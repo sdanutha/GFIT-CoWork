@@ -1,0 +1,203 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --background: #f4f1ea;
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-border: rgba(35, 52, 34, 0.14);
+  --text: #1d261d;
+  --muted: #667066;
+  --accent: #226b3a;
+  --accent-strong: #154c29;
+  --accent-soft: #e4f1e6;
+  --warning: #9d4b23;
+  --warning-soft: #fae9df;
+  background: var(--background);
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 14% 12%, rgba(87, 143, 92, 0.13), transparent 34rem),
+    var(--background);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 3rem);
+}
+
+.status-card {
+  width: min(100%, 42rem);
+  padding: clamp(1.5rem, 5vw, 3.75rem);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 1.75rem;
+  box-shadow: 0 1.75rem 5rem rgba(42, 50, 39, 0.12);
+  backdrop-filter: blur(1rem);
+}
+
+.brand-mark {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 2.5rem;
+  place-items: center;
+  color: white;
+  font-weight: 800;
+  letter-spacing: -0.08em;
+  background: var(--accent);
+  border-radius: 0.95rem;
+  box-shadow: 0 0.65rem 1.5rem rgba(34, 107, 58, 0.22);
+}
+
+.eyebrow {
+  margin: 0 0 0.6rem;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.35rem, 8vw, 4.4rem);
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.status-panel {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.status-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 720;
+}
+
+.status-heading::before {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: 0 0 auto;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 0.3rem var(--accent-soft);
+  content: "";
+}
+
+.status-panel--unavailable .status-heading {
+  color: var(--warning);
+}
+
+.status-panel--unavailable .status-heading::before {
+  background: var(--warning);
+  box-shadow: 0 0 0 0.3rem var(--warning-soft);
+}
+
+.status-copy {
+  max-width: 32rem;
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.65;
+}
+
+.retry-button {
+  margin-top: 1.4rem;
+  padding: 0.78rem 1.1rem;
+  color: white;
+  font-weight: 700;
+  background: var(--accent);
+  border: 0;
+  border-radius: 0.8rem;
+  cursor: pointer;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.retry-button:hover {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.retry-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 3px;
+}
+
+.local-note {
+  margin: 2.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #10130f;
+    --surface: rgba(28, 33, 27, 0.86);
+    --surface-border: rgba(224, 235, 220, 0.12);
+    --text: #edf2ea;
+    --muted: #aab5a7;
+    --accent: #7fc78b;
+    --accent-strong: #66ad73;
+    --accent-soft: rgba(85, 154, 98, 0.2);
+    --warning: #f1a274;
+    --warning-soft: rgba(180, 83, 38, 0.22);
+  }
+
+  body {
+    background:
+      radial-gradient(circle at 14% 12%, rgba(91, 154, 100, 0.12), transparent 34rem),
+      var(--background);
+  }
+
+  .retry-button {
+    color: #102014;
+  }
+}
+
+@media (max-width: 32rem) {
+  .app-shell {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .status-card {
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .brand-mark {
+    margin-bottom: 4rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .retry-button {
+    transition: none;
+  }
+}
