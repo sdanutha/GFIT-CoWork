@@ -59,6 +59,31 @@ test('does not expose gateway connection details or credential-like values', asy
   }
 })
 
+test('returns safe unavailable health when the gateway throws credential-like details', async () => {
+  const app = createCoWorkHost({
+    health: async () => {
+      throw new Error('Hermes gateway http://127.0.0.1:9119 failed with token=do-not-render')
+    },
+    close: async () => {},
+  })
+  const address = await app.listen(0)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/health`)
+    const body = JSON.stringify(await response.json())
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(JSON.parse(body), {
+      status: 'unavailable',
+      runtime: 'Hermes',
+      remedy: 'Check your Hermes setup, then retry.',
+    })
+    assert.doesNotMatch(body, /token|key|password|127\.0\.0\.1:9119|do-not-render/i)
+  } finally {
+    await app.close()
+  }
+})
+
 test('closes the HTTP listener before closing the Hermes gateway exactly once', async () => {
   let endpoint = ''
   let gatewayCloses = 0

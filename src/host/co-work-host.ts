@@ -9,7 +9,12 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
   let closeOperation: Promise<void> | undefined
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/api/health') {
-      const readiness = await gateway.health()
+      let readiness
+      try {
+        readiness = await gateway.health()
+      } catch {
+        readiness = { kind: 'unavailable' as const, remedy: safeUnavailableRemedy }
+      }
       const body = JSON.stringify(healthResponse(
         readiness.kind === 'ready'
           ? readiness
