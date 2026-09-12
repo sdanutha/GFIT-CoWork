@@ -86,3 +86,45 @@ test('returns the safe remedy when cleanup finds the owned process already stopp
     remedy: 'Start Hermes with hermes serve, then retry.',
   })
 })
+
+test('close waits for in-flight readiness, cleans ownership, and clears stale readiness', async () => {
+  let resolveProbe!: (ready: boolean) => void
+  let resolveStartedReadiness!: (ready: boolean) => void
+  const delayedProbe = new Promise<boolean>((resolve) => { resolveProbe = resolve })
+  const delayedStartedReadiness = new Promise<boolean>((resolve) => {
+    resolveStartedReadiness = resolve
+  })
+  let probes = 0
+  let starts = 0
+  let stops = 0
+  const gateway = createLocalHermesWorkspaceGateway({
+    probe: async () => {
+      probes += 1
+      return probes === 1 ? delayedProbe : true
+    },
+    start: () => {
+      starts += 1
+      return { stop: async () => { stops += 1 } }
+    },
+    waitForReady: async () => delayedStartedReadiness,
+  })
+
+  const health = gateway.health()
+  let closeSettled = false
+  const close = gateway.close().then(() => { closeSettled = true })
+  const queuedHealth = gateway.health()
+  await Promise.resolve()
+  assert.equal(closeSettled, false)
+  assert.equal(probes, 1)
+
+  resolveProbe(false)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(starts, 1)
+  resolveStartedReadiness(true)
+
+  assert.deepEqual(await health, { kind: 'ready', startedByCoWork: true })
+  await close
+  assert.equal(stops, 1)
+  assert.deepEqual(await queuedHealth, { kind: 'ready', startedByCoWork: false })
+  assert.equal(probes, 2)
+})

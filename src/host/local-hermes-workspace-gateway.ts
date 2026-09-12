@@ -43,6 +43,7 @@ export function createLocalHermesWorkspaceGateway(
   let owned: OwnedProcess | undefined
   let readiness: HermesReadiness | undefined
   let inFlight: Promise<HermesReadiness> | undefined
+  let closing: Promise<void> | undefined
 
   const stopOwned = async () => {
     const ownedProcess = owned
@@ -63,15 +64,31 @@ export function createLocalHermesWorkspaceGateway(
     return (readiness = { kind: 'unavailable', remedy: 'Start Hermes with hermes serve, then retry.' })
   }
 
+  const close = () => {
+    if (closing) return closing
+    const activeReadiness = inFlight
+    const closeOperation = (async () => {
+      try {
+        await activeReadiness
+      } finally {
+        try {
+          await stopOwned()
+        } finally {
+          readiness = undefined
+          if (inFlight === activeReadiness) inFlight = undefined
+        }
+      }
+    })()
+    closing = closeOperation.finally(() => { closing = undefined })
+    return closing
+  }
+
   return {
     async health() {
+      if (closing) await closing
       if (readiness) return readiness
       return (inFlight ??= resolveReadiness())
     },
-    async close() {
-      await stopOwned()
-      readiness = undefined
-      inFlight = undefined
-    },
+    close,
   }
 }
