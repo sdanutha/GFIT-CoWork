@@ -2,6 +2,52 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createLocalHermesWorkspaceGateway } from '../src/host/local-hermes-workspace-gateway.js'
 
+test('uses Hermes 0.21.2 liveness and runtime-readiness surfaces', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+  let livenessUrl = ''
+  let runtimeUrl = ''
+  let runtimeMethod = ''
+
+  class ReadyRuntimeWebSocket extends EventTarget {
+    constructor(url: string | URL) {
+      super()
+      runtimeUrl = String(url)
+      queueMicrotask(() => this.dispatchEvent(new Event('open')))
+    }
+
+    send(data: unknown) {
+      const request = JSON.parse(String(data)) as { id: string; method: string }
+      runtimeMethod = request.method
+      const message = new Event('message')
+      Object.defineProperty(message, 'data', {
+        value: JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { ok: true } }),
+      })
+      queueMicrotask(() => this.dispatchEvent(message))
+    }
+
+    close() {}
+  }
+
+  globalThis.fetch = async (input) => {
+    livenessUrl = String(input)
+    return new Response('{"ok":true}', { status: 200 })
+  }
+  globalThis.WebSocket = ReadyRuntimeWebSocket as unknown as typeof WebSocket
+
+  try {
+    const gateway = createLocalHermesWorkspaceGateway()
+    assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
+    assert.equal(livenessUrl, 'http://127.0.0.1:9119/api/health')
+    assert.equal(runtimeUrl, 'ws://127.0.0.1:9119/api/ws')
+    assert.equal(runtimeMethod, 'setup.runtime_check')
+    await gateway.close()
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})
+
 test('attaches to a healthy local Hermes server without starting another process', async () => {
   let starts = 0
   const gateway = createLocalHermesWorkspaceGateway({
@@ -12,6 +58,57 @@ test('attaches to a healthy local Hermes server without starting another process
 
   assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
   assert.equal(starts, 0)
+})
+
+test('rechecks runtime usability on every later health call', async () => {
+  let usable = false
+  let checks = 0
+  const gateway = createLocalHermesWorkspaceGateway({
+    probe: async () => true,
+    checkUsable: async () => {
+      checks += 1
+      return usable
+    },
+    start: () => ({ stop: async () => {} }),
+    waitForReady: async () => true,
+  })
+
+  assert.deepEqual(await gateway.health(), {
+    kind: 'unavailable',
+    remedy: 'Configure Hermes with hermes setup, then retry.',
+  })
+  usable = true
+  assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
+  usable = false
+  assert.deepEqual(await gateway.health(), {
+    kind: 'unavailable',
+    remedy: 'Configure Hermes with hermes setup, then retry.',
+  })
+  assert.equal(checks, 3)
+})
+
+test('observes Hermes stoppage and recovery across later health calls', async () => {
+  const liveness = [true, false, true]
+  let starts = 0
+  let stops = 0
+  const gateway = createLocalHermesWorkspaceGateway({
+    probe: async () => liveness.shift() ?? false,
+    checkUsable: async () => true,
+    start: () => {
+      starts += 1
+      return { stop: async () => { stops += 1 } }
+    },
+    waitForReady: async () => false,
+  })
+
+  assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
+  assert.deepEqual(await gateway.health(), {
+    kind: 'unavailable',
+    remedy: 'Start Hermes with hermes serve, then retry.',
+  })
+  assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
+  assert.equal(starts, 1)
+  assert.equal(stops, 1)
 })
 
 test('does not stop an externally attached Hermes server on close', async () => {
