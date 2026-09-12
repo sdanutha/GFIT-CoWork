@@ -66,7 +66,9 @@ test('turns a failed health request into safe Hermes guidance', async () => {
 
 test('does not render an unsuccessful health response body', async () => {
   const fetcher: typeof fetch = async () => new Response(
-    JSON.stringify({ remedy: 'password=do-not-render' }),
+    JSON.stringify({
+      remedy: 'Gateway http://127.0.0.1:9119 failed with token=do-not-render and password=secret.',
+    }),
     { status: 503 },
   )
 
@@ -77,6 +79,10 @@ test('does not render an unsuccessful health response body', async () => {
     runtime: 'Hermes',
     remedy: 'Check your Hermes setup, then retry.',
   })
+  assert.doesNotMatch(
+    JSON.stringify(health),
+    /token|key|password|127\.0\.0\.1:9119|do-not-render|secret/i,
+  )
 })
 
 test('announces that Hermes readiness is being checked on launch', () => {

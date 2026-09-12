@@ -38,6 +38,27 @@ test('returns not found for an unknown route', async () => {
   await app.close()
 })
 
+test('does not expose gateway connection details or credential-like values', async () => {
+  const app = createCoWorkHost({
+    health: async () => ({
+      kind: 'unavailable',
+      remedy: 'Gateway http://127.0.0.1:9119 failed with token=do-not-render and password=secret.',
+    }),
+    close: async () => {},
+  })
+  const address = await app.listen(0)
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/health`)
+    const body = JSON.stringify(await response.json())
+
+    assert.equal(response.status, 200)
+    assert.doesNotMatch(body, /token|key|password|127\.0\.0\.1:9119|do-not-render|secret/i)
+    assert.match(body, /Hermes/)
+  } finally {
+    await app.close()
+  }
+})
+
 test('closes the HTTP listener before closing the Hermes gateway exactly once', async () => {
   let endpoint = ''
   let gatewayCloses = 0
