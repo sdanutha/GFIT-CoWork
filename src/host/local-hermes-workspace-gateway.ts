@@ -33,26 +33,45 @@ const waitForReady = async () => {
 
 const localHermesOperations: Options = { probe, start, waitForReady }
 
+const isAlreadyStoppedError = (error: unknown) => (
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH'
+)
+
 export function createLocalHermesWorkspaceGateway(
   options: Options = localHermesOperations,
 ): HermesWorkspaceGateway {
   let owned: OwnedProcess | undefined
   let readiness: HermesReadiness | undefined
+  let inFlight: Promise<HermesReadiness> | undefined
+
+  const stopOwned = async () => {
+    const ownedProcess = owned
+    owned = undefined
+    if (!ownedProcess) return
+    try {
+      await ownedProcess.stop()
+    } catch (error) {
+      if (!isAlreadyStoppedError(error)) throw error
+    }
+  }
+
+  const resolveReadiness = async () => {
+    if (await options.probe()) return (readiness = { kind: 'ready', startedByCoWork: false })
+    owned = options.start()
+    if (await options.waitForReady()) return (readiness = { kind: 'ready', startedByCoWork: true })
+    await stopOwned()
+    return (readiness = { kind: 'unavailable', remedy: 'Start Hermes with hermes serve, then retry.' })
+  }
 
   return {
     async health() {
       if (readiness) return readiness
-      if (await options.probe()) return (readiness = { kind: 'ready', startedByCoWork: false })
-      owned = options.start()
-      if (await options.waitForReady()) return (readiness = { kind: 'ready', startedByCoWork: true })
-      await owned.stop()
-      owned = undefined
-      return (readiness = { kind: 'unavailable', remedy: 'Start Hermes with hermes serve, then retry.' })
+      return (inFlight ??= resolveReadiness())
     },
     async close() {
-      await owned?.stop()
-      owned = undefined
+      await stopOwned()
       readiness = undefined
+      inFlight = undefined
     },
   }
 }
