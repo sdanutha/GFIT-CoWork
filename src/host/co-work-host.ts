@@ -4,6 +4,7 @@ import { healthResponse } from '../shared/contracts.js'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
 
 export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
+  let closeOperation: Promise<void> | undefined
   const server = createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/api/health') {
       const body = JSON.stringify(healthResponse(await gateway.health()))
@@ -21,6 +22,17 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
     listen: (port: number) => new Promise<AddressInfo>((resolve) => {
       server.listen(port, '127.0.0.1', () => resolve(server.address() as AddressInfo))
     }),
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () => closeOperation ??= (async () => {
+      try {
+        if (server.listening) {
+          await new Promise<void>((resolve, reject) => server.close((error) => {
+            if (error) reject(error)
+            else resolve()
+          }))
+        }
+      } finally {
+        await gateway.close()
+      }
+    })(),
   }
 }

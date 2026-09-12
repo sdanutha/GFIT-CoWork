@@ -37,3 +37,33 @@ test('returns not found for an unknown route', async () => {
   assert.equal(response.status, 404)
   await app.close()
 })
+
+test('closes the HTTP listener before closing the Hermes gateway exactly once', async () => {
+  let endpoint = ''
+  let gatewayCloses = 0
+  const app = createCoWorkHost({
+    health: async () => ({ kind: 'ready', startedByCoWork: false }),
+    close: async () => {
+      gatewayCloses += 1
+      await assert.rejects(fetch(endpoint))
+    },
+  })
+  const address = await app.listen(0)
+  endpoint = `http://127.0.0.1:${address.port}/api/health`
+
+  await Promise.all([app.close(), app.close()])
+
+  assert.equal(gatewayCloses, 1)
+})
+
+test('closes the Hermes gateway once when the HTTP listener was never started', async () => {
+  let gatewayCloses = 0
+  const app = createCoWorkHost({
+    health: async () => ({ kind: 'ready', startedByCoWork: false }),
+    close: async () => { gatewayCloses += 1 },
+  })
+
+  await Promise.all([app.close(), app.close()])
+
+  assert.equal(gatewayCloses, 1)
+})
