@@ -12,9 +12,13 @@ its history, tool activity, approval requests, and lifecycle.
 _Avoid_: Claude runtime, provider adapter
 
 **Workspace**:
-One local project folder selected for the current GFIT CoWork view. Its thread
-list contains only Hermes sessions belonging to that folder.
-_Avoid_: global session list
+One local project folder selected for the current GFIT CoWork view. It is the
+working directory for Threads created or resumed here and the lens for the
+Thread list. The Hermes gateway exposes no folder-scoped session listing, so the
+Thread list surfaces recent Hermes sessions and narrows to the Workspace only on
+a best-effort basis; a precise per-folder list is a documented limitation, not a
+guarantee (see ADR 0002).
+_Avoid_: promising an exact per-folder session list
 
 **Thread**:
 A Hermes session displayed inside its Workspace. Hermes, rather than GFIT

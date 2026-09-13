@@ -313,3 +313,75 @@ test('opens an absolute directory and returns its Hermes Threads scoped to the p
   })
   assert.deepEqual(requestedPaths, ['/home/dev/project'])
 })
+
+test('lists Threads from session.list, enriching activity from the live session list', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+
+  class GatewayWebSocket extends EventTarget {
+    constructor(url: string | URL) {
+      super()
+      void url
+      queueMicrotask(() => this.dispatchEvent(new Event('open')))
+    }
+
+    send(data: unknown) {
+      const request = JSON.parse(String(data)) as { id: string; method: string }
+      const result =
+        request.method === 'session.list'
+          ? { sessions: [
+              { id: 's1', title: 'First thread', started_at: 1_700_000_000 },
+              { id: 's2', title: '', started_at: 0 },
+            ] }
+          : request.method === 'session.active_list'
+            ? { sessions: [{ id: 's2' }] }
+            : {}
+      const message = new Event('message')
+      Object.defineProperty(message, 'data', {
+        value: JSON.stringify({ jsonrpc: '2.0', id: request.id, result }),
+      })
+      queueMicrotask(() => this.dispatchEvent(message))
+    }
+
+    close() {}
+  }
+
+  globalThis.fetch = async (input) => {
+    const url = String(input)
+    if (url.endsWith('/')) {
+      return new Response(
+        '<script>window.__HERMES_SESSION_TOKEN__="ephemeral-loopback-token";</script>',
+        { status: 200 },
+      )
+    }
+    return new Response('{"ok":true}', { status: 200 })
+  }
+  globalThis.WebSocket = GatewayWebSocket as unknown as typeof WebSocket
+
+  try {
+    const gateway = createLocalHermesWorkspaceGateway({
+      ...baseHealthOps,
+      statPath: async () => 'directory',
+    })
+    const result = await gateway.openWorkspace('/home/dev/project')
+
+    assert.deepEqual(result, {
+      kind: 'opened',
+      workspace: {
+        path: '/home/dev/project',
+        threads: [
+          {
+            id: 's1',
+            title: 'First thread',
+            updatedAt: new Date(1_700_000_000 * 1000).toISOString(),
+            activity: 'idle',
+          },
+          { id: 's2', title: 'Untitled', updatedAt: '', activity: 'live' },
+        ],
+      },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})

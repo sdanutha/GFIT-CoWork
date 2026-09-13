@@ -12,4 +12,4 @@
 - [x] Each listed Thread provides an understandable title, recency, and activity status.
 - [x] Fake-gateway tests cover path validation, scope filtering, recent-list behavior, and host-to-browser error states.
 
-**Notes:** Recent Workspaces are a client-side navigation preference (localStorage), covered by client tests rather than fake-gateway tests. The real gateway's Hermes Thread listing (`listThreads`) is provisional and must be verified against a running Hermes; a failure yields an empty list so the Workspace still opens.
+**Notes:** Recent Workspaces are a client-side navigation preference (localStorage), covered by client tests rather than fake-gateway tests. Thread listing calls the real gateway `session.list` (activity enriched from `session.active_list`); see `docs/agents/hermes-api.md`. Per **ADR 0002**, scope is best-effort: the gateway exposes no folder filter, so the list is recent Hermes sessions, not an exact per-folder list. `CONTEXT.md`'s Workspace definition was updated to match.

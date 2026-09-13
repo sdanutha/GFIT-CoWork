@@ -20,8 +20,7 @@ type Options = {
 
 const hermesBaseUrl = 'http://127.0.0.1:9119'
 const hermesWebSocketUrl = 'ws://127.0.0.1:9119/api/ws'
-const runtimeReadinessRequestId = 'cowork-runtime-readiness'
-const runtimeReadinessTimeoutMs = 10_000
+const gatewayRequestTimeoutMs = 10_000
 
 const probe = async () => {
   try { return (await fetch(`${hermesBaseUrl}/api/health`)).ok } catch { return false }
@@ -41,50 +40,63 @@ const readSessionToken = async (): Promise<string | undefined> => {
   }
 }
 
-const checkUsable = async () => {
-  const token = await readSessionToken()
-  if (!token) return false
-  return new Promise<boolean>((resolve) => {
+// One JSON-RPC request/response over an authenticated gateway WebSocket. Opens a
+// socket, sends the method, resolves the first matching response `result`, and
+// closes; rejects on error, close, timeout, or a missing session token.
+const jsonRpcRequest = (
+  method: string,
+  params: Record<string, unknown> = {},
+  timeoutMs = gatewayRequestTimeoutMs,
+): Promise<unknown> => new Promise((resolve, reject) => {
   let settled = false
   let socket: WebSocket | undefined
-  const finish = (usable: boolean) => {
+  const requestId = `cowork-${method}`
+  const finish = (complete: () => void) => {
     if (settled) return
     settled = true
     clearTimeout(timeout)
     try { socket?.close() } catch {}
-    resolve(usable)
+    complete()
   }
-  const timeout = setTimeout(() => finish(false), runtimeReadinessTimeoutMs)
+  const timeout = setTimeout(() => finish(() => reject(new Error('gateway request timed out'))), timeoutMs)
 
-  try {
-    socket = new WebSocket(`${hermesWebSocketUrl}?token=${encodeURIComponent(token)}`)
-    socket.addEventListener('open', () => {
-      try {
-        socket?.send(JSON.stringify({
-          jsonrpc: '2.0',
-          id: runtimeReadinessRequestId,
-          method: 'setup.runtime_check',
-          params: {},
-        }))
-      } catch {
-        finish(false)
-      }
-    })
-    socket.addEventListener('message', (event) => {
-      try {
-        const response = JSON.parse(String(event.data)) as {
-          id?: unknown
-          result?: { ok?: unknown }
+  readSessionToken().then((token) => {
+    if (settled) return
+    if (!token) return finish(() => reject(new Error('no session token')))
+    try {
+      socket = new WebSocket(`${hermesWebSocketUrl}?token=${encodeURIComponent(token)}`)
+      socket.addEventListener('open', () => {
+        try {
+          socket?.send(JSON.stringify({ jsonrpc: '2.0', id: requestId, method, params }))
+        } catch (error) {
+          finish(() => reject(error))
         }
-        if (response.id === runtimeReadinessRequestId) finish(response.result?.ok === true)
-      } catch {}
-    })
-    socket.addEventListener('error', () => finish(false))
-    socket.addEventListener('close', () => finish(false))
+      })
+      socket.addEventListener('message', (event) => {
+        try {
+          const response = JSON.parse(String(event.data)) as {
+            id?: unknown; result?: unknown; error?: unknown
+          }
+          if (response.id !== requestId) return
+          if (response.error !== undefined) finish(() => reject(new Error('gateway returned an error')))
+          else finish(() => resolve(response.result))
+        } catch {}
+      })
+      socket.addEventListener('error', () => finish(() => reject(new Error('gateway socket error'))))
+      socket.addEventListener('close', () => finish(() => reject(new Error('gateway socket closed'))))
+    } catch (error) {
+      finish(() => reject(error))
+    }
+  }, () => finish(() => reject(new Error('no session token'))))
+})
+
+const checkUsable = async () => {
+  try {
+    const result = await jsonRpcRequest('setup.runtime_check') as { ok?: unknown }
+    return result?.ok === true
   } catch {
-    finish(false)
+    return false
   }
-  })
 }
 
 const start = () => {
@@ -123,31 +135,55 @@ const statPath = async (path: string): Promise<PathStatus> => {
   }
 }
 
-const toThread = (value: unknown): Thread[] => {
+// Hermes stamps session.list `started_at` as epoch seconds.
+const toIsoRecency = (startedAt: unknown): string => {
+  if (typeof startedAt !== 'number' || startedAt <= 0) return ''
+  const date = new Date(startedAt * 1000)
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString()
+}
+
+const toThread = (value: unknown, liveIds: Set<string>): Thread[] => {
   if (typeof value !== 'object' || value === null) return []
-  const record = value as Record<string, unknown>
-  if (typeof record.id !== 'string' || typeof record.title !== 'string') return []
+  const row = value as Record<string, unknown>
+  if (typeof row.id !== 'string') return []
   return [{
-    id: record.id,
-    title: record.title,
-    updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
-    activity: record.activity === 'live' ? 'live' : 'idle',
+    id: row.id,
+    title: typeof row.title === 'string' && row.title.length > 0 ? row.title : 'Untitled',
+    updatedAt: toIsoRecency(row.started_at),
+    activity: liveIds.has(row.id) ? 'live' : 'idle',
   }]
 }
 
-// Provisional: Hermes owns the Thread list for a Workspace. The exact sessions
-// surface must be confirmed against a running Hermes; until then a failure
-// yields an empty (not a fabricated) Thread list so the Workspace still opens.
-const listThreads = async (path: string): Promise<Thread[]> => {
+const liveSessionIds = (value: unknown): Set<string> => {
+  const ids = new Set<string>()
+  const rows = typeof value === 'object' && value !== null
+    ? (value as { sessions?: unknown }).sessions
+    : undefined
+  if (Array.isArray(rows)) {
+    for (const row of rows) {
+      if (typeof row !== 'object' || row === null) continue
+      const record = row as Record<string, unknown>
+      for (const key of ['id', 'session_id', 'stored_session_id'] as const) {
+        if (typeof record[key] === 'string') ids.add(record[key] as string)
+      }
+    }
+  }
+  return ids
+}
+
+// Best-effort (ADR 0002): the gateway lists recent sessions with no folder
+// filter and no cwd, so the Workspace path cannot narrow the list here. Activity
+// is enriched from the live-session list where ids line up. A failure yields an
+// empty (not a fabricated) list so the Workspace still opens.
+const listThreads = async (_workspacePath: string): Promise<Thread[]> => {
   try {
-    const response = await fetch(`${hermesBaseUrl}/api/sessions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workspace: path }),
-    })
-    if (!response.ok) return []
-    const data = await response.json() as { sessions?: unknown }
-    return Array.isArray(data.sessions) ? data.sessions.flatMap(toThread) : []
+    const [listed, active] = await Promise.all([
+      jsonRpcRequest('session.list', { limit: 200 }),
+      jsonRpcRequest('session.active_list').catch(() => ({ sessions: [] })),
+    ])
+    const liveIds = liveSessionIds(active)
+    const rows = (listed as { sessions?: unknown }).sessions
+    return Array.isArray(rows) ? rows.flatMap((row) => toThread(row, liveIds)) : []
   } catch {
     return []
   }
