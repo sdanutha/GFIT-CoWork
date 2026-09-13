@@ -93,6 +93,22 @@ The working call is **`session.resume`**:
      `reasoning.available`, `message.complete` (`payload.text` + `payload.usage`).
      Map `payload.text`, not a top-level `text`; filter by `params.session_id`
      (the runtime id from `session.resume`/`session.create`).
+  3. **Turn boundary is `session.info.running`** — Hermes emits no `turn.*` event.
+     `session.info` `payload.running` flips `true` (turn active) then `false`
+     (turn done), and `payload` also carries `stored_session_id` and `title`.
+  4. **Tool activity (verified live):**
+     `tool.start` `payload` = `{ tool_id, name (e.g. "terminal"), context (the
+     command), args }`; `tool.complete` `payload` = `{ tool_id, name, args:
+     {command}, duration_s, result: { output, exit_code, error } }`. The command
+     is in `context` on start and `args.command` on complete; output is
+     `result.output`.
+  5. **Approval (from source `server.py`).** `approval.request` `payload` carries
+     `request_id`, `command` (redacted by Hermes), and `choices`
+     (`["once","session","always","deny"]`); a timeout emits `approval.expire`
+     `{ request_id }`. Resolve with `approval.respond` `{ session_id, request_id,
+     choice }`. Not yet live-triggered: the local Hermes runs `approval_mode:
+     "smart"`, which auto-allowed every command tried (including `rm -rf`), so no
+     prompt fired — mapping is source-verified and unit-tested.
 - **Stop / interrupt a running turn:** **`session.interrupt`** — `methods_session.py:1987`
   (takes `session_id`). Note: `session.control` (`methods_session_control.py:251`) is
   only for goal/loop/subgoal/heartbeat actions, **not** turn interruption.
