@@ -97,6 +97,43 @@ dangerous action) — GFIT CoWork surfaces `approval.request`, lists via
     its activity but must not submit a competing prompt (per `CONTEXT.md`).
   - `turn.start` / `turn.end` notifications also signal when a Thread goes live/idle.
 
+## Two Hermes surfaces (choose the WS gateway)
+
+Hermes exposes two HTTP surfaces; GFIT CoWork must use the first:
+
+- **tui_gateway WS JSON-RPC** — `hermes serve`, `127.0.0.1:9119`, token from `GET /`.
+  The desktop-app protocol; issue 01 already attaches here; no extra credentials.
+  **This is the surface GFIT CoWork uses** (matches `CONTEXT.md`: a gateway client).
+- **OpenAI-compatible REST/SSE API server** — `gateway/platforms/api_server.py:1`,
+  default port `8642`, auth via `API_SERVER_KEY`. It is a *messaging-gateway platform
+  adapter* for generic OpenAI-compatible frontends (`GET/POST /api/sessions`,
+  `GET /api/sessions/{id}/messages`, `POST /api/sessions/{id}/chat/stream` SSE). Do **not**
+  use it: it must be separately enabled as a gateway platform and needs an API key,
+  which conflicts with "GFIT CoWork does not ask for or store Hermes credentials" and
+  abandons issue 01's surface.
+
+## Open gap: Workspace-scoped Thread listing
+
+`CONTEXT.md` requires the Thread list to contain **only** sessions belonging to the
+selected Workspace. The WS gateway does **not** offer this:
+
+- `session.list` returns compact rows `{id, title, preview, started_at,
+  message_count, source}` — **no cwd** (`_session_row_summary`, `methods_session.py:124`).
+- The handler forwards only `include_hidden`; it does not accept a `cwd_prefix`
+  (`_listing_rows`, `methods_session.py:141`), even though `list_sessions_rich`
+  (`hermes_state_sessions.py:1189`) supports `cwd_prefix`.
+- `hermes sessions list --workspace` filters by reading the SQLite store **directly**
+  (`hermes_cli/sessions_cmd.py:252`), not through the gateway.
+- `session.info` is a push notification after activate/create, not a per-id lookup
+  that returns cwd for an arbitrary stored session.
+
+So there is no single gateway RPC that lists sessions scoped to a Workspace path.
+This is a product decision (see the session notes / handoff); options considered:
+(a) v1 shows recent sessions best-effort and documents scoping as a Hermes-surface
+limitation; (b) the host reads the Hermes session SQLite store read-only to filter by
+cwd (couples to Hermes internals, tension with the gateway-client boundary);
+(c) use the REST API server (rejected above — needs a credential).
+
 ## Caveats
 
 - Everything here is Hermes-owned and version-specific (v0.21.2). Treat method names
