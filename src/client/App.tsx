@@ -272,6 +272,11 @@ function reduceLive(entries: LiveEntry[], event: ThreadStreamEvent): LiveEntry[]
 
 type ApprovalItem = { requestId: string; action: string; decision: 'pending' | ApprovalDecision }
 
+// 'own' = a turn this view submitted; 'external' = a turn Hermes is running for
+// this Thread through another surface (a Live Thread), which must not be
+// interrupted or prompted over from here.
+type TurnState = 'idle' | 'own' | 'external'
+
 const approvalDecisionLabel: Record<ApprovalDecision, string> = {
   allowed: 'Allowed',
   denied: 'Denied',
@@ -281,6 +286,7 @@ const approvalDecisionLabel: Record<ApprovalDecision, string> = {
 
 export function ThreadView({
   threadId,
+  initiallyLive = false,
   open = requestThread,
   subscribe = streamThread,
   submit = submitPrompt,
@@ -288,6 +294,7 @@ export function ThreadView({
   respond = respondApproval,
 }: {
   threadId: string
+  initiallyLive?: boolean
   open?: typeof requestThread
   subscribe?: StreamThread
   submit?: typeof submitPrompt
@@ -296,7 +303,7 @@ export function ThreadView({
 }) {
   const [state, setState] = useState<ThreadViewState>({ phase: 'loading' })
   const [live, setLive] = useState<LiveEntry[]>([])
-  const [active, setActive] = useState(false)
+  const [turnState, setTurnState] = useState<TurnState>(initiallyLive ? 'external' : 'idle')
   const [turnError, setTurnError] = useState<string | null>(null)
   const [approvals, setApprovals] = useState<ApprovalItem[]>([])
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -315,13 +322,17 @@ export function ThreadView({
 
   useEffect(() => {
     setLive([])
-    setActive(false)
+    setTurnState(initiallyLive ? 'external' : 'idle')
     setTurnError(null)
     setApprovals([])
     return subscribe(threadId, (event) => {
-      if (event.kind === 'turn-start') { setActive(true); setTurnError(null) }
-      else if (event.kind === 'turn-end') setActive(false)
-      else if (event.kind === 'turn-error') { setActive(false); setTurnError(event.message) }
+      if (event.kind === 'turn-start') {
+        setTurnError(null)
+        // A turn we did not submit belongs to another surface (Live Thread).
+        setTurnState((current) => current === 'own' ? 'own' : 'external')
+      }
+      else if (event.kind === 'turn-end') setTurnState('idle')
+      else if (event.kind === 'turn-error') { setTurnState('idle'); setTurnError(event.message) }
       else if (event.kind === 'approval-request') {
         setApprovals((items) => items.some((item) => item.requestId === event.requestId)
           ? items
@@ -332,7 +343,7 @@ export function ThreadView({
           : item))
       } else setLive((entries) => reduceLive(entries, event))
     })
-  }, [threadId, subscribe])
+  }, [threadId, subscribe, initiallyLive])
 
   const decideApproval = useCallback((requestId: string, choice: ApprovalChoice) => {
     setApprovals((items) => items.map((item) => item.requestId === requestId
@@ -342,12 +353,16 @@ export function ThreadView({
   }, [threadId, respond])
 
   const send = useCallback(() => {
+    if (turnState !== 'idle') return
     const text = composerRef.current?.value.trim() ?? ''
     if (text.length === 0) return
-    setActive(true)
+    setTurnState('own')
     void submit(threadId, text)
     if (composerRef.current) composerRef.current.value = ''
-  }, [threadId, submit])
+  }, [threadId, submit, turnState])
+
+  const externallyActive = turnState === 'external'
+  const busy = turnState !== 'idle'
 
   return (
     <section className="thread-view" aria-labelledby="thread-view-heading">
@@ -437,6 +452,12 @@ export function ThreadView({
         </ul>
       )}
 
+      {externallyActive && (
+        <p className="composer-live-note" role="status">
+          Hermes is running this Thread on another surface. You can prompt once the current turn ends.
+        </p>
+      )}
+
       <form
         className="composer"
         onSubmit={(event) => { event.preventDefault(); send() }}
@@ -449,19 +470,20 @@ export function ThreadView({
           rows={3}
           placeholder="Ask Hermes to do something in this Workspace…"
           defaultValue=""
+          disabled={busy}
         />
         <div className="composer-actions">
-          {active && (
+          {turnState === 'own' && (
             <button
               type="button"
               className="composer-stop"
-              onClick={() => { void stop(threadId); setActive(false) }}
+              onClick={() => { void stop(threadId); setTurnState('idle') }}
             >
               Stop
             </button>
           )}
-          <button type="button" className="composer-send" onClick={send} disabled={active}>
-            {active ? 'Working…' : 'Send'}
+          <button type="button" className="composer-send" onClick={send} disabled={busy}>
+            {externallyActive ? 'Live elsewhere' : busy ? 'Working…' : 'Send'}
           </button>
         </div>
       </form>
@@ -650,7 +672,11 @@ export function WorkspaceBrowser({
       )}
 
       {state.phase === 'opened' && selectedThreadId !== null && (
-        <ThreadView threadId={selectedThreadId} open={openThread} />
+        <ThreadView
+          threadId={selectedThreadId}
+          initiallyLive={state.threads.some((t) => t.id === selectedThreadId && t.activity === 'live')}
+          open={openThread}
+        />
       )}
     </section>
   )

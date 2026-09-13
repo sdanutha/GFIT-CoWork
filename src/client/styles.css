@@ -490,6 +490,20 @@ h1 {
   outline-offset: 2px;
 }
 
+.composer-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.composer-live-note {
+  margin: 1.25rem 0 0;
+  padding: 0.7rem 0.85rem;
+  color: var(--accent-strong);
+  font-size: 0.88rem;
+  background: var(--accent-soft);
+  border-radius: 0.7rem;
+}
+
 .composer-actions {
   display: flex;
   gap: 0.6rem;

@@ -674,3 +674,84 @@ test('presents Approval requests and resolves them by explicit choice', async ()
     }
   })
 })
+
+test('blocks the composer for an externally Live Thread and re-enables it when the turn ends', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    let emit: ((event: ThreadStreamEvent) => void) | undefined
+    const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => {
+      emit = onEvent
+      return () => {}
+    }
+    const submitted: string[] = []
+    const submit: typeof import('../src/client/App.js').submitPrompt = async (_t, text) => { submitted.push(text) }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s1" initiallyLive open={open} subscribe={subscribe} submit={submit} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const composer = () => container.querySelector('#composer-input') as HTMLTextAreaElement
+      const sendButton = () => container.querySelector('.composer-send') as HTMLButtonElement
+
+      // Live from the start: composer disabled, explains why, no Stop (not our turn).
+      assert.equal(composer().disabled, true)
+      assert.equal(sendButton().disabled, true)
+      assert.match(container.textContent ?? '', /another surface/)
+      assert.equal(container.querySelector('.composer-stop'), null)
+
+      // External turn ends -> promptable again, no stale live state.
+      await act(async () => { emit?.({ kind: 'turn-end' }); await Promise.resolve() })
+      assert.equal(composer().disabled, false)
+      assert.doesNotMatch(container.textContent ?? '', /another surface/)
+
+      composer().value = 'now I can prompt'
+      await act(async () => {
+        sendButton().dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      assert.deepEqual(submitted, ['now I can prompt'])
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('treats a stream turn we did not start as external and shows a gateway turn error', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    let emit: ((event: ThreadStreamEvent) => void) | undefined
+    const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => { emit = onEvent; return () => {} }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s1" open={open} subscribe={subscribe} submit={async () => {}} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const composer = () => container.querySelector('#composer-input') as HTMLTextAreaElement
+      assert.equal(composer().disabled, false)
+
+      await act(async () => { emit?.({ kind: 'turn-start' }); await Promise.resolve() })
+      assert.equal(composer().disabled, true)
+      assert.match(container.textContent ?? '', /another surface/)
+
+      await act(async () => { emit?.({ kind: 'turn-error', message: 'The Hermes turn ended with an error.' }); await Promise.resolve() })
+      assert.equal(composer().disabled, false)
+      assert.match(container.textContent ?? '', /ended with an error/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
