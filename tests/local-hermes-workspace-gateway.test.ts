@@ -6,6 +6,7 @@ test('uses Hermes 0.21.2 liveness and runtime-readiness surfaces', async () => {
   const originalFetch = globalThis.fetch
   const OriginalWebSocket = globalThis.WebSocket
   let livenessUrl = ''
+  let tokenUrl = ''
   let runtimeUrl = ''
   let runtimeMethod = ''
 
@@ -30,7 +31,18 @@ test('uses Hermes 0.21.2 liveness and runtime-readiness surfaces', async () => {
   }
 
   globalThis.fetch = async (input) => {
-    livenessUrl = String(input)
+    const url = String(input)
+    if (url.endsWith('/api/health')) {
+      livenessUrl = url
+    } else {
+      tokenUrl = url
+    }
+    if (url.endsWith('/')) {
+      return new Response(
+        '<script>window.__HERMES_SESSION_TOKEN__="ephemeral-loopback-token";</script>',
+        { status: 200 },
+      )
+    }
     return new Response('{"ok":true}', { status: 200 })
   }
   globalThis.WebSocket = ReadyRuntimeWebSocket as unknown as typeof WebSocket
@@ -39,7 +51,8 @@ test('uses Hermes 0.21.2 liveness and runtime-readiness surfaces', async () => {
     const gateway = createLocalHermesWorkspaceGateway()
     assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
     assert.equal(livenessUrl, 'http://127.0.0.1:9119/api/health')
-    assert.equal(runtimeUrl, 'ws://127.0.0.1:9119/api/ws')
+    assert.equal(tokenUrl, 'http://127.0.0.1:9119/')
+    assert.equal(runtimeUrl, 'ws://127.0.0.1:9119/api/ws?token=ephemeral-loopback-token')
     assert.equal(runtimeMethod, 'setup.runtime_check')
     await gateway.close()
   } finally {

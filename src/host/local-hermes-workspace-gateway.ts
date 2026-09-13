@@ -19,7 +19,24 @@ const probe = async () => {
   try { return (await fetch(`${hermesBaseUrl}/api/health`)).ok } catch { return false }
 }
 
-const checkUsable = () => new Promise<boolean>((resolve) => {
+const readSessionToken = async (): Promise<string | undefined> => {
+  try {
+    const response = await fetch(`${hermesBaseUrl}/`)
+    if (!response.ok) return undefined
+    const html = await response.text()
+    const match = html.match(/window\.__HERMES_SESSION_TOKEN__\s*=\s*("(?:\\.|[^"\\])*")\s*;/)
+    if (!match) return undefined
+    const token = JSON.parse(match[1])
+    return typeof token === 'string' && token.length > 0 ? token : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const checkUsable = async () => {
+  const token = await readSessionToken()
+  if (!token) return false
+  return new Promise<boolean>((resolve) => {
   let settled = false
   let socket: WebSocket | undefined
   const finish = (usable: boolean) => {
@@ -32,7 +49,7 @@ const checkUsable = () => new Promise<boolean>((resolve) => {
   const timeout = setTimeout(() => finish(false), runtimeReadinessTimeoutMs)
 
   try {
-    socket = new WebSocket(hermesWebSocketUrl)
+    socket = new WebSocket(`${hermesWebSocketUrl}?token=${encodeURIComponent(token)}`)
     socket.addEventListener('open', () => {
       try {
         socket?.send(JSON.stringify({
@@ -59,7 +76,8 @@ const checkUsable = () => new Promise<boolean>((resolve) => {
   } catch {
     finish(false)
   }
-})
+  })
+}
 
 const start = () => {
   const child = spawn('hermes', ['serve', '--host', '127.0.0.1', '--port', '9119'], {
