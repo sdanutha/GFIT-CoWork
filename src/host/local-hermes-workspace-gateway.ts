@@ -229,54 +229,6 @@ const toMessage = (value: unknown): ThreadMessage[] => {
   }]
 }
 
-// session.list returns the stored session key; session.resume binds it to a live
-// runtime session_id (verified against Hermes 0.21.2). Every later prompt/stop/
-// stream call must use that runtime id, so remember the key -> runtime mapping.
-const runtimeSessionByKey = new Map<string, string>()
-const runtimeSessionId = (threadKey: string): string => runtimeSessionByKey.get(threadKey) ?? threadKey
-
-const resumeThread = async (threadKey: string): Promise<ThreadMessage[]> => {
-  const result = await jsonRpcRequest('session.resume', { session_id: threadKey }) as {
-    session_id?: unknown; messages?: unknown
-  }
-  if (typeof result?.session_id === 'string') runtimeSessionByKey.set(threadKey, result.session_id)
-  const messages = result?.messages
-  return Array.isArray(messages) ? messages.flatMap(toMessage) : []
-}
-
-const createThread = async (cwd: string, title?: string): Promise<CreateThreadResult> => {
-  try {
-    const result = await jsonRpcRequest('session.create', {
-      ...(cwd.length > 0 ? { cwd } : {}),
-      ...(title ? { title } : {}),
-      source: 'gfit-cowork',
-    }) as { session_id?: unknown }
-    return typeof result?.session_id === 'string'
-      ? { kind: 'created', threadId: result.session_id }
-      : { kind: 'error' }
-  } catch {
-    return { kind: 'error' }
-  }
-}
-
-const submitPrompt = async (threadId: string, text: string): Promise<void> => {
-  await jsonRpcRequest('prompt.submit', { session_id: runtimeSessionId(threadId), text })
-}
-
-const stopThread = async (threadId: string): Promise<void> => {
-  await jsonRpcRequest('session.interrupt', { session_id: runtimeSessionId(threadId) })
-}
-
-const respondApproval = async (
-  threadId: string,
-  requestId: string,
-  choice: ApprovalChoice,
-): Promise<void> => {
-  await jsonRpcRequest('approval.respond', {
-    session_id: runtimeSessionId(threadId), request_id: requestId, choice,
-  })
-}
-
 const approvalAction = (params: Record<string, unknown>): string => {
   for (const key of ['action', 'summary', 'command', 'title'] as const) {
     if (typeof params[key] === 'string' && (params[key] as string).length > 0) return params[key] as string
@@ -295,64 +247,151 @@ const approvalDecision = (params: Record<string, unknown>): ApprovalDecision => 
 const streamRole = (role: unknown): MessageRole =>
   role === 'user' || role === 'assistant' || role === 'tool' ? role : 'assistant'
 
-const mapStreamEvent = (raw: unknown, threadId: string): ThreadStreamEvent | undefined => {
-  let frame: { method?: unknown; params?: unknown }
-  try {
-    frame = JSON.parse(String(raw)) as { method?: unknown; params?: unknown }
-  } catch {
-    return undefined
-  }
-  if (typeof frame.method !== 'string') return undefined
-  const params = (typeof frame.params === 'object' && frame.params !== null
-    ? frame.params : {}) as Record<string, unknown>
-  // Accept the stored key or its bound runtime session id (see runtimeSessionByKey).
-  if (typeof params.session_id === 'string'
-    && params.session_id !== threadId
-    && params.session_id !== runtimeSessionByKey.get(threadId)) return undefined
-  switch (frame.method) {
+type GatewayEvent = { type: string; sessionId: string; payload: Record<string, unknown> }
+
+// Verified live (Hermes 0.21.2): streaming updates arrive as method:"event" with
+// the specifics in params; there is no dedicated turn.* event — session.info's
+// `running` flag is the turn boundary. Text lives in payload.text.
+const mapStreamEvent = (event: GatewayEvent): ThreadStreamEvent | undefined => {
+  const { type, payload } = event
+  switch (type) {
+    case 'session.info':
+      return payload.running === true ? { kind: 'turn-start' }
+        : payload.running === false ? { kind: 'turn-end' }
+          : undefined
     case 'turn.start': case 'turn.started': return { kind: 'turn-start' }
     case 'turn.end': return { kind: 'turn-end' }
     case 'turn.error': return { kind: 'turn-error', message: 'The Hermes turn ended with an error.' }
-    case 'message.start': return { kind: 'message-start', role: streamRole(params.role) }
+    case 'message.start': return { kind: 'message-start', role: streamRole(payload.role) }
     case 'message.delta':
-      return { kind: 'message-delta', text: typeof params.text === 'string' ? params.text : '' }
+      return { kind: 'message-delta', text: typeof payload.text === 'string' ? payload.text : '' }
     case 'message.complete': return { kind: 'message-complete' }
     case 'approval.request':
-      return typeof params.request_id === 'string'
-        ? { kind: 'approval-request', requestId: params.request_id, action: approvalAction(params) }
+      return typeof payload.request_id === 'string'
+        ? { kind: 'approval-request', requestId: payload.request_id, action: approvalAction(payload) }
         : undefined
     case 'approval.resolved':
-      return typeof params.request_id === 'string'
-        ? { kind: 'approval-resolved', requestId: params.request_id, decision: approvalDecision(params) }
+      return typeof payload.request_id === 'string'
+        ? { kind: 'approval-resolved', requestId: payload.request_id, decision: approvalDecision(payload) }
         : undefined
     default: return undefined
   }
 }
 
-// Provisional (best-effort, see docs/agents/hermes-api.md): opens a gateway
-// socket and forwards this thread's turn notifications. Whether Hermes pushes a
-// session's events to a fresh socket depends on attachment semantics not yet
-// verified against a live turn; tool-activity events are exercised through tests
-// until the live surface is confirmed.
-const subscribe = (
-  threadId: string,
-  listener: (event: ThreadStreamEvent) => void,
-): (() => void) => {
+type PendingRequest = {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+export type GatewayConnection = {
+  request(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>
+  onEvent(listener: (event: GatewayEvent) => void): () => void
+  close(): void
+}
+
+// One authenticated gateway WebSocket, shared by every stateful call for a
+// session. Hermes binds a session to the connection that created or resumed it,
+// so create -> prompt -> stream -> stop MUST share one socket (verified live);
+// request/response correlate by id and `event` notifications fan out to listeners.
+export function createGatewayConnection(): GatewayConnection {
   let socket: WebSocket | undefined
-  let closed = false
-  void readSessionToken().then((token) => {
-    if (closed || !token) return
+  let connecting: Promise<WebSocket> | undefined
+  let counter = 0
+  const pending = new Map<string, PendingRequest>()
+  const listeners = new Set<(event: GatewayEvent) => void>()
+
+  const failAll = (reason: string) => {
+    for (const [, request] of pending) { clearTimeout(request.timer); request.reject(new Error(reason)) }
+    pending.clear()
+  }
+
+  const handle = (data: unknown) => {
+    let frame: { id?: unknown; result?: unknown; error?: unknown; method?: unknown; params?: unknown }
     try {
-      socket = new WebSocket(`${hermesWebSocketUrl}?token=${encodeURIComponent(token)}`)
-      socket.addEventListener('message', (event) => {
-        const mapped = mapStreamEvent(event.data, threadId)
-        if (mapped) listener(mapped)
-      })
+      frame = JSON.parse(String(data)) as typeof frame
     } catch {
-      // A failed subscription simply yields no events; the turn still runs in Hermes.
+      return
     }
-  }, () => {})
-  return () => { closed = true; try { socket?.close() } catch {} }
+    if (typeof frame.id === 'string' && pending.has(frame.id)) {
+      const request = pending.get(frame.id)!
+      pending.delete(frame.id)
+      clearTimeout(request.timer)
+      if (frame.error !== undefined) request.reject(new Error('gateway returned an error'))
+      else request.resolve(frame.result)
+      return
+    }
+    if (frame.method === 'event' && typeof frame.params === 'object' && frame.params !== null) {
+      const params = frame.params as Record<string, unknown>
+      if (typeof params.type !== 'string') return
+      const event: GatewayEvent = {
+        type: params.type,
+        sessionId: typeof params.session_id === 'string' ? params.session_id : '',
+        payload: typeof params.payload === 'object' && params.payload !== null
+          ? params.payload as Record<string, unknown> : {},
+      }
+      for (const listener of listeners) listener(event)
+    }
+  }
+
+  const connect = (): Promise<WebSocket> => {
+    if (socket && socket.readyState === 1) return Promise.resolve(socket)
+    if (connecting) return connecting
+    connecting = (async () => {
+      const token = await readSessionToken()
+      if (!token) { connecting = undefined; throw new Error('no session token') }
+      return await new Promise<WebSocket>((resolve, reject) => {
+        let opened = false
+        const ws = new WebSocket(`${hermesWebSocketUrl}?token=${encodeURIComponent(token)}`)
+        ws.addEventListener('open', () => { opened = true; socket = ws; connecting = undefined; resolve(ws) })
+        ws.addEventListener('message', (event) => handle(event.data))
+        ws.addEventListener('close', () => {
+          if (socket === ws) socket = undefined
+          connecting = undefined
+          failAll('gateway socket closed')
+        })
+        ws.addEventListener('error', () => {
+          connecting = undefined
+          failAll('gateway socket error')
+          if (!opened) reject(new Error('gateway socket error'))
+          try { ws.close() } catch { /* already closing */ }
+        })
+      })
+    })()
+    return connecting
+  }
+
+  return {
+    async request(method, params = {}, timeoutMs = gatewayRequestTimeoutMs) {
+      const ws = await connect()
+      counter += 1
+      const id = `cowork-${method}-${counter}`
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id)
+          reject(new Error('gateway request timed out'))
+        }, timeoutMs)
+        pending.set(id, { resolve, reject, timer })
+        try {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }))
+        } catch (error) {
+          pending.delete(id)
+          clearTimeout(timer)
+          reject(error instanceof Error ? error : new Error('gateway send failed'))
+        }
+      })
+    },
+    onEvent(listener) {
+      listeners.add(listener)
+      void connect().catch(() => { /* events resume when a later request reconnects */ })
+      return () => { listeners.delete(listener) }
+    },
+    close() {
+      try { socket?.close() } catch { /* already closing */ }
+      socket = undefined
+      failAll('gateway connection closed')
+    },
+  }
 }
 
 const localHermesOperations: Options = {
@@ -369,6 +408,13 @@ export function createLocalHermesWorkspaceGateway(
   let owned: OwnedProcess | undefined
   let inFlight: Promise<HermesReadiness> | undefined
   let closing: Promise<void> | undefined
+
+  // One shared gateway connection for this workspace's stateful session calls.
+  const connection = createGatewayConnection()
+  // session.list yields a stored key; session.resume binds it to a runtime
+  // session_id that every later prompt/stop/stream/approval call must use.
+  const runtimeSessionByKey = new Map<string, string>()
+  const runtimeSessionId = (threadKey: string): string => runtimeSessionByKey.get(threadKey) ?? threadKey
 
   const stopOwned = async () => {
     const ownedProcess = owned
@@ -411,6 +457,7 @@ export function createLocalHermesWorkspaceGateway(
         await activeReadiness
       } finally {
         try {
+          connection.close()
           await stopOwned()
         } finally {
           if (inFlight === activeReadiness) inFlight = undefined
@@ -423,6 +470,59 @@ export function createLocalHermesWorkspaceGateway(
 
   const validatePath = options.statPath ?? statPath
   const readThreads = options.listThreads ?? listThreads
+
+  const resumeThread = async (threadKey: string): Promise<ThreadMessage[]> => {
+    const result = await connection.request('session.resume', { session_id: threadKey }) as {
+      session_id?: unknown; messages?: unknown
+    }
+    if (typeof result?.session_id === 'string') runtimeSessionByKey.set(threadKey, result.session_id)
+    const messages = result?.messages
+    return Array.isArray(messages) ? messages.flatMap(toMessage) : []
+  }
+
+  const createThread = async (cwd: string, title?: string): Promise<CreateThreadResult> => {
+    try {
+      const result = await connection.request('session.create', {
+        ...(cwd.length > 0 ? { cwd } : {}),
+        ...(title ? { title } : {}),
+        source: 'gfit-cowork',
+      }) as { session_id?: unknown }
+      return typeof result?.session_id === 'string'
+        ? { kind: 'created', threadId: result.session_id }
+        : { kind: 'error' }
+    } catch {
+      return { kind: 'error' }
+    }
+  }
+
+  const submitPrompt = async (threadId: string, text: string): Promise<void> => {
+    await connection.request('prompt.submit', { session_id: runtimeSessionId(threadId), text })
+  }
+
+  const stopThread = async (threadId: string): Promise<void> => {
+    await connection.request('session.interrupt', { session_id: runtimeSessionId(threadId) })
+  }
+
+  const respondApproval = async (
+    threadId: string,
+    requestId: string,
+    choice: ApprovalChoice,
+  ): Promise<void> => {
+    await connection.request('approval.respond', {
+      session_id: runtimeSessionId(threadId), request_id: requestId, choice,
+    })
+  }
+
+  const subscribe = (
+    threadId: string,
+    listener: (event: ThreadStreamEvent) => void,
+  ): (() => void) => connection.onEvent((event) => {
+    // Accept events for the stored key or its bound runtime session id.
+    const runtime = runtimeSessionByKey.get(threadId)
+    if (event.sessionId && event.sessionId !== threadId && event.sessionId !== runtime) return
+    const mapped = mapStreamEvent(event)
+    if (mapped) listener(mapped)
+  })
 
   return {
     async health() {

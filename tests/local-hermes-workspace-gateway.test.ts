@@ -524,15 +524,18 @@ test('subscribe maps this thread\'s turn notifications and ignores others', asyn
       super()
       void url
       queueMicrotask(() => {
-        const emit = (payload: object) => {
+        this.dispatchEvent(new Event('open'))
+        const emit = (params: object) => {
           const message = new Event('message')
-          Object.defineProperty(message, 'data', { value: JSON.stringify(payload) })
+          Object.defineProperty(message, 'data', {
+            value: JSON.stringify({ jsonrpc: '2.0', method: 'event', params }),
+          })
           this.dispatchEvent(message)
         }
-        emit({ jsonrpc: '2.0', method: 'turn.start', params: { session_id: 't1' } })
-        emit({ jsonrpc: '2.0', method: 'message.delta', params: { session_id: 'other', text: 'nope' } })
-        emit({ jsonrpc: '2.0', method: 'message.delta', params: { session_id: 't1', text: 'hi' } })
-        emit({ jsonrpc: '2.0', method: 'turn.end', params: { session_id: 't1' } })
+        emit({ type: 'turn.start', session_id: 't1' })
+        emit({ type: 'message.delta', session_id: 'other', payload: { text: 'nope' } })
+        emit({ type: 'message.delta', session_id: 't1', payload: { text: 'hi' } })
+        emit({ type: 'turn.end', session_id: 't1' })
       })
     }
     close() {}
@@ -572,7 +575,7 @@ test('responds to an Approval through approval.respond and maps approval notific
         // Also push an approval.request notification for subscribe() consumers.
         const message = new Event('message')
         Object.defineProperty(message, 'data', {
-          value: JSON.stringify({ jsonrpc: '2.0', method: 'approval.request', params: { session_id: 't1', request_id: 'a1', action: 'run rm -rf build' } }),
+          value: JSON.stringify({ jsonrpc: '2.0', method: 'event', params: { type: 'approval.request', session_id: 't1', payload: { request_id: 'a1', action: 'run rm -rf build' } } }),
         })
         this.dispatchEvent(message)
       })
