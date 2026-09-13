@@ -2,68 +2,58 @@
 
 ## Goal
 
-Ship GFIT CoWork v1 (issues 01–07) working against a real local Hermes gateway,
-and live-verify each feature. Implementation is complete; the remaining work is
-live-verifying the approval flow (05) and Live Thread ownership (06), which could
-not be triggered in the last session.
+Ship GFIT CoWork v1 (issues 01–07) against a real local Hermes gateway and
+live-verify every feature. This is complete: all 7 issues are implemented and
+each is verified live against Hermes 0.21.2.
 
 ## State
 
-All 7 issues are implemented and marked done under `.scratch/gfit-cowork/issues/`.
+All issues under `.scratch/gfit-cowork/issues/` are done and live-verified:
 
-- Architecture: browser (React/Vite) → CoWork host (`src/host`, port 4318) → one
-  persistent authenticated WebSocket to the Hermes gateway (`127.0.0.1:9119`).
-  `HermesWorkspaceGateway` is the seam; `createGatewayConnection` holds the shared
-  socket (request/response by id + `method:"event"` notifications fanned out).
-- Verified LIVE in the browser against Hermes 0.21.2: health (01), workspace
-  Thread list (02), open/read a Thread via `session.resume` (03),
-  create→prompt→stream→turn-end (04), and tool activity — a `terminal: <cmd>` row
-  with output behind a details disclosure (04).
-- Key facts confirmed by probing (see `docs/agents/hermes-api.md`):
-  `session.list` returns a stored key; `session.resume` binds it to a runtime
-  `session_id` used for all later calls; streaming events are wrapped as
-  `method:"event"` with text in `payload.text`; the turn boundary is
-  `session.info.running`; tool command is in `context`/`args.command`, output in
-  `result.output`.
-- Approvals (05) and Live ownership (06): unit-tested and mapped from verified
-  event shapes, but NOT live-triggered — the local Hermes runs
-  `approval_mode: "smart"`, which auto-allowed every safe command tried (so no
-  approval prompt fired), and no concurrent external turn was orchestrated.
+- 01 health, 02 workspace Thread list, 03 open/read a Thread (`session.resume`),
+  04 create→prompt→stream→stop **plus tool activity** (a `terminal: <cmd>` row
+  with output behind a details disclosure) — all verified in the browser.
+- 05 approvals — verified live: `chmod 777 …` hits a guard rule
+  (`world/other-writable`) that gates in any approval mode, so it fired a real
+  `approval.request`; GFIT showed the Allow/Deny card with the exact command,
+  Deny resolved to "Denied", Hermes blocked the command, composer re-enabled.
+- 06 Live Thread ownership — verified end-to-end: `session.resume` returns
+  `running:true` during an external turn and the host `/api/thread` surfaces it
+  (`running`), so ThreadView opens the Thread as external (composer disabled,
+  "another surface"); unit-tested for the UI.
+
+Architecture unchanged: browser → CoWork host (`src/host`, 4318) → one
+persistent authenticated WebSocket to Hermes (9119). See
+`docs/agents/hermes-api.md` for the verified event/RPC facts.
 
 ## Git
 
-Branch `main`, in sync with `origin/main` at `b469cd0`. Working tree clean
-(only `.claude/launch.json` is untracked — a dev-only browser-preview config,
-intentionally not committed).
+Branch `main`, in sync with `origin/main` at `07d5e2a`. Working tree clean
+(only `.claude/launch.json` untracked — dev-only, intentionally uncommitted).
 
 ## Changed Files
 
-None uncommitted. Recent commits cover the whole build, the persistent-connection
-transport rework, the `session.resume` fix, and tool/approval event mapping.
+None uncommitted.
 
 ## Verification
 
-`npm test` (81/81), `npm run build`, and `npm run check:agents` all pass.
-Run the app with `PORT=4318 npm run dev` (host) + `npm run dev:client` (Vite),
-then open the printed localhost URL. Kill stale hosts first if 4318 is in use
-(EADDRINUSE silently serves old code).
+`npm test` (82/82), `npm run build`, `npm run check:agents` all pass. Run with
+`PORT=4318 npm run dev` + `npm run dev:client`; kill stale hosts if 4318 is in
+use (EADDRINUSE silently serves old code). Live approval tests need a guarded
+command (`hermes approvals test "<cmd>"`); `chmod 777 /tmp/x` works and is safe
+to Deny.
 
 ## Next Action
 
-Live-verify 05 and 06:
-1. Approvals (05): set the Hermes profile to an approval mode stricter than
-   `smart` (so a benign command is gated), send a prompt that triggers a tool,
-   and confirm the Allow/Deny UI + `approval.respond`. Adjust the mapping if the
-   live `approval.request` payload field names differ from the source.
-2. Live ownership (06): run a turn on the same session from another Hermes
-   surface (desktop/TUI) and confirm GFIT shows it as external (composer
-   disabled) via `session.info.running`.
+v1 is complete and verified. Optional polish only:
+- The Thread-list live/idle badge uses `session.active_list`, which stayed empty
+  for these sessions, so the list shows "Idle" even while a turn runs. Per-Thread
+  protection works via `running`; the list badge could be improved later.
+- Map any tool event types beyond `terminal` if other tools are used.
 
 ## Risks or Decisions Needed
 
-- 05 live needs a change to the user's Hermes approval config — a user decision;
-  do not modify Hermes config without asking.
-- 06 live needs orchestrating a concurrent turn from another surface.
-- Several throwaway probe sessions remain in the user's Hermes store (e.g.
-  "Run uname -a…", "Respond with pong"); harmless, deletable by the user via
-  Hermes (the agent must not hard-delete).
+- None outstanding. Approval mode was temporarily set to `manual` during 05
+  testing and **restored to `smart`** (confirmed).
+- Several throwaway probe sessions remain in the user's Hermes store (echo/uname/
+  pong/essay tests); harmless, deletable by the user via Hermes.
