@@ -1,33 +1,42 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import {
+  createThreadResponse,
   healthResponse,
+  hermesUnavailableMessage,
   threadErrorMessage,
   threadResponse,
   workspaceErrorMessage,
   workspaceResponse,
 } from '../shared/contracts.js'
-import type { ThreadResponse, WorkspaceResponse } from '../shared/contracts.js'
+import type {
+  CreateThreadResponse,
+  ThreadResponse,
+  WorkspaceResponse,
+} from '../shared/contracts.js'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
 
 const safeUnavailableRemedy = 'Check your Hermes setup, then retry.'
 const maxRequestBodyBytes = 8 * 1024
 
-const readStringField = async (request: IncomingMessage, field: string): Promise<string> => {
+const readJsonBody = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of request) {
     size += chunk.length
-    if (size > maxRequestBodyBytes) return ''
+    if (size > maxRequestBodyBytes) return {}
     chunks.push(chunk as Buffer)
   }
   try {
-    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
-    return typeof parsed[field] === 'string' ? parsed[field] as string : ''
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {}
   } catch {
-    return ''
+    return {}
   }
 }
+
+const stringField = (body: Record<string, unknown>, field: string): string =>
+  typeof body[field] === 'string' ? body[field] as string : ''
 
 export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
   let closeOperation: Promise<void> | undefined
@@ -57,7 +66,7 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
     }
 
     if (request.method === 'POST' && request.url === '/api/workspace') {
-      const path = await readStringField(request, 'path')
+      const path = stringField(await readJsonBody(request), 'path')
       try {
         sendJson(response, workspaceResponse(await gateway.openWorkspace(path)))
       } catch {
@@ -73,7 +82,7 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
     }
 
     if (request.method === 'POST' && request.url === '/api/thread') {
-      const threadId = await readStringField(request, 'threadId')
+      const threadId = stringField(await readJsonBody(request), 'threadId')
       try {
         sendJson(response, threadResponse(await gateway.openThread(threadId)))
       } catch {
@@ -83,6 +92,61 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
           message: threadErrorMessage('unavailable'),
         } satisfies ThreadResponse)
       }
+      return
+    }
+
+    if (request.method === 'POST' && request.url === '/api/thread/create') {
+      const body = await readJsonBody(request)
+      const cwd = stringField(body, 'cwd')
+      const title = stringField(body, 'title')
+      try {
+        sendJson(response, createThreadResponse(
+          await gateway.createThread(cwd, title.length > 0 ? title : undefined),
+        ))
+      } catch {
+        sendJson(response, {
+          status: 'error',
+          message: hermesUnavailableMessage(),
+        } satisfies CreateThreadResponse)
+      }
+      return
+    }
+
+    if (request.method === 'POST' && request.url === '/api/thread/prompt') {
+      const body = await readJsonBody(request)
+      try {
+        await gateway.submitPrompt(stringField(body, 'threadId'), stringField(body, 'text'))
+        sendJson(response, { status: 'submitted' })
+      } catch {
+        sendJson(response, { status: 'error', message: hermesUnavailableMessage() })
+      }
+      return
+    }
+
+    if (request.method === 'POST' && request.url === '/api/thread/stop') {
+      try {
+        await gateway.stopThread(stringField(await readJsonBody(request), 'threadId'))
+        sendJson(response, { status: 'stopped' })
+      } catch {
+        sendJson(response, { status: 'error', message: hermesUnavailableMessage() })
+      }
+      return
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/api/thread/stream')) {
+      const threadId = new URL(request.url, 'http://127.0.0.1').searchParams.get('threadId') ?? ''
+      response.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+      })
+      // Hermes owns the turn; the host only forwards its events to the browser.
+      const unsubscribe = gateway.subscribe(threadId, (event) => {
+        response.write(`data: ${JSON.stringify(event)}\n\n`)
+      })
+      const stop = () => { unsubscribe(); response.end() }
+      request.on('close', stop)
+      request.on('error', stop)
       return
     }
 

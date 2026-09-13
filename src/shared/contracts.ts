@@ -99,3 +99,34 @@ export function threadResponse(result: OpenThreadResult): ThreadResponse {
     ? { status: 'opened', threadId: result.history.threadId, messages: result.history.messages }
     : { status: 'error', reason: result.reason, message: threadErrorMessages[result.reason] }
 }
+
+export type CreateThreadResult =
+  | { kind: 'created'; threadId: string }
+  | { kind: 'error' }
+
+export type CreateThreadResponse =
+  | { status: 'created'; threadId: string }
+  | { status: 'error'; message: string }
+
+const unreachableHermesMessage = 'GFIT CoWork could not reach Hermes. Check Hermes, then retry.'
+
+export function createThreadResponse(result: CreateThreadResult): CreateThreadResponse {
+  return result.kind === 'created'
+    ? { status: 'created', threadId: result.threadId }
+    : { status: 'error', message: unreachableHermesMessage }
+}
+
+export function hermesUnavailableMessage(): string {
+  return unreachableHermesMessage
+}
+
+// Live turn events forwarded from Hermes to the browser over SSE.
+export type ThreadStreamEvent =
+  | { kind: 'turn-start' }
+  | { kind: 'message-start'; role: MessageRole }
+  | { kind: 'message-delta'; text: string }
+  | { kind: 'message-complete' }
+  | { kind: 'tool-start'; tool: string }
+  | { kind: 'tool-end'; tool: string; summary: string; details?: string }
+  | { kind: 'turn-end' }
+  | { kind: 'turn-error'; message: string }

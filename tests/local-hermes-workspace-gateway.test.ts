@@ -467,3 +467,84 @@ test('folds a gateway history error into an unreadable Thread state', async () =
     globalThis.WebSocket = OriginalWebSocket
   }
 })
+
+const tokenFetch: typeof fetch = async (input) => String(input).endsWith('/')
+  ? new Response('<script>window.__HERMES_SESSION_TOKEN__="ephemeral-loopback-token";</script>', { status: 200 })
+  : new Response('{"ok":true}', { status: 200 })
+
+test('creates a Thread through session.create and returns its id', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+  let createMethod = ''
+  let createParams: Record<string, unknown> = {}
+
+  class CreateWebSocket extends EventTarget {
+    constructor(url: string | URL) { super(); void url; queueMicrotask(() => this.dispatchEvent(new Event('open'))) }
+    send(data: unknown) {
+      const request = JSON.parse(String(data)) as { id: string; method: string; params: Record<string, unknown> }
+      createMethod = request.method
+      createParams = request.params
+      const message = new Event('message')
+      Object.defineProperty(message, 'data', {
+        value: JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { session_id: 'sid-1', stored_session_id: 'key-1' } }),
+      })
+      queueMicrotask(() => this.dispatchEvent(message))
+    }
+    close() {}
+  }
+
+  globalThis.fetch = tokenFetch
+  globalThis.WebSocket = CreateWebSocket as unknown as typeof WebSocket
+  try {
+    const gateway = createLocalHermesWorkspaceGateway(baseHealthOps)
+    assert.deepEqual(await gateway.createThread('/home/dev/x', 'Draft'), { kind: 'created', threadId: 'sid-1' })
+    assert.equal(createMethod, 'session.create')
+    assert.equal(createParams.cwd, '/home/dev/x')
+    assert.equal(createParams.title, 'Draft')
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})
+
+test('subscribe maps this thread\'s turn notifications and ignores others', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+
+  class NotifyWebSocket extends EventTarget {
+    constructor(url: string | URL) {
+      super()
+      void url
+      queueMicrotask(() => {
+        const emit = (payload: object) => {
+          const message = new Event('message')
+          Object.defineProperty(message, 'data', { value: JSON.stringify(payload) })
+          this.dispatchEvent(message)
+        }
+        emit({ jsonrpc: '2.0', method: 'turn.start', params: { session_id: 't1' } })
+        emit({ jsonrpc: '2.0', method: 'message.delta', params: { session_id: 'other', text: 'nope' } })
+        emit({ jsonrpc: '2.0', method: 'message.delta', params: { session_id: 't1', text: 'hi' } })
+        emit({ jsonrpc: '2.0', method: 'turn.end', params: { session_id: 't1' } })
+      })
+    }
+    close() {}
+  }
+
+  globalThis.fetch = tokenFetch
+  globalThis.WebSocket = NotifyWebSocket as unknown as typeof WebSocket
+  try {
+    const gateway = createLocalHermesWorkspaceGateway(baseHealthOps)
+    const events: string[] = []
+    const done = new Promise<void>((resolve) => {
+      const unsubscribe = gateway.subscribe('t1', (event) => {
+        events.push(event.kind === 'message-delta' ? `delta:${event.text}` : event.kind)
+        if (event.kind === 'turn-end') { unsubscribe(); resolve() }
+      })
+    })
+    await done
+    assert.deepEqual(events, ['turn-start', 'delta:hi', 'turn-end'])
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})

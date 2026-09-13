@@ -287,3 +287,113 @@ test('returns a safe unavailable Thread state when the gateway throws', async ()
     await app.close()
   }
 })
+
+test('creates a Thread in the current Workspace cwd through the host', async () => {
+  let createdWith: { cwd: string; title?: string } | undefined
+  const app = createCoWorkHost(createFakeGateway({
+    createThread: async (cwd, title) => { createdWith = { cwd, title }; return { kind: 'created', threadId: 'new-1' } },
+  }))
+  const address = await app.listen(0)
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/thread/create`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: '/home/dev/project', title: 'Draft' }),
+    })
+    assert.deepEqual(await response.json(), { status: 'created', threadId: 'new-1' })
+    assert.deepEqual(createdWith, { cwd: '/home/dev/project', title: 'Draft' })
+  } finally {
+    await app.close()
+  }
+})
+
+test('returns a safe error when Thread creation fails', async () => {
+  const app = createCoWorkHost(createFakeGateway({
+    createThread: async () => { throw new Error('token=do-not-render') },
+  }))
+  const address = await app.listen(0)
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${address.port}/api/thread/create`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cwd: '/x' }),
+    })).json()
+    assert.equal(body.status, 'error')
+    assert.doesNotMatch(JSON.stringify(body), /token|do-not-render/i)
+  } finally {
+    await app.close()
+  }
+})
+
+test('submits a prompt and stops a turn through the host', async () => {
+  const prompts: Array<{ threadId: string; text: string }> = []
+  let stopped = ''
+  const app = createCoWorkHost(createFakeGateway({
+    submitPrompt: async (threadId, text) => { prompts.push({ threadId, text }) },
+    stopThread: async (threadId) => { stopped = threadId },
+  }))
+  const address = await app.listen(0)
+  const base = `http://127.0.0.1:${address.port}`
+  try {
+    const submit = await (await fetch(`${base}/api/thread/prompt`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId: 't1', text: 'Do the thing' }),
+    })).json()
+    const stop = await (await fetch(`${base}/api/thread/stop`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId: 't1' }),
+    })).json()
+
+    assert.deepEqual(submit, { status: 'submitted' })
+    assert.deepEqual(stop, { status: 'stopped' })
+    assert.deepEqual(prompts, [{ threadId: 't1', text: 'Do the thing' }])
+    assert.equal(stopped, 't1')
+  } finally {
+    await app.close()
+  }
+})
+
+test('streams a turn to the browser as Server-Sent Events', async () => {
+  let subscribedThread = ''
+  const app = createCoWorkHost(createFakeGateway({
+    subscribe: (threadId, listener) => {
+      subscribedThread = threadId
+      queueMicrotask(() => {
+        listener({ kind: 'turn-start' })
+        listener({ kind: 'message-start', role: 'assistant' })
+        listener({ kind: 'message-delta', text: 'Hel' })
+        listener({ kind: 'message-delta', text: 'lo' })
+        listener({ kind: 'tool-start', tool: 'shell' })
+        listener({ kind: 'tool-end', tool: 'shell', summary: 'ran ls', details: 'a\nb' })
+        listener({ kind: 'message-complete' })
+        listener({ kind: 'turn-end' })
+      })
+      return () => {}
+    },
+  }))
+  const address = await app.listen(0)
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/thread/stream?threadId=t1`)
+    assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/)
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (!buffer.includes('"turn-end"')) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value)
+    }
+    await reader.cancel()
+
+    const events = buffer
+      .split('\n\n')
+      .filter((block) => block.startsWith('data: '))
+      .map((block) => JSON.parse(block.slice('data: '.length)))
+    assert.equal(subscribedThread, 't1')
+    assert.deepEqual(events.map((e) => e.kind), [
+      'turn-start', 'message-start', 'message-delta', 'message-delta',
+      'tool-start', 'tool-end', 'message-complete', 'turn-end',
+    ])
+    assert.equal(events.filter((e) => e.kind === 'message-delta').map((e) => e.text).join(''), 'Hello')
+  } finally {
+    await app.close()
+  }
+})

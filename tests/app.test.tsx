@@ -489,3 +489,133 @@ test('opens a Thread when its list item is selected', async () => {
     }
   })
 })
+
+test('streams assistant text and tool activity into the selected Thread', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => {
+      queueMicrotask(() => {
+        onEvent({ kind: 'turn-start' })
+        onEvent({ kind: 'message-start', role: 'assistant' })
+        onEvent({ kind: 'message-delta', text: 'Hel' })
+        onEvent({ kind: 'message-delta', text: 'lo' })
+        onEvent({ kind: 'tool-start', tool: 'shell' })
+        onEvent({ kind: 'tool-end', tool: 'shell', summary: 'ran ls', details: 'file-a\nfile-b' })
+        onEvent({ kind: 'message-complete' })
+        onEvent({ kind: 'turn-end' })
+      })
+      return () => {}
+    }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s1" open={open} subscribe={subscribe} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const text = container.textContent ?? ''
+      assert.match(text, /Hello/)
+      assert.match(text, /shell: ran ls/)
+      const details = container.querySelector('.tool-activity-details')
+      assert.ok(details)
+      assert.match(details.textContent ?? '', /file-a/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('submits a prompt from the composer and can stop the active turn', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    const submitted: Array<{ threadId: string; text: string }> = []
+    let stoppedThread = ''
+    const submit: typeof import('../src/client/App.js').submitPrompt = async (threadId, text) => {
+      submitted.push({ threadId, text })
+    }
+    const stop: typeof import('../src/client/App.js').stopThread = async (threadId) => {
+      stoppedThread = threadId
+    }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s7" open={open} subscribe={() => () => {}} submit={submit} stop={stop} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const composer = container.querySelector('#composer-input') as HTMLTextAreaElement
+      composer.value = 'Refactor the gateway'
+      const sendButton = container.querySelector('.composer-send')
+      assert.ok(sendButton)
+      await act(async () => {
+        sendButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      assert.deepEqual(submitted, [{ threadId: 's7', text: 'Refactor the gateway' }])
+
+      const stopButton = container.querySelector('.composer-stop')
+      assert.ok(stopButton)
+      await act(async () => {
+        stopButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      assert.equal(stoppedThread, 's7')
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('creates a new Thread in the Workspace and selects it', async () => {
+  await withDom(async (dom) => {
+    const { WorkspaceBrowser } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestWorkspace = async (path) => ({
+      status: 'opened', path, threads: [],
+    })
+    const openThread: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    let createdCwd = ''
+    const create: typeof import('../src/client/App.js').createThread = async (cwd) => {
+      createdCwd = cwd
+      return { status: 'created', threadId: 'nt1' }
+    }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<WorkspaceBrowser open={open} openThread={openThread} create={create} />)
+        await Promise.resolve()
+      })
+      const input = container.querySelector('#workspace-path') as HTMLInputElement
+      typeInto(dom, input, '/home/dev/project')
+      await act(async () => {
+        container.querySelector('.workspace-open-button')
+          ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      await act(async () => {
+        container.querySelector('.thread-new-button')
+          ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.equal(createdCwd, '/home/dev/project')
+      assert.match(container.textContent ?? '', /New Thread/)
+      assert.ok(container.querySelector('.thread-view'))
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})

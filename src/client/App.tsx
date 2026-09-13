@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { threadErrorMessage, workspaceErrorMessage } from '../shared/contracts.js'
+import { hermesUnavailableMessage, threadErrorMessage, workspaceErrorMessage } from '../shared/contracts.js'
 import type {
+  CreateThreadResponse,
   HealthResponse,
+  MessageRole,
   Thread,
   ThreadMessage,
   ThreadResponse,
+  ThreadStreamEvent,
   WorkspaceResponse,
 } from '../shared/contracts.js'
 
@@ -70,6 +73,72 @@ export async function requestThread(
   }
 }
 
+export async function createThread(
+  cwd: string,
+  fetcher: typeof fetch = fetch,
+): Promise<CreateThreadResponse> {
+  try {
+    const response = await fetcher('/api/thread/create', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd }),
+    })
+    if (!response.ok) return { status: 'error', message: hermesUnavailableMessage() }
+    return await response.json() as CreateThreadResponse
+  } catch {
+    return { status: 'error', message: hermesUnavailableMessage() }
+  }
+}
+
+export async function submitPrompt(
+  threadId: string,
+  text: string,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  try {
+    await fetcher('/api/thread/prompt', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId, text }),
+    })
+  } catch {
+    // The turn still runs in Hermes; the stream reports its outcome.
+  }
+}
+
+export async function stopThread(
+  threadId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  try {
+    await fetcher('/api/thread/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId }),
+    })
+  } catch {
+    // Best-effort: a failed stop leaves Hermes running the turn.
+  }
+}
+
+export type StreamThread = (
+  threadId: string,
+  onEvent: (event: ThreadStreamEvent) => void,
+) => () => void
+
+export const streamThread: StreamThread = (threadId, onEvent) => {
+  if (typeof EventSource === 'undefined') return () => {}
+  const source = new EventSource(`/api/thread/stream?threadId=${encodeURIComponent(threadId)}`)
+  source.addEventListener('message', (event) => {
+    try {
+      onEvent(JSON.parse(event.data) as ThreadStreamEvent)
+    } catch {
+      // Ignore malformed frames rather than breaking the live view.
+    }
+  })
+  return () => source.close()
+}
+
 const recentWorkspacesKey = 'gfit-cowork:recent-workspaces'
 const lastViewKey = 'gfit-cowork:last-view'
 const maxRecentWorkspaces = 8
@@ -129,23 +198,109 @@ type ThreadViewState =
   | { phase: 'loaded'; messages: ThreadMessage[] }
   | { phase: 'error'; message: string }
 
+type LiveEntry =
+  | { kind: 'message'; role: MessageRole; text: string; complete: boolean }
+  | { kind: 'tool'; tool: string; summary?: string; details?: string; running: boolean }
+
+function reduceLive(entries: LiveEntry[], event: ThreadStreamEvent): LiveEntry[] {
+  const appendToOpenMessage = (text: string, roleForNew: MessageRole): LiveEntry[] => {
+    const next = [...entries]
+    for (let i = next.length - 1; i >= 0; i -= 1) {
+      const entry = next[i]
+      if (entry.kind === 'message' && !entry.complete) {
+        next[i] = { ...entry, text: entry.text + text }
+        return next
+      }
+    }
+    return [...entries, { kind: 'message', role: roleForNew, text, complete: false }]
+  }
+  switch (event.kind) {
+    case 'message-start':
+      return [...entries, { kind: 'message', role: event.role, text: '', complete: false }]
+    case 'message-delta':
+      return appendToOpenMessage(event.text, 'assistant')
+    case 'message-complete': {
+      const next = [...entries]
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        const entry = next[i]
+        if (entry.kind === 'message' && !entry.complete) {
+          next[i] = { ...entry, complete: true }
+          return next
+        }
+      }
+      return entries
+    }
+    case 'tool-start':
+      return [...entries, { kind: 'tool', tool: event.tool, running: true }]
+    case 'tool-end': {
+      const finished: LiveEntry = {
+        kind: 'tool', tool: event.tool, summary: event.summary, details: event.details, running: false,
+      }
+      const next = [...entries]
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        const entry = next[i]
+        if (entry.kind === 'tool' && entry.running && entry.tool === event.tool) {
+          next[i] = finished
+          return next
+        }
+      }
+      return [...entries, finished]
+    }
+    default:
+      return entries
+  }
+}
+
 export function ThreadView({
   threadId,
   open = requestThread,
-}: { threadId: string; open?: typeof requestThread }) {
+  subscribe = streamThread,
+  submit = submitPrompt,
+  stop = stopThread,
+}: {
+  threadId: string
+  open?: typeof requestThread
+  subscribe?: StreamThread
+  submit?: typeof submitPrompt
+  stop?: typeof stopThread
+}) {
   const [state, setState] = useState<ThreadViewState>({ phase: 'loading' })
+  const [live, setLive] = useState<LiveEntry[]>([])
+  const [active, setActive] = useState(false)
+  const [turnError, setTurnError] = useState<string | null>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
-    let active = true
+    let loading = true
     setState({ phase: 'loading' })
     void open(threadId).then((result) => {
-      if (!active) return
+      if (!loading) return
       setState(result.status === 'opened'
         ? { phase: 'loaded', messages: result.messages }
         : { phase: 'error', message: result.message })
     })
-    return () => { active = false }
+    return () => { loading = false }
   }, [threadId, open])
+
+  useEffect(() => {
+    setLive([])
+    setActive(false)
+    setTurnError(null)
+    return subscribe(threadId, (event) => {
+      if (event.kind === 'turn-start') { setActive(true); setTurnError(null) }
+      else if (event.kind === 'turn-end') setActive(false)
+      else if (event.kind === 'turn-error') { setActive(false); setTurnError(event.message) }
+      else setLive((entries) => reduceLive(entries, event))
+    })
+  }, [threadId, subscribe])
+
+  const send = useCallback(() => {
+    const text = composerRef.current?.value.trim() ?? ''
+    if (text.length === 0) return
+    setActive(true)
+    void submit(threadId, text)
+    if (composerRef.current) composerRef.current.value = ''
+  }, [threadId, submit])
 
   return (
     <section className="thread-view" aria-labelledby="thread-view-heading">
@@ -157,7 +312,7 @@ export function ThreadView({
         <p className="workspace-status workspace-status--error" role="alert">{state.message}</p>
       )}
       {state.phase === 'loaded' && (
-        state.messages.length === 0 ? (
+        state.messages.length === 0 && live.length === 0 ? (
           <p className="workspace-status" role="status">This Thread has no messages yet.</p>
         ) : (
           <ol className="message-list">
@@ -167,9 +322,65 @@ export function ThreadView({
                 <span className="message-text">{message.text}</span>
               </li>
             ))}
+            {live.map((entry, index) => (
+              entry.kind === 'message' ? (
+                <li key={`live-${index}`} className={`message message--${entry.role}`}>
+                  <span className="message-role">{entry.role}</span>
+                  <span className="message-text">{entry.text}</span>
+                </li>
+              ) : (
+                <li key={`live-${index}`} className="message message--tool tool-activity">
+                  {entry.running ? (
+                    <span className="tool-activity-summary" role="status">
+                      Running {entry.tool}…
+                    </span>
+                  ) : entry.details ? (
+                    <details className="tool-activity-details">
+                      <summary>{entry.tool}: {entry.summary}</summary>
+                      <pre className="tool-activity-detail-text">{entry.details}</pre>
+                    </details>
+                  ) : (
+                    <span className="tool-activity-summary">{entry.tool}: {entry.summary}</span>
+                  )}
+                </li>
+              )
+            ))}
           </ol>
         )
       )}
+
+      {turnError !== null && (
+        <p className="workspace-status workspace-status--error" role="alert">{turnError}</p>
+      )}
+
+      <form
+        className="composer"
+        onSubmit={(event) => { event.preventDefault(); send() }}
+      >
+        <label className="composer-label" htmlFor="composer-input">Message Hermes</label>
+        <textarea
+          id="composer-input"
+          className="composer-input"
+          ref={composerRef}
+          rows={3}
+          placeholder="Ask Hermes to do something in this Workspace…"
+          defaultValue=""
+        />
+        <div className="composer-actions">
+          {active && (
+            <button
+              type="button"
+              className="composer-stop"
+              onClick={() => { void stop(threadId); setActive(false) }}
+            >
+              Stop
+            </button>
+          )}
+          <button type="button" className="composer-send" onClick={send} disabled={active}>
+            {active ? 'Working…' : 'Send'}
+          </button>
+        </div>
+      </form>
     </section>
   )
 }
@@ -183,11 +394,17 @@ type WorkspaceState =
 export function WorkspaceBrowser({
   open = requestWorkspace,
   openThread = requestThread,
-}: { open?: typeof requestWorkspace; openThread?: typeof requestThread }) {
+  create = createThread,
+}: {
+  open?: typeof requestWorkspace
+  openThread?: typeof requestThread
+  create?: typeof createThread
+}) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [recent, setRecent] = useState<string[]>(() => readRecentWorkspaces())
   const [state, setState] = useState<WorkspaceState>({ phase: 'idle' })
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const openWorkspace = useCallback(async (path: string, restoreThreadId?: string) => {
     const trimmed = path.trim()
@@ -217,6 +434,26 @@ export function WorkspaceBrowser({
     setSelectedThreadId(threadId)
     rememberLastView({ workspacePath, threadId })
   }, [])
+
+  const createInWorkspace = useCallback(async (workspacePath: string) => {
+    setCreateError(null)
+    const result = await create(workspacePath)
+    if (result.status !== 'created') {
+      setCreateError(result.message)
+      return
+    }
+    const thread: Thread = {
+      id: result.threadId,
+      title: 'New Thread',
+      updatedAt: new Date().toISOString(),
+      activity: 'idle',
+    }
+    setState((current) => current.phase === 'opened' && current.path === workspacePath
+      ? { ...current, threads: [thread, ...current.threads.filter((t) => t.id !== thread.id)] }
+      : current)
+    setSelectedThreadId(thread.id)
+    rememberLastView({ workspacePath, threadId: thread.id })
+  }, [create])
 
   const restoredRef = useRef(false)
   useEffect(() => {
@@ -286,9 +523,21 @@ export function WorkspaceBrowser({
 
       {state.phase === 'opened' && (
         <div className="thread-list">
-          <p className="thread-list-heading">
-            Threads in <span className="workspace-path-name">{state.path}</span>
-          </p>
+          <div className="thread-list-header">
+            <p className="thread-list-heading">
+              Threads in <span className="workspace-path-name">{state.path}</span>
+            </p>
+            <button
+              type="button"
+              className="thread-new-button"
+              onClick={() => { void createInWorkspace(state.path) }}
+            >
+              New Thread
+            </button>
+          </div>
+          {createError !== null && (
+            <p className="workspace-status workspace-status--error" role="alert">{createError}</p>
+          )}
           {state.threads.length === 0 ? (
             <p className="workspace-status" role="status">No Threads in this Workspace yet.</p>
           ) : (

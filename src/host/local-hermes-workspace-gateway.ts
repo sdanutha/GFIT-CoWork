@@ -3,12 +3,14 @@ import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
 import type {
+  CreateThreadResult,
   HermesReadiness,
   MessageRole,
   OpenThreadResult,
   OpenWorkspaceResult,
   Thread,
   ThreadMessage,
+  ThreadStreamEvent,
 } from '../shared/contracts.js'
 
 type OwnedProcess = {
@@ -233,6 +235,81 @@ const readHistory = async (threadId: string): Promise<ThreadMessage[]> => {
   return Array.isArray(messages) ? messages.flatMap(toMessage) : []
 }
 
+const createThread = async (cwd: string, title?: string): Promise<CreateThreadResult> => {
+  try {
+    const result = await jsonRpcRequest('session.create', {
+      ...(cwd.length > 0 ? { cwd } : {}),
+      ...(title ? { title } : {}),
+      source: 'gfit-cowork',
+    }) as { session_id?: unknown }
+    return typeof result?.session_id === 'string'
+      ? { kind: 'created', threadId: result.session_id }
+      : { kind: 'error' }
+  } catch {
+    return { kind: 'error' }
+  }
+}
+
+const submitPrompt = async (threadId: string, text: string): Promise<void> => {
+  await jsonRpcRequest('prompt.submit', { session_id: threadId, text })
+}
+
+const stopThread = async (threadId: string): Promise<void> => {
+  await jsonRpcRequest('session.interrupt', { session_id: threadId })
+}
+
+const streamRole = (role: unknown): MessageRole =>
+  role === 'user' || role === 'assistant' || role === 'tool' ? role : 'assistant'
+
+const mapStreamEvent = (raw: unknown, threadId: string): ThreadStreamEvent | undefined => {
+  let frame: { method?: unknown; params?: unknown }
+  try {
+    frame = JSON.parse(String(raw)) as { method?: unknown; params?: unknown }
+  } catch {
+    return undefined
+  }
+  if (typeof frame.method !== 'string') return undefined
+  const params = (typeof frame.params === 'object' && frame.params !== null
+    ? frame.params : {}) as Record<string, unknown>
+  if (typeof params.session_id === 'string' && params.session_id !== threadId) return undefined
+  switch (frame.method) {
+    case 'turn.start': case 'turn.started': return { kind: 'turn-start' }
+    case 'turn.end': return { kind: 'turn-end' }
+    case 'turn.error': return { kind: 'turn-error', message: 'The Hermes turn ended with an error.' }
+    case 'message.start': return { kind: 'message-start', role: streamRole(params.role) }
+    case 'message.delta':
+      return { kind: 'message-delta', text: typeof params.text === 'string' ? params.text : '' }
+    case 'message.complete': return { kind: 'message-complete' }
+    default: return undefined
+  }
+}
+
+// Provisional (best-effort, see docs/agents/hermes-api.md): opens a gateway
+// socket and forwards this thread's turn notifications. Whether Hermes pushes a
+// session's events to a fresh socket depends on attachment semantics not yet
+// verified against a live turn; tool-activity events are exercised through tests
+// until the live surface is confirmed.
+const subscribe = (
+  threadId: string,
+  listener: (event: ThreadStreamEvent) => void,
+): (() => void) => {
+  let socket: WebSocket | undefined
+  let closed = false
+  void readSessionToken().then((token) => {
+    if (closed || !token) return
+    try {
+      socket = new WebSocket(`${hermesWebSocketUrl}?token=${encodeURIComponent(token)}`)
+      socket.addEventListener('message', (event) => {
+        const mapped = mapStreamEvent(event.data, threadId)
+        if (mapped) listener(mapped)
+      })
+    } catch {
+      // A failed subscription simply yields no events; the turn still runs in Hermes.
+    }
+  }, () => {})
+  return () => { closed = true; try { socket?.close() } catch {} }
+}
+
 const localHermesOperations: Options = {
   probe, checkUsable, start, waitForReady, statPath, listThreads, readHistory,
 }
@@ -330,6 +407,10 @@ export function createLocalHermesWorkspaceGateway(
         return { kind: 'error', reason: 'unreadable' }
       }
     },
+    createThread,
+    submitPrompt,
+    stopThread,
+    subscribe,
     close,
   }
 }

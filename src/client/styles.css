@@ -335,6 +335,118 @@ h1 {
   background: var(--accent-soft);
 }
 
+.thread-list-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.thread-new-button {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.8rem;
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: var(--accent-soft);
+  border: 0;
+  border-radius: 0.6rem;
+  cursor: pointer;
+}
+
+.thread-new-button:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.thread-new-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.tool-activity {
+  color: var(--muted);
+}
+
+.tool-activity-summary {
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.tool-activity-details summary {
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.tool-activity-detail-text {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border-radius: 0.5rem;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+.composer-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.composer-input {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  color: var(--text);
+  font: inherit;
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  border: 1px solid var(--surface-border);
+  border-radius: 0.7rem;
+  resize: vertical;
+}
+
+.composer-input:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+}
+
+.composer-send {
+  padding: 0.6rem 1.2rem;
+  color: white;
+  font-weight: 700;
+  background: var(--accent);
+  border: 0;
+  border-radius: 0.7rem;
+  cursor: pointer;
+}
+
+.composer-send:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.composer-stop {
+  padding: 0.6rem 1.1rem;
+  color: var(--warning);
+  font-weight: 700;
+  background: var(--warning-soft);
+  border: 0;
+  border-radius: 0.7rem;
+  cursor: pointer;
+}
+
 .thread-view {
   margin-top: 1.75rem;
   padding-top: 1.25rem;
