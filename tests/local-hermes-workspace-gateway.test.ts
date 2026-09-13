@@ -334,7 +334,7 @@ test('lists Threads from session.list, enriching activity from the live session 
               { id: 's2', title: '', started_at: 0 },
             ] }
           : request.method === 'session.active_list'
-            ? { sessions: [{ id: 's2' }] }
+            ? { sessions: [{ session_key: 's2', status: 'working' }, { session_key: 's1', status: 'idle' }] }
             : {}
       const message = new Event('message')
       Object.defineProperty(message, 'data', {

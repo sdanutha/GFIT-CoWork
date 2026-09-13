@@ -165,6 +165,10 @@ const toThread = (value: unknown, liveIds: Set<string>): Thread[] => {
   }]
 }
 
+// session.active_list rows carry the stored key as `session_key` and a
+// `status` ("working" while a turn runs, "idle" when merely attached), verified
+// live. Only "working" sessions are live for the list badge; match by the
+// stored key (session.list ids) and the runtime id.
 const liveSessionIds = (value: unknown): Set<string> => {
   const ids = new Set<string>()
   const rows = typeof value === 'object' && value !== null
@@ -174,7 +178,8 @@ const liveSessionIds = (value: unknown): Set<string> => {
     for (const row of rows) {
       if (typeof row !== 'object' || row === null) continue
       const record = row as Record<string, unknown>
-      for (const key of ['id', 'session_id', 'stored_session_id'] as const) {
+      if (record.status !== 'working') continue
+      for (const key of ['session_key', 'id'] as const) {
         if (typeof record[key] === 'string') ids.add(record[key] as string)
       }
     }
