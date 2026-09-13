@@ -334,12 +334,13 @@ test('requests a Thread from the CoWork host and returns its messages', async ()
       status: 'opened',
       threadId: 's1',
       messages: [{ role: 'user', text: 'hi' }],
+      running: false,
     }), { status: 200 })
   }
   const { requestThread } = await import('../src/client/App.js')
   const result = await requestThread('s1', fetcher)
 
-  assert.deepEqual(result, { status: 'opened', threadId: 's1', messages: [{ role: 'user', text: 'hi' }] })
+  assert.deepEqual(result, { status: 'opened', threadId: 's1', messages: [{ role: 'user', text: 'hi' }], running: false })
   assert.deepEqual(calls, [{ url: '/api/thread', body: { threadId: 's1' } }])
 })
 
@@ -363,6 +364,7 @@ test('renders a selected Thread history in message order from Hermes', async () 
         { role: 'assistant', text: 'Working on it' },
         { role: 'tool', text: 'ran the tests' },
       ],
+      running: false,
     })
     const container = dom.window.document.querySelector('#root')
     assert.ok(container)
@@ -427,6 +429,7 @@ test('restores the last Workspace and selected Thread on return', async () => {
       status: 'opened',
       threadId,
       messages: [{ role: 'assistant', text: 'restored message' }],
+      running: false,
     })
     const container = dom.window.document.querySelector('#root')
     assert.ok(container)
@@ -458,7 +461,7 @@ test('opens a Thread when its list item is selected', async () => {
     let openedThreadId = ''
     const openThread: typeof import('../src/client/App.js').requestThread = async (threadId) => {
       openedThreadId = threadId
-      return { status: 'opened', threadId, messages: [{ role: 'user', text: 'hello thread' }] }
+      return { status: 'opened', threadId, messages: [{ role: 'user', text: 'hello thread' }], running: false }
     }
     const container = dom.window.document.querySelector('#root')
     assert.ok(container)
@@ -495,7 +498,7 @@ test('streams assistant text and tool activity into the selected Thread', async 
   await withDom(async (dom) => {
     const { ThreadView } = await import('../src/client/App.js')
     const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+      status: 'opened', threadId, messages: [], running: false,
     })
     const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => {
       queueMicrotask(() => {
@@ -535,7 +538,7 @@ test('submits a prompt from the composer and can stop the active turn', async ()
   await withDom(async (dom) => {
     const { ThreadView } = await import('../src/client/App.js')
     const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+      status: 'opened', threadId, messages: [], running: false,
     })
     const submitted: Array<{ threadId: string; text: string }> = []
     let stoppedThread = ''
@@ -632,7 +635,7 @@ test('presents Approval requests and resolves them by explicit choice', async ()
   await withDom(async (dom) => {
     const { ThreadView } = await import('../src/client/App.js')
     const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+      status: 'opened', threadId, messages: [], running: false,
     })
     let emit: ((event: ThreadStreamEvent) => void) | undefined
     const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => {
@@ -686,7 +689,7 @@ test('blocks the composer for an externally Live Thread and re-enables it when t
   await withDom(async (dom) => {
     const { ThreadView } = await import('../src/client/App.js')
     const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+      status: 'opened', threadId, messages: [], running: false,
     })
     let emit: ((event: ThreadStreamEvent) => void) | undefined
     const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => {
@@ -734,7 +737,7 @@ test('treats a stream turn we did not start as external and shows a gateway turn
   await withDom(async (dom) => {
     const { ThreadView } = await import('../src/client/App.js')
     const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+      status: 'opened', threadId, messages: [], running: false,
     })
     let emit: ((event: ThreadStreamEvent) => void) | undefined
     const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => { emit = onEvent; return () => {} }
@@ -813,7 +816,7 @@ test('restores a per-Thread draft and clears it after sending', async () => {
     const { ThreadView } = await import('../src/client/App.js')
     dom.window.localStorage.setItem('gfit-cowork:draft:s1', 'a half-written prompt')
     const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+      status: 'opened', threadId, messages: [], running: false,
     })
     const submitted: string[] = []
     const submit: typeof import('../src/client/App.js').submitPrompt = async (_t, text) => { submitted.push(text) }
@@ -951,6 +954,33 @@ test('end-to-end: Workspace to Thread to prompt to approval, leaking nothing to 
     } finally {
       globalThis.fetch = originalFetch
       ;(globalThis as { EventSource?: unknown }).EventSource = originalEventSource
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('opening a Thread with a running turn shows it as externally live', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    // Hermes reports a turn already running (a Live Thread on another surface).
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [{ role: 'user', text: 'earlier' }], running: true,
+    })
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="live1" open={open} subscribe={() => () => {}} submit={async () => {}} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const composer = container.querySelector('#composer-input') as HTMLTextAreaElement
+      const sendButton = container.querySelector('.composer-send') as HTMLButtonElement
+      assert.equal(composer.disabled, true)
+      assert.equal(sendButton.disabled, true)
+      assert.match(container.textContent ?? '', /another surface/)
+    } finally {
       if (root) await act(async () => { root?.unmount() })
     }
   })

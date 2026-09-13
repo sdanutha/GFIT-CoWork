@@ -9,7 +9,7 @@ export function createFakeGateway(
   return {
     health: async () => ({ kind: 'ready', startedByCoWork: false }),
     openWorkspace: async (path) => ({ kind: 'opened', workspace: { path, threads: [] } }),
-    openThread: async (threadId) => ({ kind: 'opened', history: { threadId, messages: [] } }),
+    openThread: async (threadId) => ({ kind: 'opened', history: { threadId, messages: [], running: false } }),
     createThread: async () => ({ kind: 'created', threadId: 'fake-thread' }),
     submitPrompt: async () => {},
     stopThread: async () => {},

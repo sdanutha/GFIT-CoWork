@@ -366,9 +366,14 @@ export function ThreadView({
     setState({ phase: 'loading' })
     void open(threadId).then((result) => {
       if (!loading) return
-      setState(result.status === 'opened'
-        ? { phase: 'loaded', messages: result.messages }
-        : { phase: 'error', message: result.message })
+      if (result.status === 'opened') {
+        setState({ phase: 'loaded', messages: result.messages })
+        // A turn already running on open means Hermes is driving this Thread
+        // elsewhere (a Live Thread) — protect the composer immediately.
+        if (result.running) setTurnState('external')
+      } else {
+        setState({ phase: 'error', message: result.message })
+      }
     })
     return () => { loading = false }
   }, [threadId, open, isNew])

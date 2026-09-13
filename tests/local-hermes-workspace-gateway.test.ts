@@ -428,6 +428,7 @@ test('resumes a Thread, maps its messages, and routes later calls to the runtime
           { role: 'assistant', text: 'hello' },
           { role: 'tool', text: 'ran tests' },
         ],
+        running: false,
       },
     })
     const resume = seen.find((call) => call.method === 'session.resume')

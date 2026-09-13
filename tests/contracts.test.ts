@@ -54,8 +54,8 @@ test('opened Thread response carries the thread id and its messages', () => {
     { role: 'assistant', text: 'hello' },
   ]
   assert.deepEqual(
-    threadResponse({ kind: 'opened', history: { threadId: 's1', messages } }),
-    { status: 'opened', threadId: 's1', messages },
+    threadResponse({ kind: 'opened', history: { threadId: 's1', messages, running: true } }),
+    { status: 'opened', threadId: 's1', messages, running: true },
   )
 })
 

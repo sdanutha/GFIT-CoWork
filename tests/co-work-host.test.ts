@@ -237,12 +237,12 @@ test('opens a Thread and returns its Hermes history in order through the host', 
     { role: 'tool', text: 'ran tests' },
   ]
   const app = createCoWorkHost(createFakeGateway({
-    openThread: async (threadId) => ({ kind: 'opened', history: { threadId, messages } }),
+    openThread: async (threadId) => ({ kind: 'opened', history: { threadId, messages, running: false } }),
   }))
   const address = await app.listen(0)
   try {
     const body = await (await openThread(`http://127.0.0.1:${address.port}`, 's1')).json()
-    assert.deepEqual(body, { status: 'opened', threadId: 's1', messages })
+    assert.deepEqual(body, { status: 'opened', threadId: 's1', messages, running: false })
   } finally {
     await app.close()
   }

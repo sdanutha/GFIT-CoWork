@@ -71,6 +71,9 @@ export type ThreadMessage = {
 export type ThreadHistory = {
   threadId: string
   messages: ThreadMessage[]
+  // Whether a turn is running on this Thread right now (Hermes may be running it
+  // through another surface — a Live Thread), from session.resume.
+  running: boolean
 }
 
 export type ThreadValidationReason = 'not-found' | 'unreadable'
@@ -81,7 +84,7 @@ export type OpenThreadResult =
   | { kind: 'error'; reason: ThreadValidationReason }
 
 export type ThreadResponse =
-  | { status: 'opened'; threadId: string; messages: ThreadMessage[] }
+  | { status: 'opened'; threadId: string; messages: ThreadMessage[]; running: boolean }
   | { status: 'error'; reason: ThreadErrorReason; message: string }
 
 const threadErrorMessages: Record<ThreadErrorReason, string> = {
@@ -96,7 +99,12 @@ export function threadErrorMessage(reason: ThreadErrorReason): string {
 
 export function threadResponse(result: OpenThreadResult): ThreadResponse {
   return result.kind === 'opened'
-    ? { status: 'opened', threadId: result.history.threadId, messages: result.history.messages }
+    ? {
+      status: 'opened',
+      threadId: result.history.threadId,
+      messages: result.history.messages,
+      running: result.history.running,
+    }
     : { status: 'error', reason: result.reason, message: threadErrorMessages[result.reason] }
 }
 

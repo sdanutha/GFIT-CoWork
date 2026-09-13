@@ -504,13 +504,15 @@ export function createLocalHermesWorkspaceGateway(
   const validatePath = options.statPath ?? statPath
   const readThreads = options.listThreads ?? listThreads
 
-  const resumeThread = async (threadKey: string): Promise<ThreadMessage[]> => {
+  const resumeThread = async (
+    threadKey: string,
+  ): Promise<{ messages: ThreadMessage[]; running: boolean }> => {
     const result = await connection.request('session.resume', { session_id: threadKey }) as {
-      session_id?: unknown; messages?: unknown
+      session_id?: unknown; messages?: unknown; running?: unknown
     }
     if (typeof result?.session_id === 'string') runtimeSessionByKey.set(threadKey, result.session_id)
-    const messages = result?.messages
-    return Array.isArray(messages) ? messages.flatMap(toMessage) : []
+    const messages = Array.isArray(result?.messages) ? result.messages.flatMap(toMessage) : []
+    return { messages, running: result?.running === true }
   }
 
   const createThread = async (cwd: string, title?: string): Promise<CreateThreadResult> => {
@@ -578,9 +580,11 @@ export function createLocalHermesWorkspaceGateway(
     async openThread(threadId: string): Promise<OpenThreadResult> {
       try {
         // session.resume binds the stored key to a runtime session and returns
-        // its history. The gateway does not distinguish a deleted session from
-        // other read failures, so any error folds to a safe "unreadable" state.
-        return { kind: 'opened', history: { threadId, messages: await resumeThread(threadId) } }
+        // its history plus whether a turn is running. The gateway does not
+        // distinguish a deleted session from other read failures, so any error
+        // folds to a safe "unreadable" state.
+        const { messages, running } = await resumeThread(threadId)
+        return { kind: 'opened', history: { threadId, messages, running } }
       } catch {
         return { kind: 'error', reason: 'unreadable' }
       }
