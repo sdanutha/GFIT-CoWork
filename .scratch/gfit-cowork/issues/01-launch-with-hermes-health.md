@@ -4,10 +4,10 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The host accepts only same-machine browser connections and does not expose a remote-access mode.
-- [ ] The app identifies itself as GFIT CoWork and never as Claude Code or an Anthropic product.
-- [ ] A healthy Hermes connection is observable from the browser through the CoWork host.
-- [ ] Missing, stopped, or unconfigured Hermes produces an actionable health/setup state without secret values.
-- [ ] Host and browser behavior are covered through the `HermesWorkspaceGateway` seam using a fake gateway and no real model invocation.
+- [x] The host accepts only same-machine browser connections and does not expose a remote-access mode.
+- [x] The app identifies itself as GFIT CoWork and never as Claude Code or an Anthropic product.
+- [x] A healthy Hermes connection is observable from the browser through the CoWork host.
+- [x] Missing, stopped, or unconfigured Hermes produces an actionable health/setup state without secret values.
+- [x] Host and browser behavior are covered through the `HermesWorkspaceGateway` seam using a fake gateway and no real model invocation.
