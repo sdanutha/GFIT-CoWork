@@ -548,3 +548,64 @@ test('subscribe maps this thread\'s turn notifications and ignores others', asyn
     globalThis.WebSocket = OriginalWebSocket
   }
 })
+
+test('responds to an Approval through approval.respond and maps approval notifications', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+  let respondMethod = ''
+  let respondParams: Record<string, unknown> = {}
+
+  class ApprovalWebSocket extends EventTarget {
+    constructor(url: string | URL) {
+      super()
+      void url
+      queueMicrotask(() => {
+        this.dispatchEvent(new Event('open'))
+        // Also push an approval.request notification for subscribe() consumers.
+        const message = new Event('message')
+        Object.defineProperty(message, 'data', {
+          value: JSON.stringify({ jsonrpc: '2.0', method: 'approval.request', params: { session_id: 't1', request_id: 'a1', action: 'run rm -rf build' } }),
+        })
+        this.dispatchEvent(message)
+      })
+    }
+    send(data: unknown) {
+      const request = JSON.parse(String(data)) as { id: string; method: string; params: Record<string, unknown> }
+      respondMethod = request.method
+      respondParams = request.params
+      const message = new Event('message')
+      Object.defineProperty(message, 'data', {
+        value: JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { ok: true } }),
+      })
+      queueMicrotask(() => this.dispatchEvent(message))
+    }
+    close() {}
+  }
+
+  globalThis.fetch = tokenFetch
+  globalThis.WebSocket = ApprovalWebSocket as unknown as typeof WebSocket
+  try {
+    const gateway = createLocalHermesWorkspaceGateway(baseHealthOps)
+
+    const requested = new Promise<void>((resolve) => {
+      const unsubscribe = gateway.subscribe('t1', (event) => {
+        if (event.kind === 'approval-request') {
+          assert.equal(event.requestId, 'a1')
+          assert.equal(event.action, 'run rm -rf build')
+          unsubscribe()
+          resolve()
+        }
+      })
+    })
+    await requested
+
+    await gateway.respondApproval('t1', 'a1', 'allow')
+    assert.equal(respondMethod, 'approval.respond')
+    assert.equal(respondParams.session_id, 't1')
+    assert.equal(respondParams.request_id, 'a1')
+    assert.equal(respondParams.choice, 'allow')
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})

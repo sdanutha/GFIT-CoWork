@@ -3,6 +3,8 @@ import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
 import type {
+  ApprovalChoice,
+  ApprovalDecision,
   CreateThreadResult,
   HermesReadiness,
   MessageRole,
@@ -258,6 +260,31 @@ const stopThread = async (threadId: string): Promise<void> => {
   await jsonRpcRequest('session.interrupt', { session_id: threadId })
 }
 
+const respondApproval = async (
+  threadId: string,
+  requestId: string,
+  choice: ApprovalChoice,
+): Promise<void> => {
+  await jsonRpcRequest('approval.respond', {
+    session_id: threadId, request_id: requestId, choice,
+  })
+}
+
+const approvalAction = (params: Record<string, unknown>): string => {
+  for (const key of ['action', 'summary', 'command', 'title'] as const) {
+    if (typeof params[key] === 'string' && (params[key] as string).length > 0) return params[key] as string
+  }
+  return 'Hermes requested approval for an action.'
+}
+
+const approvalDecision = (params: Record<string, unknown>): ApprovalDecision => {
+  const raw = String(params.decision ?? params.status ?? params.choice ?? '').toLowerCase()
+  if (raw.includes('allow') || raw.includes('approve')) return 'allowed'
+  if (raw.includes('deny') || raw.includes('reject')) return 'denied'
+  if (raw.includes('expire')) return 'expired'
+  return 'failed'
+}
+
 const streamRole = (role: unknown): MessageRole =>
   role === 'user' || role === 'assistant' || role === 'tool' ? role : 'assistant'
 
@@ -280,6 +307,14 @@ const mapStreamEvent = (raw: unknown, threadId: string): ThreadStreamEvent | und
     case 'message.delta':
       return { kind: 'message-delta', text: typeof params.text === 'string' ? params.text : '' }
     case 'message.complete': return { kind: 'message-complete' }
+    case 'approval.request':
+      return typeof params.request_id === 'string'
+        ? { kind: 'approval-request', requestId: params.request_id, action: approvalAction(params) }
+        : undefined
+    case 'approval.resolved':
+      return typeof params.request_id === 'string'
+        ? { kind: 'approval-resolved', requestId: params.request_id, decision: approvalDecision(params) }
+        : undefined
     default: return undefined
   }
 }
@@ -410,6 +445,7 @@ export function createLocalHermesWorkspaceGateway(
     createThread,
     submitPrompt,
     stopThread,
+    respondApproval,
     subscribe,
     close,
   }

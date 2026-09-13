@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { JSDOM } from 'jsdom'
 import { App, requestHealth } from '../src/client/App.js'
+import type { ThreadStreamEvent } from '../src/shared/contracts.js'
 import { withDom, typeInto } from './support/dom.js'
 
 test('shows GFIT CoWork ready for Hermes', () => {
@@ -614,6 +615,60 @@ test('creates a new Thread in the Workspace and selects it', async () => {
       assert.equal(createdCwd, '/home/dev/project')
       assert.match(container.textContent ?? '', /New Thread/)
       assert.ok(container.querySelector('.thread-view'))
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('presents Approval requests and resolves them by explicit choice', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    let emit: ((event: ThreadStreamEvent) => void) | undefined
+    const subscribe: import('../src/client/App.js').StreamThread = (_threadId, onEvent) => {
+      emit = onEvent
+      return () => {}
+    }
+    const decisions: Array<{ requestId: string; choice: string }> = []
+    const respond: typeof import('../src/client/App.js').respondApproval = async (_t, requestId, choice) => {
+      decisions.push({ requestId, choice })
+    }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s1" open={open} subscribe={subscribe} submit={async () => {}} respond={respond} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.ok(emit)
+      await act(async () => {
+        emit?.({ kind: 'approval-request', requestId: 'a1', action: 'run rm -rf build' })
+        await Promise.resolve()
+      })
+      assert.match(container.textContent ?? '', /run rm -rf build/)
+      const allowButton = container.querySelector('.approval-allow')
+      const denyButton = container.querySelector('.approval-deny')
+      assert.ok(allowButton)
+      assert.ok(denyButton)
+
+      await act(async () => {
+        allowButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      assert.deepEqual(decisions, [{ requestId: 'a1', choice: 'allow' }])
+      assert.match(container.textContent ?? '', /Allowed/)
+
+      await act(async () => {
+        emit?.({ kind: 'approval-request', requestId: 'a2', action: 'delete file' })
+        emit?.({ kind: 'approval-resolved', requestId: 'a2', decision: 'expired' })
+        await Promise.resolve()
+      })
+      assert.match(container.textContent ?? '', /Expired/)
     } finally {
       if (root) await act(async () => { root?.unmount() })
     }

@@ -397,3 +397,45 @@ test('streams a turn to the browser as Server-Sent Events', async () => {
     await app.close()
   }
 })
+
+test('resolves an Approval with an explicit choice and never defaults to allow', async () => {
+  const calls: Array<{ threadId: string; requestId: string; choice: string }> = []
+  const app = createCoWorkHost(createFakeGateway({
+    respondApproval: async (threadId, requestId, choice) => { calls.push({ threadId, requestId, choice }) },
+  }))
+  const address = await app.listen(0)
+  const base = `http://127.0.0.1:${address.port}`
+  const respond = (payload: unknown) => fetch(`${base}/api/thread/approval`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  try {
+    const allow = await (await respond({ threadId: 's1', requestId: 'a1', choice: 'allow' })).json()
+    const missing = await (await respond({ threadId: 's1', requestId: 'a2' })).json()
+
+    assert.deepEqual(allow, { status: 'resolved', choice: 'allow' })
+    assert.deepEqual(missing, { status: 'resolved', choice: 'deny' })
+    assert.deepEqual(calls, [
+      { threadId: 's1', requestId: 'a1', choice: 'allow' },
+      { threadId: 's1', requestId: 'a2', choice: 'deny' },
+    ])
+  } finally {
+    await app.close()
+  }
+})
+
+test('reports a safe error when an Approval response fails', async () => {
+  const app = createCoWorkHost(createFakeGateway({
+    respondApproval: async () => { throw new Error('token=do-not-render') },
+  }))
+  const address = await app.listen(0)
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${address.port}/api/thread/approval`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId: 's1', requestId: 'a1', choice: 'allow' }),
+    })).json()
+    assert.equal(body.status, 'error')
+    assert.doesNotMatch(JSON.stringify(body), /token|do-not-render/i)
+  } finally {
+    await app.close()
+  }
+})

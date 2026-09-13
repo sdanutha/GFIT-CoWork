@@ -133,6 +133,18 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
       return
     }
 
+    if (request.method === 'POST' && request.url === '/api/thread/approval') {
+      const body = await readJsonBody(request)
+      const choice = stringField(body, 'choice') === 'allow' ? 'allow' : 'deny'
+      try {
+        await gateway.respondApproval(stringField(body, 'threadId'), stringField(body, 'requestId'), choice)
+        sendJson(response, { status: 'resolved', choice })
+      } catch {
+        sendJson(response, { status: 'error', message: hermesUnavailableMessage() })
+      }
+      return
+    }
+
     if (request.method === 'GET' && request.url?.startsWith('/api/thread/stream')) {
       const threadId = new URL(request.url, 'http://127.0.0.1').searchParams.get('threadId') ?? ''
       response.writeHead(200, {

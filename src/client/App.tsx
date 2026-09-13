@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { hermesUnavailableMessage, threadErrorMessage, workspaceErrorMessage } from '../shared/contracts.js'
 import type {
+  ApprovalChoice,
+  ApprovalDecision,
   CreateThreadResponse,
   HealthResponse,
   MessageRole,
@@ -118,6 +120,23 @@ export async function stopThread(
     })
   } catch {
     // Best-effort: a failed stop leaves Hermes running the turn.
+  }
+}
+
+export async function respondApproval(
+  threadId: string,
+  requestId: string,
+  choice: ApprovalChoice,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  try {
+    await fetcher('/api/thread/approval', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId, requestId, choice }),
+    })
+  } catch {
+    // A failed response leaves the approval pending in Hermes; the user can retry.
   }
 }
 
@@ -251,23 +270,35 @@ function reduceLive(entries: LiveEntry[], event: ThreadStreamEvent): LiveEntry[]
   }
 }
 
+type ApprovalItem = { requestId: string; action: string; decision: 'pending' | ApprovalDecision }
+
+const approvalDecisionLabel: Record<ApprovalDecision, string> = {
+  allowed: 'Allowed',
+  denied: 'Denied',
+  expired: 'Expired',
+  failed: 'Failed',
+}
+
 export function ThreadView({
   threadId,
   open = requestThread,
   subscribe = streamThread,
   submit = submitPrompt,
   stop = stopThread,
+  respond = respondApproval,
 }: {
   threadId: string
   open?: typeof requestThread
   subscribe?: StreamThread
   submit?: typeof submitPrompt
   stop?: typeof stopThread
+  respond?: typeof respondApproval
 }) {
   const [state, setState] = useState<ThreadViewState>({ phase: 'loading' })
   const [live, setLive] = useState<LiveEntry[]>([])
   const [active, setActive] = useState(false)
   const [turnError, setTurnError] = useState<string | null>(null)
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([])
   const composerRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -286,13 +317,29 @@ export function ThreadView({
     setLive([])
     setActive(false)
     setTurnError(null)
+    setApprovals([])
     return subscribe(threadId, (event) => {
       if (event.kind === 'turn-start') { setActive(true); setTurnError(null) }
       else if (event.kind === 'turn-end') setActive(false)
       else if (event.kind === 'turn-error') { setActive(false); setTurnError(event.message) }
-      else setLive((entries) => reduceLive(entries, event))
+      else if (event.kind === 'approval-request') {
+        setApprovals((items) => items.some((item) => item.requestId === event.requestId)
+          ? items
+          : [...items, { requestId: event.requestId, action: event.action, decision: 'pending' }])
+      } else if (event.kind === 'approval-resolved') {
+        setApprovals((items) => items.map((item) => item.requestId === event.requestId
+          ? { ...item, decision: event.decision }
+          : item))
+      } else setLive((entries) => reduceLive(entries, event))
     })
   }, [threadId, subscribe])
+
+  const decideApproval = useCallback((requestId: string, choice: ApprovalChoice) => {
+    setApprovals((items) => items.map((item) => item.requestId === requestId
+      ? { ...item, decision: choice === 'allow' ? 'allowed' : 'denied' }
+      : item))
+    void respond(threadId, requestId, choice)
+  }, [threadId, respond])
 
   const send = useCallback(() => {
     const text = composerRef.current?.value.trim() ?? ''
@@ -351,6 +398,43 @@ export function ThreadView({
 
       {turnError !== null && (
         <p className="workspace-status workspace-status--error" role="alert">{turnError}</p>
+      )}
+
+      {approvals.length > 0 && (
+        <ul className="approval-list" aria-label="Approval requests">
+          {approvals.map((approval) => (
+            <li
+              key={approval.requestId}
+              className={`approval approval--${approval.decision}`}
+              role={approval.decision === 'pending' ? 'alertdialog' : undefined}
+            >
+              <p className="approval-action">
+                <span className="approval-label">Approval requested</span>
+                {approval.action}
+              </p>
+              {approval.decision === 'pending' ? (
+                <div className="approval-actions">
+                  <button
+                    type="button"
+                    className="approval-deny"
+                    onClick={() => decideApproval(approval.requestId, 'deny')}
+                  >
+                    Deny
+                  </button>
+                  <button
+                    type="button"
+                    className="approval-allow"
+                    onClick={() => decideApproval(approval.requestId, 'allow')}
+                  >
+                    Allow
+                  </button>
+                </div>
+              ) : (
+                <p className="approval-decision">{approvalDecisionLabel[approval.decision]}</p>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       <form

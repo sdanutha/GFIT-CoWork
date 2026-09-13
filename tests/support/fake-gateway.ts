@@ -13,6 +13,7 @@ export function createFakeGateway(
     createThread: async () => ({ kind: 'created', threadId: 'fake-thread' }),
     submitPrompt: async () => {},
     stopThread: async () => {},
+    respondApproval: async () => {},
     subscribe: () => () => {},
     close: async () => {},
     ...overrides,

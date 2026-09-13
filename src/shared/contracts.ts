@@ -120,6 +120,9 @@ export function hermesUnavailableMessage(): string {
   return unreachableHermesMessage
 }
 
+export type ApprovalChoice = 'allow' | 'deny'
+export type ApprovalDecision = 'allowed' | 'denied' | 'expired' | 'failed'
+
 // Live turn events forwarded from Hermes to the browser over SSE.
 export type ThreadStreamEvent =
   | { kind: 'turn-start' }
@@ -128,5 +131,7 @@ export type ThreadStreamEvent =
   | { kind: 'message-complete' }
   | { kind: 'tool-start'; tool: string }
   | { kind: 'tool-end'; tool: string; summary: string; details?: string }
+  | { kind: 'approval-request'; requestId: string; action: string }
+  | { kind: 'approval-resolved'; requestId: string; decision: ApprovalDecision }
   | { kind: 'turn-end' }
   | { kind: 'turn-error'; message: string }
