@@ -13,6 +13,12 @@ const requiredDocuments = [
   'docs/agents/hermes.md',
 ]
 
+const readme = readFileSync(resolve(repositoryRoot, 'README.md'), 'utf8')
+if (!readme.includes('.agents/handoffs/README.md')) {
+  console.error('README is missing agent handoff guidance.')
+  process.exit(1)
+}
+
 for (const documentPath of requiredDocuments) {
   if (!existsSync(resolve(repositoryRoot, documentPath))) {
     console.error(`Missing required agent document: ${documentPath}`)

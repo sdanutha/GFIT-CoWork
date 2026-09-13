@@ -24,3 +24,8 @@ test('keeps every tool adapter pointed at the canonical handoff documents', () =
     assert.match(adapter, /\.agents\/handoffs\/current\.md/)
   }
 })
+
+test('onboards agents through the canonical handoff protocol', () => {
+  const readme = readFileSync(resolve(process.cwd(), 'README.md'), 'utf8')
+  assert.match(readme, /\.agents\/handoffs\/README\.md/)
+})

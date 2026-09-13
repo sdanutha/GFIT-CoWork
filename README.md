@@ -40,6 +40,10 @@ Both development services listen only on the local machine. If the app reports
 that Hermes is unavailable, check the Hermes installation and profile, then use
 the **Retry** button.
 
+## Agent continuity
+
+This repository can move between Codex, Claude, Copilot, Hermes, and other agents without copying conversation history. Read [AGENTS.md](AGENTS.md), [CONTEXT.md](CONTEXT.md), and the [current handoff](.agents/handoffs/current.md) before resuming work. The [handoff protocol](.agents/handoffs/README.md) explains how to pause or transfer a task safely.
+
 ## Verification
 
 Run the complete test and production-build checks:
