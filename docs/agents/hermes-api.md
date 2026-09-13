@@ -76,13 +76,28 @@ The working call is **`session.resume`**:
 - **`prompt.submit`** — `methods_prompt.py:544`
   - params: `session_id`, `text`, optional `surface`, `display_kind`, `interrupted`.
   - Prompt text is sanitized server-side (`sanitize_user_prompt_text`).
-- **Streaming** (server→client notifications, same socket):
-  - `turn.start` / `turn.started`, `turn.end`, `turn.error`.
-  - `message.start`, `message.delta` (incremental text), `message.interim`,
-    `message.complete`.
+- **Streaming (VERIFIED 2026-09-13 against a live turn).** Two facts the source
+  reading missed, confirmed by probing:
+  1. **A single persistent WebSocket is required.** A gateway session is bound to
+     the connection that created it. `session.create` then `prompt.submit` on the
+     **same** socket returns `{"status":"streaming"}` and streams; doing each on a
+     fresh socket (connect-per-call) silently no-ops — the created session is gone
+     when its socket closes, and a separate stream socket receives nothing.
+  2. **Events are wrapped.** Streaming updates arrive as a JSON-RPC notification
+     with `method: "event"` and the specifics in `params`:
+     `{ "method": "event", "params": { "type": "<type>", "session_id": "<runtime id>",
+     "payload": { ... }, "seq": N } }`.
+     Observed `params.type` values: `gateway.ready`, `session.info`,
+     `message.start`, `session.title` (its `payload.session_id` is the STORED key),
+     `thinking.delta` (`payload.text`), `message.delta` (`payload.text` — the answer),
+     `reasoning.available`, `message.complete` (`payload.text` + `payload.usage`).
+     Map `payload.text`, not a top-level `text`; filter by `params.session_id`
+     (the runtime id from `session.resume`/`session.create`).
 - **Stop / interrupt a running turn:** **`session.interrupt`** — `methods_session.py:1987`
   (takes `session_id`). Note: `session.control` (`methods_session_control.py:251`) is
   only for goal/loop/subgoal/heartbeat actions, **not** turn interruption.
+- **`prompt.submit` returns `{status: "streaming"}`** on success (over the session's
+  own socket).
 
 ### Issue 05 — Approval requests
 
