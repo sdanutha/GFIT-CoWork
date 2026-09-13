@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { JSDOM } from 'jsdom'
 import { App, requestHealth } from '../src/client/App.js'
 
 test('shows GFIT CoWork ready for Hermes', () => {
@@ -90,4 +93,83 @@ test('announces that Hermes readiness is being checked on launch', () => {
 
   assert.match(html, /Checking Hermes/)
   assert.match(html, /role="status"/)
+})
+
+test('loads Hermes health on mount and retries from the unavailable screen', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://127.0.0.1/' })
+  const browserGlobals = ['window', 'document', 'HTMLElement', 'Node', 'Event', 'MouseEvent'] as const
+  const originalDescriptors = new Map(
+    browserGlobals.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]),
+  )
+  const originalFetch = globalThis.fetch
+  const actEnvironment = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean
+  }
+  const originalActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT
+  let root: Root | undefined
+
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, writable: true, value: dom.window },
+    document: { configurable: true, writable: true, value: dom.window.document },
+    HTMLElement: { configurable: true, writable: true, value: dom.window.HTMLElement },
+    Node: { configurable: true, writable: true, value: dom.window.Node },
+    Event: { configurable: true, writable: true, value: dom.window.Event },
+    MouseEvent: { configurable: true, writable: true, value: dom.window.MouseEvent },
+  })
+  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true
+
+  try {
+    const requests: string[] = []
+    const healthResponses = [
+      {
+        status: 'unavailable',
+        runtime: 'Hermes',
+        remedy: 'Run hermes setup.',
+      },
+      {
+        status: 'ready',
+        runtime: 'Hermes',
+        startedByCoWork: false,
+      },
+    ]
+    globalThis.fetch = async (input) => {
+      requests.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+      return new Response(JSON.stringify(healthResponses[requests.length - 1]), { status: 200 })
+    }
+
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+
+    await act(async () => {
+      root = createRoot(container)
+      root.render(<App />)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    assert.deepEqual(requests, ['/api/health'])
+    assert.match(container.textContent ?? '', /Hermes is unavailable/)
+    const retryButton = container.querySelector('button')
+    assert.ok(retryButton)
+
+    await act(async () => {
+      retryButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    assert.deepEqual(requests, ['/api/health', '/api/health'])
+    assert.match(container.textContent ?? '', /Hermes is ready/)
+  } finally {
+    if (root !== undefined) {
+      await act(async () => { root?.unmount() })
+    }
+    globalThis.fetch = originalFetch
+    if (originalActEnvironment === undefined) delete actEnvironment.IS_REACT_ACT_ENVIRONMENT
+    else actEnvironment.IS_REACT_ACT_ENVIRONMENT = originalActEnvironment
+    for (const name of browserGlobals) {
+      const descriptor = originalDescriptors.get(name)
+      if (descriptor === undefined) delete (globalThis as Record<string, unknown>)[name]
+      else Object.defineProperty(globalThis, name, descriptor)
+    }
+    dom.window.close()
+  }
 })
