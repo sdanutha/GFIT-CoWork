@@ -12,4 +12,6 @@
 - [x] When the external turn completes, the Thread becomes promptable without stale live state.
 - [x] Tests cover observation, blocked submission, lifecycle transitions, and gateway errors.
 
-**Notes:** ThreadView tracks a turn as `idle`/`own`/`external`: a Thread listed live (`session.active_list`) or a `turn-start` this view did not submit is `external`, which disables the composer and explains why, shows Stop only for our own turn, and still renders streamed text, tool activity, and approvals. `turn-end`/`turn-error` return it to `idle` (promptable, no stale live state).
+**Notes:** ThreadView tracks a turn as `idle`/`own`/`external`: a Thread opened with a turn already running (from `session.resume` `running`, verified live) or a `turn-start` this view did not submit is `external`, which disables the composer and explains why, shows Stop only for our own turn, and still renders streamed text, tool activity, and approvals. `turn-end`/`turn-error`/`session.info running=false` return it to `idle` (promptable, no stale live state).
+
+**Live-verified:** with an external turn active on a stored session, `session.resume` returns `running:true` and the host `/api/thread` returns `running:true` end-to-end (caught live); the client then renders the Thread as external (unit-tested). Known limitation: the Thread-list badge uses `session.active_list`, which stayed empty for these sessions, so the list shows "Idle" even while a turn runs — the per-Thread protection (the safety-critical part) works via `running`.
