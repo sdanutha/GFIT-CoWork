@@ -250,9 +250,13 @@ const streamRole = (role: unknown): MessageRole =>
 // tool.start/tool.complete payloads (verified): { name, context (the command),
 // args, result: { output, exit_code, error } }.
 const toolSummary = (payload: Record<string, unknown>): string => {
-  // ThreadView already prefixes the tool name, so summarize with the command only.
+  // ThreadView already prefixes the tool name, so summarize with the command
+  // only. tool.start carries `context`; tool.complete carries `args.command`.
+  const args = typeof payload.args === 'object' && payload.args !== null
+    ? payload.args as Record<string, unknown> : {}
+  const command = typeof args.command === 'string' ? args.command.trim() : ''
   const context = typeof payload.context === 'string' ? payload.context.trim() : ''
-  return context.length > 0 ? context : 'completed'
+  return command || context || 'completed'
 }
 
 const toolDetails = (payload: Record<string, unknown>): string | undefined => {
