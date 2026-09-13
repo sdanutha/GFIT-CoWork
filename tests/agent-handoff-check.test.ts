@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import test from 'node:test'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 
 test('validates the cross-agent handoff protocol', () => {
   assert.doesNotThrow(() => {
@@ -28,4 +29,30 @@ test('keeps every tool adapter pointed at the canonical handoff documents', () =
 test('onboards agents through the canonical handoff protocol', () => {
   const readme = readFileSync(resolve(process.cwd(), 'README.md'), 'utf8')
   assert.match(readme, /\.agents\/handoffs\/README\.md/)
+})
+
+test('rejects a README without the handoff protocol pointer', () => {
+  const fixtureDirectory = mkdtempSync(join(tmpdir(), 'gfit-cowork-agent-check-'))
+  writeFileSync(join(fixtureDirectory, 'README.md'), '# Fixture\n')
+
+  try {
+    assert.throws(
+      () =>
+        execFileSync(
+          process.execPath,
+          [resolve(process.cwd(), 'scripts/check-agent-handoff.mjs')],
+          { cwd: fixtureDirectory, encoding: 'utf8', stdio: 'pipe' },
+        ),
+      (error: unknown) => {
+        assert.equal(error && typeof error === 'object' && 'status' in error ? error.status : undefined, 1)
+        assert.equal(
+          error && typeof error === 'object' && 'stderr' in error ? error.stderr : undefined,
+          'README is missing agent handoff guidance.\n',
+        )
+        return true
+      },
+    )
+  } finally {
+    rmSync(fixtureDirectory, { recursive: true, force: true })
+  }
 })
