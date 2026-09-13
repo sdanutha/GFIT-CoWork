@@ -247,6 +247,23 @@ const approvalDecision = (params: Record<string, unknown>): ApprovalDecision => 
 const streamRole = (role: unknown): MessageRole =>
   role === 'user' || role === 'assistant' || role === 'tool' ? role : 'assistant'
 
+// tool.start/tool.complete payloads (verified): { name, context (the command),
+// args, result: { output, exit_code, error } }.
+const toolSummary = (payload: Record<string, unknown>): string => {
+  // ThreadView already prefixes the tool name, so summarize with the command only.
+  const context = typeof payload.context === 'string' ? payload.context.trim() : ''
+  return context.length > 0 ? context : 'completed'
+}
+
+const toolDetails = (payload: Record<string, unknown>): string | undefined => {
+  const result = typeof payload.result === 'object' && payload.result !== null
+    ? payload.result as Record<string, unknown> : {}
+  const output = typeof result.output === 'string' ? result.output : ''
+  const error = typeof result.error === 'string' ? result.error : ''
+  const details = [output, error].filter((part) => part.length > 0).join('\n')
+  return details.length > 0 ? details : undefined
+}
+
 type GatewayEvent = { type: string; sessionId: string; payload: Record<string, unknown> }
 
 // Verified live (Hermes 0.21.2): streaming updates arrive as method:"event" with
@@ -266,9 +283,21 @@ const mapStreamEvent = (event: GatewayEvent): ThreadStreamEvent | undefined => {
     case 'message.delta':
       return { kind: 'message-delta', text: typeof payload.text === 'string' ? payload.text : '' }
     case 'message.complete': return { kind: 'message-complete' }
+    case 'tool.start':
+      return typeof payload.name === 'string'
+        ? { kind: 'tool-start', tool: payload.name }
+        : undefined
+    case 'tool.complete':
+      return typeof payload.name === 'string'
+        ? { kind: 'tool-end', tool: payload.name, summary: toolSummary(payload), details: toolDetails(payload) }
+        : undefined
     case 'approval.request':
       return typeof payload.request_id === 'string'
         ? { kind: 'approval-request', requestId: payload.request_id, action: approvalAction(payload) }
+        : undefined
+    case 'approval.expire':
+      return typeof payload.request_id === 'string'
+        ? { kind: 'approval-resolved', requestId: payload.request_id, decision: 'expired' }
         : undefined
     case 'approval.resolved':
       return typeof payload.request_id === 'string'

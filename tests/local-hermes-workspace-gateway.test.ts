@@ -620,3 +620,57 @@ test('responds to an Approval through approval.respond and maps approval notific
     globalThis.WebSocket = OriginalWebSocket
   }
 })
+
+test('subscribe maps tool and approval events from the verified envelope', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+
+  class ToolWebSocket extends EventTarget {
+    constructor(url: string | URL) {
+      super()
+      void url
+      queueMicrotask(() => {
+        this.dispatchEvent(new Event('open'))
+        const emit = (params: object) => {
+          const message = new Event('message')
+          Object.defineProperty(message, 'data', {
+            value: JSON.stringify({ jsonrpc: '2.0', method: 'event', params }),
+          })
+          this.dispatchEvent(message)
+        }
+        emit({ type: 'session.info', session_id: 't1', payload: { running: true } })
+        emit({ type: 'tool.start', session_id: 't1', payload: { name: 'terminal', context: 'echo hi' } })
+        emit({ type: 'tool.complete', session_id: 't1', payload: { name: 'terminal', context: 'echo hi', result: { output: 'hi', exit_code: 0, error: null } } })
+        emit({ type: 'approval.request', session_id: 't1', payload: { request_id: 'a1', command: 'rm -rf build' } })
+        emit({ type: 'approval.expire', session_id: 't1', payload: { request_id: 'a1' } })
+        emit({ type: 'session.info', session_id: 't1', payload: { running: false } })
+      })
+    }
+    close() {}
+  }
+
+  globalThis.fetch = tokenFetch
+  globalThis.WebSocket = ToolWebSocket as unknown as typeof WebSocket
+  try {
+    const gateway = createLocalHermesWorkspaceGateway(baseHealthOps)
+    const events: import('../src/shared/contracts.js').ThreadStreamEvent[] = []
+    const done = new Promise<void>((resolve) => {
+      const unsubscribe = gateway.subscribe('t1', (event) => {
+        events.push(event)
+        if (event.kind === 'turn-end') { unsubscribe(); resolve() }
+      })
+    })
+    await done
+    assert.deepEqual(events, [
+      { kind: 'turn-start' },
+      { kind: 'tool-start', tool: 'terminal' },
+      { kind: 'tool-end', tool: 'terminal', summary: 'echo hi', details: 'hi' },
+      { kind: 'approval-request', requestId: 'a1', action: 'rm -rf build' },
+      { kind: 'approval-resolved', requestId: 'a1', decision: 'expired' },
+      { kind: 'turn-end' },
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})
