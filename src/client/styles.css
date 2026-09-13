@@ -53,11 +53,17 @@ button {
   backdrop-filter: blur(1rem);
 }
 
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2.5rem;
+}
+
 .brand-mark {
   display: grid;
   width: 3rem;
   height: 3rem;
-  margin-bottom: 2.5rem;
   place-items: center;
   color: white;
   font-weight: 800;
@@ -65,6 +71,26 @@ button {
   background: var(--accent);
   border-radius: 0.95rem;
   box-shadow: 0 0.65rem 1.5rem rgba(34, 107, 58, 0.22);
+}
+
+.theme-toggle {
+  padding: 0.4rem 0.85rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  color: var(--text);
+}
+
+.theme-toggle:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
 }
 
 .eyebrow {
@@ -598,8 +624,32 @@ h1 {
   font-size: 0.8rem;
 }
 
+/* Dark palette tokens, reused by an explicit choice and the system default. */
+:root[data-theme="dark"] {
+  --background: #10130f;
+  --surface: rgba(28, 33, 27, 0.86);
+  --surface-border: rgba(224, 235, 220, 0.12);
+  --text: #edf2ea;
+  --muted: #aab5a7;
+  --accent: #7fc78b;
+  --accent-strong: #66ad73;
+  --accent-soft: rgba(85, 154, 98, 0.2);
+  --warning: #f1a274;
+  --warning-soft: rgba(180, 83, 38, 0.22);
+}
+
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(circle at 14% 12%, rgba(91, 154, 100, 0.12), transparent 34rem),
+    var(--background);
+}
+
+:root[data-theme="dark"] .retry-button {
+  color: #102014;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #10130f;
     --surface: rgba(28, 33, 27, 0.86);
     --surface-border: rgba(224, 235, 220, 0.12);
@@ -612,13 +662,13 @@ h1 {
     --warning-soft: rgba(180, 83, 38, 0.22);
   }
 
-  body {
+  :root:not([data-theme="light"]) body {
     background:
       radial-gradient(circle at 14% 12%, rgba(91, 154, 100, 0.12), transparent 34rem),
       var(--background);
   }
 
-  .retry-button {
+  :root:not([data-theme="light"]) .retry-button {
     color: #102014;
   }
 }
@@ -636,8 +686,8 @@ h1 {
     box-shadow: none;
   }
 
-  .brand-mark {
-    margin-bottom: 4rem;
+  .card-top {
+    margin-bottom: 3.5rem;
   }
 }
 

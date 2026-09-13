@@ -150,7 +150,7 @@ test('loads Hermes health on mount and retries from the unavailable screen', asy
 
     assert.deepEqual(requests, ['/api/health'])
     assert.match(container.textContent ?? '', /Hermes is unavailable/)
-    const retryButton = container.querySelector('button')
+    const retryButton = container.querySelector('.retry-button')
     assert.ok(retryButton)
 
     await act(async () => {
@@ -751,6 +751,199 @@ test('treats a stream turn we did not start as external and shows a gateway turn
       assert.equal(composer().disabled, false)
       assert.match(container.textContent ?? '', /ended with an error/)
     } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('persists an explicit dark-mode choice and follows system by default', async () => {
+  await withDom(async (dom) => {
+    const { applyTheme, readTheme } = await import('../src/client/App.js')
+    const root = dom.window.document.documentElement
+
+    assert.equal(readTheme(), 'system')
+    applyTheme('dark')
+    assert.equal(root.dataset.theme, 'dark')
+    assert.equal(readTheme(), 'dark')
+
+    applyTheme('light')
+    assert.equal(root.dataset.theme, 'light')
+    assert.equal(readTheme(), 'light')
+
+    applyTheme('system')
+    assert.equal(root.dataset.theme, undefined)
+    assert.equal(readTheme(), 'system')
+  })
+})
+
+test('cycles the appearance toggle and stores the choice', async () => {
+  await withDom(async (dom) => {
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<App health={{ status: 'ready', runtime: 'Hermes', startedByCoWork: false }} />)
+        await Promise.resolve()
+      })
+      const toggle = container.querySelector('.theme-toggle') as HTMLButtonElement
+      assert.match(toggle.textContent ?? '', /System/)
+      await act(async () => {
+        toggle.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      assert.match(toggle.textContent ?? '', /Light/)
+      assert.equal(dom.window.localStorage.getItem('gfit-cowork:theme'), 'light')
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('restores a per-Thread draft and clears it after sending', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    dom.window.localStorage.setItem('gfit-cowork:draft:s1', 'a half-written prompt')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened', threadId, messages: [],
+    })
+    const submitted: string[] = []
+    const submit: typeof import('../src/client/App.js').submitPrompt = async (_t, text) => { submitted.push(text) }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s1" open={open} subscribe={() => () => {}} submit={submit} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const composer = container.querySelector('#composer-input') as HTMLTextAreaElement
+      assert.equal(composer.value, 'a half-written prompt')
+
+      await act(async () => {
+        container.querySelector('.composer-send')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      assert.deepEqual(submitted, ['a half-written prompt'])
+      assert.equal(composer.value, '')
+      assert.equal(dom.window.localStorage.getItem('gfit-cowork:draft:s1'), null)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('end-to-end: Workspace to Thread to prompt to approval, leaking nothing to preferences', async () => {
+  await withDom(async (dom) => {
+    const originalFetch = globalThis.fetch
+    const originalEventSource = (globalThis as { EventSource?: unknown }).EventSource
+
+    const sources: Array<{ url: string; emit: (event: ThreadStreamEvent) => void }> = []
+    class MockEventSource {
+      listeners: Array<(e: { data: string }) => void> = []
+      constructor(public url: string) {
+        sources.push({ url, emit: (event) => this.listeners.forEach((cb) => cb({ data: JSON.stringify(event) })) })
+      }
+      addEventListener(type: string, cb: (e: { data: string }) => void) {
+        if (type === 'message') this.listeners.push(cb)
+      }
+      close() {}
+    }
+
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
+      calls.push({ url, body })
+      const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 })
+      if (url === '/api/health') return json({ status: 'ready', runtime: 'Hermes', startedByCoWork: false })
+      if (url === '/api/workspace') return json({ status: 'opened', path: body.path, threads: [
+        { id: 't1', title: 'Existing thread', updatedAt: '2026-09-13T00:00:00.000Z', activity: 'idle' },
+      ] })
+      if (url === '/api/thread') return json({ status: 'opened', threadId: body.threadId, messages: [
+        { role: 'user', text: 'earlier question' },
+        { role: 'assistant', text: 'earlier reply' },
+      ] })
+      if (url === '/api/thread/prompt') return json({ status: 'submitted' })
+      if (url === '/api/thread/approval') return json({ status: 'resolved', choice: body.choice })
+      return new Response('{}', { status: 404 })
+    }) as typeof fetch
+    ;(globalThis as { EventSource?: unknown }).EventSource = MockEventSource as unknown
+
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<App />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.match(container.textContent ?? '', /Hermes is ready/)
+
+      // Open the fixture Workspace.
+      const input = container.querySelector('#workspace-path') as HTMLInputElement
+      typeInto(dom, input, '/home/dev/project')
+      await act(async () => {
+        container.querySelector('.workspace-open-button')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.match(container.textContent ?? '', /Existing thread/)
+
+      // Select the Thread and read its history.
+      await act(async () => {
+        container.querySelector('.thread-item')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.match(container.textContent ?? '', /earlier reply/)
+      assert.equal(sources.length, 1)
+
+      // Prompt, then stream a turn that asks for approval.
+      const composer = container.querySelector('#composer-input') as HTMLTextAreaElement
+      composer.value = 'run the migration'
+      await act(async () => {
+        container.querySelector('.composer-send')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      await act(async () => {
+        sources[0].emit({ kind: 'turn-start' })
+        sources[0].emit({ kind: 'message-start', role: 'assistant' })
+        sources[0].emit({ kind: 'message-delta', text: 'Running the plan' })
+        sources[0].emit({ kind: 'approval-request', requestId: 'ap1', action: 'execute migration script' })
+        await Promise.resolve()
+      })
+      assert.match(container.textContent ?? '', /Running the plan/)
+      assert.match(container.textContent ?? '', /execute migration script/)
+
+      // Allow the approval, then finish the turn.
+      await act(async () => {
+        container.querySelector('.approval-allow')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await Promise.resolve()
+      })
+      await act(async () => {
+        sources[0].emit({ kind: 'approval-resolved', requestId: 'ap1', decision: 'allowed' })
+        sources[0].emit({ kind: 'message-complete' })
+        sources[0].emit({ kind: 'turn-end' })
+        await Promise.resolve()
+      })
+      assert.match(container.textContent ?? '', /Allowed/)
+
+      // The whole journey hit the expected endpoints, defaulting to no full access.
+      const urls = calls.map((c) => c.url)
+      assert.ok(urls.includes('/api/thread/prompt'))
+      const approvalCall = calls.find((c) => c.url === '/api/thread/approval')
+      assert.equal(approvalCall?.body.choice, 'allow')
+
+      // Preference storage holds navigation only — no transcript, tool output, or approval secret.
+      const stored = Object.keys(dom.window.localStorage)
+        .map((key) => `${key}=${dom.window.localStorage.getItem(key)}`)
+        .join('\n')
+      assert.doesNotMatch(stored, /earlier reply|Running the plan|execute migration script|earlier question/)
+    } finally {
+      globalThis.fetch = originalFetch
+      ;(globalThis as { EventSource?: unknown }).EventSource = originalEventSource
       if (root) await act(async () => { root?.unmount() })
     }
   })

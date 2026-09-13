@@ -160,7 +160,52 @@ export const streamThread: StreamThread = (threadId, onEvent) => {
 
 const recentWorkspacesKey = 'gfit-cowork:recent-workspaces'
 const lastViewKey = 'gfit-cowork:last-view'
+const themeKey = 'gfit-cowork:theme'
+const draftKeyPrefix = 'gfit-cowork:draft:'
 const maxRecentWorkspaces = 8
+
+export type ThemePreference = 'system' | 'light' | 'dark'
+
+export function readTheme(): ThemePreference {
+  try {
+    const stored = globalThis.localStorage?.getItem(themeKey)
+    return stored === 'light' || stored === 'dark' ? stored : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+export function applyTheme(theme: ThemePreference): void {
+  const root = globalThis.document?.documentElement
+  if (!root) return
+  if (theme === 'system') delete root.dataset.theme
+  else root.dataset.theme = theme
+  try {
+    if (theme === 'system') globalThis.localStorage?.removeItem(themeKey)
+    else globalThis.localStorage?.setItem(themeKey, theme)
+  } catch {
+    // Appearance is a disposable preference; ignore storage failures.
+  }
+}
+
+// Drafts are the viewer's own unsent input, kept per Thread so a reload does not
+// lose a half-written prompt. They are never a transcript, tool output, or secret.
+export function readDraft(threadId: string): string {
+  try {
+    return globalThis.localStorage?.getItem(draftKeyPrefix + threadId) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function writeDraft(threadId: string, text: string): void {
+  try {
+    if (text.length === 0) globalThis.localStorage?.removeItem(draftKeyPrefix + threadId)
+    else globalThis.localStorage?.setItem(draftKeyPrefix + threadId, text)
+  } catch {
+    // Ignore storage failures; a lost draft is not worth interrupting the user.
+  }
+}
 
 type LastView = { workspacePath?: string; threadId?: string }
 
@@ -345,6 +390,15 @@ export function ThreadView({
     })
   }, [threadId, subscribe, initiallyLive])
 
+  useEffect(() => {
+    const node = composerRef.current
+    if (!node) return
+    node.value = readDraft(threadId)
+    const save = () => writeDraft(threadId, node.value)
+    node.addEventListener('input', save)
+    return () => node.removeEventListener('input', save)
+  }, [threadId])
+
   const decideApproval = useCallback((requestId: string, choice: ApprovalChoice) => {
     setApprovals((items) => items.map((item) => item.requestId === requestId
       ? { ...item, decision: choice === 'allow' ? 'allowed' : 'denied' }
@@ -359,6 +413,7 @@ export function ThreadView({
     setTurnState('own')
     void submit(threadId, text)
     if (composerRef.current) composerRef.current.value = ''
+    writeDraft(threadId, '')
   }, [threadId, submit, turnState])
 
   const externallyActive = turnState === 'external'
@@ -687,8 +742,16 @@ type AppProps = {
   onRetry?: () => void
 }
 
+const themeOrder: ThemePreference[] = ['system', 'light', 'dark']
+const themeLabel: Record<ThemePreference, string> = {
+  system: 'System',
+  light: 'Light',
+  dark: 'Dark',
+}
+
 export function App({ health, onRetry }: AppProps) {
   const [currentHealth, setCurrentHealth] = useState<HealthResponse | null>(health ?? null)
+  const [theme, setTheme] = useState<ThemePreference>(() => readTheme())
   const loadHealth = useCallback(async () => {
     setCurrentHealth(null)
     setCurrentHealth(await requestHealth())
@@ -698,12 +761,24 @@ export function App({ health, onRetry }: AppProps) {
     if (health === undefined) void loadHealth()
   }, [health, loadHealth])
 
+  useEffect(() => { applyTheme(theme) }, [theme])
+
   const retry = onRetry ?? (() => { void loadHealth() })
 
   return (
     <main className="app-shell">
       <article className="status-card" aria-labelledby="product-name">
-        <div className="brand-mark" aria-hidden="true">G</div>
+        <div className="card-top">
+          <div className="brand-mark" aria-hidden="true">G</div>
+          <button
+            className="theme-toggle"
+            type="button"
+            onClick={() => setTheme(themeOrder[(themeOrder.indexOf(theme) + 1) % themeOrder.length])}
+            aria-label={`Appearance: ${themeLabel[theme]}. Click to change.`}
+          >
+            {themeLabel[theme]}
+          </button>
+        </div>
         <p className="eyebrow">Local Hermes workspace</p>
         <h1 id="product-name">GFIT CoWork</h1>
         {currentHealth === null ? (
