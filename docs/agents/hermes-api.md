@@ -102,13 +102,16 @@ The working call is **`session.resume`**:
      {command}, duration_s, result: { output, exit_code, error } }`. The command
      is in `context` on start and `args.command` on complete; output is
      `result.output`.
-  5. **Approval (from source `server.py`).** `approval.request` `payload` carries
+  5. **Approval (verified live).** `approval.request` `payload` carries
      `request_id`, `command` (redacted by Hermes), and `choices`
      (`["once","session","always","deny"]`); a timeout emits `approval.expire`
      `{ request_id }`. Resolve with `approval.respond` `{ session_id, request_id,
-     choice }`. Not yet live-triggered: the local Hermes runs `approval_mode:
-     "smart"`, which auto-allowed every command tried (including `rm -rf`), so no
-     prompt fired — mapping is source-verified and unit-tested.
+     choice }`. Triggering: `approval_mode: "smart"` auto-allows most commands via
+     a command allowlist, but **guard rules gate certain commands in any mode** —
+     e.g. `chmod 777 …` matches `world/other-writable permissions` (check with
+     `hermes approvals test "<cmd>"`). Prompting `chmod 777 /tmp/x` fired a real
+     `approval.request`; GFIT rendered the Allow/Deny card and Deny resolved it
+     cleanly (command blocked, no changes).
 - **Stop / interrupt a running turn:** **`session.interrupt`** — `methods_session.py:1987`
   (takes `session_id`). Note: `session.control` (`methods_session_control.py:251`) is
   only for goal/loop/subgoal/heartbeat actions, **not** turn interruption.
