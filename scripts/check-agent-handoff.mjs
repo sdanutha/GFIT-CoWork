@@ -8,12 +8,32 @@ const requiredDocuments = [
   '.agents/handoffs/README.md',
   '.agents/handoffs/current.md',
   '.agents/workflows/development.md',
+  'CLAUDE.md',
+  '.github/copilot-instructions.md',
+  'docs/agents/hermes.md',
 ]
 
 for (const documentPath of requiredDocuments) {
   if (!existsSync(resolve(repositoryRoot, documentPath))) {
     console.error(`Missing required agent document: ${documentPath}`)
     process.exit(1)
+  }
+}
+
+const adapterPaths = [
+  'CLAUDE.md',
+  '.github/copilot-instructions.md',
+  'docs/agents/hermes.md',
+]
+const canonicalPointers = ['AGENTS.md', 'CONTEXT.md', '.agents/handoffs/current.md']
+
+for (const adapterPath of adapterPaths) {
+  const adapter = readFileSync(resolve(repositoryRoot, adapterPath), 'utf8')
+  for (const pointer of canonicalPointers) {
+    if (!adapter.includes(pointer)) {
+      console.error(`Adapter is missing canonical pointer: ${adapterPath}`)
+      process.exit(1)
+    }
   }
 }
 
