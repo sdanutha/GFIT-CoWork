@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "check:agents": "node scripts/check-agent-handoff.mjs",
     "dev": "node --import tsx src/host/index.ts",
     "dev:client": "vite",
     "build": "tsc --noEmit && vite build",
