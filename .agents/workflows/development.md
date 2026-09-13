@@ -12,7 +12,8 @@
    its commands and results are known.
 5. Commit a coherent change when the task permits commits. The commit is
    complete when its message describes the delivered behavior.
-6. Refresh `.agents/handoffs/current.md` before a transfer or meaningful pause,
-   or clear it when no continuation state remains. The workflow is complete
-   when the next agent has one exact next action or the file says no handoff is
-   active.
+6. Checkpoint after every meaningful state change by refreshing
+   `.agents/handoffs/current.md` with the latest state, verification, and one
+   exact next action. Refresh it again before a transfer or meaningful pause, or
+   clear it when no continuation state remains. The workflow is complete when
+   the next agent has one exact next action or the file says no handoff is active.

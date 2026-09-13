@@ -2,8 +2,10 @@
 
 `.agents/handoffs/current.md` is the single continuation record shared by all
 agents. When active, it describes exactly one task. Read it before resuming a
-task, and refresh it before transferring the task or taking a meaningful pause.
-Replace or clear it when its continuation state is no longer current.
+task. Update it after every meaningful state change so an unexpected stop still
+leaves recent continuation state. Refresh it again before transferring the task
+or taking a meaningful pause. Replace or clear it when its continuation state is
+no longer current.
 
 Keep the record concise and actionable. Include no credentials, secrets,
 private prompts, conversation transcripts, or raw tool output.

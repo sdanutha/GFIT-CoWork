@@ -11,6 +11,18 @@ test('validates the cross-agent handoff protocol', () => {
   })
 })
 
+test('checkpoints the handoff after every meaningful state change', () => {
+  const checkpointDocuments = [
+    '.agents/handoffs/README.md',
+    '.agents/workflows/development.md',
+  ]
+
+  for (const documentPath of checkpointDocuments) {
+    const document = readFileSync(resolve(process.cwd(), documentPath), 'utf8')
+    assert.match(document, /after every meaningful state change/)
+  }
+})
+
 test('keeps every tool adapter pointed at the canonical handoff documents', () => {
   const adapterPaths = [
     'CLAUDE.md',

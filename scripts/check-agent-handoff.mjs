@@ -26,6 +26,19 @@ for (const documentPath of requiredDocuments) {
   }
 }
 
+const checkpointDocuments = [
+  '.agents/handoffs/README.md',
+  '.agents/workflows/development.md',
+]
+
+for (const documentPath of checkpointDocuments) {
+  const document = readFileSync(resolve(repositoryRoot, documentPath), 'utf8')
+  if (!document.includes('after every meaningful state change')) {
+    console.error(`Missing handoff checkpoint rule: ${documentPath}`)
+    process.exit(1)
+  }
+}
+
 const adapterPaths = [
   'CLAUDE.md',
   '.github/copilot-instructions.md',
