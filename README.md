@@ -6,7 +6,7 @@ not.
 
 ## Requirements
 
-- Node.js 22 or newer
+- Node.js 20.19 or newer (or Node.js 22.12 or newer)
 - Hermes Agent installed locally and available as `hermes`
 - A Hermes profile configured outside GFIT CoWork with `hermes setup`
 
