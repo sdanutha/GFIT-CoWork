@@ -583,8 +583,10 @@ test('creates a new Thread in the Workspace and selects it', async () => {
     const open: typeof import('../src/client/App.js').requestWorkspace = async (path) => ({
       status: 'opened', path, threads: [],
     })
-    const openThread: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
-      status: 'opened', threadId, messages: [],
+    // A brand-new Thread has no stored history yet, so opening it would fail;
+    // the new-Thread view must not attempt the read or show that error.
+    const openThread: typeof import('../src/client/App.js').requestThread = async () => ({
+      status: 'error', reason: 'unreadable', message: 'That Thread could not be read.',
     })
     let createdCwd = ''
     const create: typeof import('../src/client/App.js').createThread = async (cwd) => {
@@ -614,7 +616,12 @@ test('creates a new Thread in the Workspace and selects it', async () => {
       })
       assert.equal(createdCwd, '/home/dev/project')
       assert.match(container.textContent ?? '', /New Thread/)
-      assert.ok(container.querySelector('.thread-view'))
+      const threadView = container.querySelector('.thread-view')
+      assert.ok(threadView)
+      // Empty, promptable state — not the "could not be read" error.
+      assert.match(threadView.textContent ?? '', /no messages yet/)
+      assert.doesNotMatch(threadView.textContent ?? '', /could not be read/)
+      assert.equal(threadView.querySelector('[role="alert"]'), null)
     } finally {
       if (root) await act(async () => { root?.unmount() })
     }

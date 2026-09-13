@@ -332,6 +332,7 @@ const approvalDecisionLabel: Record<ApprovalDecision, string> = {
 export function ThreadView({
   threadId,
   initiallyLive = false,
+  isNew = false,
   open = requestThread,
   subscribe = streamThread,
   submit = submitPrompt,
@@ -340,6 +341,7 @@ export function ThreadView({
 }: {
   threadId: string
   initiallyLive?: boolean
+  isNew?: boolean
   open?: typeof requestThread
   subscribe?: StreamThread
   submit?: typeof submitPrompt
@@ -354,6 +356,12 @@ export function ThreadView({
   const composerRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
+    // A just-created Thread has no stored history yet (Hermes persists it on the
+    // first prompt), so open it as empty rather than reporting a read failure.
+    if (isNew) {
+      setState({ phase: 'loaded', messages: [] })
+      return
+    }
     let loading = true
     setState({ phase: 'loading' })
     void open(threadId).then((result) => {
@@ -363,7 +371,7 @@ export function ThreadView({
         : { phase: 'error', message: result.message })
     })
     return () => { loading = false }
-  }, [threadId, open])
+  }, [threadId, open, isNew])
 
   useEffect(() => {
     setLive([])
@@ -566,6 +574,7 @@ export function WorkspaceBrowser({
   const [state, setState] = useState<WorkspaceState>({ phase: 'idle' })
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
+  const createdThreadIds = useRef<Set<string>>(new Set())
 
   const openWorkspace = useCallback(async (path: string, restoreThreadId?: string) => {
     const trimmed = path.trim()
@@ -609,6 +618,7 @@ export function WorkspaceBrowser({
       updatedAt: new Date().toISOString(),
       activity: 'idle',
     }
+    createdThreadIds.current.add(thread.id)
     setState((current) => current.phase === 'opened' && current.path === workspacePath
       ? { ...current, threads: [thread, ...current.threads.filter((t) => t.id !== thread.id)] }
       : current)
@@ -730,6 +740,7 @@ export function WorkspaceBrowser({
         <ThreadView
           threadId={selectedThreadId}
           initiallyLive={state.threads.some((t) => t.id === selectedThreadId && t.activity === 'live')}
+          isNew={createdThreadIds.current.has(selectedThreadId)}
           open={openThread}
         />
       )}
