@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { workspaceErrorMessage } from '../shared/contracts.js'
-import type { HealthResponse, Thread, WorkspaceResponse } from '../shared/contracts.js'
+import { threadErrorMessage, workspaceErrorMessage } from '../shared/contracts.js'
+import type {
+  HealthResponse,
+  Thread,
+  ThreadMessage,
+  ThreadResponse,
+  WorkspaceResponse,
+} from '../shared/contracts.js'
 
 const unavailableHealth: HealthResponse = {
   status: 'unavailable',
@@ -41,8 +47,56 @@ export async function requestWorkspace(
   }
 }
 
+const unavailableThread: ThreadResponse = {
+  status: 'error',
+  reason: 'unavailable',
+  message: threadErrorMessage('unavailable'),
+}
+
+export async function requestThread(
+  threadId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<ThreadResponse> {
+  try {
+    const response = await fetcher('/api/thread', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ threadId }),
+    })
+    if (!response.ok) return unavailableThread
+    return await response.json() as ThreadResponse
+  } catch {
+    return unavailableThread
+  }
+}
+
 const recentWorkspacesKey = 'gfit-cowork:recent-workspaces'
+const lastViewKey = 'gfit-cowork:last-view'
 const maxRecentWorkspaces = 8
+
+type LastView = { workspacePath?: string; threadId?: string }
+
+export function readLastView(): LastView {
+  try {
+    const raw = globalThis.localStorage?.getItem(lastViewKey)
+    const parsed = raw ? JSON.parse(raw) : {}
+    if (typeof parsed !== 'object' || parsed === null) return {}
+    const view: LastView = {}
+    if (typeof (parsed as LastView).workspacePath === 'string') view.workspacePath = (parsed as LastView).workspacePath
+    if (typeof (parsed as LastView).threadId === 'string') view.threadId = (parsed as LastView).threadId
+    return view
+  } catch {
+    return {}
+  }
+}
+
+function rememberLastView(view: LastView): void {
+  try {
+    globalThis.localStorage?.setItem(lastViewKey, JSON.stringify(view))
+  } catch {
+    // A navigation preference is disposable; ignore storage failures.
+  }
+}
 
 export function readRecentWorkspaces(): string[] {
   try {
@@ -70,25 +124,86 @@ function formatRecency(iso: string): string {
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' }).format(date)
 }
 
+type ThreadViewState =
+  | { phase: 'loading' }
+  | { phase: 'loaded'; messages: ThreadMessage[] }
+  | { phase: 'error'; message: string }
+
+export function ThreadView({
+  threadId,
+  open = requestThread,
+}: { threadId: string; open?: typeof requestThread }) {
+  const [state, setState] = useState<ThreadViewState>({ phase: 'loading' })
+
+  useEffect(() => {
+    let active = true
+    setState({ phase: 'loading' })
+    void open(threadId).then((result) => {
+      if (!active) return
+      setState(result.status === 'opened'
+        ? { phase: 'loaded', messages: result.messages }
+        : { phase: 'error', message: result.message })
+    })
+    return () => { active = false }
+  }, [threadId, open])
+
+  return (
+    <section className="thread-view" aria-labelledby="thread-view-heading">
+      <h3 id="thread-view-heading" className="thread-view-heading">Thread history</h3>
+      {state.phase === 'loading' && (
+        <p className="workspace-status" role="status">Loading Thread…</p>
+      )}
+      {state.phase === 'error' && (
+        <p className="workspace-status workspace-status--error" role="alert">{state.message}</p>
+      )}
+      {state.phase === 'loaded' && (
+        state.messages.length === 0 ? (
+          <p className="workspace-status" role="status">This Thread has no messages yet.</p>
+        ) : (
+          <ol className="message-list">
+            {state.messages.map((message, index) => (
+              <li key={message.id ?? index} className={`message message--${message.role}`}>
+                <span className="message-role">{message.role}</span>
+                <span className="message-text">{message.text}</span>
+              </li>
+            ))}
+          </ol>
+        )
+      )}
+    </section>
+  )
+}
+
 type WorkspaceState =
   | { phase: 'idle' }
   | { phase: 'opening' }
   | { phase: 'opened'; path: string; threads: Thread[] }
   | { phase: 'error'; message: string }
 
-export function WorkspaceBrowser({ open = requestWorkspace }: { open?: typeof requestWorkspace }) {
+export function WorkspaceBrowser({
+  open = requestWorkspace,
+  openThread = requestThread,
+}: { open?: typeof requestWorkspace; openThread?: typeof requestThread }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [recent, setRecent] = useState<string[]>(() => readRecentWorkspaces())
   const [state, setState] = useState<WorkspaceState>({ phase: 'idle' })
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
 
-  const openWorkspace = useCallback(async (path: string) => {
+  const openWorkspace = useCallback(async (path: string, restoreThreadId?: string) => {
     const trimmed = path.trim()
     if (trimmed.length === 0) return
+    setSelectedThreadId(null)
     setState({ phase: 'opening' })
     const result = await open(trimmed)
     if (result.status === 'opened') {
       setRecent(rememberWorkspace(result.path))
       setState({ phase: 'opened', path: result.path, threads: result.threads })
+      const restore = restoreThreadId
+        && result.threads.some((thread) => thread.id === restoreThreadId)
+        ? restoreThreadId
+        : undefined
+      setSelectedThreadId(restore ?? null)
+      rememberLastView(restore ? { workspacePath: result.path, threadId: restore } : { workspacePath: result.path })
     } else {
       setState({ phase: 'error', message: result.message })
     }
@@ -96,6 +211,22 @@ export function WorkspaceBrowser({ open = requestWorkspace }: { open?: typeof re
 
   const openFromInput = useCallback(() => {
     void openWorkspace(inputRef.current?.value ?? '')
+  }, [openWorkspace])
+
+  const selectThread = useCallback((threadId: string, workspacePath: string) => {
+    setSelectedThreadId(threadId)
+    rememberLastView({ workspacePath, threadId })
+  }, [])
+
+  const restoredRef = useRef(false)
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    const last = readLastView()
+    if (last.workspacePath) {
+      if (inputRef.current) inputRef.current.value = last.workspacePath
+      void openWorkspace(last.workspacePath, last.threadId)
+    }
   }, [openWorkspace])
 
   return (
@@ -163,19 +294,30 @@ export function WorkspaceBrowser({ open = requestWorkspace }: { open?: typeof re
           ) : (
             <ul>
               {state.threads.map((thread) => (
-                <li key={thread.id} className="thread-item">
-                  <span className="thread-title">{thread.title}</span>
-                  <time className="thread-recency" dateTime={thread.updatedAt}>
-                    {formatRecency(thread.updatedAt)}
-                  </time>
-                  <span className={`thread-activity thread-activity--${thread.activity}`}>
-                    {thread.activity === 'live' ? 'Live' : 'Idle'}
-                  </span>
+                <li key={thread.id}>
+                  <button
+                    type="button"
+                    className={`thread-item${thread.id === selectedThreadId ? ' thread-item--selected' : ''}`}
+                    aria-pressed={thread.id === selectedThreadId}
+                    onClick={() => selectThread(thread.id, state.path)}
+                  >
+                    <span className="thread-title">{thread.title}</span>
+                    <time className="thread-recency" dateTime={thread.updatedAt}>
+                      {formatRecency(thread.updatedAt)}
+                    </time>
+                    <span className={`thread-activity thread-activity--${thread.activity}`}>
+                      {thread.activity === 'live' ? 'Live' : 'Idle'}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
           )}
         </div>
+      )}
+
+      {state.phase === 'opened' && selectedThreadId !== null && (
+        <ThreadView threadId={selectedThreadId} open={openThread} />
       )}
     </section>
   )

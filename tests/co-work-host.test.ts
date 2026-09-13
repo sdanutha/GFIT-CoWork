@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createCoWorkHost } from '../src/host/co-work-host.js'
-import type { Thread, WorkspaceValidationReason } from '../src/shared/contracts.js'
+import type {
+  Thread,
+  ThreadMessage,
+  ThreadValidationReason,
+  WorkspaceValidationReason,
+} from '../src/shared/contracts.js'
 import { createFakeGateway } from './support/fake-gateway.js'
 
 const openWorkspace = (baseUrl: string, path: string) =>
@@ -9,6 +14,13 @@ const openWorkspace = (baseUrl: string, path: string) =>
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path }),
+  })
+
+const openThread = (baseUrl: string, threadId: string) =>
+  fetch(`${baseUrl}/api/thread`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ threadId }),
   })
 
 test('returns Hermes readiness only through the loopback health endpoint', async () => {
@@ -213,6 +225,64 @@ test('treats a malformed request body as an empty Workspace path', async () => {
       body: 'not json',
     })
     assert.equal(received, '')
+  } finally {
+    await app.close()
+  }
+})
+
+test('opens a Thread and returns its Hermes history in order through the host', async () => {
+  const messages: ThreadMessage[] = [
+    { id: 'r1', role: 'user', text: 'Ship issue 03' },
+    { id: 'r2', role: 'assistant', text: 'On it.' },
+    { role: 'tool', text: 'ran tests' },
+  ]
+  const app = createCoWorkHost(createFakeGateway({
+    openThread: async (threadId) => ({ kind: 'opened', history: { threadId, messages } }),
+  }))
+  const address = await app.listen(0)
+  try {
+    const body = await (await openThread(`http://127.0.0.1:${address.port}`, 's1')).json()
+    assert.deepEqual(body, { status: 'opened', threadId: 's1', messages })
+  } finally {
+    await app.close()
+  }
+})
+
+test('maps each Thread read error to a safe recovery message', async () => {
+  const expected: Record<ThreadValidationReason, RegExp> = {
+    'not-found': /no longer exists/i,
+    unreadable: /could not be read/i,
+  }
+  for (const reason of Object.keys(expected) as ThreadValidationReason[]) {
+    const app = createCoWorkHost(createFakeGateway({
+      openThread: async () => ({ kind: 'error', reason }),
+    }))
+    const address = await app.listen(0)
+    try {
+      const body = await (await openThread(`http://127.0.0.1:${address.port}`, 's1')).json()
+      assert.equal(body.status, 'error')
+      assert.equal(body.reason, reason)
+      assert.match(body.message, expected[reason])
+    } finally {
+      await app.close()
+    }
+  }
+})
+
+test('returns a safe unavailable Thread state when the gateway throws', async () => {
+  const app = createCoWorkHost(createFakeGateway({
+    openThread: async () => {
+      throw new Error('history http://127.0.0.1:9119 failed with token=do-not-render')
+    },
+  }))
+  const address = await app.listen(0)
+  try {
+    const response = await openThread(`http://127.0.0.1:${address.port}`, 's1')
+    const body = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(body.status, 'error')
+    assert.equal(body.reason, 'unavailable')
+    assert.doesNotMatch(JSON.stringify(body), /token|do-not-render|127\.0\.0\.1:9119/i)
   } finally {
     await app.close()
   }

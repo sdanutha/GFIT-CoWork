@@ -1,13 +1,19 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { healthResponse, workspaceErrorMessage, workspaceResponse } from '../shared/contracts.js'
-import type { WorkspaceResponse } from '../shared/contracts.js'
+import {
+  healthResponse,
+  threadErrorMessage,
+  threadResponse,
+  workspaceErrorMessage,
+  workspaceResponse,
+} from '../shared/contracts.js'
+import type { ThreadResponse, WorkspaceResponse } from '../shared/contracts.js'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
 
 const safeUnavailableRemedy = 'Check your Hermes setup, then retry.'
 const maxRequestBodyBytes = 8 * 1024
 
-const readRequestedPath = async (request: IncomingMessage): Promise<string> => {
+const readStringField = async (request: IncomingMessage, field: string): Promise<string> => {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of request) {
@@ -16,8 +22,8 @@ const readRequestedPath = async (request: IncomingMessage): Promise<string> => {
     chunks.push(chunk as Buffer)
   }
   try {
-    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { path?: unknown }
-    return typeof parsed.path === 'string' ? parsed.path : ''
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>
+    return typeof parsed[field] === 'string' ? parsed[field] as string : ''
   } catch {
     return ''
   }
@@ -51,7 +57,7 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
     }
 
     if (request.method === 'POST' && request.url === '/api/workspace') {
-      const path = await readRequestedPath(request)
+      const path = await readStringField(request, 'path')
       try {
         sendJson(response, workspaceResponse(await gateway.openWorkspace(path)))
       } catch {
@@ -62,6 +68,20 @@ export function createCoWorkHost(gateway: HermesWorkspaceGateway) {
           reason: 'unavailable',
           message: workspaceErrorMessage('unavailable'),
         } satisfies WorkspaceResponse)
+      }
+      return
+    }
+
+    if (request.method === 'POST' && request.url === '/api/thread') {
+      const threadId = await readStringField(request, 'threadId')
+      try {
+        sendJson(response, threadResponse(await gateway.openThread(threadId)))
+      } catch {
+        sendJson(response, {
+          status: 'error',
+          reason: 'unavailable',
+          message: threadErrorMessage('unavailable'),
+        } satisfies ThreadResponse)
       }
       return
     }

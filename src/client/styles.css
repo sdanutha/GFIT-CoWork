@@ -276,10 +276,30 @@ h1 {
 
 .thread-item {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 0;
+  padding: 0.75rem 0.5rem;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
   border-top: 1px solid var(--surface-border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+.thread-item:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.thread-item:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.thread-item--selected {
+  background: var(--accent-soft);
 }
 
 .thread-title {
@@ -313,6 +333,63 @@ h1 {
 .thread-activity--live {
   color: var(--accent-strong);
   background: var(--accent-soft);
+}
+
+.thread-view {
+  margin-top: 1.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.thread-view-heading {
+  margin: 0 0 0.9rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.7rem 0.85rem;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border: 1px solid var(--surface-border);
+  border-radius: 0.7rem;
+}
+
+.message--user {
+  border-left: 3px solid var(--accent);
+}
+
+.message--assistant {
+  border-left: 3px solid var(--accent-strong);
+}
+
+.message--tool {
+  border-left: 3px solid var(--muted);
+}
+
+.message-role {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
 }
 
 .local-note {

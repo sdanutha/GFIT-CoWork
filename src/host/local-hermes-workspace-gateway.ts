@@ -2,7 +2,14 @@ import { spawn } from 'node:child_process'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
-import type { HermesReadiness, OpenWorkspaceResult, Thread } from '../shared/contracts.js'
+import type {
+  HermesReadiness,
+  MessageRole,
+  OpenThreadResult,
+  OpenWorkspaceResult,
+  Thread,
+  ThreadMessage,
+} from '../shared/contracts.js'
 
 type OwnedProcess = {
   stop(): Promise<void>
@@ -16,6 +23,7 @@ type Options = {
   waitForReady(): Promise<boolean>
   statPath?(path: string): Promise<PathStatus>
   listThreads?(path: string): Promise<Thread[]>
+  readHistory?(threadId: string): Promise<ThreadMessage[]>
 }
 
 const hermesBaseUrl = 'http://127.0.0.1:9119'
@@ -189,8 +197,44 @@ const listThreads = async (_workspacePath: string): Promise<Thread[]> => {
   }
 }
 
+const messageText = (content: unknown): string => {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => (typeof block === 'object' && block !== null
+        && typeof (block as { text?: unknown }).text === 'string'
+        ? (block as { text: string }).text
+        : ''))
+      .join('')
+  }
+  return ''
+}
+
+const toMessage = (value: unknown): ThreadMessage[] => {
+  if (typeof value !== 'object' || value === null) return []
+  const row = value as Record<string, unknown>
+  const role = row.role
+  const normalizedRole: MessageRole =
+    role === 'user' || role === 'assistant' || role === 'tool' ? role : 'system'
+  const id = typeof row.row_id === 'string' ? row.row_id
+    : typeof row.id === 'string' ? row.id : undefined
+  return [{
+    ...(id !== undefined ? { id } : {}),
+    role: normalizedRole,
+    text: messageText(row.content ?? row.text),
+  }]
+}
+
+const readHistory = async (threadId: string): Promise<ThreadMessage[]> => {
+  const result = await jsonRpcRequest('session.history', {
+    session_id: threadId, include_row_ids: true,
+  })
+  const messages = (result as { messages?: unknown }).messages
+  return Array.isArray(messages) ? messages.flatMap(toMessage) : []
+}
+
 const localHermesOperations: Options = {
-  probe, checkUsable, start, waitForReady, statPath, listThreads,
+  probe, checkUsable, start, waitForReady, statPath, listThreads, readHistory,
 }
 
 const isAlreadyStoppedError = (error: unknown) => (
@@ -257,6 +301,7 @@ export function createLocalHermesWorkspaceGateway(
 
   const validatePath = options.statPath ?? statPath
   const readThreads = options.listThreads ?? listThreads
+  const readThreadHistory = options.readHistory ?? readHistory
 
   return {
     async health() {
@@ -275,6 +320,15 @@ export function createLocalHermesWorkspaceGateway(
       const status = await validatePath(path)
       if (status !== 'directory') return { kind: 'error', reason: status }
       return { kind: 'opened', workspace: { path, threads: await readThreads(path) } }
+    },
+    async openThread(threadId: string): Promise<OpenThreadResult> {
+      try {
+        // The gateway does not distinguish a deleted session from other read
+        // failures, so any error folds to a safe "unreadable" recovery state.
+        return { kind: 'opened', history: { threadId, messages: await readThreadHistory(threadId) } }
+      } catch {
+        return { kind: 'error', reason: 'unreadable' }
+      }
     },
     close,
   }

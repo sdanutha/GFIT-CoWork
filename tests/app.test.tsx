@@ -324,3 +324,168 @@ test('remembers opened Workspaces and reopens a recent one', async () => {
     }
   })
 })
+
+test('requests a Thread from the CoWork host and returns its messages', async () => {
+  const calls: Array<{ url: string; body: unknown }> = []
+  const fetcher: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), body: JSON.parse(String(init?.body ?? '{}')) })
+    return new Response(JSON.stringify({
+      status: 'opened',
+      threadId: 's1',
+      messages: [{ role: 'user', text: 'hi' }],
+    }), { status: 200 })
+  }
+  const { requestThread } = await import('../src/client/App.js')
+  const result = await requestThread('s1', fetcher)
+
+  assert.deepEqual(result, { status: 'opened', threadId: 's1', messages: [{ role: 'user', text: 'hi' }] })
+  assert.deepEqual(calls, [{ url: '/api/thread', body: { threadId: 's1' } }])
+})
+
+test('turns a failed Thread request into a safe, non-leaking state', async () => {
+  const fetcher: typeof fetch = async () => { throw new Error('token=do-not-render') }
+  const { requestThread } = await import('../src/client/App.js')
+  const result = await requestThread('s1', fetcher)
+
+  assert.equal(result.status, 'error')
+  assert.doesNotMatch(JSON.stringify(result), /token|do-not-render/i)
+})
+
+test('renders a selected Thread history in message order from Hermes', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened',
+      threadId,
+      messages: [
+        { role: 'user', text: 'Please refactor' },
+        { role: 'assistant', text: 'Working on it' },
+        { role: 'tool', text: 'ran the tests' },
+      ],
+    })
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="s1" open={open} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const text = container.textContent ?? ''
+      assert.match(text, /Please refactor/)
+      assert.match(text, /Working on it/)
+      assert.match(text, /ran the tests/)
+      const items = [...container.querySelectorAll('.message-text')].map((n) => n.textContent)
+      assert.deepEqual(items, ['Please refactor', 'Working on it', 'ran the tests'])
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('shows safe recovery guidance when a Thread cannot be read', async () => {
+  await withDom(async (dom) => {
+    const { ThreadView } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestThread = async () => ({
+      status: 'error',
+      reason: 'not-found',
+      message: 'That Thread no longer exists in Hermes.',
+    })
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ThreadView threadId="gone" open={open} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const alert = container.querySelector('[role="alert"]')
+      assert.ok(alert)
+      assert.match(alert.textContent ?? '', /no longer exists/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('restores the last Workspace and selected Thread on return', async () => {
+  await withDom(async (dom) => {
+    const { WorkspaceBrowser } = await import('../src/client/App.js')
+    dom.window.localStorage.setItem(
+      'gfit-cowork:last-view',
+      JSON.stringify({ workspacePath: '/home/dev/project', threadId: 't1' }),
+    )
+    const open: typeof import('../src/client/App.js').requestWorkspace = async (path) => ({
+      status: 'opened',
+      path,
+      threads: [{ id: 't1', title: 'Remembered thread', updatedAt: '2026-09-13T00:00:00.000Z', activity: 'idle' }],
+    })
+    const openThread: typeof import('../src/client/App.js').requestThread = async (threadId) => ({
+      status: 'opened',
+      threadId,
+      messages: [{ role: 'assistant', text: 'restored message' }],
+    })
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<WorkspaceBrowser open={open} openThread={openThread} />)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const text = container.textContent ?? ''
+      assert.match(text, /\/home\/dev\/project/)
+      assert.match(text, /Remembered thread/)
+      assert.match(text, /restored message/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('opens a Thread when its list item is selected', async () => {
+  await withDom(async (dom) => {
+    const { WorkspaceBrowser } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestWorkspace = async (path) => ({
+      status: 'opened',
+      path,
+      threads: [{ id: 't9', title: 'Pick me', updatedAt: '2026-09-13T00:00:00.000Z', activity: 'idle' }],
+    })
+    let openedThreadId = ''
+    const openThread: typeof import('../src/client/App.js').requestThread = async (threadId) => {
+      openedThreadId = threadId
+      return { status: 'opened', threadId, messages: [{ role: 'user', text: 'hello thread' }] }
+    }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<WorkspaceBrowser open={open} openThread={openThread} />)
+        await Promise.resolve()
+      })
+      const input = container.querySelector('#workspace-path') as HTMLInputElement
+      const openButton = container.querySelector('.workspace-open-button')
+      assert.ok(openButton)
+      typeInto(dom, input, '/home/dev/project')
+      await act(async () => {
+        openButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      const threadButton = container.querySelector('.thread-item')
+      assert.ok(threadButton)
+      await act(async () => {
+        threadButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.equal(openedThreadId, 't9')
+      assert.match(container.textContent ?? '', /hello thread/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})

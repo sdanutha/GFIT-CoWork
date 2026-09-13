@@ -385,3 +385,85 @@ test('lists Threads from session.list, enriching activity from the live session 
     globalThis.WebSocket = OriginalWebSocket
   }
 })
+
+test('opens a Thread by mapping session.history into ordered messages', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+  let historyMethod = ''
+  let historyParams: Record<string, unknown> = {}
+
+  class HistoryWebSocket extends EventTarget {
+    constructor(url: string | URL) { super(); void url; queueMicrotask(() => this.dispatchEvent(new Event('open'))) }
+    send(data: unknown) {
+      const request = JSON.parse(String(data)) as { id: string; method: string; params: Record<string, unknown> }
+      historyMethod = request.method
+      historyParams = request.params
+      const message = new Event('message')
+      Object.defineProperty(message, 'data', {
+        value: JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { count: 3, messages: [
+          { row_id: 'r1', role: 'user', content: 'hi' },
+          { role: 'assistant', content: [{ text: 'hel' }, { text: 'lo' }] },
+          { role: 'tool', content: 'ran tests' },
+        ] } }),
+      })
+      queueMicrotask(() => this.dispatchEvent(message))
+    }
+    close() {}
+  }
+
+  globalThis.fetch = async (input) => String(input).endsWith('/')
+    ? new Response('<script>window.__HERMES_SESSION_TOKEN__="ephemeral-loopback-token";</script>', { status: 200 })
+    : new Response('{"ok":true}', { status: 200 })
+  globalThis.WebSocket = HistoryWebSocket as unknown as typeof WebSocket
+
+  try {
+    const gateway = createLocalHermesWorkspaceGateway(baseHealthOps)
+    assert.deepEqual(await gateway.openThread('s1'), {
+      kind: 'opened',
+      history: {
+        threadId: 's1',
+        messages: [
+          { id: 'r1', role: 'user', text: 'hi' },
+          { role: 'assistant', text: 'hello' },
+          { role: 'tool', text: 'ran tests' },
+        ],
+      },
+    })
+    assert.equal(historyMethod, 'session.history')
+    assert.equal(historyParams.session_id, 's1')
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})
+
+test('folds a gateway history error into an unreadable Thread state', async () => {
+  const originalFetch = globalThis.fetch
+  const OriginalWebSocket = globalThis.WebSocket
+
+  class ErrorWebSocket extends EventTarget {
+    constructor(url: string | URL) { super(); void url; queueMicrotask(() => this.dispatchEvent(new Event('open'))) }
+    send(data: unknown) {
+      const request = JSON.parse(String(data)) as { id: string }
+      const message = new Event('message')
+      Object.defineProperty(message, 'data', {
+        value: JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: 5001, message: 'nope' } }),
+      })
+      queueMicrotask(() => this.dispatchEvent(message))
+    }
+    close() {}
+  }
+
+  globalThis.fetch = async (input) => String(input).endsWith('/')
+    ? new Response('<script>window.__HERMES_SESSION_TOKEN__="ephemeral-loopback-token";</script>', { status: 200 })
+    : new Response('{"ok":true}', { status: 200 })
+  globalThis.WebSocket = ErrorWebSocket as unknown as typeof WebSocket
+
+  try {
+    const gateway = createLocalHermesWorkspaceGateway(baseHealthOps)
+    assert.deepEqual(await gateway.openThread('s1'), { kind: 'error', reason: 'unreadable' })
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.WebSocket = OriginalWebSocket
+  }
+})

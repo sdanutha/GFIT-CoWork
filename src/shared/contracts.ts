@@ -59,3 +59,43 @@ export function workspaceResponse(result: OpenWorkspaceResult): WorkspaceRespons
     ? { status: 'opened', path: result.workspace.path, threads: result.workspace.threads }
     : { status: 'error', reason: result.reason, message: workspaceErrorMessages[result.reason] }
 }
+
+export type MessageRole = 'user' | 'assistant' | 'tool' | 'system'
+
+export type ThreadMessage = {
+  id?: string
+  role: MessageRole
+  text: string
+}
+
+export type ThreadHistory = {
+  threadId: string
+  messages: ThreadMessage[]
+}
+
+export type ThreadValidationReason = 'not-found' | 'unreadable'
+export type ThreadErrorReason = ThreadValidationReason | 'unavailable'
+
+export type OpenThreadResult =
+  | { kind: 'opened'; history: ThreadHistory }
+  | { kind: 'error'; reason: ThreadValidationReason }
+
+export type ThreadResponse =
+  | { status: 'opened'; threadId: string; messages: ThreadMessage[] }
+  | { status: 'error'; reason: ThreadErrorReason; message: string }
+
+const threadErrorMessages: Record<ThreadErrorReason, string> = {
+  'not-found': 'That Thread no longer exists in Hermes.',
+  unreadable: 'That Thread could not be read. It may have been changed in Hermes.',
+  unavailable: 'GFIT CoWork could not reach Hermes. Check Hermes, then retry.',
+}
+
+export function threadErrorMessage(reason: ThreadErrorReason): string {
+  return threadErrorMessages[reason]
+}
+
+export function threadResponse(result: OpenThreadResult): ThreadResponse {
+  return result.kind === 'opened'
+    ? { status: 'opened', threadId: result.history.threadId, messages: result.history.messages }
+    : { status: 'error', reason: result.reason, message: threadErrorMessages[result.reason] }
+}
