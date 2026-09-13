@@ -2,7 +2,10 @@ import { spawn } from 'node:child_process'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
 import type { HermesReadiness } from '../shared/contracts.js'
 
-type OwnedProcess = { stop(): Promise<void> }
+type OwnedProcess = {
+  stop(): Promise<void>
+  onExit?(listener: () => void): void
+}
 type Options = {
   probe(): Promise<boolean>
   checkUsable?(): Promise<boolean>
@@ -83,8 +86,13 @@ const start = () => {
   const child = spawn('hermes', ['serve', '--host', '127.0.0.1', '--port', '9119'], {
     detached: process.platform !== 'win32', stdio: 'ignore', shell: false,
   })
-  child.on('error', () => {})
-  return { stop: async () => { if (child.pid) process.kill(child.pid, 'SIGTERM') } }
+  return {
+    onExit: (listener: () => void) => {
+      child.once('error', listener)
+      child.once('exit', listener)
+    },
+    stop: async () => { if (child.pid) process.kill(child.pid, 'SIGTERM') },
+  }
 }
 
 const waitForReady = async () => {
@@ -127,7 +135,11 @@ export function createLocalHermesWorkspaceGateway(
         : { kind: 'unavailable', remedy: 'Configure Hermes with hermes setup, then retry.' }
     }
     await stopOwned()
-    owned = options.start()
+    const started = options.start()
+    owned = started
+    started.onExit?.(() => {
+      if (owned === started) owned = undefined
+    })
     if (await options.waitForReady()) {
       return await isUsable()
         ? { kind: 'ready', startedByCoWork: true }

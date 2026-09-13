@@ -238,3 +238,26 @@ test('close waits for in-flight readiness, cleans ownership, and clears stale re
   assert.deepEqual(await queuedHealth, { kind: 'ready', startedByCoWork: false })
   assert.equal(probes, 2)
 })
+
+test('clears ownership when the started Hermes child exits before a later external attach', async () => {
+  let childExited!: () => void
+  let stops = 0
+  let starts = 0
+  const gateway = createLocalHermesWorkspaceGateway({
+    probe: async () => starts === 0 ? false : true,
+    start: () => {
+      starts += 1
+      return {
+        onExit: (listener: () => void) => { childExited = listener },
+        stop: async () => { stops += 1 },
+      }
+    },
+    waitForReady: async () => true,
+  })
+
+  assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: true })
+  childExited()
+  assert.deepEqual(await gateway.health(), { kind: 'ready', startedByCoWork: false })
+  await gateway.close()
+  assert.equal(stops, 0)
+})
