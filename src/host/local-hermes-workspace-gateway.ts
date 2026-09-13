@@ -1,16 +1,21 @@
 import { spawn } from 'node:child_process'
+import { stat } from 'node:fs/promises'
+import { isAbsolute } from 'node:path'
 import type { HermesWorkspaceGateway } from './hermes-workspace-gateway.js'
-import type { HermesReadiness } from '../shared/contracts.js'
+import type { HermesReadiness, OpenWorkspaceResult, Thread } from '../shared/contracts.js'
 
 type OwnedProcess = {
   stop(): Promise<void>
   onExit?(listener: () => void): void
 }
+type PathStatus = 'directory' | 'not-found' | 'not-a-directory' | 'unreadable'
 type Options = {
   probe(): Promise<boolean>
   checkUsable?(): Promise<boolean>
   start(): OwnedProcess
   waitForReady(): Promise<boolean>
+  statPath?(path: string): Promise<PathStatus>
+  listThreads?(path: string): Promise<Thread[]>
 }
 
 const hermesBaseUrl = 'http://127.0.0.1:9119'
@@ -103,7 +108,54 @@ const waitForReady = async () => {
   return false
 }
 
-const localHermesOperations: Options = { probe, checkUsable, start, waitForReady }
+const errorCode = (error: unknown): string | undefined => (
+  typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code: unknown }).code)
+    : undefined
+)
+
+const statPath = async (path: string): Promise<PathStatus> => {
+  try {
+    return (await stat(path)).isDirectory() ? 'directory' : 'not-a-directory'
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return 'not-found'
+    return 'unreadable'
+  }
+}
+
+const toThread = (value: unknown): Thread[] => {
+  if (typeof value !== 'object' || value === null) return []
+  const record = value as Record<string, unknown>
+  if (typeof record.id !== 'string' || typeof record.title !== 'string') return []
+  return [{
+    id: record.id,
+    title: record.title,
+    updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : '',
+    activity: record.activity === 'live' ? 'live' : 'idle',
+  }]
+}
+
+// Provisional: Hermes owns the Thread list for a Workspace. The exact sessions
+// surface must be confirmed against a running Hermes; until then a failure
+// yields an empty (not a fabricated) Thread list so the Workspace still opens.
+const listThreads = async (path: string): Promise<Thread[]> => {
+  try {
+    const response = await fetch(`${hermesBaseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workspace: path }),
+    })
+    if (!response.ok) return []
+    const data = await response.json() as { sessions?: unknown }
+    return Array.isArray(data.sessions) ? data.sessions.flatMap(toThread) : []
+  } catch {
+    return []
+  }
+}
+
+const localHermesOperations: Options = {
+  probe, checkUsable, start, waitForReady, statPath, listThreads,
+}
 
 const isAlreadyStoppedError = (error: unknown) => (
   typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH'
@@ -167,6 +219,9 @@ export function createLocalHermesWorkspaceGateway(
     return closing
   }
 
+  const validatePath = options.statPath ?? statPath
+  const readThreads = options.listThreads ?? listThreads
+
   return {
     async health() {
       if (closing) await closing
@@ -178,6 +233,12 @@ export function createLocalHermesWorkspaceGateway(
       } finally {
         if (inFlight === operation) inFlight = undefined
       }
+    },
+    async openWorkspace(path: string): Promise<OpenWorkspaceResult> {
+      if (!isAbsolute(path)) return { kind: 'error', reason: 'not-absolute' }
+      const status = await validatePath(path)
+      if (status !== 'directory') return { kind: 'error', reason: status }
+      return { kind: 'opened', workspace: { path, threads: await readThreads(path) } }
     },
     close,
   }

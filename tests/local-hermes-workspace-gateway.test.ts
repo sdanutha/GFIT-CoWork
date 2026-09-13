@@ -261,3 +261,55 @@ test('clears ownership when the started Hermes child exits before a later extern
   await gateway.close()
   assert.equal(stops, 0)
 })
+
+// openWorkspace never touches the health operations, so keep them inert here.
+const baseHealthOps = {
+  probe: async () => true,
+  start: () => ({ stop: async () => {} }),
+  waitForReady: async () => true,
+}
+
+test('rejects a relative Workspace path without touching the filesystem', async () => {
+  let statted = false
+  const gateway = createLocalHermesWorkspaceGateway({
+    ...baseHealthOps,
+    statPath: async () => { statted = true; return 'directory' },
+  })
+
+  assert.deepEqual(await gateway.openWorkspace('relative/path'), {
+    kind: 'error',
+    reason: 'not-absolute',
+  })
+  assert.equal(statted, false)
+})
+
+test('maps filesystem status of an absolute path to a validation reason', async () => {
+  for (const status of ['not-found', 'not-a-directory', 'unreadable'] as const) {
+    const gateway = createLocalHermesWorkspaceGateway({ ...baseHealthOps, statPath: async () => status })
+    assert.deepEqual(await gateway.openWorkspace('/home/dev/x'), {
+      kind: 'error',
+      reason: status,
+    })
+  }
+})
+
+test('opens an absolute directory and returns its Hermes Threads scoped to the path', async () => {
+  const requestedPaths: string[] = []
+  const gateway = createLocalHermesWorkspaceGateway({
+    ...baseHealthOps,
+    statPath: async () => 'directory',
+    listThreads: async (path) => {
+      requestedPaths.push(path)
+      return [{ id: 't1', title: 'Scoped', updatedAt: '2026-09-13T00:00:00.000Z', activity: 'idle' }]
+    },
+  })
+
+  assert.deepEqual(await gateway.openWorkspace('/home/dev/project'), {
+    kind: 'opened',
+    workspace: {
+      path: '/home/dev/project',
+      threads: [{ id: 't1', title: 'Scoped', updatedAt: '2026-09-13T00:00:00.000Z', activity: 'idle' }],
+    },
+  })
+  assert.deepEqual(requestedPaths, ['/home/dev/project'])
+})

@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { JSDOM } from 'jsdom'
 import { App, requestHealth } from '../src/client/App.js'
+import { withDom, typeInto } from './support/dom.js'
 
 test('shows GFIT CoWork ready for Hermes', () => {
   const html = renderToStaticMarkup(
@@ -172,4 +173,154 @@ test('loads Hermes health on mount and retries from the unavailable screen', asy
     }
     dom.window.close()
   }
+})
+
+test('requests a Workspace from the CoWork host and returns its scoped Threads', async () => {
+  const calls: Array<{ url: string; body: unknown }> = []
+  const fetcher: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), body: JSON.parse(String(init?.body ?? '{}')) })
+    return new Response(JSON.stringify({
+      status: 'opened',
+      path: '/home/dev/project',
+      threads: [],
+    }), { status: 200 })
+  }
+
+  const { requestWorkspace } = await import('../src/client/App.js')
+  const result = await requestWorkspace('/home/dev/project', fetcher)
+
+  assert.deepEqual(result, { status: 'opened', path: '/home/dev/project', threads: [] })
+  assert.deepEqual(calls, [{ url: '/api/workspace', body: { path: '/home/dev/project' } }])
+})
+
+test('turns a failed Workspace request into a safe, non-leaking state', async () => {
+  const fetcher: typeof fetch = async () => { throw new Error('token=do-not-render') }
+  const { requestWorkspace } = await import('../src/client/App.js')
+
+  const result = await requestWorkspace('/home/dev/project', fetcher)
+
+  assert.equal(result.status, 'error')
+  assert.doesNotMatch(JSON.stringify(result), /token|do-not-render/i)
+})
+
+test('opens a Workspace and lists its Threads with title, recency, and activity', async () => {
+  await withDom(async (dom) => {
+    const { WorkspaceBrowser } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestWorkspace = async (path) => ({
+      status: 'opened',
+      path,
+      threads: [
+        { id: 't1', title: 'Refactor gateway', updatedAt: '2026-09-13T08:30:00.000Z', activity: 'live' },
+        { id: 't2', title: 'Write the spec', updatedAt: '2026-09-10T00:00:00.000Z', activity: 'idle' },
+      ],
+    })
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<WorkspaceBrowser open={open} />)
+        await Promise.resolve()
+      })
+      const input = container.querySelector('#workspace-path') as HTMLInputElement
+      const openButton = container.querySelector('.workspace-open-button')
+      assert.ok(openButton)
+      typeInto(dom, input, '/home/dev/project')
+      await act(async () => {
+        openButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      const text = container.textContent ?? ''
+      assert.match(text, /Refactor gateway/)
+      assert.match(text, /Write the spec/)
+      assert.match(text, /Live/)
+      assert.match(text, /Idle/)
+      assert.match(text, /Sep 13, 2026/)
+      assert.match(text, /\/home\/dev\/project/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('shows a safe error message when a Workspace cannot be opened', async () => {
+  await withDom(async (dom) => {
+    const { WorkspaceBrowser } = await import('../src/client/App.js')
+    const open: typeof import('../src/client/App.js').requestWorkspace = async () => ({
+      status: 'error',
+      reason: 'not-found',
+      message: 'That folder does not exist on this machine.',
+    })
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<WorkspaceBrowser open={open} />)
+        await Promise.resolve()
+      })
+      const input = container.querySelector('#workspace-path') as HTMLInputElement
+      const openButton = container.querySelector('.workspace-open-button')
+      assert.ok(openButton)
+      typeInto(dom, input, '/missing')
+      await act(async () => {
+        openButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      const alert = container.querySelector('[role="alert"]')
+      assert.ok(alert)
+      assert.match(alert.textContent ?? '', /does not exist/)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
+})
+
+test('remembers opened Workspaces and reopens a recent one', async () => {
+  await withDom(async (dom) => {
+    const { WorkspaceBrowser, readRecentWorkspaces } = await import('../src/client/App.js')
+    let opened = 0
+    const open: typeof import('../src/client/App.js').requestWorkspace = async (path) => {
+      opened += 1
+      return { status: 'opened', path, threads: [] }
+    }
+    const container = dom.window.document.querySelector('#root')
+    assert.ok(container)
+    let root: Root | undefined
+
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<WorkspaceBrowser open={open} />)
+        await Promise.resolve()
+      })
+      const input = container.querySelector('#workspace-path') as HTMLInputElement
+      const openButton = container.querySelector('.workspace-open-button')
+      assert.ok(openButton)
+      typeInto(dom, input, '/home/dev/remembered')
+      await act(async () => {
+        openButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+
+      assert.deepEqual(readRecentWorkspaces(), ['/home/dev/remembered'])
+      const recentButton = [...container.querySelectorAll('.workspace-recent-item')]
+        .find((element) => element.textContent === '/home/dev/remembered')
+      assert.ok(recentButton)
+
+      await act(async () => {
+        recentButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+      assert.equal(opened, 2)
+    } finally {
+      if (root) await act(async () => { root?.unmount() })
+    }
+  })
 })
