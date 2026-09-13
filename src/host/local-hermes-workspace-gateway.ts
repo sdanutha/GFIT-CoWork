@@ -27,7 +27,6 @@ type Options = {
   waitForReady(): Promise<boolean>
   statPath?(path: string): Promise<PathStatus>
   listThreads?(path: string): Promise<Thread[]>
-  readHistory?(threadId: string): Promise<ThreadMessage[]>
 }
 
 const hermesBaseUrl = 'http://127.0.0.1:9119'
@@ -220,20 +219,28 @@ const toMessage = (value: unknown): ThreadMessage[] => {
   const role = row.role
   const normalizedRole: MessageRole =
     role === 'user' || role === 'assistant' || role === 'tool' ? role : 'system'
-  const id = typeof row.row_id === 'string' ? row.row_id
-    : typeof row.id === 'string' ? row.id : undefined
+  const rawId = row.row_id ?? row.id
+  const id = typeof rawId === 'string' ? rawId
+    : typeof rawId === 'number' ? String(rawId) : undefined
   return [{
     ...(id !== undefined ? { id } : {}),
     role: normalizedRole,
-    text: messageText(row.content ?? row.text),
+    text: messageText(row.text ?? row.content),
   }]
 }
 
-const readHistory = async (threadId: string): Promise<ThreadMessage[]> => {
-  const result = await jsonRpcRequest('session.history', {
-    session_id: threadId, include_row_ids: true,
-  })
-  const messages = (result as { messages?: unknown }).messages
+// session.list returns the stored session key; session.resume binds it to a live
+// runtime session_id (verified against Hermes 0.21.2). Every later prompt/stop/
+// stream call must use that runtime id, so remember the key -> runtime mapping.
+const runtimeSessionByKey = new Map<string, string>()
+const runtimeSessionId = (threadKey: string): string => runtimeSessionByKey.get(threadKey) ?? threadKey
+
+const resumeThread = async (threadKey: string): Promise<ThreadMessage[]> => {
+  const result = await jsonRpcRequest('session.resume', { session_id: threadKey }) as {
+    session_id?: unknown; messages?: unknown
+  }
+  if (typeof result?.session_id === 'string') runtimeSessionByKey.set(threadKey, result.session_id)
+  const messages = result?.messages
   return Array.isArray(messages) ? messages.flatMap(toMessage) : []
 }
 
@@ -253,11 +260,11 @@ const createThread = async (cwd: string, title?: string): Promise<CreateThreadRe
 }
 
 const submitPrompt = async (threadId: string, text: string): Promise<void> => {
-  await jsonRpcRequest('prompt.submit', { session_id: threadId, text })
+  await jsonRpcRequest('prompt.submit', { session_id: runtimeSessionId(threadId), text })
 }
 
 const stopThread = async (threadId: string): Promise<void> => {
-  await jsonRpcRequest('session.interrupt', { session_id: threadId })
+  await jsonRpcRequest('session.interrupt', { session_id: runtimeSessionId(threadId) })
 }
 
 const respondApproval = async (
@@ -266,7 +273,7 @@ const respondApproval = async (
   choice: ApprovalChoice,
 ): Promise<void> => {
   await jsonRpcRequest('approval.respond', {
-    session_id: threadId, request_id: requestId, choice,
+    session_id: runtimeSessionId(threadId), request_id: requestId, choice,
   })
 }
 
@@ -298,7 +305,10 @@ const mapStreamEvent = (raw: unknown, threadId: string): ThreadStreamEvent | und
   if (typeof frame.method !== 'string') return undefined
   const params = (typeof frame.params === 'object' && frame.params !== null
     ? frame.params : {}) as Record<string, unknown>
-  if (typeof params.session_id === 'string' && params.session_id !== threadId) return undefined
+  // Accept the stored key or its bound runtime session id (see runtimeSessionByKey).
+  if (typeof params.session_id === 'string'
+    && params.session_id !== threadId
+    && params.session_id !== runtimeSessionByKey.get(threadId)) return undefined
   switch (frame.method) {
     case 'turn.start': case 'turn.started': return { kind: 'turn-start' }
     case 'turn.end': return { kind: 'turn-end' }
@@ -346,7 +356,7 @@ const subscribe = (
 }
 
 const localHermesOperations: Options = {
-  probe, checkUsable, start, waitForReady, statPath, listThreads, readHistory,
+  probe, checkUsable, start, waitForReady, statPath, listThreads,
 }
 
 const isAlreadyStoppedError = (error: unknown) => (
@@ -413,7 +423,6 @@ export function createLocalHermesWorkspaceGateway(
 
   const validatePath = options.statPath ?? statPath
   const readThreads = options.listThreads ?? listThreads
-  const readThreadHistory = options.readHistory ?? readHistory
 
   return {
     async health() {
@@ -435,9 +444,10 @@ export function createLocalHermesWorkspaceGateway(
     },
     async openThread(threadId: string): Promise<OpenThreadResult> {
       try {
-        // The gateway does not distinguish a deleted session from other read
-        // failures, so any error folds to a safe "unreadable" recovery state.
-        return { kind: 'opened', history: { threadId, messages: await readThreadHistory(threadId) } }
+        // session.resume binds the stored key to a runtime session and returns
+        // its history. The gateway does not distinguish a deleted session from
+        // other read failures, so any error folds to a safe "unreadable" state.
+        return { kind: 'opened', history: { threadId, messages: await resumeThread(threadId) } }
       } catch {
         return { kind: 'error', reason: 'unreadable' }
       }

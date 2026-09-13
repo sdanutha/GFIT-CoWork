@@ -47,13 +47,25 @@ decorator (e.g. `tui_gateway/methods_session.py`, `methods_prompt.py`,
 
 ### Issue 03 — open and read a Thread
 
-- **`session.info`** — session metadata / cwd (`methods_session.py`, emitted at :871).
-- **`session.history`** — `methods_session.py:1697`
-  - params: `session_id`.
-  - returns: `{ "count": n, "messages": [...] }` via `_history_to_messages`;
-    pass `include_row_ids` so each turn keeps its durable row id.
-- **`session.activate`** — `methods_session.py` (near :930): attach the frontend to a
-  live session and get its payload (optionally `omit_messages`).
+**Verified against a running Hermes (2026-09-13):** `session.list` returns the
+**stored session key**; `session.history` and `session.activate` on that key both
+fail with `4001 "session not found"` because they resolve a **runtime** session.
+The working call is **`session.resume`**:
+
+- **`session.resume`** — params: `session_id` = the stored key from `session.list`.
+  - returns: `{ session_id (NEW runtime id), session_key (the stored key),
+    resumed, running, status, message_count, messages, ... }`.
+  - `messages[]` shape (verified): `{ role, text, timestamp, row_id }` — `text`
+    is already a string; `row_id` is a number.
+  - **The returned `session_id` is a new runtime id** (e.g. stored
+    `20260913_182338_5c7588` → runtime `6d7e75e1`). Every later `prompt.submit`,
+    `session.interrupt`, `approval.respond`, and stream filter must use this
+    runtime id, not the stored key. The local gateway remembers the
+    key → runtime mapping (`runtimeSessionByKey`).
+  - `running`/`status` also report whether a turn is already active (useful for
+    Live Thread detection, issue 06).
+- `session.history` (`methods_session.py:1697`) works only for an already-live
+  runtime session, so it is not used for opening a stored Thread.
 
 ### Issue 04 — create, prompt, stream, stop
 
