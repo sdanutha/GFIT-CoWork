@@ -136,12 +136,15 @@ dangerous action) — GFIT CoWork surfaces `approval.request`, lists via
 ### Issue 06 — Live Thread ownership
 
 - **`session.active_list`** — `methods_session.py:914`
-  - returns: `{ "sessions": [ <live item>, … ] }` — "Live TUI sessions in this
-    process (not a DB browser)", i.e. sessions currently attached/executing through
-    this gateway. Takes `current_session_id`.
-  - A Thread present here (running a turn) is a **Live Thread**: GFIT CoWork shows
-    its activity but must not submit a competing prompt (per `CONTEXT.md`).
-  - `turn.start` / `turn.end` notifications also signal when a Thread goes live/idle.
+  - returns: `{ "sessions": [ <live item>, … ] }` of sessions attached to this
+    gateway. **Verified live:** each item has `session_key` (the stored id, matches
+    `session.list` ids), `id` (runtime), and `status` (`"working"` while a turn
+    runs, `"idle"` when merely attached), plus title/preview/last_active.
+  - Populated only while a turn is active; between turns it can be empty. For the
+    list badge, treat a row as Live only when `status === "working"` and match by
+    `session_key`.
+  - The safety-critical per-Thread signal is `session.resume` `running` (issue 06),
+    not this list snapshot.
 
 ## Two Hermes surfaces (choose the WS gateway)
 

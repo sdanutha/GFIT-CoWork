@@ -45,11 +45,11 @@ to Deny.
 
 ## Next Action
 
-v1 is complete and verified. Optional polish only:
-- The Thread-list live/idle badge uses `session.active_list`, which stayed empty
-  for these sessions, so the list shows "Idle" even while a turn runs. Per-Thread
-  protection works via `running`; the list badge could be improved later.
-- Map any tool event types beyond `terminal` if other tools are used.
+v1 is complete and verified, including the earlier polish: the Thread-list badge
+now shows **Live** for a running Thread (`session.active_list` `status==='working'`,
+matched by `session_key`) — verified live in the browser. No outstanding work.
+Optional future: the badge is a list-load snapshot (not a live subscription);
+map tool event types beyond `terminal` if other tools appear.
 
 ## Risks or Decisions Needed
 
