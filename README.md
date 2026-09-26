@@ -60,6 +60,18 @@ management and public share links. The server refuses these to Members with
 403 (`api/access.py` lists what a Member may call; anything else is refused),
 and the web UI hides their menus.
 
+### Managing Profiles
+
+The Admin adds a colleague in the Profiles panel by creating a Profile named
+after their employee ID, with an optional display name. Each Profile is listed
+as "name (ID)" (or just the ID) with its status and last login. The Admin can
+**disable** a Profile — the person is signed out at once and later logins are
+told their access is suspended, but their data stays — **enable** it again, or
+**delete** it permanently (the Profile and its record) after confirming.
+
+Display name, status and last login live in the **Profile roster**
+(`gfit_roster.json` in the state directory), not in the Hermes Profile config.
+
 The rest of this README is the upstream Hermes WebUI documentation, kept for
 reference.
 

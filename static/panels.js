@@ -6755,10 +6755,12 @@ async function loadProfilesPanel() {
       const activeBadge = isActive ? `<span style="color:var(--link);font-size:10px;font-weight:600;margin-left:6px">${esc(t('profile_active'))}</span>` : '';
       const defaultBadge = p.is_default ? ` <span style="opacity:.5">${esc(t('profile_default_label'))}</span>` : '';
       const hiddenBadge = p.visible === false ? ' <span class="detail-badge" title="Hidden from chat">Hidden from chat</span>' : '';
+      const accessBadge = p.status ? ` ${_profileAccessBadge(p)}` : '';
+      if (p.status) meta.push(p.last_login ? t('profile_last_login_at', _profileLastLogin(p)) : t('profile_last_login_never'));
       card.innerHTML = `
         <div class="profile-card-header">
           <div style="min-width:0;flex:1">
-            <div class="profile-card-name${isActive ? ' is-active' : ''}">${gwDot}${esc(p.name)}${defaultBadge}${activeBadge}${hiddenBadge}</div>
+            <div class="profile-card-name${isActive ? ' is-active' : ''}">${gwDot}${esc(p.label || p.name)}${defaultBadge}${activeBadge}${hiddenBadge}${accessBadge}</div>
             ${meta.length ? `<div class="profile-card-meta">${esc(meta.join(' \u00b7 '))}</div>` : `<div class="profile-card-meta">${esc(t('profile_no_configuration'))}</div>`}
           </div>
         </div>`;
@@ -6806,7 +6808,7 @@ function _renderProfileDetail(p, activeName){
   const body = $('profileDetailBody');
   const empty = $('profileDetailEmpty');
   if (!title || !body) return;
-  title.textContent = p.name;
+  title.textContent = p.label || p.name;
   const isActive = p.name === activeName;
   const isDefault = !!p.is_default;
   const statusBadge = isActive
@@ -6818,6 +6820,14 @@ function _renderProfileDetail(p, activeName){
     : `<span class="detail-badge">${esc(t('profile_gateway_stopped'))}</span>`;
   const rows = [];
   rows.push(`<div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value">${statusBadge}${defaultBadge}</div></div>`);
+  if (p.status) {
+    // GFIT-CoWork Profile roster: who this Profile belongs to and whether they may log in.
+    const isDisabled = _profileIsDisabled(p);
+    const accessBtn = `<button type="button" class="sm-btn" style="margin-left:8px" onclick="setProfileAccess(${esc(JSON.stringify(p.name))}, ${isDisabled})">${esc(t(isDisabled ? 'profile_access_enable' : 'profile_access_disable'))}</button>`;
+    rows.push(`<div class="detail-row"><div class="detail-row-label">${esc(t('profile_display_name_label'))}</div><div class="detail-row-value">${p.display_name ? esc(p.display_name) : `<span style="color:var(--muted)">${esc(t('profile_none'))}</span>`}</div></div>`);
+    rows.push(`<div class="detail-row"><div class="detail-row-label">${esc(t('profile_access_label'))}</div><div class="detail-row-value">${_profileAccessBadge(p)}${_profilesCache && _profilesCache.single_profile_mode ? '' : accessBtn}</div></div>`);
+    rows.push(`<div class="detail-row"><div class="detail-row-label">${esc(t('profile_last_login_label'))}</div><div class="detail-row-value">${p.last_login ? esc(_profileLastLogin(p)) : `<span style="color:var(--muted)">${esc(t('profile_last_login_never'))}</span>`}</div></div>`);
+  }
   rows.push(`<div class="detail-row"><div class="detail-row-label">Gateway</div><div class="detail-row-value">${gwBadge}</div></div>`);
   if (p.model) rows.push(`<div class="detail-row"><div class="detail-row-label">Model</div><div class="detail-row-value"><code>${esc(p.model)}</code></div></div>`);
   if (p.provider) rows.push(`<div class="detail-row"><div class="detail-row-label">Provider</div><div class="detail-row-value">${esc(p.provider)}</div></div>`);
@@ -6903,12 +6913,38 @@ async function deleteCurrentProfile(){
   const _ok = await showConfirmDialog({title:t('profile_delete_confirm_title',name),message:t('profile_delete_confirm_message'),confirmLabel:t('delete_title'),danger:true,focusCancel:true});
   if(!_ok) return;
   try {
-    await api('/api/profile/delete', { method: 'POST', body: JSON.stringify({ name }) });
+    await api('/api/profile/delete', { method: 'POST', body: JSON.stringify({ name, confirm: name }) });
     _invalidateKanbanProfileCache();
     _clearProfileDetail();
     await loadProfilesPanel();
     showToast(t('profile_deleted', name));
   } catch (e) { showToast(t('delete_failed') + e.message); }
+}
+
+function _profileLastLogin(p){
+  return new Date(p.last_login * 1000).toLocaleString();
+}
+
+function _profileIsDisabled(p){
+  return p.status === 'disabled';
+}
+
+function _profileAccessBadge(p){
+  return _profileIsDisabled(p)
+    ? `<span class="detail-badge">${esc(t('profile_access_disabled'))}</span>`
+    : `<span class="detail-badge ok">${esc(t('profile_access_active'))}</span>`;
+}
+
+async function setProfileAccess(name, enable){
+  if (!enable) {
+    const _ok = await showConfirmDialog({title:t('profile_disable_confirm_title', name),message:t('profile_disable_confirm_message'),confirmLabel:t('profile_access_disable'),danger:true,focusCancel:true});
+    if (!_ok) return;
+  }
+  try {
+    await api(enable ? '/api/profile/enable' : '/api/profile/disable', { method: 'POST', body: JSON.stringify({ name }) });
+    await loadProfilesPanel();
+    showToast(t(enable ? 'profile_enabled_toast' : 'profile_disabled_toast', name));
+  } catch (e) { showToast(e.message); }
 }
 
 function renderProfileDropdown(data) {
@@ -7388,6 +7424,10 @@ function _renderProfileForm(){
           <div class="detail-form-hint">${esc(t('profile_name_rule') || 'Lowercase letters, numbers, hyphens, underscores only.')}</div>
         </div>
         <div class="detail-form-row">
+          <label for="profileFormDisplayName">${esc(t('profile_display_name_label'))}</label>
+          <input type="text" id="profileFormDisplayName" placeholder="${esc(t('profile_display_name_placeholder'))}" autocomplete="off">
+        </div>
+        <div class="detail-form-row">
           <label class="detail-form-check" for="profileFormClone">
             <input type="checkbox" id="profileFormClone"> <span>${esc(t('profile_clone_label') || 'Clone config from active profile')}</span>
           </label>
@@ -7473,6 +7513,9 @@ async function saveProfileForm(){
   if (baseUrl && !/^https?:\/\//.test(baseUrl)) { errEl.textContent = t('profile_base_url_rule'); errEl.style.display = ''; return; }
   try {
     const payload = { name, clone_config: cloneConfig };
+    const displayNameEl = $('profileFormDisplayName');
+    const displayName = displayNameEl ? (displayNameEl.value || '').trim() : '';
+    if (displayName) payload.display_name = displayName;
     const selectedModel = modelEl ? (modelEl.value || '').trim() : '';
     if (selectedModel) {
       const modelState = (typeof _modelStateForSelect === 'function')
@@ -7504,7 +7547,7 @@ async function deleteProfile(name) {
   const _delProf=await showConfirmDialog({title:t('profile_delete_confirm_title',name),message:t('profile_delete_confirm_message'),confirmLabel:t('delete_title'),danger:true,focusCancel:true});
   if(!_delProf) return;
   try {
-    await api('/api/profile/delete', { method: 'POST', body: JSON.stringify({ name }) });
+    await api('/api/profile/delete', { method: 'POST', body: JSON.stringify({ name, confirm: name }) });
     _invalidateKanbanProfileCache();
     await loadProfilesPanel();
     showToast(t('profile_deleted', name));

@@ -1002,8 +1002,8 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     request runs in ``default``.
 
     Fails closed: the session is ended when Directory login is no longer
-    configured, the bound Profile no longer exists, the session's role is
-    unknown, or an Admin is no longer on the Admin list.
+    configured, the bound Profile no longer exists or is disabled, the
+    session's role is unknown, or an Admin is no longer on the Admin list.
     """
     from api.access import ROLE_ADMIN, ROLE_MEMBER, is_admin
     from api.profiles import named_profile_exists, pin_request_profile
@@ -1013,7 +1013,9 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     if role == ROLE_ADMIN:
         valid = bound_profile == 'default' and is_admin(info.get('username'))
     elif role == ROLE_MEMBER:
-        valid = named_profile_exists(bound_profile)
+        from api import roster
+
+        valid = named_profile_exists(bound_profile) and not roster.is_disabled(bound_profile)
     else:
         valid = False
     if not is_directory_auth_enabled() or not valid:
@@ -1146,6 +1148,21 @@ def invalidate_session(cookie_value) -> None:
             if token in _sessions:
                 _sessions.pop(token, None)
                 _save_sessions(_sessions)
+
+
+def invalidate_sessions_for_profile(profile: str) -> None:
+    """End every session bound to *profile* (it was disabled or deleted)."""
+    if not profile:
+        return
+    with _SESSIONS_LOCK:
+        doomed = [
+            token for token, record in _sessions.items()
+            if isinstance(record, dict) and record.get('bound_profile') == profile
+        ]
+        for token in doomed:
+            _sessions.pop(token, None)
+        if doomed:
+            _save_sessions(_sessions)
 
 
 def parse_cookie(handler) -> str | None:

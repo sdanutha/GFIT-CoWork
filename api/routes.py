@@ -15262,7 +15262,9 @@ def handle_get(handler, parsed) -> bool:
         diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
         try:
             diag.stage("list_profiles_api") if diag else None
-            profiles_payload = profiles_api.list_profiles_api()
+            from api import roster
+
+            profiles_payload = roster.label_rows(profiles_api.list_profiles_api())
             diag.stage("active_profile_lookup") if diag else None
             active = profiles_api.get_active_profile_name()
             diag.stage("isolated_mode_check") if diag else None
@@ -17423,11 +17425,15 @@ def handle_post(handler, parsed) -> bool:
             return bad(handler, "name is required")
         import re as _re
 
-        if not _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", name):
+        if not _re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
             return bad(
                 handler,
-                "Invalid profile name: lowercase letters, numbers, hyphens, underscores only",
+                "Invalid profile name: name it after the employee ID "
+                "(lowercase letters, numbers, hyphens, underscores; up to 64 characters)",
             )
+        display_name = body.get("display_name")
+        if display_name is not None and not isinstance(display_name, str):
+            return bad(handler, "display_name must be text")
         clone_from = body.get("clone_from")
         if clone_from is not None:
             clone_from = str(clone_from).strip()
@@ -17451,21 +17457,56 @@ def handle_post(handler, parsed) -> bool:
                 default_model=default_model,
                 model_provider=model_provider,
             )
-            return j(handler, {"ok": True, "profile": result})
         except PermissionError as e:
             return bad(handler, _sanitize_error(e), 403)
         except (ValueError, FileExistsError, RuntimeError) as e:
             return bad(handler, str(e))
+        from api import roster
+
+        try:
+            roster.add(name, display_name or "")
+        except (OSError, roster.RosterUnreadable) as e:
+            logger.warning("Profile %s created, but its roster record was not saved: %s", name, e)
+            return bad(handler, f"Profile '{name}' was created, but its display name could not be saved.", 500)
+        return j(handler, {"ok": True, "profile": {**result, **roster.view(name)}})
+
+    if parsed.path in ("/api/profile/disable", "/api/profile/enable"):
+        name = body.get("name", "").strip()
+        if not name:
+            return bad(handler, "name is required")
+        from api import roster
+        from api.access import is_admin
+        from api.profiles import _validate_profile_name, named_profile_exists
+
+        try:
+            _validate_profile_name(name)
+        except ValueError as e:
+            return bad(handler, _sanitize_error(e))
+        if not named_profile_exists(name):
+            return bad(handler, f"Profile '{name}' does not exist.", 404)
+        if is_admin(name):
+            # An Admin logs in to `default`, so this Profile's status would not shut them out.
+            return bad(handler, f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
+        if parsed.path == "/api/profile/disable":
+            roster.disable(name)
+        else:
+            roster.enable(name)
+        return j(handler, {"ok": True, "profile": roster.view(name)})
 
     if parsed.path == "/api/profile/delete":
         name = body.get("name", "").strip()
         if not name:
             return bad(handler, "name is required")
+        # Deleting is permanent: the caller confirms by repeating the name.
+        if str(body.get("confirm") or "").strip() != name:
+            return bad(handler, "Confirm the deletion: send confirm set to the Profile name")
         try:
+            from api import roster
             from api.profiles import delete_profile_api, _validate_profile_name
 
             _validate_profile_name(name)
             result = delete_profile_api(name)
+            roster.remove(name)
             return j(handler, result)
         except PermissionError as e:
             return bad(handler, _sanitize_error(e), 403)

@@ -24,6 +24,10 @@ _Avoid_: root, superuser, owner
 A Hermes Agent profile: one agent identity with its own config, memory, skills, sessions and Workspaces. A logged-in User can reach only their own Profile.
 _Avoid_: bot, persona
 
+**Profile roster**:
+GFIT-CoWork's own record of each Profile: the User's display name, whether the Profile is active or disabled, and the last login. It is kept apart from the Hermes Profile config. A disabled Profile keeps its data, but its User cannot log in.
+_Avoid_: user list, member table
+
 **Workspace**:
 A folder the agent works in for a session. Every Workspace lives inside its owner's Profile.
 _Avoid_: project folder, directory

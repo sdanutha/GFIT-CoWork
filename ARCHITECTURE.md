@@ -1855,3 +1855,6 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   its Profile (`profiles.pin_request_profile`, which makes it an isolated-profile request).
 - `api/access.py` — the one list of endpoints a Member may call; everything else is Admin-only
   (fail closed), enforced in `check_auth`.
+- `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
+  state directory. Disabling or deleting a Profile ends its sessions; a disabled Profile's
+  sessions are also refused on every request (`auth._reconcile_directory_session`).

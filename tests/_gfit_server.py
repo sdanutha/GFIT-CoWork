@@ -17,6 +17,7 @@ from pathlib import Path
 
 import api.auth as auth
 import api.profiles as profiles
+import api.roster as roster
 
 PASSWORD = "Tr0ub4dor&3-correct-horse"
 WRONG_PASSWORD = "not-the-password"
@@ -120,6 +121,7 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
     monkeypatch.setattr(auth, "STATE_DIR", state)
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
     monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
+    monkeypatch.setattr(roster, "STATE_DIR", state)
     for name, value in (legacy_env or {}).items():
         monkeypatch.setenv(name, value)
     auth._sessions.clear()
