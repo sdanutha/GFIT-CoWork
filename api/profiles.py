@@ -2288,6 +2288,14 @@ def _validate_profile_name(name: str):
         )
 
 
+def named_profile_exists(name: str) -> bool:
+    """True if *name* is a valid named Profile with a directory on disk. Fails closed."""
+    try:
+        return _resolve_named_profile_home(name).is_dir()
+    except (ValueError, OSError):
+        return False
+
+
 def _profiles_root() -> Path:
     """Return the canonical root that contains named profiles."""
     return (_DEFAULT_HERMES_HOME / 'profiles').resolve()

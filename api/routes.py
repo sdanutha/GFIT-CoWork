@@ -11248,6 +11248,8 @@ _LOGIN_LOCALE = {
         "btn": "Sign in",
         "invalid_pw": "Invalid password",
         "conn_failed": "Connection failed",
+        "directory_subtitle": "Sign in with your employee ID and password",
+        "username_placeholder": "Employee ID",
     },
     "fr": {
         "lang": "fr-FR",
@@ -11455,6 +11457,39 @@ button:hover{background:rgba(124,185,255,.25)}
 <!-- Keep login.js relative so subpath mounts load it under the current scope. -->
 <script src="static/login.js?v={{WEBUI_VERSION}}"></script>
 </body></html>"""
+
+
+def _handle_directory_login(handler, body, client_ip: str) -> bool:
+    """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
+    from api.helpers import build_profile_cookie
+    from api.member_login import attempt_login
+
+    outcome = attempt_login(body.get("username"), body.get("password"), client_ip)
+    if outcome.status != 200:
+        return j(handler, {"error": outcome.error}, status=outcome.status)
+    return _send_login_success(
+        handler,
+        outcome.session_cookie,
+        build_profile_cookie(outcome.bound_profile, session_cookie_value=outcome.session_cookie),
+    )
+
+
+def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bool:
+    """Answer a successful login: ``{"ok": true}`` plus the session cookie."""
+    from api.auth import set_auth_cookie
+
+    payload = json.dumps({"ok": True}).encode()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(payload)))
+    handler.send_header("Cache-Control", "no-store")
+    _security_headers(handler)
+    set_auth_cookie(handler, session_cookie)
+    for cookie in extra_cookies:
+        handler.send_header("Set-Cookie", cookie)
+    handler.end_headers()
+    handler.wfile.write(payload)
+    return True
 
 
 def _safe_login_redirect_path(raw_path: str | None) -> str:
@@ -14022,9 +14057,9 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/login":
         _settings = load_settings()
         _lang = _settings.get("language", "en")
-        _login_strings = _LOGIN_LOCALE[
+        _login_strings = dict(_LOGIN_LOCALE[
             _resolve_login_locale_key(_lang)
-        ]
+        ])
         from urllib.parse import quote
         from api.updates import WEBUI_VERSION
         # #7056: only render the password input / submit / passkey controls
@@ -14034,7 +14069,7 @@ def handle_get(handler, parsed) -> bool:
         # the server — every submit. The OIDC SSO entry point stays the
         # sole path. ``is_password_auth_enabled`` is the same predicate
         # ``/api/auth/status`` reports as ``password_auth_enabled``.
-        from api.auth import are_passkeys_enabled, is_password_auth_enabled
+        from api.auth import are_passkeys_enabled, is_directory_auth_enabled, is_password_auth_enabled
 
         # The password INPUT is gated on a configured password, but the passkey
         # button must survive a passwordless-passkey deployment: settings expose
@@ -14046,7 +14081,22 @@ def handle_get(handler, parsed) -> bool:
             '<button type="button" id="passkey-login" class="passkey-login" '
             'style="display:none">Sign in with passkey</button>'
         )
-        if is_password_auth_enabled():
+        if is_directory_auth_enabled():
+            # Locales without Directory copy yet fall back to English.
+            for _key in ("directory_subtitle", "username_placeholder"):
+                _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
+            _login_strings["subtitle"] = _login_strings["directory_subtitle"]
+            _password_form_html = (
+                '<input type="text" id="username" name="username" '
+                f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
+                'autocomplete="username" '
+                'autocapitalize="none" spellcheck="false" autofocus required>'
+                f'<input type="password" id="pw" name="password" '
+                f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
+                'autocomplete="current-password" required>'
+                f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
+            )
+        elif is_password_auth_enabled():
             _password_form_html = (
                 f'<input type="password" id="pw" '
                 f'placeholder="{_html.escape(_login_strings["placeholder"])}" autofocus>'
@@ -14136,8 +14186,10 @@ def handle_get(handler, parsed) -> bool:
             ensure_trusted_auth_session,
             get_password_hash,
             is_auth_enabled,
+            is_directory_auth_enabled,
             is_oidc_auth_enabled,
             is_trusted_auth_enabled,
+            DIRECTORY_AUTH_TYPE,
         )
         from api.passkeys import registered_credentials
 
@@ -14164,7 +14216,9 @@ def handle_get(handler, parsed) -> bool:
         }
         if is_trusted_auth_enabled() or (session_info and session_info.get("auth_type") == "trusted"):
             payload["trusted_auth_enabled"] = True
-        if session_info and session_info.get("auth_type") == "trusted":
+        if is_directory_auth_enabled():
+            payload["directory_auth_enabled"] = True
+        if session_info and session_info.get("auth_type") in ("trusted", DIRECTORY_AUTH_TYPE):
             payload["auth_type"] = session_info.get("auth_type")
             payload["user"] = session_info.get("username")
             payload["bound_profile"] = session_info.get("bound_profile")
@@ -18041,7 +18095,6 @@ def handle_post(handler, parsed) -> bool:
         from api.auth import (
             verify_password,
             create_session,
-            set_auth_cookie,
             is_auth_enabled,
         )
         from api.auth import _check_login_rate, _record_login_attempt, _clear_login_attempts
@@ -18049,6 +18102,10 @@ def handle_post(handler, parsed) -> bool:
         if not is_auth_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
         client_ip = handler.client_address[0]
+        from api.auth import is_directory_auth_enabled
+
+        if is_directory_auth_enabled():
+            return _handle_directory_login(handler, body, client_ip)
         if not _check_login_rate(client_ip):
             return j(
                 handler,
@@ -18060,17 +18117,7 @@ def handle_post(handler, parsed) -> bool:
             _record_login_attempt(client_ip)
             return bad(handler, "Invalid password", 401)
         _clear_login_attempts(client_ip)
-        cookie_val = create_session()
-        body = json.dumps({"ok": True}).encode()
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(body)))
-        handler.send_header("Cache-Control", "no-store")
-        _security_headers(handler)
-        set_auth_cookie(handler, cookie_val)
-        handler.end_headers()
-        handler.wfile.write(body)
-        return True
+        return _send_login_success(handler, create_session())
 
     if parsed.path == "/api/auth/passkey/options":
         from api.auth import _passkey_feature_flag_enabled, is_auth_enabled

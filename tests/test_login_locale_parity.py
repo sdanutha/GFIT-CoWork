@@ -224,6 +224,13 @@ REQUIRED_LOGIN_KEYS = (
     "conn_failed",
 )
 
+# GFIT-CoWork Directory login copy. Optional: a locale without it falls back to
+# English at render time (api/routes.py, the /login handler).
+OPTIONAL_LOGIN_KEYS = (
+    "directory_subtitle",
+    "username_placeholder",
+)
+
 # Login-flow user-facing keys that must be translated (non-English) in every locale.
 # Adding a new locale to i18n.js without these translated will leak English to the
 # user during the very first run / login experience.
@@ -272,9 +279,10 @@ def test_login_locale_entry_well_formed(loc_key: str):
     """Each _LOGIN_LOCALE entry must have all required sub-keys and non-empty string values."""
     login = _load_login_locale()
     entry = login[loc_key]
-    assert set(entry.keys()) == set(REQUIRED_LOGIN_KEYS), (
+    keys = set(entry.keys())
+    assert set(REQUIRED_LOGIN_KEYS) <= keys <= set(REQUIRED_LOGIN_KEYS) | set(OPTIONAL_LOGIN_KEYS), (
         f"_LOGIN_LOCALE[{loc_key!r}] keys mismatch. "
-        f"Expected {set(REQUIRED_LOGIN_KEYS)}, got {set(entry.keys())}."
+        f"Expected {set(REQUIRED_LOGIN_KEYS)} (+ optional {set(OPTIONAL_LOGIN_KEYS)}), got {keys}."
     )
     for k, v in entry.items():
         assert isinstance(v, str) and v, f"_LOGIN_LOCALE[{loc_key!r}][{k!r}] is empty/non-str: {v!r}"

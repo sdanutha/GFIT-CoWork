@@ -14,6 +14,21 @@ GFIT-CoWork is a hard fork of
 copyright notice is kept in [LICENSE](LICENSE). Environment variables keep their
 upstream `HERMES_WEBUI_*` names.
 
+### Login with an employee ID
+
+A User signs in with their employee ID (`521740`, `GFIT\521740` or
+`521740@gfit.co.th` all work) and password. The password is checked by the
+**Directory**; GFIT-CoWork never stores or logs it. Login succeeds only when the
+Directory accepts the password **and** a Profile named after the employee ID
+exists. The session is then bound to that Profile.
+
+| Variable | Meaning |
+| --- | --- |
+| `HERMES_WEBUI_DIRECTORY` | Which Directory to use. Unset turns Directory login off. `memory` uses the in-memory Directory. Any other value refuses every login. |
+| `HERMES_WEBUI_DIRECTORY_USERS` | For `memory`: a JSON file standing in for AD, e.g. `{"521740": {"password": "dev-only", "display_name": "Somchai Jaidee"}}`. For tests and local development only. |
+
+Wrong-password attempts are rate-limited per IP (5 per minute).
+
 The rest of this README is the upstream Hermes WebUI documentation, kept for
 reference.
 

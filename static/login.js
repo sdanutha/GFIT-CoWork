@@ -67,11 +67,16 @@ document.addEventListener('DOMContentLoaded', function () {
     if (!input) return;
     var pw = input.value;
     hideErr();
+    // GFIT-CoWork Directory login: the server renders the username field only
+    // when Directory login is configured.
+    var userField = document.getElementById('username');
+    var payload = { password: pw };
+    if (userField) payload.username = userField.value;
     try {
       var res = await fetch('api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw }),
+        body: JSON.stringify(payload),
         credentials: 'include',
       });
       var data = {};

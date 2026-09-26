@@ -567,13 +567,25 @@ def get_oidc_startup_warning() -> str | None:
     return "\n".join(warnings) if warnings else None
 
 
+# Session ``auth_type`` for a GFIT-CoWork Directory login.
+DIRECTORY_AUTH_TYPE = 'directory'
+
+
+def is_directory_auth_enabled() -> bool:
+    """True if GFIT-CoWork Directory login (employee ID + password) is configured."""
+    from api.directory import is_directory_enabled
+
+    return is_directory_enabled()
+
+
 def is_auth_enabled() -> bool:
-    """True if password auth, passkeys, OIDC login, or trusted-header auth is configured."""
+    """True if password auth, passkeys, OIDC, trusted-header, or Directory login is configured."""
     return (
         is_password_auth_enabled()
         or are_passkeys_enabled()
         or is_oidc_auth_enabled()
         or is_trusted_auth_enabled()
+        or is_directory_auth_enabled()
     )
 
 
@@ -907,6 +919,8 @@ def ensure_trusted_auth_session(handler) -> dict | None:
         return handler._trusted_auth_session_reconciled
     cookie_value = parse_cookie(handler)
     info = get_session_info(cookie_value) if cookie_value and verify_session(cookie_value) else None
+    if info and info.get('auth_type') == DIRECTORY_AUTH_TYPE:
+        return _reconcile_directory_session(handler, info, cookie_value)
     if info and info.get('auth_type') != 'trusted':
         return _remember_trusted_auth_session(handler, info)
     if not is_trusted_auth_enabled():
@@ -942,6 +956,23 @@ def ensure_trusted_auth_session(handler) -> dict | None:
     _apply_trusted_session_profile(handler, bound_profile, cookie_value)
     info = get_session_info(cookie_value)
     return _remember_trusted_auth_session(handler, info, cookie_value)
+
+
+def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict | None:
+    """Run a Directory session's request in its bound Profile, whatever the client sent.
+
+    Fails closed: the session is ended when Directory login is no longer
+    configured or the bound Profile no longer exists.
+    """
+    from api.profiles import named_profile_exists
+
+    bound_profile = str(info.get('bound_profile') or '').strip()
+    if not is_directory_auth_enabled() or not named_profile_exists(bound_profile):
+        invalidate_session(cookie_value)
+        handler._trusted_auth_session_rejected = True
+        return _remember_trusted_auth_session(handler, None)
+    _apply_trusted_session_profile(handler, bound_profile, cookie_value)
+    return _remember_trusted_auth_session(handler, info)
 
 
 def trusted_session_allows_active_profile(info: dict | None) -> bool:
