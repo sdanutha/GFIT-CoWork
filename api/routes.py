@@ -615,12 +615,7 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     if not _session_visible_to_active_profile(session_profile, handler):
         if emit_error:
             if session_profile:
-                j(handler, {
-                    "error": "Session belongs to a different profile",
-                    "code": "session_profile_mismatch",
-                    "session_id": sid,
-                    "profile": session_profile,
-                }, status=409)
+                _session_profile_mismatch(handler, sid, session_profile)
             else:
                 # Unknown/legacy None-profile sidecar: keep the 404 so the
                 # frontend's self-heal still fires. _profiles_match coerces
@@ -630,6 +625,26 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
                 bad(handler, "Session not found", 404)
         return False
     return True
+
+
+def _session_profile_mismatch(handler, sid, session_profile):
+    """Answer a request for a session owned by another, known profile.
+
+    409 ``session_profile_mismatch`` names the owning profile so the client can
+    offer to switch to it. A request pinned to one Profile (a GFIT-CoWork
+    Member) can never switch, and must not learn who owns the session, so it
+    gets the plain 404.
+    """
+    from api.profiles import pinned_request_profile
+
+    if pinned_request_profile():
+        return bad(handler, "Session not found", 404)
+    return j(handler, {
+        "error": "Session belongs to a different profile",
+        "code": "session_profile_mismatch",
+        "session_id": sid,
+        "profile": session_profile,
+    }, status=409)
 
 
 def _stream_id_owner_session_id(stream_id: str | None) -> str | None:
@@ -677,12 +692,38 @@ def _stream_id_visible_to_request_profile(
     return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
 
 
+def _guard_pinned_profile_request(handler, parsed, body=None) -> bool:
+    """A request pinned to one Profile (a GFIT-CoWork Member) may name only that Profile.
+
+    Refuses with 403 a profile switch, and a ``profile`` in the query string or
+    body that names another Profile. The request itself already runs in the
+    pinned Profile; refusing makes a forged request fail loudly instead of
+    being quietly retargeted.
+    """
+    from api.profiles import pinned_request_profile
+
+    pinned = pinned_request_profile()
+    if not pinned:
+        return True
+    named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
+    if isinstance(body, dict) and body.get("profile") not in (None, ""):
+        named.append(body.get("profile"))
+    if getattr(parsed, "path", "") == "/api/profile/switch" or any(
+        not isinstance(value, str) or not _profiles_match(value, pinned) for value in named
+    ):
+        bad(handler, "Profile access forbidden", 403)
+        return False
+    return True
+
+
 def _guard_request_session_visibility(handler, parsed, body=None, method="GET") -> bool:
     """Apply request session-profile visibility check to request-supplied IDs.
 
     Covers top-level `session_id` in the query/body. Routes that accept session
     IDs under other keys must enforce their own visibility checks.
     """
+    if not _guard_pinned_profile_request(handler, parsed, body):
+        return False
     method = str(method).upper()
     if _request_session_visibility_exempt(method, getattr(parsed, "path", "")):
         return True
@@ -2975,6 +3016,7 @@ from api import config as api_config
 from api.helpers import (
     require,
     bad,
+    resolve_inside,
     safe_resolve,
     arm_connection_close_if_body_pending,
     j,
@@ -5417,12 +5459,7 @@ def _handle_session_anchor_scene(handler, body):
     _anchor_session_profile = getattr(s, "profile", None) or None
     if not _session_visible_to_active_profile(_anchor_session_profile, handler):
         if _anchor_session_profile:
-            return j(handler, {
-                "error": "Session belongs to a different profile",
-                "code": "session_profile_mismatch",
-                "session_id": sid,
-                "profile": _anchor_session_profile,
-            }, status=409)
+            return _session_profile_mismatch(handler, sid, _anchor_session_profile)
         return bad(handler, "Session not found", 404)
     with _get_session_agent_lock(sid):
         idx, message = _find_anchor_scene_message(
@@ -11459,6 +11496,18 @@ button:hover{background:rgba(124,185,255,.25)}
 </body></html>"""
 
 
+def _directory_session_role(handler) -> str | None:
+    """The GFIT-CoWork role (``admin``/``member``) of this request's Directory session, if any."""
+    from api.access import ROLE_ADMIN, ROLE_MEMBER
+    from api.auth import DIRECTORY_AUTH_TYPE, ensure_trusted_auth_session
+
+    info = ensure_trusted_auth_session(handler)
+    if not info or info.get("auth_type") != DIRECTORY_AUTH_TYPE:
+        return None
+    role = info.get("role")
+    return role if role in (ROLE_ADMIN, ROLE_MEMBER) else None
+
+
 def _handle_directory_login(handler, body, client_ip: str) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
@@ -11545,11 +11594,9 @@ def _request_base_url(handler) -> str:
 
 
 def _oidc_login_html(parsed) -> str:
-    try:
-        from api.auth_oidc import is_oidc_enabled
-    except Exception:
-        return ""
-    if not is_oidc_enabled():
+    from api.auth import is_oidc_auth_enabled
+
+    if not is_oidc_auth_enabled():
         return ""
     next_path = _safe_login_redirect_path(
         parse_qs(parsed.query or "").get("next", [""])[0]
@@ -13441,12 +13488,7 @@ def _handle_session_get(handler, parsed) -> bool:
                 # Valid session owned by a KNOWN other profile: 409 so the
                 # client can offer to switch to it (#5419).
                 if _diag: _diag.finish()
-                return j(handler, {
-                    "error": "Session belongs to a different profile",
-                    "code": "session_profile_mismatch",
-                    "session_id": sid,
-                    "profile": _session_profile,
-                }, status=409)
+                return _session_profile_mismatch(handler, sid, _session_profile)
             # Unknown/legacy None-profile sidecar: keep the original 404 so
             # the frontend's self-heal (clear stale URL + localStorage) still
             # fires. _profiles_match coerces None->'default', so a truly
@@ -13919,12 +13961,7 @@ def _handle_session_get(handler, parsed) -> bool:
             if _session_profile:
                 # Valid CLI/foreign session owned by a KNOWN other profile:
                 # 409 so the client can offer to switch to it (#5419).
-                return j(handler, {
-                    "error": "Session belongs to a different profile",
-                    "code": "session_profile_mismatch",
-                    "session_id": sid,
-                    "profile": _session_profile,
-                }, status=409)
+                return _session_profile_mismatch(handler, sid, _session_profile)
             # Missing session (cli_meta={} -> profile=None): keep the 404
             # self-heal path. _profiles_match coerces None->'default', so a
             # truly-missing session under a non-default active profile would
@@ -14035,9 +14072,17 @@ def handle_get(handler, parsed) -> bool:
             html = _render_index_shell_base().replace(
                 "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
             )
+            from api.access import ROLE_MEMBER
+
+            role = _directory_session_role(handler)
+            if role:
+                # GFIT-CoWork: the stylesheet hides Admin-only menus for Members
+                # (cosmetic; the server gate is the source of truth). Extensions
+                # are Admin-only, so a Member's shell does not load them.
+                html = html.replace("<html ", f'<html data-gfit-role="{role}" ', 1)
             return t(
                 handler,
-                inject_extension_tags(html),
+                html if role == ROLE_MEMBER else inject_extension_tags(html),
                 content_type="text/html; charset=utf-8",
             )
         except Exception as exc:
@@ -14062,51 +14107,22 @@ def handle_get(handler, parsed) -> bool:
         ])
         from urllib.parse import quote
         from api.updates import WEBUI_VERSION
-        # #7056: only render the password input / submit / passkey controls
-        # when password auth is actually enabled. With native OIDC configured
-        # and ``HERMES_WEBUI_PASSWORD`` unset, the form previously still
-        # displayed the password prompt and accepted — silently 401-ing at
-        # the server — every submit. The OIDC SSO entry point stays the
-        # sole path. ``is_password_auth_enabled`` is the same predicate
-        # ``/api/auth/status`` reports as ``password_auth_enabled``.
-        from api.auth import are_passkeys_enabled, is_directory_auth_enabled, is_password_auth_enabled
-
-        # The password INPUT is gated on a configured password, but the passkey
-        # button must survive a passwordless-passkey deployment: settings expose
-        # ``passwordless_enabled = passkeys registered AND not password_auth_enabled``
-        # (routes.py ~14059) and ``is_auth_enabled()`` counts passkeys as an
-        # independent auth method, so hiding the button when no password is set
-        # would remove the ONLY working login affordance for those instances.
-        _passkey_button_html = (
-            '<button type="button" id="passkey-login" class="passkey-login" '
-            'style="display:none">Sign in with passkey</button>'
+        # GFIT-CoWork: the Directory login (employee ID + password) is the only
+        # way in (ADR 0004), so it is the only form. Locales without Directory
+        # copy yet fall back to English.
+        for _key in ("directory_subtitle", "username_placeholder"):
+            _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
+        _login_strings["subtitle"] = _login_strings["directory_subtitle"]
+        _password_form_html = (
+            '<input type="text" id="username" name="username" '
+            f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
+            'autocomplete="username" '
+            'autocapitalize="none" spellcheck="false" autofocus required>'
+            f'<input type="password" id="pw" name="password" '
+            f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
+            'autocomplete="current-password" required>'
+            f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
         )
-        if is_directory_auth_enabled():
-            # Locales without Directory copy yet fall back to English.
-            for _key in ("directory_subtitle", "username_placeholder"):
-                _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
-            _login_strings["subtitle"] = _login_strings["directory_subtitle"]
-            _password_form_html = (
-                '<input type="text" id="username" name="username" '
-                f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
-                'autocomplete="username" '
-                'autocapitalize="none" spellcheck="false" autofocus required>'
-                f'<input type="password" id="pw" name="password" '
-                f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
-                'autocomplete="current-password" required>'
-                f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
-            )
-        elif is_password_auth_enabled():
-            _password_form_html = (
-                f'<input type="password" id="pw" '
-                f'placeholder="{_html.escape(_login_strings["placeholder"])}" autofocus>'
-                f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
-                f'{_passkey_button_html}'
-            )
-        elif are_passkeys_enabled():
-            _password_form_html = _passkey_button_html
-        else:
-            _password_form_html = ""
         version_token = quote(WEBUI_VERSION, safe="")
         _page = (
             _LOGIN_PAGE_HTML.replace("{{APP_NAME}}", _html.escape(APP_NAME))
@@ -14123,6 +14139,12 @@ def handle_get(handler, parsed) -> bool:
             .replace("{{OIDC_LOGIN_HTML}}", _oidc_login_html(parsed))
         )
         return t(handler, _page, content_type="text/html; charset=utf-8")
+
+    if parsed.path in ("/api/auth/oidc/start", "/api/auth/oidc/callback"):
+        from api.auth import is_oidc_auth_enabled
+
+        if not is_oidc_auth_enabled():
+            return j(handler, {"error": "OIDC login is disabled"}, status=404)
 
     if parsed.path == "/api/auth/oidc/start":
         from api.auth_oidc import OIDCAuthError, OIDCConfigError, build_authorization_redirect
@@ -14184,10 +14206,10 @@ def handle_get(handler, parsed) -> bool:
         from api.auth import (
             _passkey_feature_flag_enabled,
             ensure_trusted_auth_session,
-            get_password_hash,
             is_auth_enabled,
             is_directory_auth_enabled,
             is_oidc_auth_enabled,
+            is_password_auth_enabled,
             is_trusted_auth_enabled,
             DIRECTORY_AUTH_TYPE,
         )
@@ -14202,7 +14224,7 @@ def handle_get(handler, parsed) -> bool:
             logged_in = bool(session_info)
         passkey_flag = _passkey_feature_flag_enabled()
         passkeys = registered_credentials() if passkey_flag else []
-        password_auth_enabled = get_password_hash() is not None
+        password_auth_enabled = is_password_auth_enabled()
         payload = {
             "auth_enabled": auth_enabled,
             "logged_in": logged_in,
@@ -14222,6 +14244,8 @@ def handle_get(handler, parsed) -> bool:
             payload["auth_type"] = session_info.get("auth_type")
             payload["user"] = session_info.get("username")
             payload["bound_profile"] = session_info.get("bound_profile")
+        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
+            payload["role"] = session_info.get("role")
         return j(handler, payload)
 
     if parsed.path.startswith("/api/share/"):
@@ -14510,9 +14534,9 @@ def handle_get(handler, parsed) -> bool:
             os.getenv("HERMES_WEBUI_PASSWORD", "").strip()
         )
         # Auth-state fields for frontend safety badge / confirmation flows
-        from api.auth import get_password_hash, is_auth_enabled
+        from api.auth import is_auth_enabled, is_password_auth_enabled
         settings["auth_enabled"] = is_auth_enabled()
-        settings["password_auth_enabled"] = get_password_hash() is not None
+        settings["password_auth_enabled"] = is_password_auth_enabled()
         try:
             from api.auth import _passkey_feature_flag_enabled as _pffe
             from api.passkeys import registered_credentials as _rc
@@ -14861,8 +14885,13 @@ def handle_get(handler, parsed) -> bool:
                 workspace = resolve_trusted_workspace(cli_meta["workspace"])
             except (FileNotFoundError, ValueError):
                 return j(handler, {"git": None})
+        from api.workspace import confine_to_member_workspace
         from api.workspace_git import GitWorkspaceError, git_status
 
+        try:
+            workspace = confine_to_member_workspace(Path(workspace))
+        except ValueError:
+            return j(handler, {"git": None})
         try:
             status = git_status(Path(workspace))
         except GitWorkspaceError as e:
@@ -17451,6 +17480,7 @@ def handle_post(handler, parsed) -> bool:
             create_session,
             get_password_hash,
             is_auth_enabled,
+            is_password_auth_enabled,
             parse_cookie,
             set_auth_cookie,
             verify_password,
@@ -17594,7 +17624,7 @@ def handle_post(handler, parsed) -> bool:
             logged_in_after = True
 
         saved["auth_enabled"] = auth_enabled_after
-        saved["password_auth_enabled"] = get_password_hash() is not None
+        saved["password_auth_enabled"] = is_password_auth_enabled()
         saved["logged_in"] = logged_in_after
         saved["auth_just_enabled"] = auth_just_enabled
         try:
@@ -18092,32 +18122,13 @@ def handle_post(handler, parsed) -> bool:
 
     # ── Auth endpoints (POST) ──
     if parsed.path == "/api/auth/login":
-        from api.auth import (
-            verify_password,
-            create_session,
-            is_auth_enabled,
-        )
-        from api.auth import _check_login_rate, _record_login_attempt, _clear_login_attempts
+        from api.auth import is_auth_enabled
 
         if not is_auth_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
-        client_ip = handler.client_address[0]
-        from api.auth import is_directory_auth_enabled
-
-        if is_directory_auth_enabled():
-            return _handle_directory_login(handler, body, client_ip)
-        if not _check_login_rate(client_ip):
-            return j(
-                handler,
-                {"error": "Too many attempts. Try again in a minute."},
-                status=429,
-            )
-        password = body.get("password", "")
-        if not verify_password(password):
-            _record_login_attempt(client_ip)
-            return bad(handler, "Invalid password", 401)
-        _clear_login_attempts(client_ip)
-        return _send_login_success(handler, create_session())
+        # GFIT-CoWork: the Directory is the only way in (ADR 0004). With a
+        # legacy method configured but no Directory, every login is refused.
+        return _handle_directory_login(handler, body, handler.client_address[0])
 
     if parsed.path == "/api/auth/passkey/options":
         from api.auth import _passkey_feature_flag_enabled, is_auth_enabled
@@ -21273,6 +21284,13 @@ def _handle_media(handler, parsed):
     except Exception:
         return bad(handler, "Invalid path", 400)
 
+    # GFIT-CoWork: a Member may only view files inside their own Profile.
+    from api.profiles import _resolve_named_profile_home, pinned_request_profile
+
+    _pinned = pinned_request_profile()
+    if _pinned and not target.is_relative_to(_resolve_named_profile_home(_pinned)):
+        return bad(handler, "That file is outside your Profile.", 403)
+
     # Allowed roots: hermes home, /tmp, and active workspace.
     # Intentionally NOT the entire home dir — that would expose ~/.ssh,
     # ~/.aws, browser profiles, etc. to any authenticated user.
@@ -21457,7 +21475,7 @@ def _file_raw_target(session, sid: str, rel: str) -> tuple[Path, Path] | None:
         from api.upload import _session_attachment_dir
 
         attachment_root = _session_attachment_dir(sid)
-        attachment_target = safe_resolve(attachment_root, rel)
+        attachment_target = resolve_inside(attachment_root, rel)
     except Exception:
         return None
     if attachment_target.exists() and attachment_target.is_file():
@@ -24642,12 +24660,7 @@ def _handle_session_compression_recovery_start(handler, body):
         # 404 only for the None-profile self-heal path.
         _recovery_session_profile = getattr(source, "profile", None)
         if _recovery_session_profile:
-            return j(handler, {
-                "error": "Session belongs to a different profile",
-                "code": "session_profile_mismatch",
-                "session_id": sid,
-                "profile": _recovery_session_profile,
-            }, status=409)
+            return _session_profile_mismatch(handler, sid, _recovery_session_profile)
         return bad(handler, "Session not found", 404)
     recovery = compression_recovery_payload_for_session(source)
     if not recovery:
@@ -25052,12 +25065,7 @@ def _handle_chat_start(handler, body, diag=None):
                 # so the client can offer to switch to it (#5419).
                 # 404 is preserved only for the None-profile
                 # (unknown/legacy) self-heal case.
-                return j(handler, {
-                    "error": "Session belongs to a different profile",
-                    "code": "session_profile_mismatch",
-                    "session_id": body.get("session_id", ""),
-                    "profile": session_profile,
-                }, status=409)
+                return _session_profile_mismatch(handler, body.get("session_id", ""), session_profile)
             else:
                 return bad(handler, "Session not found", 404)
         # Resolve durable rotations before any workspace/model/pending mutation.
@@ -25882,17 +25890,20 @@ def _git_session(handler, session_id: str):
 
 
 def _git_session_workspace(handler, session_id: str):
-    session = _git_session(handler, session_id)
-    if session is None:
-        return None
-    return Path(session.workspace)
+    return _git_session_and_workspace(handler, session_id)[1]
 
 
 def _git_session_and_workspace(handler, session_id: str):
+    from api.workspace import confine_to_member_workspace
+
     session = _git_session(handler, session_id)
     if session is None:
         return None, None
-    return session, Path(session.workspace)
+    try:
+        return session, confine_to_member_workspace(Path(session.workspace))
+    except ValueError as exc:
+        bad(handler, str(exc), 403)
+        return None, None
 
 
 def _git_locked_by_active_stream(session) -> bool:
@@ -29329,12 +29340,7 @@ def _handle_session_import_cli(handler, body):
             # 409 ``session_profile_mismatch`` for a known other
             # profile, 404 only for the None-profile self-heal path.
             if existing_profile:
-                return j(handler, {
-                    "error": "Session belongs to a different profile",
-                    "code": "session_profile_mismatch",
-                    "session_id": sid,
-                    "profile": existing_profile,
-                }, status=409)
+                return _session_profile_mismatch(handler, sid, existing_profile)
             return bad(handler, "Session not found in CLI store", 404)
         refresh_profile = requested_profile or existing_profile
         cli_meta = _resolve_cli_import_metadata(

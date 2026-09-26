@@ -438,12 +438,45 @@ def get_password_hash() -> str | None:
         return result
 
 
+# ── GFIT-CoWork: the Upstream login methods are off (ADR 0004, ticket 09) ────
+# The Directory is the only way in. The single shared password, passkeys, OIDC
+# and the trusted header report "not enabled", so every one of their endpoints
+# refuses and the UI hides them. Their configuration still turns the auth gate
+# on (see is_auth_enabled), so a Deployment that set a password but no
+# Directory is locked rather than open. Deleting their code is left to later
+# cleanup.
+
 def is_password_auth_enabled() -> bool:
-    """True if a password is configured (env var or settings)."""
-    return get_password_hash() is not None
+    """Always False: the single shared password is off in GFIT-CoWork."""
+    return False
 
 
 def _passkey_feature_flag_enabled() -> bool:
+    """Always False: passkeys are off in GFIT-CoWork."""
+    return False
+
+
+def is_oidc_auth_enabled() -> bool:
+    """Always False: OIDC login is off in GFIT-CoWork."""
+    return False
+
+
+def is_trusted_auth_enabled() -> bool:
+    """Always False: trusted-header login is off in GFIT-CoWork."""
+    return False
+
+
+def _legacy_login_configured() -> bool:
+    """True if an Upstream login method is configured, though none of them is honoured."""
+    return (
+        get_password_hash() is not None
+        or _passkey_feature_flag_configured()
+        or _oidc_configured()
+        or _trusted_auth_header_configured()
+    )
+
+
+def _passkey_feature_flag_configured() -> bool:
     """Return True if the passkey/WebAuthn surface is enabled for this deployment.
 
     Passkey support is opt-in default-off behind a feature flag so deployments
@@ -488,7 +521,7 @@ def are_passkeys_enabled() -> bool:
         return False
 
 
-def is_oidc_auth_enabled() -> bool:
+def _oidc_configured() -> bool:
     """True if native OIDC login is configured for WebUI sessions."""
     try:
         from api.auth_oidc import is_oidc_enabled
@@ -579,14 +612,12 @@ def is_directory_auth_enabled() -> bool:
 
 
 def is_auth_enabled() -> bool:
-    """True if password auth, passkeys, OIDC, trusted-header, or Directory login is configured."""
-    return (
-        is_password_auth_enabled()
-        or are_passkeys_enabled()
-        or is_oidc_auth_enabled()
-        or is_trusted_auth_enabled()
-        or is_directory_auth_enabled()
-    )
+    """True if Directory login, or any Upstream login method, is configured.
+
+    Only the Directory can log anyone in; a configured Upstream method keeps
+    the gate on so the Deployment fails closed.
+    """
+    return is_directory_auth_enabled() or _legacy_login_configured()
 
 
 def verify_password(plain: str) -> bool:
@@ -620,18 +651,26 @@ def verify_password(plain: str) -> bool:
     return False
 
 
-def create_session(*, auth_type: str | None = None, username: str | None = None, bound_profile: str | None = None) -> str:
+def create_session(
+    *,
+    auth_type: str | None = None,
+    username: str | None = None,
+    bound_profile: str | None = None,
+    role: str | None = None,
+) -> str:
     """Create a new auth session. Returns signed cookie value."""
     token = secrets.token_hex(32)
     expiry = time.time() + _resolve_session_ttl()
     record: float | dict
-    if any(value is not None for value in (auth_type, username, bound_profile)):
+    if any(value is not None for value in (auth_type, username, bound_profile, role)):
         record = {
             'expiry': expiry,
             'auth_type': auth_type,
             'username': username,
             'bound_profile': bound_profile,
         }
+        if role is not None:
+            record['role'] = role
     else:
         record = expiry
     with _SESSIONS_LOCK:
@@ -866,10 +905,6 @@ def session_bound_profile(cookie_value: str) -> str | None:
     return bound_profile or None
 
 
-def is_trusted_auth_enabled() -> bool:
-    return _trusted_auth_header_configured()
-
-
 def get_trusted_auth_logout_url() -> str | None:
     value = os.getenv(_TRUSTED_AUTH_LOGOUT_URL_ENV, '').strip()
     return value or None
@@ -921,13 +956,14 @@ def ensure_trusted_auth_session(handler) -> dict | None:
     info = get_session_info(cookie_value) if cookie_value and verify_session(cookie_value) else None
     if info and info.get('auth_type') == DIRECTORY_AUTH_TYPE:
         return _reconcile_directory_session(handler, info, cookie_value)
-    if info and info.get('auth_type') != 'trusted':
-        return _remember_trusted_auth_session(handler, info)
     if not is_trusted_auth_enabled():
+        # GFIT-CoWork: only a Directory session is honoured (ticket 09).
         if info:
             invalidate_session(cookie_value)
             handler._trusted_auth_session_rejected = True
         return _remember_trusted_auth_session(handler, None)
+    if info and info.get('auth_type') != 'trusted':
+        return _remember_trusted_auth_session(handler, info)
     from api.routes import _raw_peer_is_trusted_proxy
 
     if not _raw_peer_is_trusted_proxy(handler):
@@ -961,18 +997,61 @@ def ensure_trusted_auth_session(handler) -> dict | None:
 def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict | None:
     """Run a Directory session's request in its bound Profile, whatever the client sent.
 
+    A Member's request is pinned to the bound Profile, so no Profile the client
+    names (cookie, query or body) can reach another Profile's data. An Admin's
+    request runs in ``default``.
+
     Fails closed: the session is ended when Directory login is no longer
-    configured or the bound Profile no longer exists.
+    configured, the bound Profile no longer exists, the session's role is
+    unknown, or an Admin is no longer on the Admin list.
     """
-    from api.profiles import named_profile_exists
+    from api.access import ROLE_ADMIN, ROLE_MEMBER, is_admin
+    from api.profiles import named_profile_exists, pin_request_profile
 
     bound_profile = str(info.get('bound_profile') or '').strip()
-    if not is_directory_auth_enabled() or not named_profile_exists(bound_profile):
+    role = info.get('role')
+    if role == ROLE_ADMIN:
+        valid = bound_profile == 'default' and is_admin(info.get('username'))
+    elif role == ROLE_MEMBER:
+        valid = named_profile_exists(bound_profile)
+    else:
+        valid = False
+    if not is_directory_auth_enabled() or not valid:
         invalidate_session(cookie_value)
         handler._trusted_auth_session_rejected = True
         return _remember_trusted_auth_session(handler, None)
+    if role == ROLE_MEMBER:
+        pin_request_profile(bound_profile)
     _apply_trusted_session_profile(handler, bound_profile, cookie_value)
     return _remember_trusted_auth_session(handler, info)
+
+
+def _refuse_admin_only_for_member(handler, parsed, session_info: dict) -> bool:
+    """The Admin-only gate: True (after sending 403) when a Member calls a non-Member endpoint."""
+    if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
+        return False
+    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, member_may_call
+
+    if session_info.get('role') == ROLE_ADMIN:
+        return False
+    if member_may_call(getattr(handler, 'command', 'GET'), parsed.path):
+        return False
+    _send_forbidden(handler, parsed, ADMIN_ONLY_MESSAGE)
+    return True
+
+
+def _send_forbidden(handler, parsed, message: str) -> None:
+    if parsed.path.startswith('/api/'):
+        body = json.dumps({'error': message}).encode()
+        content_type = 'application/json'
+    else:
+        body = message.encode()
+        content_type = 'text/plain; charset=utf-8'
+    handler.send_response(403)
+    handler.send_header('Content-Type', content_type)
+    handler.send_header('Content-Length', str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 def trusted_session_allows_active_profile(info: dict | None) -> bool:
@@ -1154,6 +1233,8 @@ def check_auth(handler, parsed) -> bool:
         return False
     session_info = ensure_trusted_auth_session(handler)
     if session_info:
+        if _refuse_admin_only_for_member(handler, parsed, session_info):
+            return False
         if not trusted_session_allows_active_profile(session_info):
             if parsed.path.startswith('/api/'):
                 body = b'{"error":"Profile access forbidden"}'

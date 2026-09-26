@@ -28,6 +28,9 @@ def post(path, body=None):
         return json.loads(e.read()), e.code
 
 
+DIRECTORY_SUBTITLE = "Sign in with your employee ID and password"
+
+
 def _current_language():
     settings, status = get("/api/settings")
     assert status == 200
@@ -44,7 +47,9 @@ def test_login_page_uses_simplified_chinese_for_zh_cn_alias():
         assert status2 == 200
         assert 'lang="zh-CN"' in html
         assert "\u767b\u5f55" in html
-        assert "\u8f93\u5165\u5bc6\u7801\u7ee7\u7eed\u4f7f\u7528" in html
+        # GFIT-CoWork: the subtitle is the Directory copy, English until the
+        # other locales are translated (phase 2).
+        assert DIRECTORY_SUBTITLE in html
     finally:
         restored, restore_status = post("/api/settings", {"language": prev_lang})
         assert restore_status == 200
@@ -60,7 +65,9 @@ def test_login_page_uses_traditional_chinese_for_zh_hant():
         html, status2 = get_raw("/login")
         assert status2 == 200
         assert 'lang="zh-TW"' in html
-        assert "\u8f38\u5165\u5bc6\u78bc\u7e7c\u7e8c\u4f7f\u7528" in html
+        # GFIT-CoWork: the subtitle is the Directory copy, English until the
+        # other locales are translated (phase 2).
+        assert DIRECTORY_SUBTITLE in html
         assert "\u5bc6\u78bc\u932f\u8aa4" in html
     finally:
         restored, restore_status = post("/api/settings", {"language": prev_lang})
@@ -78,7 +85,9 @@ def test_login_page_uses_russian_for_ru():
         assert status2 == 200
         assert 'lang="ru-RU"' in html
         assert "\u0412\u043e\u0439\u0442\u0438" in html
-        assert "\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c, \u0447\u0442\u043e\u0431\u044b \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c" in html
+        # GFIT-CoWork: the subtitle is the Directory copy, English until the
+        # other locales are translated (phase 2).
+        assert DIRECTORY_SUBTITLE in html
         assert "\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c" in html
     finally:
         restored, restore_status = post("/api/settings", {"language": prev_lang})

@@ -1838,3 +1838,20 @@ an existing workspace. Strict: path must be under home, in the saved workspace l
 
 The distinction matters because add uses permissive validation to avoid the circular
 dependency: you cannot get a path into the saved list if you need the saved list to add it.
+
+**GFIT-CoWork Members.** For a request pinned to a Member's Profile, both functions apply
+the same stricter rule instead: the path must resolve (after `..` and symlinks) inside
+`<Profile>/workspace`. `helpers.safe_resolve` and `safe_resolve_ws` apply it again to every
+file operation, so a Workspace root that is somehow outside still grants nothing
+(`confine_to_member_workspace`). `helpers.resolve_inside` is the unconfined primitive, for
+roots that are not Workspaces (the session attachment inbox). The Admin is not confined.
+
+## GFIT-CoWork access control
+
+- `api/directory.py` — the Directory seam (username + password → Identity); `api/ldap_directory.py`
+  is the company-AD implementation (LDAPS or StartTLS only).
+- `api/member_login.py` — the login decision (rate limit → Directory → Admin list or Profile → session).
+- `api/auth.py` — only Directory sessions are honoured; a Member session pins the request to
+  its Profile (`profiles.pin_request_profile`, which makes it an isolated-profile request).
+- `api/access.py` — the one list of endpoints a Member may call; everything else is Admin-only
+  (fail closed), enforced in `check_auth`.

@@ -1,114 +1,29 @@
 """GFIT-CoWork ticket 02: Member login with an employee ID (in-memory Directory).
 
-Every test talks HTTP to a real ``server.Handler`` started in-process on a free
-port, with its auth state, Hermes home and Directory isolated to ``tmp_path``.
-The shared live test server is left alone: turning Directory login on there
-would put every other test behind a login.
+Every test talks HTTP to a real ``server.Handler`` started in-process (see
+``tests/_gfit_server.py``).
 """
 from __future__ import annotations
 
-import http.client
 import http.cookies
-import json
 import logging
-import threading
 
 import pytest
 
 import api.auth as auth
-import api.profiles as profiles
+from tests._gfit_server import PASSWORD, WRONG_PASSWORD, Client, gfit_server as _gfit_server
 
-PASSWORD = "Tr0ub4dor&3-correct-horse"
-WRONG_PASSWORD = "not-the-password"
 MEMBER = "521740"
 NO_PROFILE_USER = "671278"
 
 INCORRECT = "incorrect username or password"
 
 
-class Client:
-    """A tiny browser: keeps cookies across requests to one server."""
-
-    def __init__(self, port: int):
-        self.port = port
-        self.cookies: dict[str, str] = {}
-
-    def request(self, method, path, body=None):
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
-        headers = {}
-        if self.cookies:
-            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
-        data = None
-        if body is not None:
-            data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
-        conn.request(method, path, body=data, headers=headers)
-        resp = conn.getresponse()
-        raw = resp.read()
-        set_cookies = resp.headers.get_all("Set-Cookie") or []
-        for header in set_cookies:
-            jar = http.cookies.SimpleCookie()
-            jar.load(header)
-            for name, morsel in jar.items():
-                if morsel.value and morsel["max-age"] != "0":
-                    self.cookies[name] = morsel.value
-                else:
-                    self.cookies.pop(name, None)
-        conn.close()
-        try:
-            payload = json.loads(raw) if raw else None
-        except ValueError:
-            payload = raw.decode("utf-8", "replace")
-        return resp.status, payload, set_cookies
-
-    def login(self, username, password):
-        return self.request("POST", "/api/auth/login", {"username": username, "password": password})
-
-
 @pytest.fixture
 def gfit_server(monkeypatch, tmp_path):
-    import server
-
-    state = tmp_path / "state"
-    state.mkdir()
-    hermes_home = tmp_path / "hermes"
-    (hermes_home / "profiles" / MEMBER).mkdir(parents=True)
-
-    users = tmp_path / "directory-users.json"
-    users.write_text(json.dumps({
-        MEMBER: {"password": PASSWORD, "display_name": "Somchai Jaidee"},
-        NO_PROFILE_USER: {"password": PASSWORD, "display_name": "No Profile"},
-    }))
-    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
-    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY_USERS", str(users))
-
-    # Isolate auth state and switch off every other login method.
-    monkeypatch.setattr(auth, "STATE_DIR", state)
-    monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
-    monkeypatch.setattr(auth, "is_password_auth_enabled", lambda: False)
-    monkeypatch.setattr(auth, "are_passkeys_enabled", lambda: False)
-    monkeypatch.setattr(auth, "is_oidc_auth_enabled", lambda: False)
-    monkeypatch.delenv("HERMES_WEBUI_TRUSTED_AUTH_HEADER", raising=False)
-    auth._sessions.clear()
-    auth._login_attempts.clear()
-
-    # Profiles live under an isolated Hermes home.
-    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)
-    profiles._invalidate_root_profile_cache()
-
-    httpd = server.QuietHTTPServer(("127.0.0.1", 0), server.Handler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield {"port": httpd.server_address[1], "state": state, "users": users}
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        auth._sessions.clear()
-        auth._login_attempts.clear()
-        profiles._invalidate_root_profile_cache()
+    users = {MEMBER: "Somchai Jaidee", NO_PROFILE_USER: "No Profile"}
+    with _gfit_server(monkeypatch, tmp_path, users=users, profile_names=[MEMBER]) as srv:
+        yield {"port": srv.port, "state": srv.state, "users": srv.users}
 
 
 @pytest.fixture

@@ -215,6 +215,17 @@ _PROTECTED_ENV_KEYS = frozenset({
     # the operator intended. Same shape as the isolated-profile key: only
     # the operator/launcher env at startup can set it.
     'HERMES_WEBUI_MAX_SESSION_RESOLVE',
+    # GFIT-CoWork: who may log in, and who is an Admin, belong to the Deployment.
+    'HERMES_WEBUI_ADMIN_USERS',
+    'HERMES_WEBUI_DIRECTORY',
+    'HERMES_WEBUI_DIRECTORY_USERS',
+    'HERMES_WEBUI_LDAP_URL',
+    'HERMES_WEBUI_LDAP_STARTTLS',
+    'HERMES_WEBUI_LDAP_BIND_FORMAT',
+    'HERMES_WEBUI_LDAP_DOMAIN',
+    'HERMES_WEBUI_LDAP_BASE_DN',
+    'HERMES_WEBUI_LDAP_USER_FILTER',
+    'HERMES_WEBUI_LDAP_CA_CERT',
 })
 
 
@@ -285,6 +296,10 @@ def _is_isolated_profile_mode() -> bool:
     not the current os.environ value. init_profile_state() overwrites HERMES_HOME
     at startup, which would disable detection if we read it here.
     """
+    # A request pinned to one Profile (a GFIT-CoWork Member) is an isolated
+    # request, whatever the process posture.
+    if pinned_request_profile():
+        return True
     # PRIMARY gate: explicit startup opt-in. Default OFF → a normal named-profile
     # launch is never treated as isolated, so profile switching keeps working
     # (#4586). Read the snapshot, not live os.environ, so profile .env reloads
@@ -316,8 +331,16 @@ def _is_isolated_profile_mode() -> bool:
 
 
 def _isolated_profile_name() -> str:
-    """Return the profile directory name from _INITIAL_HERMES_HOME."""
-    return Path(_INITIAL_HERMES_HOME).expanduser().name
+    """Return the pinned request Profile, else the directory name from _INITIAL_HERMES_HOME."""
+    return pinned_request_profile() or Path(_INITIAL_HERMES_HOME).expanduser().name
+
+
+def _isolated_profile_home() -> Path:
+    """Return the home of the pinned request Profile, else the startup HERMES_HOME."""
+    pinned = pinned_request_profile()
+    if pinned:
+        return _resolve_named_profile_home(pinned)
+    return Path(_INITIAL_HERMES_HOME).expanduser()
 
 
 def _resolve_base_hermes_home() -> Path:
@@ -514,6 +537,24 @@ def clear_request_profile() -> None:
     Safe to call even if set_request_profile() was never called.
     """
     _tls.profile = None
+    _tls.pinned_profile = None
+
+
+def pin_request_profile(name: str) -> None:
+    """Pin this request to Profile *name* (a GFIT-CoWork Member's bound Profile).
+
+    A pinned request is an isolated-profile request: every lookup clamps to
+    *name*, cross-profile reads are off, and switching, creating or deleting a
+    Profile is refused. Cleared with the request profile by
+    clear_request_profile().
+    """
+    _tls.pinned_profile = name
+    _tls.profile = name
+
+
+def pinned_request_profile() -> str | None:
+    """Return the Profile this request is pinned to, or None."""
+    return getattr(_tls, 'pinned_profile', None)
 
 
 def _resolve_profile_home_for_name(name: str) -> Path:
@@ -529,7 +570,7 @@ def _resolve_profile_home_for_name(name: str) -> Path:
     # startup HERMES_HOME so callers cannot resolve a foreign profile path.
     if _is_isolated_profile_mode():
         isolated_name = _isolated_profile_name()
-        isolated_home = Path(_INITIAL_HERMES_HOME).expanduser()
+        isolated_home = _isolated_profile_home()
         if name and not _profiles_match(name, isolated_name):
             logger.warning(
                 "Ignoring profile lookup %r in isolated profile mode; using pinned profile %r",
@@ -550,7 +591,7 @@ def get_active_hermes_home() -> Path:
     is respected, not just the process-level global.
     """
     if _is_isolated_profile_mode():
-        return Path(_INITIAL_HERMES_HOME).expanduser()
+        return _isolated_profile_home()
     return _resolve_profile_home_for_name(get_active_profile_name())
 
 
@@ -1626,7 +1667,7 @@ def init_profile_state() -> None:
     global _active_profile
     if _is_isolated_profile_mode():
         _active_profile = _isolated_profile_name()
-        home = Path(_INITIAL_HERMES_HOME).expanduser()
+        home = _isolated_profile_home()
     else:
         _active_profile = _read_active_profile_file()
         home = get_active_hermes_home()
@@ -1717,7 +1758,7 @@ def switch_profile(name: str, *, process_wide: bool = True) -> dict:
 
     # Resolve profile directory
     if _is_isolated_profile_mode():
-        home = Path(_INITIAL_HERMES_HOME).expanduser()
+        home = _isolated_profile_home()
     elif _is_root_profile(name):
         home = _DEFAULT_HERMES_HOME
     else:
@@ -2143,7 +2184,7 @@ def list_profiles_api() -> list:
     # In isolated profile mode, return only the active (isolated) profile
     if _is_isolated_profile_mode():
         active = _isolated_profile_name()
-        hermes_home = Path(_INITIAL_HERMES_HOME).expanduser()
+        hermes_home = _isolated_profile_home()
         try:
             from hermes_cli.profiles import list_profiles
             infos = list_profiles()

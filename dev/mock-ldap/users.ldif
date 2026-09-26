@@ -1,0 +1,34 @@
+# Sample users for the GFIT-CoWork mock LDAP. Every entry is a stand-in for an
+# AD account: the uid is the employee ID and displayName is the real name.
+# Passwords are for local development only.
+
+dn: ou=people,dc=gfit,dc=local
+objectClass: organizationalUnit
+ou: people
+
+# สมชาย ใจดี -- a Member (create Profile 521740 to let him in)
+dn: uid=521740,ou=people,dc=gfit,dc=local
+objectClass: inetOrgPerson
+uid: 521740
+cn: Somchai Jaidee
+sn: Jaidee
+displayName:: 4Liq4Lih4LiK4Liy4LiiIOC5g+C4iOC4lOC4tQ==
+userPassword: Somchai-Pass-1
+
+# วิภา รักงาน -- a second Member
+dn: uid=671278,ou=people,dc=gfit,dc=local
+objectClass: inetOrgPerson
+uid: 671278
+cn: Wipa Rakngan
+sn: Rakngan
+displayName:: 4Lin4Li04Lig4LiyIOC4o+C4seC4geC4h+C4suC4mQ==
+userPassword: Wipa-Pass-1
+
+# ผู้ดูแล ระบบ -- put 600001 in HERMES_WEBUI_ADMIN_USERS to make them the Admin
+dn: uid=600001,ou=people,dc=gfit,dc=local
+objectClass: inetOrgPerson
+uid: 600001
+cn: Admin Person
+sn: Person
+displayName:: 4Lic4Li54LmJ4LiU4Li54LmB4LilIOC4o+C4sOC4muC4mg==
+userPassword: Admin-Pass-1

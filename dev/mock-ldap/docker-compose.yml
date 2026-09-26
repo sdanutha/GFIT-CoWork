@@ -1,0 +1,28 @@
+# GFIT-CoWork mock LDAP: an OpenLDAP server with TLS, standing in for the
+# company AD during development. See README.md.
+#
+#   ./make-certs.sh && docker compose up -d
+#
+# LDAPS on localhost:1636, LDAP (StartTLS) on localhost:1389.
+services:
+  mock-ldap:
+    image: osixia/openldap:1.5.0
+    command: --copy-service
+    environment:
+      LDAP_ORGANISATION: GFIT
+      LDAP_DOMAIN: gfit.local
+      LDAP_ADMIN_PASSWORD: mock-ldap-admin
+      LDAP_TLS: "true"
+      LDAP_TLS_CRT_FILENAME: server.crt
+      LDAP_TLS_KEY_FILENAME: server.key
+      LDAP_TLS_CA_CRT_FILENAME: ca.crt
+      LDAP_TLS_VERIFY_CLIENT: never
+      # The server still accepts plain binds on 389; GFIT-CoWork refuses to
+      # send a password without TLS on its own side, which the tests check.
+      LDAP_TLS_ENFORCE: "false"
+    ports:
+      - "1389:389"
+      - "1636:636"
+    volumes:
+      - ./certs:/container/service/slapd/assets/certs:ro
+      - ./users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-users.ldif:ro

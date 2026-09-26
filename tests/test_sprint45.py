@@ -65,56 +65,6 @@ def _restore_settings_file(original_text):
     _get_settings_file().write_text(original_text, encoding="utf-8")
 
 
-def test_first_password_enablement_returns_cookie_and_keeps_browser_logged_in():
-    original_settings = _snapshot_settings_file()
-    cookie_header = None  # captured for teardown use
-    try:
-        saved, status, headers = post("/api/settings", {"_set_password": "sprint45-secret"})
-        assert status == 200
-        assert saved["auth_enabled"] is True
-        assert saved["logged_in"] is True
-        assert saved["auth_just_enabled"] is True
-
-        set_cookie = headers.get("Set-Cookie", "")
-        assert "hermes_session=" in set_cookie
-        cookie_header = set_cookie.split(";", 1)[0]
-
-        auth, auth_status, _ = get("/api/auth/status", headers={"Cookie": cookie_header})
-        assert auth_status == 200
-        assert auth["auth_enabled"] is True
-        assert auth["logged_in"] is True
-
-        done, done_status, _ = post(
-            "/api/onboarding/complete",
-            {},
-            headers={"Cookie": cookie_header},
-        )
-        assert done_status == 200
-        assert done["completed"] is True
-    finally:
-        # First: write a clean settings file (no password_hash) directly to disk
-        try:
-            import json as _json
-            clean = _json.loads(original_settings) if original_settings else {}
-            clean.pop("password_hash", None)
-            _get_settings_file().parent.mkdir(parents=True, exist_ok=True)
-            _get_settings_file().write_text(_json.dumps(clean, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-        # Then: tell the server to clear auth via API (must use the session cookie
-        # and prove possession of the current password under auth-disable safety).
-        try:
-            _headers = {"Cookie": cookie_header} if cookie_header else {}
-            post(
-                "/api/settings",
-                {"_clear_password": True, "_current_password": "sprint45-secret"},
-                headers=_headers,
-            )
-        except Exception:
-            pass
-        _restore_settings_file(original_settings)
-
-
 def test_legacy_assistant_language_is_hidden_and_removed_on_next_save():
     original_settings = _snapshot_settings_file()
     try:

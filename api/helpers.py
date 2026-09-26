@@ -62,11 +62,22 @@ def _sanitize_error(e: Exception) -> str:
     return msg
 
 
-def safe_resolve(root: Path, requested: str) -> Path:
+def resolve_inside(root: Path, requested: str) -> Path:
     """Resolve a relative path inside root, raising ValueError on traversal."""
     resolved = (root / requested).resolve()
     resolved.relative_to(root.resolve())  # raises ValueError if outside root
     return resolved
+
+
+def safe_resolve(root: Path, requested: str) -> Path:
+    """Resolve a relative path inside the Workspace root, raising ValueError on traversal.
+
+    A GFIT-CoWork Member is also refused any path outside their Profile's
+    Workspace, whatever *root* is.
+    """
+    from api.workspace import confine_to_member_workspace
+
+    return confine_to_member_workspace(resolve_inside(root, requested))
 
 
 _CSP_CONNECT_BASE = (

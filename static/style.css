@@ -7324,3 +7324,33 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 /* Settings field highlight (mirrors msg-question-highlight / _highlightQuestionRow pattern) */
 .settings-field-highlight { animation: settings-field-pulse 1.6s ease-out; }
 @keyframes settings-field-pulse { 0% { box-shadow: 0 0 0 0 var(--focus-ring); } 35% { box-shadow: 0 0 0 4px var(--focus-ring); } 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); } }
+
+/* GFIT-CoWork: a Member does not see Admin-only menus. The server stamps
+   data-gfit-role on <html> and refuses these features anyway (api/access.py);
+   hiding them is cosmetic. Settings are Deployment-wide, so the whole panel is
+   the Admin's. */
+html[data-gfit-role="member"] [data-panel="logs"],
+html[data-gfit-role="member"] [data-panel="kanban"],
+html[data-gfit-role="member"] [data-panel="profiles"],
+html[data-gfit-role="member"] [data-panel="settings"],
+html[data-gfit-role="member"] #dashboardRailBtn,
+html[data-gfit-role="member"] #dashboardMobileBtn,
+html[data-gfit-role="member"] #updateBanner,
+html[data-gfit-role="member"] #btnRestartGateway,
+html[data-gfit-role="member"] #btnTerminalToggle,
+html[data-gfit-role="member"] #composerTerminalPanel,
+html[data-gfit-role="member"] #composerTerminalDock,
+html[data-gfit-role="member"] #yoloPill,
+html[data-gfit-role="member"] #approvalSkipAll,
+html[data-gfit-role="member"] #providerQuotaChip,
+html[data-gfit-role="member"] #composerMobileQuotaAction,
+html[data-gfit-role="member"] #btnShareSession {
+  display: none !important;
+}
+
+/* GFIT-CoWork: the Directory is the only way in (ADR 0004), so Settings has no
+   shared-password field. The passkey block and Disable Auth stay hidden because
+   the server reports those methods off. */
+.settings-field:has(> #settingsPasswordForm) {
+  display: none !important;
+}

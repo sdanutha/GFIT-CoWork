@@ -20,14 +20,45 @@ A User signs in with their employee ID (`521740`, `GFIT\521740` or
 `521740@gfit.co.th` all work) and password. The password is checked by the
 **Directory**; GFIT-CoWork never stores or logs it. Login succeeds only when the
 Directory accepts the password **and** a Profile named after the employee ID
-exists. The session is then bound to that Profile.
+exists. The session is then bound to that Profile. An employee ID on the Admin
+list logs in to the `default` Profile as the **Admin** instead.
 
 | Variable | Meaning |
 | --- | --- |
-| `HERMES_WEBUI_DIRECTORY` | Which Directory to use. Unset turns Directory login off. `memory` uses the in-memory Directory. Any other value refuses every login. |
+| `HERMES_WEBUI_DIRECTORY` | Which Directory to use. Unset turns Directory login off. `ldap` uses the company AD; `memory` uses the in-memory Directory. Any other value refuses every login. |
+| `HERMES_WEBUI_ADMIN_USERS` | Comma-separated employee IDs of the Deployment's Admins, e.g. `521740,671278`. |
+| `HERMES_WEBUI_LDAP_URL` | For `ldap`: `ldaps://ad-host` or `ldap://ad-host` with `HERMES_WEBUI_LDAP_STARTTLS=1`. Plain LDAP is refused. |
+| `HERMES_WEBUI_LDAP_BIND_FORMAT`, `HERMES_WEBUI_LDAP_DOMAIN` | For `ldap`: `upn` (`521740@domain`) or `domain` (`DOMAIN\521740`), plus the domain. |
+| `HERMES_WEBUI_LDAP_BASE_DN`, `HERMES_WEBUI_LDAP_USER_FILTER` | For `ldap`: where and how to look the user up to read `displayName` (filter default `(sAMAccountName={username})`). |
+| `HERMES_WEBUI_LDAP_CA_CERT` | For `ldap`: the CA certificate of the AD server, when the system does not trust it. |
 | `HERMES_WEBUI_DIRECTORY_USERS` | For `memory`: a JSON file standing in for AD, e.g. `{"521740": {"password": "dev-only", "display_name": "Somchai Jaidee"}}`. For tests and local development only. |
 
-Wrong-password attempts are rate-limited per IP (5 per minute).
+Wrong-password attempts are rate-limited per IP (5 per minute). When AD cannot
+be reached, login says the directory is unavailable rather than that the
+password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
+stand-in (see its README).
+
+The Directory is the only way in. The upstream login methods (the shared
+`HERMES_WEBUI_PASSWORD` or Settings password, passkeys, OIDC and the trusted
+header) are switched off; configuring one of them keeps the login gate on but
+never lets anyone in.
+
+### Members and the Admin
+
+A **Member** works only in their own Profile. Every request runs in the Profile
+bound to their session, whatever Profile the client names; naming another one
+is refused, and a Member cannot switch Profiles. A Member's Workspaces live in
+`<Profile>/workspace`, created at first login. Registering a Workspace outside
+it, or any file operation that resolves outside it (through `..` or a symlink),
+is refused.
+
+The **Admin** is not confined and alone may use the server-level features:
+terminal, changing workspace git, extensions, self-update, shutdown and reload,
+server logs, YOLO mode, providers, models and MCP servers, Settings (they are
+shared by the whole Deployment), onboarding, gateway control, Profile
+management and public share links. The server refuses these to Members with
+403 (`api/access.py` lists what a Member may call; anything else is refused),
+and the web UI hides their menus.
 
 The rest of this README is the upstream Hermes WebUI documentation, kept for
 reference.

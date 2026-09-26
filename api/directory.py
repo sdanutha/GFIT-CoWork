@@ -9,6 +9,8 @@ Directory (company AD, ticket 08) are interchangeable.
 The implementation is chosen with ``HERMES_WEBUI_DIRECTORY``:
 
 * unset -- Directory login is off.
+* ``ldap`` -- :class:`api.ldap_directory.LdapDirectory`, the company AD over
+  LDAPS or StartTLS (configured with ``HERMES_WEBUI_LDAP_*``).
 * ``memory`` -- :class:`InMemoryDirectory`, loaded from the JSON file named by
   ``HERMES_WEBUI_DIRECTORY_USERS``: ``{"521740": {"password": "...",
   "display_name": "..."}}``. It stands in for AD, so it holds mock passwords.
@@ -41,9 +43,20 @@ class Identity(NamedTuple):
     display_name: str
 
 
+class DirectoryUnavailable(Exception):
+    """The Directory could not answer (unreachable, or unusable config).
+
+    Not a wrong password: the login is refused with a different message and
+    does not count towards the rate limit.
+    """
+
+
 class Directory(Protocol):
     def authenticate(self, username: str, password: str) -> Identity | None:
-        """Return the Identity when *password* is right for *username*, else None."""
+        """Return the Identity when *password* is right for *username*, else None.
+
+        Raises DirectoryUnavailable when the Directory cannot answer.
+        """
 
 
 def normalize_username(raw) -> str | None:
@@ -104,6 +117,16 @@ class InMemoryDirectory:
         return Identity(name, stored[1])
 
 
+class _Unavailable:
+    """The Directory for a configuration that cannot be used: every login is unavailable."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+    def authenticate(self, username, password) -> Identity | None:
+        raise DirectoryUnavailable(self.reason)
+
+
 class _RefuseAll:
     """The fail-closed Directory for a broken or unknown configuration."""
 
@@ -130,5 +153,13 @@ def get_directory() -> Directory | None:
                 path, type(exc).__name__,
             )
             return _RefuseAll()
+    if kind == "ldap":
+        from api.ldap_directory import LdapDirectory
+
+        try:
+            return LdapDirectory.from_env()
+        except ValueError as exc:
+            logger.warning("LDAP Directory is misconfigured (%s); every login is unavailable", exc)
+            return _Unavailable(str(exc))
     logger.warning("Unknown %s=%r; refusing every login", DIRECTORY_ENV, kind)
     return _RefuseAll()

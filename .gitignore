@@ -88,3 +88,6 @@ docs/ui-ux/review-shots/
 # Local WebUI runtime data and credentials
 .webui_password
 attachments/
+
+# GFIT-CoWork mock LDAP certificates (dev/mock-ldap/make-certs.sh)
+dev/mock-ldap/certs/

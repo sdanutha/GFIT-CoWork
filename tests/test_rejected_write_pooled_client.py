@@ -505,13 +505,23 @@ def _own_server():
 
 @pytest.fixture
 def auth_on(monkeypatch):
-    """Turn password auth on for this test (conftest resets the hash cache)."""
+    """Turn GFIT-CoWork Directory login on for this test, with one Admin."""
     import api.auth as auth
 
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "pooled-client-regression")
-    auth._invalidate_password_hash_cache()
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", _ADMIN)
     assert auth.is_auth_enabled(), "the auth-path regression needs auth enabled"
     return auth
+
+
+_ADMIN = "600001"
+
+
+def _admin_session(auth) -> str:
+    """A valid Directory session (the only kind GFIT-CoWork honours)."""
+    return auth.create_session(
+        auth_type=auth.DIRECTORY_AUTH_TYPE, username=_ADMIN, bound_profile="default", role="admin",
+    )
 
 
 def _assert_kept_alive(answered: bytes, status: bytes) -> None:
@@ -598,7 +608,7 @@ def _authenticated_same_origin_post(port, cookie_name, cookie, framing, body=b""
 @pytest.mark.parametrize("framing", _BODYLESS_FRAMING, ids=_BODYLESS_IDS)
 def test_bodyless_csrf_token_rejection_keeps_the_pooled_socket_alive(framing, auth_on):
     """A real session, a same-origin POST, and no CSRF token -> token_mismatch."""
-    cookie = auth_on.create_session()
+    cookie = _admin_session(auth_on)
     try:
         with _own_server() as port:
             answered = _pipelined_after(
@@ -616,7 +626,7 @@ def test_bodyless_csrf_token_rejection_keeps_the_pooled_socket_alive(framing, au
 
 
 def test_csrf_token_rejection_with_a_body_still_closes_the_pooled_socket(auth_on):
-    cookie = auth_on.create_session()
+    cookie = _admin_session(auth_on)
     try:
         with _own_server() as port:
             answered = _pipelined_after(
