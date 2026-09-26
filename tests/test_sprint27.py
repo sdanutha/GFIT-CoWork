@@ -92,22 +92,23 @@ def test_settings_whitespace_bot_name_defaults_to_hermes():
 
 # ── Login page rendering ──────────────────────────────────────────────────
 
-def test_login_page_shows_default_bot_name():
-    """GET /login should contain 'Hermes' in title and h1 when default."""
+def test_login_page_shows_app_name():
+    """GET /login shows the web app's name (GFIT-CoWork) in title and h1."""
     html, status = get_raw("/login")
     assert status == 200
-    assert "<title>Hermes" in html
-    assert "<h1>Hermes</h1>" in html
+    assert "<title>GFIT-CoWork" in html
+    assert "<h1>GFIT-CoWork</h1>" in html
 
 
-def test_login_page_shows_custom_bot_name():
-    """GET /login should reflect the configured bot_name."""
+def test_login_page_ignores_custom_bot_name():
+    """The assistant name is not the web app's name: /login keeps GFIT-CoWork."""
     try:
         post("/api/settings", {"bot_name": "Aria"})
         html, status = get_raw("/login")
         assert status == 200
-        assert "<title>Aria" in html
-        assert "<h1>Aria</h1>" in html
+        assert "<title>GFIT-CoWork" in html
+        assert "<h1>GFIT-CoWork</h1>" in html
+        assert "Aria" not in html
     finally:
         post("/api/settings", {"bot_name": "Hermes"})
 
@@ -130,7 +131,5 @@ def test_login_page_xss_escaped():
         assert status == 200
         # Raw tag must not appear unescaped
         assert "<script>alert(1)</script>" not in html
-        # Escaped form should appear
-        assert "&lt;script&gt;" in html
     finally:
         post("/api/settings", {"bot_name": "Hermes"})

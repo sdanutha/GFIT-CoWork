@@ -1,4 +1,25 @@
-# Hermes Web UI
+# GFIT-CoWork
+
+GFIT-CoWork is a multi-user web workspace for working with
+[Hermes Agent](https://hermes-agent.nousresearch.com/), run on a shared server
+for one GFIT team. Each person logs in with their company AD account and works
+in their own Hermes Agent Profile; the team's Admin runs the server, the API key
+and the list of Profiles. See [CONTEXT.md](CONTEXT.md) for the vocabulary and
+[docs/adr/](docs/adr/) for the design decisions.
+
+GFIT-CoWork is a hard fork of
+[hermes-webui](https://github.com/nesquena/hermes-webui) (MIT License), taken at
+`c296673e`. Changes are no longer merged from upstream
+([ADR 0001](docs/adr/0001-hard-fork-from-hermes-webui.md)). The original
+copyright notice is kept in [LICENSE](LICENSE). Environment variables keep their
+upstream `HERMES_WEBUI_*` names.
+
+The rest of this README is the upstream Hermes WebUI documentation, kept for
+reference.
+
+---
+
+## About Hermes Web UI (upstream)
 
 [Hermes Agent](https://hermes-agent.nousresearch.com/) is a sophisticated autonomous agent that lives on your server, accessed via a terminal or messaging apps, that remembers what it learns and gets more capable the longer it runs.
 

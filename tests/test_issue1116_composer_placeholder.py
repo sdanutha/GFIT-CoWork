@@ -44,8 +44,9 @@ class TestComposerPlaceholderProfile:
         ui_src = _src("ui.js")
         messages_src = _src("messages.js")
         sessions_src = _src("sessions.js")
-        assert "document.title=assistantDisplayName();" in ui_src
-        assert "document.title=sessionTitle+' \\u2014 '+assistantDisplayName();" in ui_src
+        # GFIT-CoWork: the tab title names the web app (APP_NAME), not the assistant.
+        assert "document.title=APP_NAME;" in ui_src
+        assert "document.title=sessionTitle+' \\u2014 '+APP_NAME;" in ui_src
         assert "const _bn=assistantDisplayName();" in ui_src
         assert "assistantDisplayName()" in messages_src
         assert "assistantDisplayName()" in sessions_src

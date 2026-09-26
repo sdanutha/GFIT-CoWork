@@ -16,7 +16,7 @@ def test_delete_confirmation_mentions_retained_worktree():
     assert "session_delete_worktree_confirm" in i18n
     assert "will remain on disk" in i18n
     assert "session_delete_worktree_confirm: (path) => `Delete this conversation? The worktree at ${path} will remain on disk.`" in i18n
-    assert "session_delete_worktree_desc: 'Delete only the WebUI conversation; keep the worktree on disk'" in i18n
+    assert "session_delete_worktree_desc: 'Delete only the GFIT-CoWork conversation; keep the worktree on disk'" in i18n
     assert "session_deleted_worktree: 'Conversation deleted. Worktree remains on disk.'" in i18n
 
 

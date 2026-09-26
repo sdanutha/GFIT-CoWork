@@ -83,7 +83,7 @@ def test_extensions_panel_warns_about_trust_model_and_stays_install_free():
     pane_end = INDEX_HTML.index('id="settingsPaneSystem"', pane_start)
     pane = INDEX_HTML[pane_start:pane_end]
 
-    assert "Extensions run in the WebUI browser origin" in pane
+    assert "Extensions run in the GFIT-CoWork browser origin" in pane
     assert "Settings and extension-owned storage are browser-local and not for secrets" in pane
     assert "Only load trusted local extension directories" in pane
     assert "takes effect after reload" in pane

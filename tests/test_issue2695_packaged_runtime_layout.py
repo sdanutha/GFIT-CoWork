@@ -32,7 +32,7 @@ def _copy_repo_without_heavy_dirs(dst: Path) -> Path:
 def _build_wheel(repo_copy: Path) -> Path:
     dist_dir = repo_copy / "dist"
     env = os.environ.copy()
-    env["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_HERMES_WEBUI"] = "0.52.2695"
+    env["SETUPTOOLS_SCM_PRETEND_VERSION_FOR_GFIT_COWORK"] = "0.52.2695"
     subprocess.run(
         [
             sys.executable,
@@ -51,8 +51,8 @@ def _build_wheel(repo_copy: Path) -> Path:
         stderr=subprocess.PIPE,
         text=True,
     )
-    wheels = sorted(dist_dir.glob("hermes_webui-*.whl"))
-    assert wheels, "wheel build must produce a hermes_webui wheel"
+    wheels = sorted(dist_dir.glob("gfit_cowork-*.whl"))
+    assert wheels, "wheel build must produce a gfit_cowork wheel"
     return wheels[0]
 
 

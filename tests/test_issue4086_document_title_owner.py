@@ -26,9 +26,9 @@ def test_apply_bot_name_does_not_overwrite_active_session_document_title():
     src = BOOT_JS.read_text()
     body = _extract_function(src, "function applyBotName(){")
 
-    assert "if(!S.session) document.title=name;" in body
-    assert "document.title=name;" not in body.replace(
-        "if(!S.session) document.title=name;",
+    assert "if(!S.session) document.title=APP_NAME;" in body
+    assert "document.title=APP_NAME;" not in body.replace(
+        "if(!S.session) document.title=APP_NAME;",
         "",
     )
 
@@ -37,4 +37,4 @@ def test_sync_topbar_remains_session_document_title_owner():
     src = UI_JS.read_text()
     body = _extract_function(src, "function syncTopbar(){")
 
-    assert "document.title=sessionTitle+' \\u2014 '+assistantDisplayName();" in body
+    assert "document.title=sessionTitle+' \\u2014 '+APP_NAME;" in body

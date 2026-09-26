@@ -3068,7 +3068,7 @@ function applyBotName(){
   // The saved assistant name applies to the default profile only.
   // Non-default profiles use their own profile names.
   const name=assistantDisplayName();
-  if(!S.session) document.title=name;
+  if(!S.session) document.title=APP_NAME;
   const sidebarH1=document.querySelector('.sidebar-header h1');
   if(sidebarH1) sidebarH1.textContent=name;
   const logo=document.querySelector('.sidebar-header .logo');
@@ -3953,8 +3953,8 @@ window.addEventListener('pageshow', async (event) => {
 
 async function shutdownServer() {
   const ok = await showConfirmDialog({
-    title: (typeof t === 'function' ? t('settings_shutdown_confirm_title') : 'Stop Hermes WebUI'),
-    message: (typeof t === 'function' ? t('settings_shutdown_confirm_message') : 'Stop the Hermes WebUI server?'),
+    title: (typeof t === 'function' ? t('settings_shutdown_confirm_title') : 'Stop GFIT-CoWork'),
+    message: (typeof t === 'function' ? t('settings_shutdown_confirm_message') : 'Stop the GFIT-CoWork server?'),
     confirmLabel: (typeof t === 'function' ? t('settings_shutdown_confirm_btn') : 'Stop'),
     danger: true,
   });

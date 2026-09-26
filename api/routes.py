@@ -2913,6 +2913,7 @@ def _get_cached_session_list_payload(
     return payload
 
 from api.config import (
+    APP_NAME,
     STATE_DIR,
     SESSION_DIR,
     DEFAULT_WORKSPACE,
@@ -11414,7 +11415,7 @@ def _resolve_login_locale_key(raw_lang: str | None) -> str:
 # ── Login page (self-contained, no external deps) ────────────────────────────
 _LOGIN_PAGE_HTML = """<!doctype html>
 <html lang="{{LANG}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{BOT_NAME}} — {{LOGIN_TITLE}}</title>
+<title>{{APP_NAME}} — {{LOGIN_TITLE}}</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#1a1a2e;color:#e8e8f0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
@@ -11442,8 +11443,8 @@ button:hover{background:rgba(124,185,255,.25)}
 .err{color:#e94560;font-size:12px;margin-top:10px;display:none}
 </style></head><body>
 <div class="card">
-  <div class="logo">{{BOT_NAME_INITIAL}}</div>
-  <h1>{{BOT_NAME}}</h1>
+  <div class="logo">{{APP_NAME_INITIAL}}</div>
+  <h1>{{APP_NAME}}</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
     {{PASSWORD_FORM_HTML}}
@@ -14020,7 +14021,6 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/login":
         _settings = load_settings()
-        _bn = _html.escape(_settings.get("bot_name") or "Hermes")
         _lang = _settings.get("language", "en")
         _login_strings = _LOGIN_LOCALE[
             _resolve_login_locale_key(_lang)
@@ -14059,8 +14059,8 @@ def handle_get(handler, parsed) -> bool:
             _password_form_html = ""
         version_token = quote(WEBUI_VERSION, safe="")
         _page = (
-            _LOGIN_PAGE_HTML.replace("{{BOT_NAME}}", _bn)
-            .replace("{{BOT_NAME_INITIAL}}", _bn[0].upper())
+            _LOGIN_PAGE_HTML.replace("{{APP_NAME}}", _html.escape(APP_NAME))
+            .replace("{{APP_NAME_INITIAL}}", _html.escape(APP_NAME[0].upper()))
             .replace("{{WEBUI_VERSION}}", version_token)
             .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
             .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))

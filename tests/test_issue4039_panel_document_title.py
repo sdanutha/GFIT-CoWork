@@ -12,8 +12,8 @@ def test_sync_app_titlebar_stamps_non_chat_document_title():
     src = _src("panels.js")
 
     assert "if (panel !== 'chat') {" in src
-    assert "const bot = typeof assistantDisplayName === 'function' ? assistantDisplayName() : '';" in src
-    assert "document.title = bot ? mainText + ' \\u2014 ' + bot : mainText;" in src
+    # GFIT-CoWork: the tab title names the web app, not the assistant.
+    assert "document.title = mainText + ' \\u2014 ' + APP_NAME;" in src
 
 
 def test_switch_panel_restores_chat_title_via_sync_topbar():
@@ -27,5 +27,5 @@ def test_chat_title_format_stays_owned_by_sync_topbar():
     panels_src = _src("panels.js")
     ui_src = _src("ui.js")
 
-    assert "document.title=sessionTitle+' \\u2014 '+assistantDisplayName();" in ui_src
-    assert "document.title=sessionTitle+' \\u2014 '+assistantDisplayName();" not in panels_src
+    assert "document.title=sessionTitle+' \\u2014 '+APP_NAME;" in ui_src
+    assert "document.title=sessionTitle+' \\u2014 '+APP_NAME;" not in panels_src

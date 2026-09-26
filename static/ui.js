@@ -7,6 +7,8 @@
 // See api/todo_state.py for the wire contract.
 const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null,_pendingSessionToolsets:null};
 
+// The web app's own name for page chrome (tab title). The assistant keeps its own name.
+const APP_NAME='GFIT-CoWork';
 function assistantDisplayName(){
   if(S.activeProfile&&S.activeProfile!=='default') return S.activeProfile.charAt(0).toUpperCase()+S.activeProfile.slice(1);
   return window._botName||'Hermes';
@@ -11507,7 +11509,7 @@ function _topbarMessageMetaText(){
 }
 function syncTopbar(){
   if(!S.session){
-    document.title=assistantDisplayName();
+    document.title=APP_NAME;
     if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
     if(typeof _syncWorkspaceHeadingState==='function') _syncWorkspaceHeadingState();
     if(typeof syncModelChip==='function') syncModelChip();
@@ -11529,7 +11531,7 @@ function syncTopbar(){
   }
   const sessionTitle=S.session.title||t('untitled');
   const _topbarTitle=$('topbarTitle');if(_topbarTitle)_topbarTitle.textContent=sessionTitle;
-  document.title=sessionTitle+' \u2014 '+assistantDisplayName();
+  document.title=sessionTitle+' \u2014 '+APP_NAME;
   if(typeof activeSessionHasPendingPromptAttention==='function'&&activeSessionHasPendingPromptAttention()){
     document.title='● '+document.title;
   }

@@ -291,7 +291,7 @@ def render_session_html(session: dict, theme: str = "dark", palette: dict | None
 <main>
 {''.join(blocks)}
 </main>
-<footer class="doc-foot">Exported from Hermes WebUI on {exported}</footer>
+<footer class="doc-foot">Exported from GFIT-CoWork on {exported}</footer>
 </div>
 </body>
 </html>"""

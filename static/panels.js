@@ -79,8 +79,7 @@ function syncAppTitlebar() {
 
   titleEl.textContent = mainText;
   if (panel !== 'chat') {
-    const bot = typeof assistantDisplayName === 'function' ? assistantDisplayName() : '';
-    document.title = bot ? mainText + ' \u2014 ' + bot : mainText;
+    document.title = mainText + ' \u2014 ' + APP_NAME;
   }
   if (subEl) {
     if (subText) {
@@ -997,12 +996,12 @@ function _cronGatewayNoticeHtml(status) {
         ? 'Gateway endpoint not reachable'
         : 'Gateway not running';
   const body = notConfigured
-    ? 'In Hermes WebUI, scheduled jobs require the Hermes gateway daemon. If this is a single-container Docker install, jobs can be created and run manually here, but scheduled ticks need a gateway container or `hermes gateway` running outside the WebUI.'
+    ? 'In GFIT-CoWork, scheduled jobs require the Hermes gateway daemon. If this is a single-container Docker install, jobs can be created and run manually here, but scheduled ticks need a gateway container or `hermes gateway` running outside the WebUI.'
     : isStaleMetadata
       ? 'The gateway is marked as configured, but its health metadata has gone stale. In Docker, scheduled jobs require a live gateway daemon that refreshes runtime metadata while ticking cron.'
       : isRemoteUnreachable
         ? 'The gateway health endpoint is not reachable from WebUI. Verify the configured gateway URL env var (`GATEWAY_HEALTH_URL`, `HERMES_GATEWAY_HEALTH_URL`, `HERMES_API_URL`, or `HERMES_WEBUI_GATEWAY_BASE_URL`) points to a reachable gateway service and network path before relying on cron ticking.'
-        : 'In Hermes WebUI, scheduled jobs require the Hermes gateway daemon to be running. Start the gateway container or `hermes gateway` before relying on offline scheduled runs.';
+        : 'In GFIT-CoWork, scheduled jobs require the Hermes gateway daemon to be running. Start the gateway container or `hermes gateway` before relying on offline scheduled runs.';
   const docsHref = 'https://github.com/nesquena/hermes-webui/blob/master/docs/docker.md#scheduled-jobs-and-the-gateway-daemon';
   const helpLink = notConfigured || isRemoteUnreachable || isStaleMetadata
     ? `<p><a href="${docsHref}" target="_blank" rel="noopener">How to enable scheduled jobs in Docker ↗</a></p>`
@@ -9126,8 +9125,8 @@ async function loadSettingsPanel(){
       // Only annotate the channel when on experimental — stable is the implicit
       // default and needs no extra chrome.
       webuiBadge.textContent = chan==='experimental'
-        ? `WebUI: ${chanVer} · Experimental`
-        : `WebUI: ${chanVer}`;
+        ? `GFIT-CoWork: ${chanVer} · Experimental`
+        : `GFIT-CoWork: ${chanVer}`;
     }
     const agentBadge = $('settings-agent-version-badge');
     if(agentBadge){

@@ -698,6 +698,7 @@ global.startGatewaySSE = () => {{}};
 global.showToast = () => {{}};
 global.t = value => value;
 global.assistantDisplayName = () => 'Hermes';
+global.APP_NAME = 'GFIT-CoWork';
 global._profileSwitchPanelLoad = async () => {{}};
 global._refreshProfileSwitchBackground = () => {{}};
 var _profileSwitchGeneration = 0;

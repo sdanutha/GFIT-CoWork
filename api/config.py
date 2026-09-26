@@ -46,6 +46,9 @@ _platform_default_hermes_home = _paths._platform_default_hermes_home
 # REPO_ROOT is the directory that contains this file's parent (api/ -> repo root)
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 
+# The web app's own name, shown in page chrome. Hermes Agent keeps its name.
+APP_NAME = "GFIT-CoWork"
+
 # ── Network config (env-overridable) ─────────────────────────────────────────
 HOST = os.getenv("HERMES_WEBUI_HOST", "127.0.0.1")
 PORT = int(os.getenv("HERMES_WEBUI_PORT", "8787"))
