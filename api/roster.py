@@ -15,8 +15,9 @@ function here (``create_profile``, ``disable_profile``, ``enable_profile``,
 and its record in step, returns the Profile's roster view, and raises
 ProfileRefused (a message for the Admin and its kind) when it refuses. The
 steps run in an order where a failure part way leaves the Profile shut, never
-open: create writes the record before the Hermes Profile, and delete disables
-the Profile before the Hermes Profile is deleted. Disabling a Profile
+open: create writes the record disabled before the Hermes Profile and makes it
+active only once the Profile exists, and delete disables the Profile before the
+Hermes Profile is deleted. Disabling a Profile
 ends its sessions straight away; its data stays.
 """
 from __future__ import annotations
@@ -202,12 +203,9 @@ def record_login(name: str, display_name="") -> None:
 def _check_existing_member_profile(name: str) -> None:
     """Refuse unless *name* is an existing Profile that is not the built-in one or an Admin's."""
     from api.access import is_admin
-    from api.profiles import _validate_profile_name, named_profile_exists
+    from api.profiles import named_profile_exists
 
-    try:
-        _validate_profile_name(name)
-    except ValueError as exc:
-        raise ProfileRefused(str(exc)) from exc
+    _check_name(name)
     if not named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' does not exist.", REFUSED_NOT_FOUND)
     if is_admin(name):
@@ -231,24 +229,42 @@ def _refusal_from_hermes(exc: Exception, message: str, busy_kind: str) -> Profil
     return ProfileRefused(f"{message}: {exc}", kind)
 
 
-def create_profile(name: str, display_name="", **hermes_options) -> dict:
+def _refuse_isolated_mode(action: str) -> None:
+    """Refuse before anything changes when Profiles cannot be created or deleted here."""
+    from api.profiles import _is_isolated_profile_mode
+
+    if _is_isolated_profile_mode():
+        raise ProfileRefused(f"Profile {action} is not allowed in isolated profile mode.", REFUSED_FORBIDDEN)
+
+
+def _check_name(name: str) -> None:
+    """Refuse a name that breaks the Profile-name rule (``default`` included)."""
+    from api.profiles import _validate_profile_name
+
+    try:
+        _validate_profile_name(name)
+    except ValueError as exc:
+        raise ProfileRefused(str(exc)) from exc
+
+
+def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
     """The Admin creates Profile *name*, active, with *display_name*.
 
-    The record is written before the Hermes Profile is created, so a failure
-    part way never leaves a Profile with no record (which would count as
-    active). *hermes_options* go to ``api.profiles.create_profile_api``
-    (clone and model options). Returns the new Profile's row for the Profile list.
+    The record is written disabled before the Hermes Profile is created and
+    made active only once it exists, so a failure at any step leaves the
+    Profile shut, never without a record (which would count as active).
+    *hermes_options* go to ``api.profiles.create_profile_api`` (clone and model
+    options). Returns the new Profile's row for the Profile list.
     """
     from api import profiles
 
-    try:
-        profiles._validate_profile_name(name)
-    except ValueError as exc:
-        raise ProfileRefused(str(exc)) from exc
+    _refuse_isolated_mode("creation")
+    _check_name(name)
     if profiles.named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' already exists.")
     try:
-        add(name, display_name)
+        _write(lambda records: records.__setitem__(
+            name, {"display_name": clean_display_name(display_name), "status": STATUS_DISABLED}))
     except (OSError, RosterUnreadable) as exc:
         logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
         raise ProfileRefused(
@@ -259,21 +275,25 @@ def create_profile(name: str, display_name="", **hermes_options) -> dict:
         result = profiles.create_profile_api(name, **hermes_options)
     except Exception as exc:
         if profiles.named_profile_exists(name) and not isinstance(exc, FileExistsError):
-            # Made in part: keep it shut rather than leave it without a record.
-            _keep_shut(name)
+            # Made in part: its record keeps it shut until the Admin deletes it.
+            profiles._invalidate_list_profiles_cache()
             raise _refusal_from_hermes(
-                exc, f"Profile '{name}' was created only in part and is disabled", REFUSED_BAD_REQUEST,
+                exc,
+                f"Profile '{name}' was created only in part and is disabled; delete it and create it again",
+                REFUSED_BAD_REQUEST,
             ) from exc
         _drop_record(name)
         raise _refusal_from_hermes(exc, f"Profile '{name}' was not created", REFUSED_BAD_REQUEST) from exc
-    return {**result, **view(name)}
-
-
-def _keep_shut(name: str) -> None:
     try:
-        _set(name, status=STATUS_DISABLED)
-    except (OSError, RosterUnreadable):
-        logger.warning("Profile %s was created in part and could not be marked disabled", name, exc_info=True)
+        _set(name, status=STATUS_ACTIVE)
+    except (OSError, RosterUnreadable) as exc:
+        logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
+        raise ProfileRefused(
+            f"Profile '{name}' was created but is disabled: the Profile roster could not be written. "
+            "Enable it once the roster is fixed.",
+            REFUSED_SERVER_FAULT,
+        ) from exc
+    return {**result, **view(name)}
 
 
 def _drop_record(name: str) -> None:
@@ -284,14 +304,15 @@ def _drop_record(name: str) -> None:
         logger.warning("The roster record of Profile %s could not be removed", name, exc_info=True)
 
 
-def _set_status(name: str, status: str, action="changed") -> None:
-    """Record *status* for Profile *name*; refuse, with nothing *action*, when the roster cannot be written."""
+def _set_status(name: str, status: str, outcome: str = "changed") -> None:
+    """Record *status* for Profile *name*; when the roster cannot be written, refuse
+    saying the Profile was not *outcome* (``changed``, ``deleted``)."""
     try:
         _set(name, status=status)
     except (OSError, RosterUnreadable) as exc:
         logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
         raise ProfileRefused(
-            f"Profile '{name}' was not {action}: the Profile roster could not be written.",
+            f"Profile '{name}' was not {outcome}: the Profile roster could not be written.",
             REFUSED_SERVER_FAULT,
         ) from exc
 
@@ -336,10 +357,10 @@ def delete_profile(name: str) -> dict:
     """
     from api import profiles
 
-    try:
-        profiles._validate_profile_name(name)
-    except ValueError as exc:
-        raise ProfileRefused(str(exc)) from exc
+    _refuse_isolated_mode("deletion")
+    if name == "default":
+        raise ProfileRefused("The built-in default Profile cannot be deleted.")
+    _check_name(name)
     if not profiles.named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' does not exist.")
     _set_status(name, STATUS_DISABLED, "deleted")

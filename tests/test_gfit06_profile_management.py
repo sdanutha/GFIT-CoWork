@@ -149,6 +149,29 @@ def test_a_create_that_fails_part_way_leaves_the_profile_disabled(srv, admin, mo
     assert _cannot_log_in(srv, NEWCOMER)
 
 
+def test_a_failed_activation_leaves_the_new_profile_disabled(srv, admin, monkeypatch):
+    # The record is written disabled, then made active once the Hermes Profile exists.
+    import api.roster as roster
+
+    real_save = roster._save
+    saves = []
+
+    def save_once(records):
+        saves.append(records)
+        if len(saves) > 1:
+            raise OSError("disk full")
+        real_save(records)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(roster, "_save", save_once)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 500, body
+    assert "disabled" in body["error"]
+    assert srv.profile_home(NEWCOMER).is_dir()
+    assert _row(admin, NEWCOMER)["status"] == "disabled"
+    assert _cannot_log_in(srv, NEWCOMER)
+
+
 def test_creating_an_existing_disabled_profile_leaves_it_disabled(admin):
     admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
     admin.post("/api/profile/disable", {"name": NEWCOMER})
@@ -332,6 +355,7 @@ def test_the_default_profile_cannot_be_deleted(admin):
     status, body, _ = admin.post("/api/profile/delete", {"name": "default", "confirm": "default"})
     assert status == 400, body
     assert "default" in body["error"]
+    assert "create" not in body["error"]
 
 
 # ── Members are refused ─────────────────────────────────────────────────────

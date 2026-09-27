@@ -1867,8 +1867,8 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   that checks it is allowed, keeps the Hermes Profile and its record in step and returns
   the roster view, or raises `ProfileRefused` (a message and a kind, which the handler maps
   to 400/403/404/409/500). The steps are ordered so a failure part way leaves the Profile
-  shut: create writes the record first, and a Hermes Profile made only in part stays
-  disabled; delete disables the Profile (ending its sessions) before deleting it, and a
+  shut: create writes the record disabled first and makes it active only once the Hermes
+  Profile exists; delete disables the Profile (ending its sessions) before deleting it, and a
   deletion that cannot finish leaves it disabled. A disabled Profile's sessions are also
   refused on every request (`auth._reconcile_directory_session`).
 - `api/member_login.py` also writes the Directory display name into the roster on every
