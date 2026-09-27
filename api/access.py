@@ -12,9 +12,12 @@ to which Profile (:func:`admit`, Admission), and what a Member may call.
 endpoints added later (fail closed). :data:`ADMIN_ONLY_ENDPOINTS` names the
 server-level features on purpose so the intent is readable, but a Member is
 refused them simply because they are not Member endpoints. A Member entry names
-a route exactly; a prefix is allowed only where the path has a variable part
-(:data:`VARIABLE_PATH_PREFIXES`), and ``tests/test_gfit_admin_gate_list.py``
-fails when a dispatched route reaches Members any other way.
+a route exactly, with the methods it handles. A prefix is allowed only where the
+path has a variable part (:data:`VARIABLE_PATH_PREFIXES`, each with its reason),
+and it covers only the one prefix route the server dispatches on: a literal
+route, or a narrower prefix route, under it needs its own entry.
+``tests/test_gfit_admin_gate_list.py`` fails when a dispatched route reaches a
+User any other way, so a new route stays Admin-only until someone names it.
 
 The server gate is the source of truth. The frontend hides the matching menus
 for Members, which is cosmetic only.
@@ -42,8 +45,10 @@ _ANY = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     # The app shell and its assets
     (_READ, "/"), (_READ, "/index.html"), (_READ, "/sessions"),
-    (_READ, "/session/*"), (_READ, "/static/*"), (_READ, "/manifest.json"),
-    (_READ, "/manifest.webmanifest"), (_READ, "/sw.js"), (_READ, "/favicon.ico"),
+    (_READ, "/session/*"), (_READ, "/session/static/*"), (_READ, "/static/*"),
+    (_READ, "/manifest.json"), (_READ, "/manifest.webmanifest"),
+    (_READ, "/session/manifest.json"), (_READ, "/session/manifest.webmanifest"),
+    (_READ, "/sw.js"), (_READ, "/favicon.ico"),
     (_READ, "/health"), (_READ, "/plugins/*"), (_READ, "/dashboard-plugins/*"),
     # Sign in and out
     (_READ, "/api/auth/status"), (_WRITE, "/api/auth/login"), (_WRITE, "/api/auth/logout"),
@@ -128,22 +133,19 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
 )
 
 # A Member prefix entry is allowed only where the route has a variable part that
-# cannot be listed. Each one says why. tests/test_gfit_admin_gate_list.py fails
-# when a route reaches Members through any other prefix.
+# cannot be listed. Each one says why, and covers only the prefix route it names
+# (see the module docstring).
 VARIABLE_PATH_PREFIXES: dict[str, str] = {
-    "/session/*": "session pages by session id, and their static assets",
+    "/session/*": "session pages by session id",
+    "/session/static/*": "static assets requested relative to a session page",
     "/static/*": "static assets by file name",
     "/plugins/*": "plugin assets by plugin name and file",
     "/dashboard-plugins/*": "dashboard plugin assets by plugin name and file",
 }
 
-# Shortcut prefixes from before every Member route was named exactly. Tickets
-# 03-05 replaced each with exact entries; admin-gate-exact ticket 06 deletes this
-# list. Do not add to it.
-LEGACY_PREFIXES: frozenset[str] = frozenset()
-
-# Server-level features, refused for Members. Listed so the intent is explicit;
-# they carve holes in the Member prefixes above.
+# Server-level features, refused for Members. Listed so the intent is explicit:
+# none of them is on the Member list, so they are refused anyway. An entry here
+# carves a hole only if it falls under a variable-path prefix above.
 ADMIN_ONLY_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_ANY, "/api/terminal/*"),                       # terminal
     (_ANY, "/api/git/*"),                            # mutating workspace git

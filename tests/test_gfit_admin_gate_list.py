@@ -15,7 +15,6 @@ from typing import NamedTuple
 import pytest
 
 from api.access import (
-    LEGACY_PREFIXES,
     MEMBER_ENDPOINTS,
     VARIABLE_PATH_PREFIXES,
     member_entry,
@@ -54,6 +53,10 @@ GATE_TABLE = [
     ("GET", "/static/ui.js", ALLOWED),
     ("GET", "/session/20260927_abc123", ALLOWED),
     ("GET", "/plugins/example/app.js", ALLOWED),
+    ("GET", "/session/static/ui.js", ALLOWED),
+    # Literal routes under a variable-path prefix, named exactly
+    ("GET", "/session/manifest.json", ALLOWED),
+    ("GET", "/session/manifest.webmanifest", ALLOWED),
     # Session and chat routes, named exactly
     ("POST", "/api/session/undo", ALLOWED),
     ("GET", "/api/session/export", ALLOWED),
@@ -196,11 +199,13 @@ def test_every_route_a_user_can_reach_is_named_exactly():
         entry = member_entry(method, route + "x" if prefix else route)
         if entry is None or not entry.endswith("*"):
             continue
-        if entry in VARIABLE_PATH_PREFIXES or entry in LEGACY_PREFIXES:
+        # A prefix route may use only its own variable-path entry.
+        if prefix and entry == route + "*" and entry in VARIABLE_PATH_PREFIXES:
             continue
         unnamed.append(
             f"{method} {route}{'*' if prefix else ''} reaches Users through the prefix "
-            f"{entry}: add it to the User list (MEMBER_ENDPOINTS) as an exact route, "
+            f"{entry}: add it to the User list (MEMBER_ENDPOINTS) as an exact route "
+            "(a prefix route also needs its reason in VARIABLE_PATH_PREFIXES), "
             "or leave it Admin-only (off the User list, or carved out in "
             "ADMIN_ONLY_ENDPOINTS)"
         )

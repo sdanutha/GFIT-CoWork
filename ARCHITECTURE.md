@@ -1857,7 +1857,10 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   isolated-profile request).
 - `api/access.py` — Admission (`admit`: from a confirmed employee ID, Admin at `default`, Member
   at their own active Profile, or refused with a reason), and the one list of endpoints a Member
-  may call; everything else is Admin-only (fail closed), enforced in `check_auth`.
+  may call; everything else is Admin-only (fail closed), enforced in `check_auth`. The list
+  names each route and method exactly, with a prefix only for a variable path part (the
+  module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
+  in `api/routes.py` and fails when the list and the handled routes disagree.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory. Disabling or deleting a Profile ends its sessions; a disabled Profile's
   sessions are also refused on every request (`auth._reconcile_directory_session`).
