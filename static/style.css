@@ -7344,7 +7344,8 @@ html[data-gfit-role="member"] #yoloPill,
 html[data-gfit-role="member"] #approvalSkipAll,
 html[data-gfit-role="member"] #providerQuotaChip,
 html[data-gfit-role="member"] #composerMobileQuotaAction,
-html[data-gfit-role="member"] #btnShareSession {
+html[data-gfit-role="member"] #btnShareSession,
+html[data-gfit-role="member"] [data-gfit-admin-only] {
   display: none !important;
 }
 

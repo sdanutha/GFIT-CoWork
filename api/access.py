@@ -104,11 +104,15 @@ ADMIN_ONLY_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_ANY, "/api/gateway/*"),                        # gateway control
     (_ANY, "/api/profile/*"),                        # profile management
     (_ANY, "/api/share/create"), (_ANY, "/api/share/revoke"),  # public share links
-    (_ANY, "/api/escape/*"), (_ANY, "/api/file/open-vscode"),  # files outside the Workspace
+    (_ANY, "/api/escape/*"),                         # files outside the Workspace
+    (_ANY, "/api/file/open-vscode"), (_ANY, "/api/file/reveal"),  # the server machine
     (_ANY, "/api/commands/exec"),                    # server-side agent commands
     (_ANY, "/api/dashboard/*"),                      # Hermes dashboard control
     (_ANY, "/api/kanban/*"),                         # one board for every Profile
     (_ANY, "/api/approval/inject_test"), (_ANY, "/api/clarify/inject_test"),
+    # The session store every Profile shares
+    (_ANY, "/api/sessions/cleanup"), (_ANY, "/api/sessions/cleanup_zero_message"),
+    (_ANY, "/api/session/recovery/audit"), (_ANY, "/api/session/recovery/repair-safe"),
 )
 
 

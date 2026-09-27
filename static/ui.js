@@ -21675,17 +21675,21 @@ function _showWorkspaceRootContextMenu(e){
   createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
   menu.appendChild(createSep);
 
-  menu.appendChild(_workspaceContextMenuItem(t('reveal_in_finder'),async()=>{
+  const revealRoot=_workspaceContextMenuItem(t('reveal_in_finder'),async()=>{
     menu.remove();
     try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
     catch(err){showToast(t('reveal_failed')+(err.message||err));}
-  }));
+  });
+  revealRoot.dataset.gfitAdminOnly='';  // acts on the server machine; Admin-only (api/access.py)
+  menu.appendChild(revealRoot);
 
-  menu.appendChild(_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
+  const vscodeRoot=_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
     menu.remove();
     try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
     catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}
-  }));
+  });
+  vscodeRoot.dataset.gfitAdminOnly='';
+  menu.appendChild(vscodeRoot);
 
   menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
     menu.remove();
@@ -22196,6 +22200,7 @@ function _showFileContextMenu(e, item){
     revealItem.onmouseenter=()=>revealItem.style.background='var(--hover-bg)';
     revealItem.onmouseleave=()=>revealItem.style.background='';
     revealItem.onclick=async()=>{menu.remove();try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('reveal_failed')+(err.message||err));}};
+    revealItem.dataset.gfitAdminOnly='';  // acts on the server machine; Admin-only (api/access.py)
     menu.appendChild(revealItem);
 
     // Open in VS Code (#2735)
@@ -22205,6 +22210,7 @@ function _showFileContextMenu(e, item){
     vscodeItem.onmouseenter=()=>vscodeItem.style.background='var(--hover-bg)';
     vscodeItem.onmouseleave=()=>vscodeItem.style.background='';
     vscodeItem.onclick=async()=>{menu.remove();try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}};
+    vscodeItem.dataset.gfitAdminOnly='';
     menu.appendChild(vscodeItem);
 
     // Copy file path — resolves the absolute on-disk path on the server (so the

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from api.access import ADMIN_ONLY_MESSAGE
 from tests._gfit_server import gfit_server as _gfit_server
 
 ADMIN = "521740"
@@ -87,6 +88,15 @@ ADMIN_ONLY = [
     ("POST", "/api/kanban/tasks", {}),
 ]
 
+# Routes that act on the session store every Profile shares, or on the server machine.
+REACH_EVERY_PROFILE_OR_THE_SERVER = [
+    ("POST", "/api/sessions/cleanup", {}),
+    ("POST", "/api/sessions/cleanup_zero_message", {}),
+    ("GET", "/api/session/recovery/audit", None),
+    ("POST", "/api/session/recovery/repair-safe", {}),
+    ("POST", "/api/file/reveal", {"session_id": "x", "path": "."}),
+]
+
 # Safe for the Admin to call in a test (no shutdown, update, or install).
 ADMIN_SAFE = [
     ("GET", "/api/logs", None),
@@ -96,6 +106,9 @@ ADMIN_SAFE = [
     ("GET", "/api/mcp/servers", None),
     ("GET", "/api/escape/list", None),
     ("POST", "/api/settings", {"send_key": "enter"}),
+    ("GET", "/api/session/recovery/audit", None),
+    ("POST", "/api/sessions/cleanup_zero_message", {}),  # the test teardown calls it too
+    ("POST", "/api/file/reveal", {"session_id": "no-such-session", "path": "."}),  # never opens anything
 ]
 
 MEMBER_ALLOWED = [
@@ -227,3 +240,10 @@ def test_admin_with_a_profile_of_their_own_is_signed_out_when_removed_from_the_l
     status, body, _ = again.get("/api/auth/status")
     assert body["role"] == "member"
     assert body["bound_profile"] == ADMIN
+
+
+@pytest.mark.parametrize("method,path,body", REACH_EVERY_PROFILE_OR_THE_SERVER)
+def test_member_is_refused_routes_that_reach_every_profile(member, method, path, body):
+    status, payload, _ = member.request(method, path, body)
+    assert status == 403, (method, path, payload)
+    assert payload["error"] == ADMIN_ONLY_MESSAGE
