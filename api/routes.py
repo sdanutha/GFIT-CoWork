@@ -11508,6 +11508,21 @@ def _directory_session_role(handler) -> str | None:
     return role if role in (ROLE_ADMIN, ROLE_MEMBER) else None
 
 
+def _login_client_ip(handler) -> str:
+    """The address the login rate limit counts attempts against.
+
+    Behind a reverse proxy every request arrives from the proxy, so one person's
+    wrong passwords would lock out the whole Team. With
+    ``HERMES_WEBUI_TRUST_FORWARDED_FOR=1`` and a trusted proxy as the socket
+    peer, the forwarded client address is used instead; otherwise (or on a
+    malformed chain) the socket peer.
+    """
+    raw = _request_client_ip(handler)
+    if _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR") and _raw_peer_is_trusted_proxy(handler):
+        return _forwarded_client_ip_from_trusted_proxy(handler) or raw
+    return raw
+
+
 def _handle_directory_login(handler, body, client_ip: str) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
@@ -18172,7 +18187,7 @@ def handle_post(handler, parsed) -> bool:
             return j(handler, {"ok": True, "message": "Auth not enabled"})
         # GFIT-CoWork: the Directory is the only way in (ADR 0004). With a
         # legacy method configured but no Directory, every login is refused.
-        return _handle_directory_login(handler, body, handler.client_address[0])
+        return _handle_directory_login(handler, body, _login_client_ip(handler))
 
     if parsed.path == "/api/auth/passkey/options":
         from api.auth import _passkey_feature_flag_enabled, is_auth_enabled

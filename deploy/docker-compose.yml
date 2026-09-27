@@ -1,0 +1,71 @@
+# GFIT-CoWork -- one Deployment for one Team: Hermes Agent + GFIT-CoWork.
+#
+# Copy this file and team.env.example into a folder of their own, rename the
+# example to .env, fill it in, then:
+#
+#   docker compose up -d
+#
+# Everything a Deployment keeps (Profiles, sessions, memory, the Profile
+# roster, Workspaces) lives in named volumes prefixed with the project name
+# (gfit-<TEAM>), so several Deployments share one server without touching each
+# other. The step-by-step guide is deploy/README.md.
+
+name: gfit-${TEAM:?set TEAM in .env}
+
+services:
+  hermes-agent:
+    image: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
+    command: gateway run
+    env_file: .env
+    environment:
+      - HERMES_HOME=/home/hermes/.hermes
+      - HERMES_UID=${UID:-1000}
+      - HERMES_GID=${GID:-1000}
+      # The gateway API is reached by GFIT-CoWork over the Deployment's own
+      # network only; it is never published on the host.
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${API_SERVER_KEY:?set API_SERVER_KEY in .env}
+    volumes:
+      - hermes-home:/home/hermes/.hermes
+      - hermes-agent-src:/opt/hermes
+    restart: unless-stopped
+
+  gfit-cowork:
+    image: ${GFIT_COWORK_IMAGE:-gfit-cowork:latest}
+    depends_on:
+      - hermes-agent
+    env_file: .env
+    ports:
+      # Loopback only: the reverse proxy (deploy/caddy) serves it over HTTPS.
+      - "127.0.0.1:${GFIT_PORT:?set GFIT_PORT in .env}:8787"
+    environment:
+      - HERMES_WEBUI_HOST=0.0.0.0
+      - HERMES_WEBUI_PORT=8787
+      - HERMES_WEBUI_STATE_DIR=/home/hermeswebui/.hermes/webui
+      - HERMES_API_URL=http://hermes-agent:8642
+      - HERMES_WEBUI_GATEWAY_API_KEY=${API_SERVER_KEY}
+      - WANTED_UID=${UID:-1000}
+      - WANTED_GID=${GID:-1000}
+      # Only reachable through the HTTPS reverse proxy.
+      - HERMES_WEBUI_SECURE=1
+      - HERMES_WEBUI_ALLOWED_ORIGINS=https://${GFIT_HOSTNAME:?set GFIT_HOSTNAME in .env}
+      # Count login attempts per person, not per proxy. The proxy reaches the
+      # container from the Docker bridge network.
+      - HERMES_WEBUI_TRUST_FORWARDED_FOR=1
+      - HERMES_WEBUI_TRUSTED_PROXY_CIDRS=${TRUSTED_PROXY_CIDRS:-172.16.0.0/12}
+    volumes:
+      - hermes-home:/home/hermeswebui/.hermes
+      - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent:ro
+      # The Admin's Workspace. A Member's Workspaces live in their Profile.
+      - admin-workspace:/workspace
+      # The AD CA certificate (HERMES_WEBUI_LDAP_CA_CERT=/certs/...).
+      - ./certs:/certs:ro
+    restart: unless-stopped
+
+volumes:
+  hermes-home:
+  # Filled from the agent image on first start. After upgrading the agent
+  # image, remove it so it is filled again (see deploy/README.md).
+  hermes-agent-src:
+  admin-workspace:

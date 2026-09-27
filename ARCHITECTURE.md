@@ -1863,3 +1863,5 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   `session_identity` gives `/api/auth/status` the `display_name` and "name (ID)" `label`
   the Profile chip shows. The chip opens an identity menu (`openIdentityMenu`) with Sign
   Out instead of the Profile switcher.
+- `deploy/` — the Deployment kit: `docker-compose.yml` (one Team), `team.env.example`,
+  and `caddy/` (the HTTPS reverse proxy shared by every Deployment on a server).

@@ -33,7 +33,10 @@ list logs in to the `default` Profile as the **Admin** instead.
 | `HERMES_WEBUI_LDAP_CA_CERT` | For `ldap`: the CA certificate of the AD server, when the system does not trust it. |
 | `HERMES_WEBUI_DIRECTORY_USERS` | For `memory`: a JSON file standing in for AD, e.g. `{"521740": {"password": "dev-only", "display_name": "Somchai Jaidee"}}`. For tests and local development only. |
 
-Wrong-password attempts are rate-limited per IP (5 per minute). When AD cannot
+Wrong-password attempts are rate-limited per IP (5 per minute). Behind a
+reverse proxy, set `HERMES_WEBUI_TRUST_FORWARDED_FOR=1` (and
+`HERMES_WEBUI_TRUSTED_PROXY_CIDRS` for a proxy not on loopback) so attempts are
+counted per person's forwarded address, not per proxy. When AD cannot
 be reached, login says the directory is unavailable rather than that the
 password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
 stand-in (see its README).
@@ -80,6 +83,14 @@ it in the Profile roster. Until someone's first login, their chip shows the
 name the Admin typed, or just the ID if the Admin typed none. `/api/auth/status`
 sends `user`, `display_name` and `label`. Clicking the chip opens a menu with
 the name and **Sign Out**, which ends that browser's session only.
+
+### Deploying for a Team
+
+`deploy/` is the Deployment kit: one Docker Compose file and one config file
+per Team (Hermes Agent + GFIT-CoWork), plus a Caddy reverse proxy that serves
+every Deployment on the server over HTTPS, each on its own hostname. The
+step-by-step guide, including how to add a Team, add a Member and run a pilot,
+is [deploy/README.md](deploy/README.md).
 
 The rest of this README is the upstream Hermes WebUI documentation, kept for
 reference.
