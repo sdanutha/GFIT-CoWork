@@ -54,6 +54,18 @@ GATE_TABLE = [
     ("GET", "/static/ui.js", ALLOWED),
     ("GET", "/session/20260927_abc123", ALLOWED),
     ("GET", "/plugins/example/app.js", ALLOWED),
+    # Session and chat routes, named exactly
+    ("POST", "/api/session/undo", ALLOWED),
+    ("GET", "/api/session/export", ALLOWED),
+    ("GET", "/api/sessions/search", ALLOWED),
+    ("GET", "/api/chat/stream", ALLOWED),
+    ("GET", "/api/background/status", ALLOWED),
+    ("GET", "/api/sessions/20260927_abc123/events", ALLOWED),  # one session id segment
+    ("GET", "/api/sessions/a/b/events", REFUSED),
+    ("GET", "/api/sessions//events", REFUSED),
+    ("GET", "/api/session/new", REFUSED),  # POST only
+    ("POST", "/api/chat/stream", REFUSED),  # GET only
+    ("GET", "/api/session/not-a-route", REFUSED),
     # Unknown routes are refused (fail closed)
     ("GET", "/api/not-a-route", REFUSED),
     ("POST", "/api/not-a-route", REFUSED),

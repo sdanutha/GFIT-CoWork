@@ -35,7 +35,8 @@ _READ = frozenset({"GET"})
 _WRITE = frozenset({"POST"})
 _ANY = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 
-# (methods, path) a Member may call. A path ending in ``*`` is a prefix.
+# (methods, path) a Member may call. A path ending in ``*`` is a prefix; a
+# ``<name>`` segment matches exactly one non-empty path segment (an id).
 # Longest match wins, so a narrower Admin-only entry can carve a hole in a
 # Member prefix.
 MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
@@ -46,11 +47,33 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/health"), (_READ, "/plugins/*"), (_READ, "/dashboard-plugins/*"),
     # Sign in and out
     (_READ, "/api/auth/status"), (_WRITE, "/api/auth/login"), (_WRITE, "/api/auth/logout"),
-    # Sessions and chat
-    (_READ, "/api/session"), (_READ, "/api/session/*"), (_WRITE, "/api/session/*"),
-    (_READ, "/api/sessions"), (_READ, "/api/sessions/*"), (_WRITE, "/api/sessions/*"),
-    (_READ, "/api/chat/*"), (_WRITE, "/api/chat"), (_WRITE, "/api/chat/*"),
-    (_WRITE, "/api/btw"), (_WRITE, "/api/background"), (_READ, "/api/background/*"),
+    # Sessions, each acted on by id inside the Member's pinned Profile
+    (_READ, "/api/session"), (_READ, "/api/session/compress/status"),
+    (_READ, "/api/session/export"), (_READ, "/api/session/lineage/report"),
+    (_READ, "/api/session/status"), (_READ, "/api/session/stream"),
+    (_READ, "/api/session/usage"), (_READ, "/api/session/worktree/status"),
+    (_READ, "/api/session/yolo"),
+    (_WRITE, "/api/session/anchor-scene"), (_WRITE, "/api/session/archive"),
+    (_WRITE, "/api/session/branch"), (_WRITE, "/api/session/clear"),
+    (_WRITE, "/api/session/compress"), (_WRITE, "/api/session/compress/start"),
+    (_WRITE, "/api/session/compression-recovery/start"),
+    (_WRITE, "/api/session/conversation-rounds"), (_WRITE, "/api/session/delete"),
+    (_WRITE, "/api/session/draft"), (_WRITE, "/api/session/duplicate"),
+    (_WRITE, "/api/session/handoff-summary"), (_WRITE, "/api/session/import"),
+    (_WRITE, "/api/session/import_cli"), (_WRITE, "/api/session/move"),
+    (_WRITE, "/api/session/new"), (_WRITE, "/api/session/pin"),
+    (_WRITE, "/api/session/rename"), (_WRITE, "/api/session/retry"),
+    (_WRITE, "/api/session/title/regenerate"), (_WRITE, "/api/session/toolsets"),
+    (_WRITE, "/api/session/truncate"), (_WRITE, "/api/session/undo"),
+    (_WRITE, "/api/session/update"),
+    (_READ, "/api/sessions"), (_READ, "/api/sessions/search"),
+    (_READ, "/api/sessions/events"), (_READ, "/api/sessions/gateway/stream"),
+    (_READ, "/api/sessions/<id>/events"),
+    # Chat
+    (_WRITE, "/api/chat"), (_WRITE, "/api/chat/start"), (_WRITE, "/api/chat/steer"),
+    (_READ, "/api/chat/stream"), (_READ, "/api/chat/stream/status"),
+    (_READ, "/api/chat/cancel"),
+    (_WRITE, "/api/btw"), (_WRITE, "/api/background"), (_READ, "/api/background/status"),
     (_WRITE, "/api/goal"), (_WRITE, "/api/process-complete-ack"),
     (_WRITE, "/api/bg-task-complete-ack"),
     (_READ, "/api/approval/pending"), (_READ, "/api/approval/stream"),
@@ -102,7 +125,6 @@ VARIABLE_PATH_PREFIXES: dict[str, str] = {
 # being replaced by exact entries for the routes under it (admin-gate-exact
 # tickets 03-05 empty this list). Do not add to it.
 LEGACY_PREFIXES: frozenset[str] = frozenset({
-    "/api/session/*", "/api/sessions/*", "/api/chat/*", "/api/background/*",
     "/api/file/*", "/api/workspaces/*", "/api/rollback/*", "/api/projects/*",
     "/api/crons/*", "/api/skills/*", "/api/commands/*", "/api/wiki/*", "/api/notes/*",
 })
@@ -178,6 +200,16 @@ def admit(employee_id: str) -> Admitted | Refused:
     return Admitted(ROLE_MEMBER, employee_id)
 
 
+def _segments_match(pattern: str, path: str) -> bool:
+    """True if *path* matches *pattern* segment by segment, a ``<name>`` segment
+    standing for any one non-empty segment."""
+    wanted, given = pattern.split("/"), path.split("/")
+    return len(wanted) == len(given) and all(
+        (w.startswith("<") and w.endswith(">") and g) or w == g
+        for w, g in zip(wanted, given)
+    )
+
+
 def _best_match(entries, method: str, path: str) -> tuple[int, str | None]:
     """(length, pattern) of the longest entry matching (method, path), or (-1, None)."""
     best = (-1, None)
@@ -187,6 +219,9 @@ def _best_match(entries, method: str, path: str) -> tuple[int, str | None]:
         if pattern.endswith("*"):
             if path.startswith(pattern[:-1]):
                 best = max(best, (len(pattern) - 1, pattern))
+        elif "<" in pattern:
+            if _segments_match(pattern, path):
+                best = max(best, (len(pattern) + 1, pattern))
         elif path == pattern:
             best = max(best, (len(pattern) + 1, pattern))  # an exact match beats any prefix
     return best
