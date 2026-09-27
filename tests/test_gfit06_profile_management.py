@@ -300,6 +300,40 @@ def test_deleting_a_profile_ends_its_sessions(srv, admin):
     assert status == 403
 
 
+def test_a_deletion_that_cannot_finish_leaves_the_profile_disabled(srv, admin, monkeypatch):
+    import api.profiles as profiles
+
+    def busy(*_args, **_kwargs):
+        raise RuntimeError("an agent is still running")
+
+    member = srv.logged_in(MEMBER)
+    with monkeypatch.context() as patch:
+        patch.setattr(profiles, "delete_profile_api", busy)
+        status, body, _ = admin.post("/api/profile/delete", {"name": MEMBER, "confirm": MEMBER})
+    assert status == 409, body
+    assert "disabled" in body["error"]
+    assert "an agent is still running" in body["error"]
+    assert member.get("/api/sessions")[0] == 401
+    assert srv.profile_home(MEMBER).is_dir()
+    assert _row(admin, MEMBER)["status"] == "disabled"
+    assert _cannot_log_in(srv, MEMBER)
+
+
+def test_an_unreadable_roster_refuses_delete(srv, admin):
+    (srv.state / "gfit_roster.json").write_text("{not json")
+    status, body, _ = admin.post("/api/profile/delete", {"name": MEMBER, "confirm": MEMBER})
+    assert status == 500, body
+    assert "not deleted" in body["error"]
+    assert srv.profile_home(MEMBER).is_dir()
+    assert (srv.state / "gfit_roster.json").read_text() == "{not json"
+
+
+def test_the_default_profile_cannot_be_deleted(admin):
+    status, body, _ = admin.post("/api/profile/delete", {"name": "default", "confirm": "default"})
+    assert status == 400, body
+    assert "default" in body["error"]
+
+
 # ── Members are refused ─────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("path,body", [

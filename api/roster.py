@@ -10,12 +10,13 @@ before the roster existed (or outside GFIT-CoWork) keep working. An unreadable
 roster fails closed: every Profile counts as disabled until it is fixed.
 
 This module owns the Profile lifecycle: each Admin action on a Profile is one
-function here (``create_profile``, ``disable_profile``, ``enable_profile``)
-that checks the action is allowed, keeps the Hermes Profile (``api.profiles``)
+function here (``create_profile``, ``disable_profile``, ``enable_profile``,
+``delete_profile``) that checks the action is allowed, keeps the Hermes Profile (``api.profiles``)
 and its record in step, returns the Profile's roster view, and raises
 ProfileRefused (a message for the Admin and its kind) when it refuses. The
 steps run in an order where a failure part way leaves the Profile shut, never
-open: create writes the record before the Hermes Profile. Disabling a Profile
+open: create writes the record before the Hermes Profile, and delete disables
+the Profile before the Hermes Profile is deleted. Disabling a Profile
 ends its sessions straight away; its data stays.
 """
 from __future__ import annotations
@@ -283,14 +284,14 @@ def _drop_record(name: str) -> None:
         logger.warning("The roster record of Profile %s could not be removed", name, exc_info=True)
 
 
-def _set_status(name: str, status: str) -> None:
-    """Record *status* for Profile *name*; refuse, with nothing changed, when the roster cannot be written."""
+def _set_status(name: str, status: str, action="changed") -> None:
+    """Record *status* for Profile *name*; refuse, with nothing *action*, when the roster cannot be written."""
     try:
         _set(name, status=status)
     except (OSError, RosterUnreadable) as exc:
         logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
         raise ProfileRefused(
-            f"Profile '{name}' was not changed: the Profile roster could not be written.",
+            f"Profile '{name}' was not {action}: the Profile roster could not be written.",
             REFUSED_SERVER_FAULT,
         ) from exc
 
@@ -327,7 +328,27 @@ def enable_profile(name: str) -> dict:
     return view(name)
 
 
-def remove(name: str) -> None:
-    """End Profile *name*'s sessions and forget it (after it is deleted)."""
+def delete_profile(name: str) -> dict:
+    """The Admin deletes Profile *name*: shut it first, then delete it, then forget it.
+
+    The Profile is disabled (ending its sessions) before its data is removed,
+    so a deletion that cannot finish leaves it shut. Returns ``{'ok': True, 'name': name}``.
+    """
+    from api import profiles
+
+    try:
+        profiles._validate_profile_name(name)
+    except ValueError as exc:
+        raise ProfileRefused(str(exc)) from exc
+    if not profiles.named_profile_exists(name):
+        raise ProfileRefused(f"Profile '{name}' does not exist.")
+    _set_status(name, STATUS_DISABLED, "deleted")
     _end_sessions(name)
-    _write(lambda records: records.pop(name, None))
+    try:
+        result = profiles.delete_profile_api(name)
+    except Exception as exc:
+        raise _refusal_from_hermes(
+            exc, f"Profile '{name}' is now disabled but was not deleted", REFUSED_CONFLICT,
+        ) from exc
+    _drop_record(name)
+    return result

@@ -1863,15 +1863,14 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   in `api/routes.py` and fails when the list and the handled routes disagree.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
-  (`create_profile`, `disable_profile`, `enable_profile`) is one function that checks it
-  is allowed, keeps the Hermes Profile and its record in step and returns the roster view,
-  or raises `ProfileRefused` (a message and a kind, which the handler maps to
-  400/403/404/409/500). The steps are ordered so a failure part way leaves the Profile
+  (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function
+  that checks it is allowed, keeps the Hermes Profile and its record in step and returns
+  the roster view, or raises `ProfileRefused` (a message and a kind, which the handler maps
+  to 400/403/404/409/500). The steps are ordered so a failure part way leaves the Profile
   shut: create writes the record first, and a Hermes Profile made only in part stays
-  disabled. Delete still calls `api.profiles` from its handler. Disabling or deleting a
-  Profile ends its sessions; a
-  disabled Profile's sessions are also refused on every request
-  (`auth._reconcile_directory_session`).
+  disabled; delete disables the Profile (ending its sessions) before deleting it, and a
+  deletion that cannot finish leaves it disabled. A disabled Profile's sessions are also
+  refused on every request (`auth._reconcile_directory_session`).
 - `api/member_login.py` also writes the Directory display name into the roster on every
   Member login (an Admin's rides on the session record, since an Admin has no Profile);
   `session_identity` gives `/api/auth/status` the `display_name` and "name (ID)" `label`

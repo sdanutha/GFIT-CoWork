@@ -17512,20 +17512,12 @@ def handle_post(handler, parsed) -> bool:
         # Deleting is permanent: the caller confirms by repeating the name.
         if str(body.get("confirm") or "").strip() != name:
             return bad(handler, "Confirm the deletion: send confirm set to the Profile name")
-        try:
-            from api import roster
-            from api.profiles import delete_profile_api, _validate_profile_name
+        from api import roster
 
-            _validate_profile_name(name)
-            result = delete_profile_api(name)
-            roster.remove(name)
-            return j(handler, result)
-        except PermissionError as e:
-            return bad(handler, _sanitize_error(e), 403)
-        except (ValueError, FileNotFoundError) as e:
-            return bad(handler, _sanitize_error(e))
-        except RuntimeError as e:
-            return bad(handler, str(e), 409)
+        try:
+            return j(handler, roster.delete_profile(name))
+        except roster.ProfileRefused as e:
+            return _profile_refused(handler, e)
 
     # ── Settings (POST) ──
     if parsed.path == "/api/settings":
