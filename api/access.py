@@ -83,7 +83,8 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/api/projects"), (_WRITE, "/api/projects/create"),
     (_WRITE, "/api/projects/rename"), (_WRITE, "/api/projects/delete"),
     (_READ, "/api/prompts"), (_WRITE, "/api/prompts"), (frozenset({"DELETE"}), "/api/prompts"),
-    (_READ, "/api/commands"), (_READ, "/api/commands/*"), (_WRITE, "/api/commands/bundles/resolve"),
+    (_READ, "/api/commands"), (_READ, "/api/commands/bundles"),
+    (_READ, "/api/commands/moa/resolve"), (_WRITE, "/api/commands/bundles/resolve"),
     (_READ, "/api/personalities"), (_WRITE, "/api/personality/set"),
     (_READ, "/api/reasoning"), (_READ, "/api/media"),
     (_WRITE, "/api/upload"), (_WRITE, "/api/upload/extract"),
@@ -94,8 +95,13 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     # The Member's own Profile: memory, skills, cron jobs
     (_READ, "/api/profiles"), (_READ, "/api/profile/active"),
     (_READ, "/api/memory"), (_WRITE, "/api/memory/write"),
-    (_READ, "/api/skills"), (_READ, "/api/skills/*"), (_WRITE, "/api/skills/*"),
-    (_READ, "/api/crons"), (_READ, "/api/crons/*"), (_WRITE, "/api/crons/*"),
+    (_READ, "/api/skills"), (_READ, "/api/skills/content"), (_READ, "/api/skills/usage"),
+    (_WRITE, "/api/skills/save"), (_WRITE, "/api/skills/delete"), (_WRITE, "/api/skills/toggle"),
+    (_READ, "/api/crons"), (_READ, "/api/crons/status"), (_READ, "/api/crons/recent"),
+    (_READ, "/api/crons/history"), (_READ, "/api/crons/output"), (_READ, "/api/crons/run"),
+    (_READ, "/api/crons/delivery-options"),
+    (_WRITE, "/api/crons/create"), (_WRITE, "/api/crons/update"), (_WRITE, "/api/crons/delete"),
+    (_WRITE, "/api/crons/pause"), (_WRITE, "/api/crons/resume"), (_WRITE, "/api/crons/run"),
     # Workspaces and files, confined to the Profile (see api.workspace)
     (_READ, "/api/workspaces"), (_READ, "/api/workspaces/suggest"),
     (_WRITE, "/api/workspaces/add"), (_WRITE, "/api/workspaces/remove"),
@@ -114,7 +120,9 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/api/git-info"),
     # Read-only views
     (_READ, "/api/settings"), (_READ, "/api/insights"), (_READ, "/api/project-os/dashboard"),
-    (_READ, "/api/wiki/*"), (_READ, "/api/notes/*"), (_READ, "/api/plugins"),
+    (_READ, "/api/wiki/status"), (_READ, "/api/wiki/browse"), (_READ, "/api/wiki/page"),
+    (_READ, "/api/notes/sources"), (_READ, "/api/notes/search"), (_READ, "/api/notes/item"),
+    (_READ, "/api/plugins"),
     (_READ, "/api/gateway/status"),
     (_READ, "/api/health/agent"), (_READ, "/api/system/health"),
 )
@@ -129,12 +137,10 @@ VARIABLE_PATH_PREFIXES: dict[str, str] = {
     "/dashboard-plugins/*": "dashboard plugin assets by plugin name and file",
 }
 
-# Shortcut prefixes from before every Member route was named exactly. Each one is
-# being replaced by exact entries for the routes under it (admin-gate-exact
-# tickets 03-05 empty this list). Do not add to it.
-LEGACY_PREFIXES: frozenset[str] = frozenset({
-    "/api/crons/*", "/api/skills/*", "/api/commands/*", "/api/wiki/*", "/api/notes/*",
-})
+# Shortcut prefixes from before every Member route was named exactly. Tickets
+# 03-05 replaced each with exact entries; admin-gate-exact ticket 06 deletes this
+# list. Do not add to it.
+LEGACY_PREFIXES: frozenset[str] = frozenset()
 
 # Server-level features, refused for Members. Listed so the intent is explicit;
 # they carve holes in the Member prefixes above.
@@ -210,10 +216,10 @@ def admit(employee_id: str) -> Admitted | Refused:
 def _segments_match(pattern: str, path: str) -> bool:
     """True if *path* matches *pattern* segment by segment, a ``<name>`` segment
     standing for any one non-empty segment."""
-    wanted, given = pattern.split("/"), path.split("/")
-    return len(wanted) == len(given) and all(
-        (w.startswith("<") and w.endswith(">") and g) or w == g
-        for w, g in zip(wanted, given)
+    pattern_parts, path_parts = pattern.split("/"), path.split("/")
+    return len(pattern_parts) == len(path_parts) and all(
+        (want.startswith("<") and want.endswith(">") and got) or want == got
+        for want, got in zip(pattern_parts, path_parts)
     )
 
 
@@ -226,11 +232,9 @@ def _best_match(entries, method: str, path: str) -> tuple[int, str | None]:
         if pattern.endswith("*"):
             if path.startswith(pattern[:-1]):
                 best = max(best, (len(pattern) - 1, pattern))
-        elif "<" in pattern:
-            if _segments_match(pattern, path):
-                best = max(best, (len(pattern) + 1, pattern))
-        elif path == pattern:
-            best = max(best, (len(pattern) + 1, pattern))  # an exact match beats any prefix
+        elif _segments_match(pattern, path):
+            # A match of the whole path, placeholders included, beats any prefix.
+            best = max(best, (len(path) + 1, pattern))
     return best
 
 

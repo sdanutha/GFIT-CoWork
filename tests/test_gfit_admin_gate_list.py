@@ -75,6 +75,18 @@ GATE_TABLE = [
     ("POST", "/api/projects/create", ALLOWED),
     ("GET", "/api/rollback/restore", REFUSED),  # POST only
     ("POST", "/api/file/not-a-route", REFUSED),
+    # Cron, skill, command, wiki and note routes, named exactly
+    ("POST", "/api/crons/create", ALLOWED),
+    ("GET", "/api/crons/run", ALLOWED),
+    ("POST", "/api/crons/run", ALLOWED),
+    ("POST", "/api/skills/save", ALLOWED),
+    ("GET", "/api/commands/bundles", ALLOWED),
+    ("GET", "/api/wiki/page", ALLOWED),
+    ("GET", "/api/notes/search", ALLOWED),
+    ("GET", "/api/crons/create", REFUSED),  # POST only
+    ("GET", "/api/skills/save", REFUSED),  # POST only
+    ("POST", "/api/commands/exec", REFUSED),  # server-side agent commands
+    ("GET", "/api/wiki/not-a-route", REFUSED),
     # Unknown routes are refused (fail closed)
     ("GET", "/api/not-a-route", REFUSED),
     ("POST", "/api/not-a-route", REFUSED),
