@@ -4,10 +4,10 @@ The order matters (spec, "Login decision"):
 
 1. rate-limit check (per IP)
 2. Directory authenticate
-3. an employee ID on the Admin list is bound to ``default`` as an Admin
-4. anyone else needs a Profile named after their employee ID, and it must not
-   be disabled in the Profile roster
-5. issue a session bound to that Profile, with the role
+3. Admission (:func:`api.access.admit`): an employee ID on the Admin list is
+   bound to ``default`` as an Admin; anyone else needs a Profile named after
+   their employee ID, and it must not be disabled in the Profile roster
+4. issue a session bound to that Profile, with the role
 
 A wrong password and a missing Profile get different messages, but neither the
 password nor anything derived from it is logged or stored.
@@ -18,6 +18,7 @@ import logging
 from typing import NamedTuple
 
 from api import auth
+from api.access import REFUSED_NO_PROFILE, REFUSED_PROFILE_NOT_ACTIVE
 from api.directory import DirectoryUnavailable, get_directory
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,12 @@ RATE_LIMITED_MESSAGE = "Too many attempts. Try again in a minute."
 UNAVAILABLE_MESSAGE = (
     "The company directory is unavailable right now. Try again in a few minutes."
 )
+
+# What login logs and shows for each reason Admission refuses someone.
+_REFUSALS = {
+    REFUSED_NO_PROFILE: ("no Profile", NO_PROFILE_MESSAGE),
+    REFUSED_PROFILE_NOT_ACTIVE: ("Profile disabled", SUSPENDED_MESSAGE),
+}
 
 
 class LoginOutcome(NamedTuple):
@@ -56,23 +63,18 @@ def attempt_login(username, password, client_ip: str) -> LoginOutcome:
         auth._record_login_attempt(client_ip)
         return LoginOutcome(401, INCORRECT_MESSAGE)
 
-    from api.access import ROLE_ADMIN, ROLE_MEMBER, is_admin
-    from api import roster
-    from api.profiles import named_profile_exists
+    from api.access import ROLE_ADMIN, ROLE_MEMBER, Refused, admit
 
-    if is_admin(identity.employee_id):
-        role, bound_profile = ROLE_ADMIN, "default"
-    elif not named_profile_exists(identity.employee_id):
-        logger.info("Directory login for %s refused: no Profile", identity.employee_id)
-        return LoginOutcome(403, NO_PROFILE_MESSAGE)
-    elif roster.is_disabled(identity.employee_id):
-        logger.info("Directory login for %s refused: Profile disabled", identity.employee_id)
-        return LoginOutcome(403, SUSPENDED_MESSAGE)
-    else:
-        role, bound_profile = ROLE_MEMBER, identity.employee_id
+    admission = admit(identity.employee_id)
+    if isinstance(admission, Refused):
+        why, message = _REFUSALS[admission.reason]
+        logger.info("Directory login for %s refused: %s", identity.employee_id, why)
+        return LoginOutcome(403, message)
+    role, bound_profile = admission
 
     auth._clear_login_attempts(client_ip)
     if role == ROLE_MEMBER:
+        from api import roster
         from api.workspace import ensure_member_workspace
 
         ensure_member_workspace(bound_profile)

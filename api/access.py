@@ -5,7 +5,8 @@ There are two roles. An **Admin** is an employee ID named in
 Profile and can use everything. Everyone else who logs in is a **Member**,
 pinned to their own Profile.
 
-This module is the one place that decides what a Member may call.
+This module is the one place that decides who is admitted, with which role and
+to which Profile (:func:`admit`, Admission), and what a Member may call.
 :func:`member_may_call` classifies a request by method and path against
 :data:`MEMBER_ENDPOINTS`; anything not listed there is refused, including
 endpoints added later (fail closed). :data:`ADMIN_ONLY_ENDPOINTS` names the
@@ -18,6 +19,7 @@ for Members, which is cosmetic only.
 from __future__ import annotations
 
 import os
+from typing import NamedTuple
 
 ADMIN_USERS_ENV = "HERMES_WEBUI_ADMIN_USERS"
 
@@ -120,6 +122,34 @@ def admin_users() -> frozenset[str]:
 
 def is_admin(employee_id) -> bool:
     return bool(employee_id) and employee_id in admin_users()
+
+
+# Why Admission refuses someone.
+REFUSED_NO_PROFILE = "no_profile"
+REFUSED_PROFILE_NOT_ACTIVE = "profile_not_active"
+
+
+class Admitted(NamedTuple):
+    role: str
+    profile: str
+
+
+class Refused(NamedTuple):
+    reason: str
+
+
+def admit(employee_id: str) -> Admitted | Refused:
+    """Admission: may *employee_id* use this Deployment, with which role, in which Profile?"""
+    from api import roster
+    from api.profiles import named_profile_exists
+
+    if is_admin(employee_id):
+        return Admitted(ROLE_ADMIN, "default")
+    if not named_profile_exists(employee_id):
+        return Refused(REFUSED_NO_PROFILE)
+    if roster.is_disabled(employee_id):
+        return Refused(REFUSED_PROFILE_NOT_ACTIVE)
+    return Admitted(ROLE_MEMBER, employee_id)
 
 
 def _match_length(entries, method: str, path: str) -> int:
