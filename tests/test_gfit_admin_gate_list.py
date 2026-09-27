@@ -66,6 +66,15 @@ GATE_TABLE = [
     ("GET", "/api/session/new", REFUSED),  # POST only
     ("POST", "/api/chat/stream", REFUSED),  # GET only
     ("GET", "/api/session/not-a-route", REFUSED),
+    # File, Workspace, rollback and project routes, named exactly
+    ("POST", "/api/file/rename", ALLOWED),
+    ("POST", "/api/file/path", ALLOWED),
+    ("POST", "/api/workspaces/add", ALLOWED),
+    ("GET", "/api/rollback/list", ALLOWED),
+    ("GET", "/api/rollback/diff", ALLOWED),
+    ("POST", "/api/projects/create", ALLOWED),
+    ("GET", "/api/rollback/restore", REFUSED),  # POST only
+    ("POST", "/api/file/not-a-route", REFUSED),
     # Unknown routes are refused (fail closed)
     ("GET", "/api/not-a-route", REFUSED),
     ("POST", "/api/not-a-route", REFUSED),

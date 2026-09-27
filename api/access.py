@@ -80,7 +80,8 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_WRITE, "/api/approval/respond"),
     (_READ, "/api/clarify/pending"), (_READ, "/api/clarify/stream"),
     (_WRITE, "/api/clarify/respond"),
-    (_READ, "/api/projects"), (_WRITE, "/api/projects/*"),
+    (_READ, "/api/projects"), (_WRITE, "/api/projects/create"),
+    (_WRITE, "/api/projects/rename"), (_WRITE, "/api/projects/delete"),
     (_READ, "/api/prompts"), (_WRITE, "/api/prompts"), (frozenset({"DELETE"}), "/api/prompts"),
     (_READ, "/api/commands"), (_READ, "/api/commands/*"), (_WRITE, "/api/commands/bundles/resolve"),
     (_READ, "/api/personalities"), (_WRITE, "/api/personality/set"),
@@ -96,11 +97,18 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/api/skills"), (_READ, "/api/skills/*"), (_WRITE, "/api/skills/*"),
     (_READ, "/api/crons"), (_READ, "/api/crons/*"), (_WRITE, "/api/crons/*"),
     # Workspaces and files, confined to the Profile (see api.workspace)
-    (_READ, "/api/workspaces"), (_READ, "/api/workspaces/suggest"), (_WRITE, "/api/workspaces/*"),
+    (_READ, "/api/workspaces"), (_READ, "/api/workspaces/suggest"),
+    (_WRITE, "/api/workspaces/add"), (_WRITE, "/api/workspaces/remove"),
+    (_WRITE, "/api/workspaces/rename"), (_WRITE, "/api/workspaces/reorder"),
     (_WRITE, "/api/workspace/upload"),
     (_READ, "/api/list"), (_READ, "/api/file"), (_READ, "/api/file/raw"),
-    (_READ, "/api/folder/download"), (_WRITE, "/api/file/*"),
-    (_READ, "/api/rollback/*"), (_WRITE, "/api/rollback/restore"),
+    (_READ, "/api/folder/download"),
+    (_WRITE, "/api/file/save"), (_WRITE, "/api/file/office-save"),
+    (_WRITE, "/api/file/create"), (_WRITE, "/api/file/create-dir"),
+    (_WRITE, "/api/file/rename"), (_WRITE, "/api/file/move"),
+    (_WRITE, "/api/file/delete"), (_WRITE, "/api/file/path"),
+    (_READ, "/api/rollback/list"), (_READ, "/api/rollback/diff"),
+    (_WRITE, "/api/rollback/restore"),
     # Read-only workspace git
     (_READ, "/api/git/status"), (_READ, "/api/git/branches"), (_READ, "/api/git/diff"),
     (_READ, "/api/git-info"),
@@ -125,7 +133,6 @@ VARIABLE_PATH_PREFIXES: dict[str, str] = {
 # being replaced by exact entries for the routes under it (admin-gate-exact
 # tickets 03-05 empty this list). Do not add to it.
 LEGACY_PREFIXES: frozenset[str] = frozenset({
-    "/api/file/*", "/api/workspaces/*", "/api/rollback/*", "/api/projects/*",
     "/api/crons/*", "/api/skills/*", "/api/commands/*", "/api/wiki/*", "/api/notes/*",
 })
 
