@@ -26,6 +26,15 @@ def _ui_js() -> str:
     return (Path(__file__).parent.parent / "static" / "ui.js").read_text(encoding="utf-8")
 
 
+def _reads_active_profile(expr: str) -> bool:
+    """A chip-label expression reads S.activeProfile, directly or via profileChipText().
+
+    GFIT-CoWork: profileChipText() shows "name (ID)" under a Directory login and
+    otherwise S.activeProfile (see test_profile_chip_text_keys_on_active_profile).
+    """
+    return "S.activeProfile" in expr or expr.strip() == "profileChipText()"
+
+
 def _sync_topbar_body(src: str) -> str:
     """Return the full source of the syncTopbar() function."""
     start = src.find("function syncTopbar(){")
@@ -55,7 +64,7 @@ class TestIssue3635ProfileChipActive:
         )
         assert updates, "no profileChipLabel textContent assignment found in syncTopbar"
         for expr in updates:
-            assert "S.activeProfile" in expr, (
+            assert _reads_active_profile(expr), (
                 "profile chip label must read S.activeProfile, got: " + expr.strip()
             )
 
@@ -84,7 +93,7 @@ class TestIssue3635ProfileChipActive:
         inconsistency was the bug. They must now be identical.
         """
         body = _sync_topbar_body(_ui_js())
-        setters = re.findall(r"\.textContent=(S\.activeProfile\|\|'default')", body)
+        setters = re.findall(r"\.textContent=(S\.activeProfile\|\|'default'|profileChipText\(\))", body)
         assert len(setters) >= 2, (
             "expected both syncTopbar chip-label setters to read "
             "S.activeProfile||'default'; found: " + str(setters)
@@ -129,10 +138,17 @@ class TestProfileSwitcherSourceOfTruthInvariant:
         assignments = re.findall(r"profileChipLabel'\);[\s\S]{0,120}?\.textContent=([^;]+);", body)
         assert assignments, "no profileChipLabel assignment found in syncTopbar()"
         for expr in assignments:
-            assert "S.activeProfile" in expr and "S.session.profile" not in expr, (
+            assert _reads_active_profile(expr) and "S.session.profile" not in expr, (
                 "profile chip (switcher trigger) must resolve from S.activeProfile, "
                 "not the loaded session's profile: " + expr.strip()
             )
+
+    def test_profile_chip_text_keys_on_active_profile(self):
+        src = _ui_js()
+        start = src.find("function profileChipText(){")
+        assert start != -1, "profileChipText() not found in ui.js"
+        body = src[start:src.find("}", start) + 1]
+        assert "S.activeProfile" in body and "S.session" not in body, body
 
     def test_dropdown_active_row_keys_on_active_profile(self):
         body = _render_profile_dropdown_body(_panels_js())

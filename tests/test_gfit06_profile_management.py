@@ -91,8 +91,9 @@ def test_creating_an_existing_profile_is_refused(admin):
 def test_member_list_is_labelled_with_the_roster(srv, admin):
     member = srv.logged_in(MEMBER)
     row = _row(admin, MEMBER)
-    # Created outside the roster: shown by ID, active, with the login recorded.
-    assert row["label"] == MEMBER
+    # Created outside the roster: active, with the login recorded and the
+    # display name taken from the Directory on login (ticket 07).
+    assert row["label"] == f"Member One ({MEMBER})"
     assert row["status"] == "active"
     assert isinstance(row["last_login"], (int, float))
     assert member.get("/api/profile/active")[0] == 200

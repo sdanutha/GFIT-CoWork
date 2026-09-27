@@ -104,6 +104,16 @@ def clean_display_name(value) -> str:
     return " ".join(value.split())[:DISPLAY_NAME_MAX]
 
 
+def directory_name(value, employee_id: str) -> str:
+    """A display name from the Directory, or ``''`` when it is only the employee ID.
+
+    The Directory falls back to the ID when a person has no name, and that is
+    no name at all.
+    """
+    display_name = clean_display_name(value)
+    return "" if display_name == employee_id else display_name
+
+
 def view(name: str) -> dict:
     """The roster view of Profile *name*: name, display name, label, status, last login."""
     record = _record(name)
@@ -154,8 +164,17 @@ def _set(name: str, **fields) -> None:
     _write(lambda records: records.setdefault(name, {}).update(fields))
 
 
-def record_login(name: str) -> None:
-    _set(name, last_login=time.time())
+def record_login(name: str, display_name="") -> None:
+    """Record a login to Profile *name*, taking the display name from the Directory.
+
+    A Directory name that is empty or just the employee ID (the Directory's
+    fallback) does not replace the name the Admin typed.
+    """
+    fields = {"last_login": time.time()}
+    display_name = directory_name(display_name, name)
+    if display_name:
+        fields["display_name"] = display_name
+    _set(name, **fields)
 
 
 def disable(name: str) -> None:

@@ -72,6 +72,15 @@ told their access is suspended, but their data stays — **enable** it again, or
 Display name, status and last login live in the **Profile roster**
 (`gfit_roster.json` in the state directory), not in the Hermes Profile config.
 
+### Name and Sign Out
+
+After login the Profile chip shows who is signed in as "name (ID)", e.g.
+"สมชาย ใจดี (521740)". Every login takes the name from the Directory and saves
+it in the Profile roster. Until someone's first login, their chip shows the
+name the Admin typed, or just the ID if the Admin typed none. `/api/auth/status`
+sends `user`, `display_name` and `label`. Clicking the chip opens a menu with
+the name and **Sign Out**, which ends that browser's session only.
+
 The rest of this README is the upstream Hermes WebUI documentation, kept for
 reference.
 

@@ -657,6 +657,7 @@ def create_session(
     username: str | None = None,
     bound_profile: str | None = None,
     role: str | None = None,
+    display_name: str | None = None,
 ) -> str:
     """Create a new auth session. Returns signed cookie value."""
     token = secrets.token_hex(32)
@@ -671,6 +672,8 @@ def create_session(
         }
         if role is not None:
             record['role'] = role
+        if display_name is not None:
+            record['display_name'] = display_name
     else:
         record = expiry
     with _SESSIONS_LOCK:

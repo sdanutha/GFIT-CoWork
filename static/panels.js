@@ -6988,6 +6988,45 @@ function renderProfileDropdown(data) {
   if (tbl) tbl.textContent = active;
 }
 
+// ── GFIT-CoWork identity menu (ticket 07) ──
+// Under a Directory login nobody switches Profile, so the Profile chip shows
+// who is signed in and opens this menu (name, employee ID, Sign Out) instead.
+async function loadGfitIdentity(){
+  S.gfitIdentity=null;
+  try{
+    const status=await api('/api/auth/status',{redirect401:false});
+    if(status&&status.logged_in&&status.auth_type==='directory'){
+      S.gfitIdentity={user:status.user||'',display_name:status.display_name||'',label:status.label||status.user||''};
+    }
+  }catch(_){}
+  if(!S.gfitIdentity) return;
+  for(const btn of [$('profileChip'),$('titlebarProfileBtn')]){
+    if(!btn) continue;
+    btn.title=S.gfitIdentity.label;
+    btn.setAttribute('aria-label',S.gfitIdentity.label);
+  }
+}
+
+function renderIdentityMenu(){
+  const dd=$('profileDropdown');
+  if(!dd||!S.gfitIdentity) return;
+  const id=S.gfitIdentity;
+  dd.innerHTML=`<div class="profile-opt identity-menu-who">`+
+    `<div class="profile-opt-name">${esc(id.display_name||id.user)}</div>`+
+    (id.display_name?`<div class="profile-opt-meta">${esc(id.user)}</div>`:'')+
+    `</div><div class="ws-divider"></div>`;
+  const out=document.createElement('div');
+  out.className='profile-opt identity-menu-sign-out';
+  out.innerHTML=`<div class="profile-opt-name">${esc(t('sign_out'))}</div>`;
+  out.onclick=()=>{closeProfileDropdown();signOut();};
+  dd.appendChild(out);
+}
+
+function openIdentityMenu(){
+  renderIdentityMenu();
+  _openProfileDropdownShell();
+}
+
 function toggleProfileDropdown(e) {
   const dd = $('profileDropdown');
   if (!dd) return;
@@ -6996,6 +7035,7 @@ function toggleProfileDropdown(e) {
   if(typeof closeModelDropdown==='function') closeModelDropdown();
   // Track which element triggered the dropdown for positioning
   _profileDropdownTrigger = (e && e.currentTarget) || $('profileChip');
+  if (S.gfitIdentity) return openIdentityMenu();
   const openGen = ++_profileDropdownOpenGeneration;
   const cached = _profileDropdownBestCachedData();
 

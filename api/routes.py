@@ -14245,7 +14245,10 @@ def handle_get(handler, parsed) -> bool:
             payload["user"] = session_info.get("username")
             payload["bound_profile"] = session_info.get("bound_profile")
         if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
+            from api.member_login import session_identity
+
             payload["role"] = session_info.get("role")
+            payload.update(session_identity(session_info))
         return j(handler, payload)
 
     if parsed.path.startswith("/api/share/"):

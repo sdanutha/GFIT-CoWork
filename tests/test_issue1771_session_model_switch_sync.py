@@ -162,7 +162,7 @@ for (const name of [
   '_findModelInDropdown', '_refreshOpenModelDropdown', '_applyModelToDropdown',
   '_addLiveModelsToSelect',
   '_modelStateFromAppliedDropdown', '_persistSessionModelCorrection',
-  '_applySessionModelFallback', 'syncTopbar'
+  '_applySessionModelFallback', 'profileChipText', 'syncTopbar'
 ]) {
   const src = extractFunc(name, {optional: name !== 'syncTopbar'});
   if (src) eval(src);

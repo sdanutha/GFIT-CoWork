@@ -13,6 +13,12 @@ function assistantDisplayName(){
   if(S.activeProfile&&S.activeProfile!=='default') return S.activeProfile.charAt(0).toUpperCase()+S.activeProfile.slice(1);
   return window._botName||'Hermes';
 }
+// GFIT-CoWork: who is signed in, from /api/auth/status ({user, display_name,
+// label}), or null when there is no Directory session. Under a Directory login
+// the Profile chip shows "name (ID)" instead of the Profile name.
+function profileChipText(){
+  return (S.gfitIdentity&&S.gfitIdentity.label)||S.activeProfile||'default';
+}
 const INFLIGHT={};  // keyed by session_id while request in-flight
 const SESSION_QUEUES={};  // keyed by session_id for queued follow-up turns
 const MAX_UPLOAD_BYTES=(window.__HERMES_CONFIG__&&window.__HERMES_CONFIG__.maxUploadBytes)||20*1024*1024;
@@ -11524,9 +11530,9 @@ function syncTopbar(){
     if(typeof syncAppTitlebar==='function') syncAppTitlebar();
     // Update profile chip even when no session is active (e.g. right after profile switch)
     const _profileLabel=$('profileChipLabel');
-    if(_profileLabel) _profileLabel.textContent=S.activeProfile||'default';
+    if(_profileLabel) _profileLabel.textContent=profileChipText();
     const _titleLabel=$('titlebarProfileLabel');
-    if(_titleLabel) _titleLabel.textContent=S.activeProfile||'default';
+    if(_titleLabel) _titleLabel.textContent=profileChipText();
     return;
   }
   const sessionTitle=S.session.title||t('untitled');
@@ -11651,9 +11657,9 @@ function syncTopbar(){
   // scoping project/session operations to the session's own profile — is
   // unaffected by this line.
   const profileLabel=$('profileChipLabel');
-  if(profileLabel) profileLabel.textContent=S.activeProfile||'default';
+  if(profileLabel) profileLabel.textContent=profileChipText();
   const titleLabel=$('titlebarProfileLabel');
-  if(titleLabel) titleLabel.textContent=S.activeProfile||'default';
+  if(titleLabel) titleLabel.textContent=profileChipText();
 }
 
 function msgContent(m){

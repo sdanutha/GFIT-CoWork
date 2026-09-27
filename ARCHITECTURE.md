@@ -1858,3 +1858,8 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory. Disabling or deleting a Profile ends its sessions; a disabled Profile's
   sessions are also refused on every request (`auth._reconcile_directory_session`).
+- `api/member_login.py` also writes the Directory display name into the roster on every
+  Member login (an Admin's rides on the session record, since an Admin has no Profile);
+  `session_identity` gives `/api/auth/status` the `display_name` and "name (ID)" `label`
+  the Profile chip shows. The chip opens an identity menu (`openIdentityMenu`) with Sign
+  Out instead of the Profile switcher.

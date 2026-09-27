@@ -76,11 +76,33 @@ def attempt_login(username, password, client_ip: str) -> LoginOutcome:
         from api.workspace import ensure_member_workspace
 
         ensure_member_workspace(bound_profile)
-        roster.record_login(bound_profile)
+        roster.record_login(bound_profile, identity.display_name)
     cookie = auth.create_session(
         auth_type=auth.DIRECTORY_AUTH_TYPE,
         username=identity.employee_id,
         bound_profile=bound_profile,
         role=role,
+        # An Admin has no Profile, so no roster record: the name rides on the session.
+        display_name=identity.display_name if role == ROLE_ADMIN else None,
     )
     return LoginOutcome(200, session_cookie=cookie, bound_profile=bound_profile)
+
+
+def session_identity(session_info: dict) -> dict:
+    """The name GFIT-CoWork shows for a Directory session: display name and "name (ID)" label.
+
+    A Member's name comes from the Profile roster (updated from the Directory
+    on every login, else the name the Admin typed); an Admin's from the session.
+    """
+    from api import roster
+    from api.access import ROLE_MEMBER
+
+    employee_id = str(session_info.get("username") or "")
+    if session_info.get("role") == ROLE_MEMBER:
+        display_name = roster.view(employee_id)["display_name"]
+    else:
+        display_name = roster.directory_name(session_info.get("display_name"), employee_id)
+    return {
+        "display_name": display_name,
+        "label": f"{display_name} ({employee_id})" if display_name else employee_id,
+    }
