@@ -11,7 +11,10 @@ to which Profile (:func:`admit`, Admission), and what a Member may call.
 :data:`MEMBER_ENDPOINTS`; anything not listed there is refused, including
 endpoints added later (fail closed). :data:`ADMIN_ONLY_ENDPOINTS` names the
 server-level features on purpose so the intent is readable, but a Member is
-refused them simply because they are not Member endpoints.
+refused them simply because they are not Member endpoints. A Member entry names
+a route exactly; a prefix is allowed only where the path has a variable part
+(:data:`VARIABLE_PATH_PREFIXES`), and ``tests/test_gfit_admin_gate_list.py``
+fails when a dispatched route reaches Members any other way.
 
 The server gate is the source of truth. The frontend hides the matching menus
 for Members, which is cosmetic only.
@@ -37,7 +40,7 @@ _ANY = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 # Member prefix.
 MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     # The app shell and its assets
-    (_READ, "/"), (_READ, "/index.html"), (_READ, "/sessions"), (_READ, "/session"),
+    (_READ, "/"), (_READ, "/index.html"), (_READ, "/sessions"),
     (_READ, "/session/*"), (_READ, "/static/*"), (_READ, "/manifest.json"),
     (_READ, "/manifest.webmanifest"), (_READ, "/sw.js"), (_READ, "/favicon.ico"),
     (_READ, "/health"), (_READ, "/plugins/*"), (_READ, "/dashboard-plugins/*"),
@@ -84,6 +87,25 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/api/gateway/status"),
     (_READ, "/api/health/agent"), (_READ, "/api/system/health"),
 )
+
+# A Member prefix entry is allowed only where the route has a variable part that
+# cannot be listed. Each one says why. tests/test_gfit_admin_gate_list.py fails
+# when a route reaches Members through any other prefix.
+VARIABLE_PATH_PREFIXES: dict[str, str] = {
+    "/session/*": "session pages by session id, and their static assets",
+    "/static/*": "static assets by file name",
+    "/plugins/*": "plugin assets by plugin name and file",
+    "/dashboard-plugins/*": "dashboard plugin assets by plugin name and file",
+}
+
+# Shortcut prefixes from before every Member route was named exactly. Each one is
+# being replaced by exact entries for the routes under it (admin-gate-exact
+# tickets 03-05 empty this list). Do not add to it.
+LEGACY_PREFIXES: frozenset[str] = frozenset({
+    "/api/session/*", "/api/sessions/*", "/api/chat/*", "/api/background/*",
+    "/api/file/*", "/api/workspaces/*", "/api/rollback/*", "/api/projects/*",
+    "/api/crons/*", "/api/skills/*", "/api/commands/*", "/api/wiki/*", "/api/notes/*",
+})
 
 # Server-level features, refused for Members. Listed so the intent is explicit;
 # they carve holes in the Member prefixes above.
@@ -156,23 +178,30 @@ def admit(employee_id: str) -> Admitted | Refused:
     return Admitted(ROLE_MEMBER, employee_id)
 
 
-def _match_length(entries, method: str, path: str) -> int:
-    """Length of the longest entry matching (method, path), or -1."""
-    best = -1
+def _best_match(entries, method: str, path: str) -> tuple[int, str | None]:
+    """(length, pattern) of the longest entry matching (method, path), or (-1, None)."""
+    best = (-1, None)
     for methods, pattern in entries:
         if method not in methods:
             continue
         if pattern.endswith("*"):
             if path.startswith(pattern[:-1]):
-                best = max(best, len(pattern) - 1)
+                best = max(best, (len(pattern) - 1, pattern))
         elif path == pattern:
-            best = max(best, len(pattern) + 1)  # an exact match beats any prefix
+            best = max(best, (len(pattern) + 1, pattern))  # an exact match beats any prefix
     return best
+
+
+def member_entry(method: str, path: str) -> str | None:
+    """The Member entry that lets a Member call *method* *path*, or None if refused."""
+    method = str(method or "").upper()
+    path = str(path or "")
+    allowed, pattern = _best_match(MEMBER_ENDPOINTS, method, path)
+    if allowed >= 0 and allowed > _best_match(ADMIN_ONLY_ENDPOINTS, method, path)[0]:
+        return pattern
+    return None
 
 
 def member_may_call(method: str, path: str) -> bool:
     """True if a Member may call *method* *path*. Unclassified endpoints are refused."""
-    method = str(method or "").upper()
-    path = str(path or "")
-    allowed = _match_length(MEMBER_ENDPOINTS, method, path)
-    return allowed >= 0 and allowed > _match_length(ADMIN_ONLY_ENDPOINTS, method, path)
+    return member_entry(method, path) is not None
