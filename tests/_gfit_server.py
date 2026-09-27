@@ -131,6 +131,7 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)
     profiles._invalidate_root_profile_cache()
+    profiles._invalidate_list_profiles_cache()
 
     httpd = server.QuietHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -143,3 +144,4 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
         auth._sessions.clear()
         auth._login_attempts.clear()
         profiles._invalidate_root_profile_cache()
+        profiles._invalidate_list_profiles_cache()

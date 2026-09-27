@@ -88,6 +88,77 @@ def test_creating_an_existing_profile_is_refused(admin):
     assert status == 400, body
 
 
+def _fail(*_args, **_kwargs):
+    raise OSError("disk full")
+
+
+def _cannot_log_in(srv, name):
+    status, _, _ = srv.client().login(name)
+    return status == 403
+
+
+def test_a_failed_roster_write_on_create_leaves_no_profile(srv, admin, monkeypatch):
+    import api.roster as roster
+
+    with monkeypatch.context() as patch:
+        patch.setattr(roster, "_save", _fail)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 500, body
+    assert "not created" in body["error"]
+    assert not srv.profile_home(NEWCOMER).exists()
+    assert _cannot_log_in(srv, NEWCOMER)
+
+
+def test_an_unreadable_roster_refuses_create(srv, admin):
+    (srv.state / "gfit_roster.json").write_text("{not json")
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
+    assert status == 500, body
+    assert not srv.profile_home(NEWCOMER).exists()
+    assert (srv.state / "gfit_roster.json").read_text() == "{not json"
+
+
+def test_a_failed_hermes_create_leaves_no_roster_record(srv, admin, monkeypatch):
+    import api.profiles as profiles
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("hermes said no")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(profiles, "create_profile_api", refuse)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 400, body
+    assert "hermes said no" in body["error"]
+    assert _row(admin, NEWCOMER) is None
+    assert _cannot_log_in(srv, NEWCOMER)
+    # No record is left behind: creating it again works and starts fresh.
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
+    assert status == 200, body
+    assert _row(admin, NEWCOMER)["label"] == NEWCOMER
+
+
+def test_a_create_that_fails_part_way_leaves_the_profile_disabled(srv, admin, monkeypatch):
+    # The Hermes Profile directory is made, then a later step fails: shut, not open.
+    import api.profiles as profiles
+
+    with monkeypatch.context() as patch:
+        patch.setattr(profiles, "_write_endpoint_to_config", _fail)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 500, body
+    assert "disabled" in body["error"]
+    assert _row(admin, NEWCOMER)["status"] == "disabled"
+    assert _cannot_log_in(srv, NEWCOMER)
+
+
+def test_creating_an_existing_disabled_profile_leaves_it_disabled(admin):
+    admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    admin.post("/api/profile/disable", {"name": NEWCOMER})
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Someone Else"})
+    assert status == 400, body
+    row = _row(admin, NEWCOMER)
+    assert row["status"] == "disabled"
+    assert row["label"] == f"Somsri J. ({NEWCOMER})"
+
+
 def test_member_list_is_labelled_with_the_roster(srv, admin):
     member = srv.logged_in(MEMBER)
     row = _row(admin, MEMBER)
@@ -171,10 +242,6 @@ def test_an_unreadable_roster_fails_closed(srv, admin):
     assert (srv.state / "gfit_roster.json").read_text() == "{not json"
 
 
-def _fail_roster_save(*_args, **_kwargs):
-    raise OSError("disk full")
-
-
 @pytest.mark.parametrize("action", ["disable", "enable"])
 def test_an_unreadable_roster_leaves_the_profile_unchanged(srv, admin, action):
     (srv.state / "gfit_roster.json").write_text("{not json")
@@ -189,7 +256,7 @@ def test_a_failed_roster_write_leaves_the_profile_unchanged(srv, admin, monkeypa
     import api.roster as roster
 
     with monkeypatch.context() as patch:
-        patch.setattr(roster, "_save", _fail_roster_save)
+        patch.setattr(roster, "_save", _fail)
         status, body, _ = admin.post("/api/profile/disable", {"name": MEMBER})
     assert status == 500, body
     assert f"'{MEMBER}' was not changed" in body["error"]

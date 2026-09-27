@@ -10,12 +10,13 @@ before the roster existed (or outside GFIT-CoWork) keep working. An unreadable
 roster fails closed: every Profile counts as disabled until it is fixed.
 
 This module owns the Profile lifecycle: each Admin action on a Profile is one
-function here (``disable_profile``, ``enable_profile``) that checks the action
-is allowed, keeps the roster in step, returns the Profile's roster view, and
-raises ProfileRefused (a message for the Admin and its kind) when it refuses.
-Disabling a Profile ends its sessions straight away; its data stays. Creating
-and deleting the Hermes Profile still go through ``api.profiles`` from the
-HTTP handlers.
+function here (``create_profile``, ``disable_profile``, ``enable_profile``)
+that checks the action is allowed, keeps the Hermes Profile (``api.profiles``)
+and its record in step, returns the Profile's roster view, and raises
+ProfileRefused (a message for the Admin and its kind) when it refuses. The
+steps run in an order where a failure part way leaves the Profile shut, never
+open: create writes the record before the Hermes Profile. Disabling a Profile
+ends its sessions straight away; its data stays.
 """
 from __future__ import annotations
 
@@ -48,6 +49,7 @@ class RosterUnreadable(Exception):
 
 # The kinds of ProfileRefused.
 REFUSED_BAD_REQUEST = "bad_request"
+REFUSED_FORBIDDEN = "forbidden"
 REFUSED_NOT_FOUND = "not_found"
 REFUSED_CONFLICT = "conflict"
 REFUSED_SERVER_FAULT = "server_fault"
@@ -210,6 +212,75 @@ def _check_existing_member_profile(name: str) -> None:
     if is_admin(name):
         # An Admin logs in to `default`, so this Profile's status would not shut them out.
         raise ProfileRefused(f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
+
+
+def _refusal_from_hermes(exc: Exception, message: str, busy_kind: str) -> ProfileRefused:
+    """A ProfileRefused for a failure of the Hermes Profile layer, with its reason.
+
+    *busy_kind* is the kind for a RuntimeError (for example, an agent is running).
+    """
+    if isinstance(exc, PermissionError):
+        kind = REFUSED_FORBIDDEN
+    elif isinstance(exc, RuntimeError):
+        kind = busy_kind
+    elif isinstance(exc, (ValueError, FileExistsError, FileNotFoundError)):
+        kind = REFUSED_BAD_REQUEST
+    else:
+        kind = REFUSED_SERVER_FAULT
+    return ProfileRefused(f"{message}: {exc}", kind)
+
+
+def create_profile(name: str, display_name="", **hermes_options) -> dict:
+    """The Admin creates Profile *name*, active, with *display_name*.
+
+    The record is written before the Hermes Profile is created, so a failure
+    part way never leaves a Profile with no record (which would count as
+    active). *hermes_options* go to ``api.profiles.create_profile_api``
+    (clone and model options). Returns the new Profile's row for the Profile list.
+    """
+    from api import profiles
+
+    try:
+        profiles._validate_profile_name(name)
+    except ValueError as exc:
+        raise ProfileRefused(str(exc)) from exc
+    if profiles.named_profile_exists(name):
+        raise ProfileRefused(f"Profile '{name}' already exists.")
+    try:
+        add(name, display_name)
+    except (OSError, RosterUnreadable) as exc:
+        logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
+        raise ProfileRefused(
+            f"Profile '{name}' was not created: the Profile roster could not be written.",
+            REFUSED_SERVER_FAULT,
+        ) from exc
+    try:
+        result = profiles.create_profile_api(name, **hermes_options)
+    except Exception as exc:
+        if profiles.named_profile_exists(name) and not isinstance(exc, FileExistsError):
+            # Made in part: keep it shut rather than leave it without a record.
+            _keep_shut(name)
+            raise _refusal_from_hermes(
+                exc, f"Profile '{name}' was created only in part and is disabled", REFUSED_BAD_REQUEST,
+            ) from exc
+        _drop_record(name)
+        raise _refusal_from_hermes(exc, f"Profile '{name}' was not created", REFUSED_BAD_REQUEST) from exc
+    return {**result, **view(name)}
+
+
+def _keep_shut(name: str) -> None:
+    try:
+        _set(name, status=STATUS_DISABLED)
+    except (OSError, RosterUnreadable):
+        logger.warning("Profile %s was created in part and could not be marked disabled", name, exc_info=True)
+
+
+def _drop_record(name: str) -> None:
+    """Forget Profile *name*'s record. A leftover is harmless: Admission needs the Profile to exist."""
+    try:
+        _write(lambda records: records.pop(name, None))
+    except (OSError, RosterUnreadable):
+        logger.warning("The roster record of Profile %s could not be removed", name, exc_info=True)
 
 
 def _set_status(name: str, status: str) -> None:

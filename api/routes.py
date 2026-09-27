@@ -15670,6 +15670,7 @@ def _profile_refused(handler, refusal):
 
     status = {
         roster.REFUSED_BAD_REQUEST: 400,
+        roster.REFUSED_FORBIDDEN: 403,
         roster.REFUSED_NOT_FOUND: 404,
         roster.REFUSED_CONFLICT: 409,
     }.get(refusal.kind, 500)
@@ -17475,11 +17476,12 @@ def handle_post(handler, parsed) -> bool:
         model_provider = body.get("model_provider", "").strip() if body.get("model_provider") else None
         if base_url and not base_url.startswith(("http://", "https://")):
             return bad(handler, "base_url must start with http:// or https://")
-        try:
-            from api.profiles import create_profile_api
+        from api import roster
 
-            result = create_profile_api(
+        try:
+            profile = roster.create_profile(
                 name,
+                display_name or "",
                 clone_from=clone_from,
                 clone_config=bool(body.get("clone_config", False)),
                 base_url=base_url,
@@ -17487,18 +17489,9 @@ def handle_post(handler, parsed) -> bool:
                 default_model=default_model,
                 model_provider=model_provider,
             )
-        except PermissionError as e:
-            return bad(handler, _sanitize_error(e), 403)
-        except (ValueError, FileExistsError, RuntimeError) as e:
-            return bad(handler, str(e))
-        from api import roster
-
-        try:
-            roster.add(name, display_name or "")
-        except (OSError, roster.RosterUnreadable) as e:
-            logger.warning("Profile %s created, but its roster record was not saved: %s", name, e)
-            return bad(handler, f"Profile '{name}' was created, but its display name could not be saved.", 500)
-        return j(handler, {"ok": True, "profile": {**result, **roster.view(name)}})
+        except roster.ProfileRefused as e:
+            return _profile_refused(handler, e)
+        return j(handler, {"ok": True, "profile": profile})
 
     if parsed.path in ("/api/profile/disable", "/api/profile/enable"):
         name = body.get("name", "").strip()
