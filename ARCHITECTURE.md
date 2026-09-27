@@ -1862,8 +1862,13 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
   in `api/routes.py` and fails when the list and the handled routes disagree.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
-  state directory. Disabling or deleting a Profile ends its sessions; a disabled Profile's
-  sessions are also refused on every request (`auth._reconcile_directory_session`).
+  state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
+  (`disable_profile`, `enable_profile`) is one function that checks it is allowed, keeps
+  the roster in step and returns the roster view, or raises `ProfileRefused` (a message
+  and a kind, which the handler maps to 400/404/409/500). Create and delete still call
+  `api.profiles` from their handlers. Disabling or deleting a Profile ends its sessions; a
+  disabled Profile's sessions are also refused on every request
+  (`auth._reconcile_directory_session`).
 - `api/member_login.py` also writes the Directory display name into the roster on every
   Member login (an Admin's rides on the session record, since an Admin has no Profile);
   `session_identity` gives `/api/auth/status` the `display_name` and "name (ID)" `label`

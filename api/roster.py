@@ -9,9 +9,13 @@ A Profile with no record is active and shown by its ID alone, so Profiles made
 before the roster existed (or outside GFIT-CoWork) keep working. An unreadable
 roster fails closed: every Profile counts as disabled until it is fixed.
 
-Disabling a Profile ends its sessions straight away; its data stays. The Hermes
-Profile itself is created and deleted through ``api.profiles``; this module
-only keeps the roster in step.
+This module owns the Profile lifecycle: each Admin action on a Profile is one
+function here (``disable_profile``, ``enable_profile``) that checks the action
+is allowed, keeps the roster in step, returns the Profile's roster view, and
+raises ProfileRefused (a message for the Admin and its kind) when it refuses.
+Disabling a Profile ends its sessions straight away; its data stays. Creating
+and deleting the Hermes Profile still go through ``api.profiles`` from the
+HTTP handlers.
 """
 from __future__ import annotations
 
@@ -40,6 +44,21 @@ _cache: tuple[tuple, dict[str, dict]] | None = None
 
 class RosterUnreadable(Exception):
     """The roster file exists but cannot be read or parsed."""
+
+
+# The kinds of ProfileRefused.
+REFUSED_BAD_REQUEST = "bad_request"
+REFUSED_NOT_FOUND = "not_found"
+REFUSED_CONFLICT = "conflict"
+REFUSED_SERVER_FAULT = "server_fault"
+
+
+class ProfileRefused(Exception):
+    """An Admin action on a Profile was refused: ``str()`` is the message for the Admin."""
+
+    def __init__(self, message: str, kind: str = REFUSED_BAD_REQUEST):
+        super().__init__(message)
+        self.kind = kind
 
 
 def _path() -> Path:
@@ -177,21 +196,67 @@ def record_login(name: str, display_name="") -> None:
     _set(name, **fields)
 
 
-def disable(name: str) -> None:
-    """Disable Profile *name* and end its sessions now. Its data stays."""
-    _set(name, status=STATUS_DISABLED)
+def _check_existing_member_profile(name: str) -> None:
+    """Refuse unless *name* is an existing Profile that is not the built-in one or an Admin's."""
+    from api.access import is_admin
+    from api.profiles import _validate_profile_name, named_profile_exists
+
+    try:
+        _validate_profile_name(name)
+    except ValueError as exc:
+        raise ProfileRefused(str(exc)) from exc
+    if not named_profile_exists(name):
+        raise ProfileRefused(f"Profile '{name}' does not exist.", REFUSED_NOT_FOUND)
+    if is_admin(name):
+        # An Admin logs in to `default`, so this Profile's status would not shut them out.
+        raise ProfileRefused(f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
+
+
+def _set_status(name: str, status: str) -> None:
+    """Record *status* for Profile *name*; refuse, with nothing changed, when the roster cannot be written."""
+    try:
+        _set(name, status=status)
+    except (OSError, RosterUnreadable) as exc:
+        logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
+        raise ProfileRefused(
+            f"Profile '{name}' was not changed: the Profile roster could not be written.",
+            REFUSED_SERVER_FAULT,
+        ) from exc
+
+
+def _end_sessions(name: str) -> None:
     from api.auth import invalidate_sessions_for_profile
 
     invalidate_sessions_for_profile(name)
 
 
+def disable(name: str) -> None:
+    """Mark Profile *name*'s record disabled and end its sessions now, with no guards."""
+    _set(name, status=STATUS_DISABLED)
+    _end_sessions(name)
+
+
 def enable(name: str) -> None:
+    """Mark Profile *name*'s record active, with no guards."""
     _set(name, status=STATUS_ACTIVE)
+
+
+def disable_profile(name: str) -> dict:
+    """The Admin disables Profile *name*: its sessions end now and its data stays."""
+    _check_existing_member_profile(name)
+    _set_status(name, STATUS_DISABLED)
+    _end_sessions(name)
+    return view(name)
+
+
+def enable_profile(name: str) -> dict:
+    """The Admin re-enables Profile *name*, so its User can log in again."""
+    _check_existing_member_profile(name)
+    _set_status(name, STATUS_ACTIVE)
+    return view(name)
 
 
 def remove(name: str) -> None:
     """End Profile *name*'s sessions and forget it (after it is deleted)."""
-    from api.auth import invalidate_sessions_for_profile
-
-    invalidate_sessions_for_profile(name)
+    _end_sessions(name)
     _write(lambda records: records.pop(name, None))

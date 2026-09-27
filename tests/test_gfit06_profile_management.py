@@ -171,6 +171,32 @@ def test_an_unreadable_roster_fails_closed(srv, admin):
     assert (srv.state / "gfit_roster.json").read_text() == "{not json"
 
 
+def _fail_roster_save(*_args, **_kwargs):
+    raise OSError("disk full")
+
+
+@pytest.mark.parametrize("action", ["disable", "enable"])
+def test_an_unreadable_roster_leaves_the_profile_unchanged(srv, admin, action):
+    (srv.state / "gfit_roster.json").write_text("{not json")
+    status, body, _ = admin.post(f"/api/profile/{action}", {"name": MEMBER})
+    assert status == 500, body
+    assert f"'{MEMBER}' was not changed" in body["error"]
+    assert (srv.state / "gfit_roster.json").read_text() == "{not json"
+
+
+def test_a_failed_roster_write_leaves_the_profile_unchanged(srv, admin, monkeypatch):
+    member = srv.logged_in(MEMBER)
+    import api.roster as roster
+
+    with monkeypatch.context() as patch:
+        patch.setattr(roster, "_save", _fail_roster_save)
+        status, body, _ = admin.post("/api/profile/disable", {"name": MEMBER})
+    assert status == 500, body
+    assert f"'{MEMBER}' was not changed" in body["error"]
+    assert member.get("/api/sessions")[0] == 200
+    assert _row(admin, MEMBER)["status"] == "active"
+
+
 # ── delete ──────────────────────────────────────────────────────────────────
 
 def test_delete_without_confirmation_is_refused(srv, admin):

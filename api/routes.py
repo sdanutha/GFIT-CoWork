@@ -15664,6 +15664,18 @@ def _llm_update_summary(system_prompt: str, user_prompt: str, active_profile: st
         return str(result.get("final_response") or "").strip()
 
 
+def _profile_refused(handler, refusal):
+    """Answer a refused Profile management action (``roster.ProfileRefused``) with its HTTP status."""
+    from api import roster
+
+    status = {
+        roster.REFUSED_BAD_REQUEST: 400,
+        roster.REFUSED_NOT_FOUND: 404,
+        roster.REFUSED_CONFLICT: 409,
+    }.get(refusal.kind, 500)
+    return bad(handler, _sanitize_error(refusal), status)
+
+
 def handle_post(handler, parsed) -> bool:
     """Handle all POST routes. Returns True if handled, False for 404."""
     diag = RequestDiagnostics.maybe_start("POST", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
@@ -17493,23 +17505,12 @@ def handle_post(handler, parsed) -> bool:
         if not name:
             return bad(handler, "name is required")
         from api import roster
-        from api.access import is_admin
-        from api.profiles import _validate_profile_name, named_profile_exists
 
+        action = roster.disable_profile if parsed.path == "/api/profile/disable" else roster.enable_profile
         try:
-            _validate_profile_name(name)
-        except ValueError as e:
-            return bad(handler, _sanitize_error(e))
-        if not named_profile_exists(name):
-            return bad(handler, f"Profile '{name}' does not exist.", 404)
-        if is_admin(name):
-            # An Admin logs in to `default`, so this Profile's status would not shut them out.
-            return bad(handler, f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
-        if parsed.path == "/api/profile/disable":
-            roster.disable(name)
-        else:
-            roster.enable(name)
-        return j(handler, {"ok": True, "profile": roster.view(name)})
+            return j(handler, {"ok": True, "profile": action(name)})
+        except roster.ProfileRefused as e:
+            return _profile_refused(handler, e)
 
     if parsed.path == "/api/profile/delete":
         name = body.get("name", "").strip()
