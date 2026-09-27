@@ -28,6 +28,10 @@ _Avoid_: bot, persona
 GFIT-CoWork's own record of each Profile: the User's display name, whether the Profile is active or disabled, and the last login. It is kept apart from the Hermes Profile config. A disabled Profile keeps its data, but its User cannot log in.
 _Avoid_: user list, member table
 
+**Admission**:
+The decision, from an AD username the company AD has confirmed, of whether that person may use the Deployment and with which role and Profile: an Admin goes to `default`; anyone else needs their own Profile, and it must be active. It is made at login and again on every request, so a change to the Admin list or the Profile roster takes effect at once.
+_Avoid_: authorization, access check
+
 **Workspace**:
 A folder the agent works in for a session. Every Workspace lives inside its owner's Profile.
 _Avoid_: project folder, directory

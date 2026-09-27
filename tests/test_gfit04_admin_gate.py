@@ -201,3 +201,29 @@ def test_session_ends_when_admin_is_removed_from_the_list(srv, admin, monkeypatc
     monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", SECOND_ADMIN)
     status, _, _ = admin.get("/api/profile/active")
     assert status == 401
+
+
+def test_member_session_ends_when_they_are_added_to_the_admin_list(srv, member, monkeypatch):
+    assert member.get("/api/sessions")[0] == 200
+    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", f"{ADMIN},{MEMBER}")
+
+    status, _, _ = member.get("/api/sessions")
+    assert status == 401
+
+    again = srv.logged_in(MEMBER)
+    status, body, _ = again.get("/api/auth/status")
+    assert body["role"] == "admin"
+    assert body["bound_profile"] == "default"
+
+
+def test_admin_with_a_profile_of_their_own_is_signed_out_when_removed_from_the_list(srv, admin, monkeypatch):
+    srv.profile_home(ADMIN).mkdir()
+    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", SECOND_ADMIN)
+
+    status, _, _ = admin.get("/api/profile/active")
+    assert status == 401
+
+    again = srv.logged_in(ADMIN)
+    status, body, _ = again.get("/api/auth/status")
+    assert body["role"] == "member"
+    assert body["bound_profile"] == ADMIN

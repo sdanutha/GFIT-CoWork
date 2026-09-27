@@ -1851,8 +1851,10 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
 - `api/directory.py` — the Directory seam (username + password → Identity); `api/ldap_directory.py`
   is the company-AD implementation (LDAPS or StartTLS only).
 - `api/member_login.py` — the login flow (rate limit → Directory → Admission → session).
-- `api/auth.py` — only Directory sessions are honoured; a Member session pins the request to
-  its Profile (`profiles.pin_request_profile`, which makes it an isolated-profile request).
+- `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission and
+  ends the session when it no longer gives the session's role and Profile; a Member session
+  pins the request to its Profile (`profiles.pin_request_profile`, which makes it an
+  isolated-profile request).
 - `api/access.py` — Admission (`admit`: from a confirmed employee ID, Admin at `default`, Member
   at their own active Profile, or refused with a reason), and the one list of endpoints a Member
   may call; everything else is Admin-only (fail closed), enforced in `check_auth`.

@@ -1005,22 +1005,16 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     request runs in ``default``.
 
     Fails closed: the session is ended when Directory login is no longer
-    configured, the bound Profile no longer exists or is disabled, the
-    session's role is unknown, or an Admin is no longer on the Admin list.
+    configured, or when Admission (:func:`api.access.admit`) for the session's
+    employee ID no longer gives the session's role and Profile -- the Profile
+    was deleted or disabled, the Admin list changed, or the role is unknown.
     """
-    from api.access import ROLE_ADMIN, ROLE_MEMBER, is_admin
-    from api.profiles import named_profile_exists, pin_request_profile
+    from api.access import ROLE_MEMBER, Admitted, admit
+    from api.profiles import pin_request_profile
 
     bound_profile = str(info.get('bound_profile') or '').strip()
     role = info.get('role')
-    if role == ROLE_ADMIN:
-        valid = bound_profile == 'default' and is_admin(info.get('username'))
-    elif role == ROLE_MEMBER:
-        from api import roster
-
-        valid = named_profile_exists(bound_profile) and not roster.is_disabled(bound_profile)
-    else:
-        valid = False
+    valid = admit(str(info.get('username') or '').strip()) == Admitted(role, bound_profile)
     if not is_directory_auth_enabled() or not valid:
         invalidate_session(cookie_value)
         handler._trusted_auth_session_rejected = True
