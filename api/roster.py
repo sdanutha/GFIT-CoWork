@@ -237,14 +237,22 @@ def _refuse_isolated_mode(action: str) -> None:
         raise ProfileRefused(f"Profile {action} is not allowed in isolated profile mode.", REFUSED_FORBIDDEN)
 
 
-def _check_name(name: str) -> None:
-    """Refuse a name that breaks the Profile-name rule (``default`` included)."""
+def _check_name(name: str, field: str = "profile name") -> None:
+    """Refuse a name that breaks the Profile-name rule (``default`` included).
+
+    The rule is the Hermes Profile layer's; the message is in the Admin's terms.
+    """
     from api.profiles import _validate_profile_name
 
     try:
         _validate_profile_name(name)
     except ValueError as exc:
-        raise ProfileRefused(str(exc)) from exc
+        if name == "default":
+            raise ProfileRefused(str(exc)) from exc
+        raise ProfileRefused(
+            f"Invalid {field}: name it after the employee ID "
+            "(lowercase letters, numbers, hyphens, underscores; up to 64 characters)",
+        ) from exc
 
 
 def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
@@ -257,9 +265,18 @@ def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
     options). Returns the new Profile's row for the Profile list.
     """
     from api import profiles
+    from api.access import is_admin
 
     _refuse_isolated_mode("creation")
     _check_name(name)
+    # create_profile_api checks clone_from too, but only after the record is written.
+    clone_from = hermes_options.get("clone_from")
+    if clone_from is not None and not profiles._is_root_profile(clone_from):
+        _check_name(clone_from, "clone_from name")
+    if is_admin(name):
+        raise ProfileRefused(
+            f"{name} is an Admin: an Admin logs in to the default Profile, "
+            "so nobody could log in to this one.")
     if profiles.named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' already exists.")
     try:

@@ -73,6 +73,7 @@ def test_a_name_that_breaks_the_profile_name_rules_is_refused(srv, admin, name):
     status, body, _ = admin.post("/api/profile/create", {"name": name, "display_name": "Someone"})
     assert status == 400, body
     assert "name" in body["error"].lower()
+    assert "employee ID" in body["error"]
     assert _row(admin, name) is None
 
 
@@ -86,6 +87,31 @@ def test_the_built_in_default_profile_cannot_be_created(admin):
 def test_creating_an_existing_profile_is_refused(admin):
     status, body, _ = admin.post("/api/profile/create", {"name": MEMBER})
     assert status == 400, body
+
+
+@pytest.mark.parametrize("clone_from", ["Bad Name!", "../etc", "-leading-dash", "x" * 65, ""])
+def test_a_clone_from_name_that_breaks_the_profile_name_rule_is_refused(srv, admin, clone_from):
+    status, body, _ = admin.post(
+        "/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J.", "clone_from": clone_from})
+    assert status == 400, body
+    assert "employee ID" in body["error"]
+    assert not srv.profile_home(NEWCOMER).exists()
+    # No record is left behind: creating it again starts fresh.
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
+    assert status == 200, body
+    assert _row(admin, NEWCOMER)["label"] == NEWCOMER
+
+
+def test_a_profile_cannot_be_created_for_an_admin_id(srv, admin):
+    # An Admin logs in to `default`, so nobody could ever log in to this Profile.
+    status, body, _ = admin.post("/api/profile/create", {"name": ADMIN, "display_name": "Admin One"})
+    assert status == 400, body
+    assert "Admin" in body["error"]
+    assert "default" in body["error"]
+    assert not srv.profile_home(ADMIN).exists()
+    # No record either: a Profile made by hand under that ID shows no display name.
+    srv.profile_home(ADMIN).mkdir()
+    assert _row(admin, ADMIN)["label"] == ADMIN
 
 
 def _fail(*_args, **_kwargs):

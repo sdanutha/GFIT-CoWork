@@ -1866,7 +1866,9 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function
   that checks it is allowed, keeps the Hermes Profile and its record in step and returns
   the roster view, or raises `ProfileRefused` (a message and a kind, which the handler maps
-  to 400/403/404/409/500). The steps are ordered so a failure part way leaves the Profile
+  to 400/403/404/409/500). Names (and the clone-from name) are checked with the Hermes
+  Profile layer's rule (`profiles._validate_profile_name`), and create refuses an Admin's ID
+  (an Admin logs in to `default`). The steps are ordered so a failure part way leaves the Profile
   shut: create writes the record disabled first and makes it active only once the Hermes
   Profile exists; delete disables the Profile (ending its sessions) before deleting it, and a
   deletion that cannot finish leaves it disabled. A disabled Profile's sessions are also

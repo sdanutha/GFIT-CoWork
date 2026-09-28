@@ -2689,7 +2689,7 @@ def create_profile_api(name: str, clone_from: str = None,
     if _is_isolated_profile_mode():
         raise PermissionError("Profile creation is not allowed in isolated profile mode.")
     _validate_profile_name(name)
-    # Defense-in-depth: validate clone_from here too, even though routes.py
+    # Defense-in-depth: validate clone_from here too, even though api/roster.py
     # also validates it. Any caller that bypasses the HTTP layer gets protection.
     if clone_from is not None and not _is_root_profile(clone_from):
         _validate_profile_name(clone_from)

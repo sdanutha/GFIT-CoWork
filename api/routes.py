@@ -17454,22 +17454,12 @@ def handle_post(handler, parsed) -> bool:
         name = body.get("name", "").strip()
         if not name:
             return bad(handler, "name is required")
-        import re as _re
-
-        if not _re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
-            return bad(
-                handler,
-                "Invalid profile name: name it after the employee ID "
-                "(lowercase letters, numbers, hyphens, underscores; up to 64 characters)",
-            )
         display_name = body.get("display_name")
         if display_name is not None and not isinstance(display_name, str):
             return bad(handler, "display_name must be text")
         clone_from = body.get("clone_from")
         if clone_from is not None:
             clone_from = str(clone_from).strip()
-            if not _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", clone_from):
-                return bad(handler, "Invalid clone_from name")
         base_url = body.get("base_url", "").strip() if body.get("base_url") else None
         api_key = body.get("api_key", "").strip() if body.get("api_key") else None
         default_model = body.get("default_model", "").strip() if body.get("default_model") else None
