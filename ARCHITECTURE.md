@@ -1870,6 +1870,12 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   (fail closed), enforced in `check_auth`. The list names each route and method exactly, with a prefix only for a variable path part (the
   module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
   in `api/routes.py` and fails when the list and the handled routes disagree.
+- `api/workspace_policy.py` — the Workspace policy, chosen once per request from the request's
+  Admission (`request_workspace_policy`): a User's policy (everything inside
+  `<Profile>/workspace`), the unconfined policy (the Admin, login turned off, worker threads),
+  or the refusing answer (a Directory session with no Admission: `access.request_has_directory_session`).
+  Being introduced: Workspace code still asks `caller_is_user` itself until the migration
+  lands; `tests/test_gfit_workspace_policy_guard.py` lists those callers and fails on new ones.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
   (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function

@@ -242,6 +242,7 @@ def admit_request(session_info: dict) -> Admitted | None:
     session check.
     """
     clear_request_admission()
+    _request.directory_session = True
     admission = admit(str(session_info.get("username") or "").strip())
     session = Admitted(session_info.get("role"), str(session_info.get("bound_profile") or "").strip())
     if admission != session:
@@ -253,6 +254,16 @@ def admit_request(session_info: dict) -> Admitted | None:
 def request_admission() -> Admitted | None:
     """This request's Admission, or None when the caller was not admitted."""
     return getattr(_request, "admission", None)
+
+
+def request_has_directory_session() -> bool:
+    """True when this request came with a Directory session, admitted or not.
+
+    With :func:`request_admission` it tells a request with no caller (login
+    turned off, a worker thread) from a Directory session whose Admission was
+    refused, which must be refused everything (unknown is not allowed).
+    """
+    return getattr(_request, "directory_session", False)
 
 
 def caller_is_user() -> bool:
@@ -267,8 +278,9 @@ def caller_bound_profile() -> str | None:
 
 
 def clear_request_admission() -> None:
-    """Forget this request's Admission. Safe to call when none was recorded."""
+    """Forget this request's Admission and Directory session. Safe to call when none was recorded."""
     _request.admission = None
+    _request.directory_session = False
 
 
 def _segments_match(pattern: str, path: str) -> bool:

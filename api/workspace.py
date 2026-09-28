@@ -422,6 +422,11 @@ def _profile_default_workspace(profile: str | Path | None = None) -> str:
     """
     if caller_is_user():
         return str(ensure_member_workspace())
+    return _configured_default_workspace(profile)
+
+
+def _configured_default_workspace(profile: str | Path | None = None) -> str:
+    """The unconfined default Workspace: :func:`_profile_default_workspace` for the Admin."""
     try:
         from api.config import get_config_for_profile_home
         profile_home = _resolve_profile_home_param(profile)
@@ -486,6 +491,11 @@ def _clean_workspace_list(workspaces: list, profile: str | Path | None = None) -
     """
     if caller_is_user():
         return _clean_member_workspace_list(workspaces, _caller_workspace_root())
+    return _clean_unconfined_workspace_list(workspaces, profile)
+
+
+def _clean_unconfined_workspace_list(workspaces: list, profile: str | Path | None = None) -> list:
+    """The unconfined saved-list clean-up: :func:`_clean_workspace_list` for the Admin."""
     hermes_profiles = (_home_path() / '.hermes' / 'profiles').resolve()
     result = []
     for w in workspaces:
@@ -627,6 +637,23 @@ def save_workspaces(workspaces: list, profile: str | Path | None = None) -> None
     ws_file.write_text(json.dumps(workspaces, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
+def _remote_cwd_for(profile: str | Path | None = None) -> str | None:
+    try:
+        return _remote_terminal_cwd(profile=profile) if profile is not None else _remote_terminal_cwd()
+    except TypeError:
+        return _remote_terminal_cwd()
+
+
+def _unconfined_may_use(raw: str, profile: str | Path | None, remote_cwd: str | None) -> bool:
+    """May *raw* be the Admin's last-used Workspace? Target-side for a remote terminal."""
+    if remote_cwd:
+        # For remote/SSH profiles, last_workspace is target-side state. Do
+        # not accept stale server-local paths merely because they exist on
+        # the WebUI host; require the value to stay under terminal.cwd.
+        return _remote_terminal_workspace_candidate(raw, profile=profile) is not None
+    return Path(raw).is_dir()
+
+
 def get_profile_default_workspace(profile: str | Path | None = None) -> str:
     """Resolve the ACTIVE PROFILE's default workspace, never the global file.
 
@@ -642,23 +669,14 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
     Priority: profile-scoped ``last_workspace.txt`` -> profile ``config.yaml``
     ``workspace``/``default_workspace`` -> ``terminal.cwd`` -> process default.
     """
-    try:
-        remote_cwd = _remote_terminal_cwd(profile=profile) if profile is not None else _remote_terminal_cwd()
-    except TypeError:
-        remote_cwd = _remote_terminal_cwd()
+    remote_cwd = _remote_cwd_for(profile)
 
     def _valid(raw: str) -> str | None:
         if not raw:
             return None
         if caller_is_user():
             return raw if _member_may_use(raw) else None
-        if remote_cwd:
-            if _remote_terminal_workspace_candidate(raw, profile=profile) is not None:
-                return raw
-            return None
-        if Path(raw).is_dir():
-            return raw
-        return None
+        return raw if _unconfined_may_use(raw, profile, remote_cwd) else None
 
     lw_file = _last_workspace_file_for_profile(profile)
     if lw_file is not None and lw_file.exists():
@@ -672,26 +690,14 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
 
 
 def get_last_workspace(profile: str | Path | None = None) -> str:
-    try:
-        remote_cwd = _remote_terminal_cwd(profile=profile) if profile is not None else _remote_terminal_cwd()
-    except TypeError:
-        remote_cwd = _remote_terminal_cwd()
+    remote_cwd = _remote_cwd_for(profile)
 
     def valid_last_workspace(raw: str) -> str | None:
         if not raw:
             return None
         if caller_is_user():
             return raw if _member_may_use(raw) else None
-        if remote_cwd:
-            # For remote/SSH profiles, last_workspace is target-side state. Do
-            # not accept stale server-local paths merely because they exist on
-            # the WebUI host; require the value to stay under terminal.cwd.
-            if _remote_terminal_workspace_candidate(raw, profile=profile) is not None:
-                return raw
-            return None
-        if Path(raw).is_dir():
-            return raw
-        return None
+        return raw if _unconfined_may_use(raw, profile, remote_cwd) else None
 
     lw_file = _last_workspace_file_for_profile(profile)
     if lw_file is not None and lw_file.exists():
@@ -1043,6 +1049,11 @@ def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
     if caller_is_user():
         member_root = _caller_workspace_root()
         return [member_root] if member_root.is_dir() else []
+    return _unconfined_file_roots(profile)
+
+
+def _unconfined_file_roots(profile: str | Path | None = None) -> list[Path]:
+    """The unconfined roots: :func:`_trusted_workspace_roots` for the Admin."""
     roots: list[Path] = []
 
     def add(candidate: str | Path | None) -> None:
@@ -1202,6 +1213,11 @@ def resolve_trusted_workspace(path: str | Path | None = None, profile: str | Pat
     """
     if caller_is_user():
         return _resolve_member_workspace(path)
+    return _resolve_unconfined_workspace(path, profile)
+
+
+def _resolve_unconfined_workspace(path: str | Path | None = None, profile: str | Path | None = None) -> Path:
+    """The unconfined rules of :func:`resolve_trusted_workspace`, for the Admin."""
     if path in (None, ""):
         return _resolve_path(_BOOT_DEFAULT_WORKSPACE, profile) if profile is not None else _resolve_path(_BOOT_DEFAULT_WORKSPACE)
 
@@ -1383,6 +1399,29 @@ def validate_workspace_to_add(path: str, profile: str | Path | None = None) -> P
     """
     if caller_is_user():
         return _resolve_member_workspace(path)
+    return _validate_unconfined_workspace_to_add(path, profile)
+
+
+def _unconfined_register_target(path: str, profile: str | Path | None = None) -> Path | None:
+    """The server folder the Admin may create to register *path*, checked before it is created.
+
+    None when *path* is target-side for a remote terminal (nothing to create
+    here). Refuses a blocked system folder, except at or under the home
+    directory, as the Workspace add route does.
+    """
+    path = _strip_surrounding_quotes(path)
+    if _remote_terminal_workspace_candidate(path, profile=profile) is not None:
+        return None
+    candidate = _resolve_path(path, profile=profile)
+    if _is_blocked_system_path(candidate):
+        _home = _home_path()
+        if not (_home != Path("/") and (candidate == _home or _is_within(candidate, _home))):
+            raise ValueError(f"Path points to a system directory: {candidate}")
+    return candidate
+
+
+def _validate_unconfined_workspace_to_add(path: str, profile: str | Path | None = None) -> Path:
+    """The unconfined rules of :func:`validate_workspace_to_add`, for the Admin."""
     path = _strip_surrounding_quotes(path)
     candidate = _resolve_path(path, profile) if profile is not None else _resolve_path(path)
 
