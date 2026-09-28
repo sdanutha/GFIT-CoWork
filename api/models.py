@@ -7818,10 +7818,20 @@ def get_claude_code_sessions(projects_dir: Path | str | None = None, *, max_file
     return sessions
 
 
+def _request_is_bound_to_a_profile() -> bool:
+    """True when this request is a User's, bound to their own Profile."""
+    from api.access import caller_bound_profile
+
+    return caller_bound_profile() is not None
+
+
 def get_claude_code_session_messages(sid, projects_dir: Path | str | None = None) -> list:
-    """Return messages for one read-only Claude Code JSONL session."""
+    """Return messages for one read-only Claude Code JSONL session.
+
+    None for a User's request: the transcripts belong to no Profile.
+    """
     sid = str(sid or '')
-    if not sid.startswith(f'{CLAUDE_CODE_SOURCE}_'):
+    if not sid.startswith(f'{CLAUDE_CODE_SOURCE}_') or _request_is_bound_to_a_profile():
         return []
     for path in _iter_claude_code_jsonl_files(projects_dir) or []:
         if _claude_code_session_id(path) != sid:
@@ -9394,6 +9404,10 @@ def get_cli_sessions(
     bridge is purely additive and never crashes the WebUI.
     """
     source_filter = _normalize_cli_session_source_filter(source_filter)
+    if _request_is_bound_to_a_profile():
+        # Claude Code rows come from the server account's home and belong to
+        # no Profile; a User's request may reach only their own Profile.
+        include_claude_code = False
     if all_profiles:
         contexts, context_cache_key = _all_profiles_cli_contexts()
         db_path = "all profiles"

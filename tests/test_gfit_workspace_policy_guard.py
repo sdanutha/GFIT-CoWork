@@ -38,6 +38,7 @@ ROLE = "compares a role with ROLE_MEMBER"
 NOT_WORKSPACE: dict[tuple[str, str, str], str] = {
     ("api/login.py", "attempt_login", ROLE): "login: creates a new User's default Workspace from an explicit Profile",
     ("api/login.py", "session_identity", ASKS): "display name: from the Profile roster for a User",
+    ("api/models.py", "_request_is_bound_to_a_profile", BOUND): "session ownership: no Profile-less Claude Code rows for a User",
     ("api/profiles.py", "_is_isolated_profile_mode", BOUND): "Profile binding: a User's request is an isolated request",
     ("api/profiles.py", "_isolated_profile_name", BOUND): "Profile binding: the Profile a request is bound to",
     ("api/profiles.py", "_isolated_profile_home", BOUND): "Profile binding: the home of the Profile a request is bound to",

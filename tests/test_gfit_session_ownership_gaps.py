@@ -4,6 +4,8 @@
   (ticket 01).
 - A User cannot read or answer another Profile's pending approvals or clarify
   questions, whatever kind of session they belong to (ticket 02).
+- A User is not shown, and cannot open, the server account's Claude Code
+  sessions, which belong to no Profile (ticket 03).
 
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
 Admin keeps today's behaviour in each case.
@@ -170,8 +172,17 @@ def _state_db_session(srv, uid, sid, source="telegram"):
             " parent_session_id TEXT, message_count INTEGER)"
         )
         conn.execute(
-            "INSERT INTO sessions (id, source, title, started_at, message_count) VALUES (?, ?, ?, ?, 1)",
-            (sid, source, f"{source} chat", time.time()),
+            "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " session_id TEXT, role TEXT, content TEXT, timestamp REAL)"
+        )
+        now = time.time()
+        conn.execute(
+            "INSERT INTO sessions (id, source, title, started_at, message_count) VALUES (?, ?, ?, ?, 2)",
+            (sid, source, f"{source} chat", now),
+        )
+        conn.executemany(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+            [(sid, "user", "hello", now), (sid, "assistant", "hi", now + 1)],
         )
     conn.close()
     return sid
@@ -322,3 +333,75 @@ def test_the_admin_on_another_profiles_webui_session_answers_as_today(srv, pendi
     admin = srv.logged_in(ADMIN)
     status, body, _ = admin.get(f"/api/approval/pending?session_id={sids['bob-webui']}")
     assert status == 409 and body["profile"] == BOB, body
+
+
+# ── Ticket 03: sessions that belong to no Profile ────────────────────────────
+
+CLAUDE_CODE_TEXT = "the server account's private Claude Code history"
+
+
+@pytest.fixture
+def claude_code(srv, tmp_path, monkeypatch):
+    """A Claude Code transcript in the server account's home, and the settings that show it."""
+    projects = tmp_path / "server-home" / ".claude" / "projects"
+    transcript = projects / "some-project" / "session.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text("\n".join(json.dumps(row) for row in [
+        {"summary": "Server-side Claude Code"},
+        {"timestamp": "2026-09-01T12:00:01Z", "message": {"role": "user", "content": CLAUDE_CODE_TEXT}},
+        {"timestamp": "2026-09-01T12:00:02Z", "message": {"role": "assistant", "content": "ok"}},
+    ]) + "\n")
+    monkeypatch.setenv("HERMES_WEBUI_CLAUDE_PROJECTS_DIR", str(projects))
+    admin = srv.logged_in(ADMIN)
+    status, body, _ = admin.post("/api/settings", {"show_cli_sessions": True,
+                                                   "show_claude_code_sessions": True})
+    assert status == 200, body
+    from api.models import _claude_code_session_id, clear_cli_sessions_cache
+    clear_cli_sessions_cache()
+    return admin, _claude_code_session_id(transcript)
+
+
+def _listed_ids(client) -> set[str]:
+    status, body, _ = client.get("/api/sessions")
+    assert status == 200, body
+    return {row["session_id"] for row in body["sessions"]}
+
+
+def test_a_user_is_not_shown_or_given_claude_code_sessions(srv, claude_code):
+    _admin, cc_sid = claude_code
+    alice = srv.logged_in(ALICE)
+    status, body, _ = alice.get("/api/sessions")
+    assert status == 200, body
+    assert not [row for row in body["sessions"] if row.get("source_tag") == "claude_code"]
+    assert CLAUDE_CODE_TEXT not in json.dumps(body)
+
+    theirs = alice.get(f"/api/session?session_id={cc_sid}")[:2]
+    missing = alice.get(f"/api/session?session_id={MISSING}")[:2]
+    assert theirs[0] == 404, theirs
+    assert (theirs[0], str(theirs[1]).replace(cc_sid, "<sid>")) == \
+        (missing[0], str(missing[1]).replace(MISSING, "<sid>"))
+
+    status, body, _ = alice.post("/api/session/import_cli", {"session_id": cc_sid})
+    assert status == 404, body
+    assert CLAUDE_CODE_TEXT not in json.dumps(body)
+    assert cc_sid not in _listed_ids(alice)
+
+
+def test_the_admin_still_sees_and_opens_claude_code_sessions(srv, claude_code):
+    admin, cc_sid = claude_code
+    assert cc_sid in _listed_ids(admin)
+    status, body, _ = admin.get(f"/api/session?session_id={cc_sid}")
+    assert status == 200, body
+    assert CLAUDE_CODE_TEXT in json.dumps(body)
+
+
+def test_a_users_own_cli_sessions_still_show(srv, claude_code):
+    _state_db_session(srv, ALICE, "alice-cli-1", source="cli")
+    alice = srv.logged_in(ALICE)
+    assert "alice-cli-1" in _listed_ids(alice)
+    status, body, _ = alice.get("/api/session?session_id=alice-cli-1")
+    assert status == 200, body
+
+
+def test_a_user_is_not_shown_codex_sessions(srv):
+    pytest.importorskip("api.codex_sessions", reason="the Codex scanner is not available")
