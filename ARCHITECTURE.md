@@ -1880,11 +1880,16 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   Admission: `access.request_has_directory_session`). Choosing and listing Workspaces, file
   roots and confinement, and the git, media, rollback (through the saved list) and worktree
   checks all ask it; no other code asks "is the caller a User?" to decide confinement, and
-  `tests/test_gfit_workspace_policy_guard.py` fails when it does (its allowlist is empty) or
-  when the Workspace modules name something "Member" rather than "User". A *profile* argument
-  to a Workspace function is the Admin's; for a User the policy's own Profile wins. Login is
-  the one place that makes a User's Workspace from an explicit Profile
-  (`workspace.ensure_user_workspace`), because it runs before the request has an Admission.
+  `tests/test_gfit_workspace_policy_guard.py` fails when it does (its allowlist is empty).
+  A *profile* argument to a Workspace function is the Admin's; for a User the policy's own
+  Profile wins. Login is the one place that makes a User's Workspace from an explicit
+  Profile (`workspace.ensure_user_workspace`), because it runs before the request has an
+  Admission.
+- Naming: GFIT-CoWork code uses `CONTEXT.md`'s words, "User" (not Member) and "bound" (a
+  User's request is bound to their Profile; not pinned). `tests/test_gfit_naming_guard.py`
+  reads GFIT-CoWork's modules and fails on a module, function, class, parameter or
+  module-level name that says "member" or "pinned", apart from the names it keeps on purpose
+  (the role constant, whose value is the stored `member` role, and upstream's pinned names).
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
   (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function

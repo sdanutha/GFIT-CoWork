@@ -32,6 +32,10 @@ _Avoid_: user list, member table
 The decision, from an AD username the company AD has confirmed, of whether that person may use the Deployment and with which role and Profile: an Admin goes to `default`; anyone else needs their own Profile, and it must be active. It is made at login and again on every request, so a change to the Admin list or the Profile roster takes effect at once.
 _Avoid_: authorization, access check
 
+**Bound**:
+Said of a User's request: it runs in that User's Profile and may name no other, because the request's Admission says so. The Admin's requests are not bound.
+_Avoid_: pinned, locked
+
 **Workspace**:
 A folder the agent works in for a session. Every Workspace lives inside its owner's Profile.
 _Avoid_: project folder, directory

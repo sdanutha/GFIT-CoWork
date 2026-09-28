@@ -17,10 +17,6 @@ empty it. Entries name the file, the enclosing function and the question, so a
 function that asks for both reasons (the GET dispatcher) is listed once for each. An entry that no longer matches anything fails too, so both lists
 only shrink.
 
-A second check keeps the glossary's word in the Workspace modules: they define
-no function, class, parameter or module-level name with "member" in it (the
-stored ``member`` role value is not a name).
-
 Limits: a caller is named by file, enclosing function and question, so the same
 question asked again inside a listed function is not seen; and only the spellings above are
 recognised.
@@ -171,33 +167,3 @@ def test_a_closure_counts_as_its_function():
     tree = ast.parse(source)
     assert _outermost_function_at(_enclosing_functions(tree), 3) == "outer"
 
-
-WORKSPACE_MODULES = ("api/workspace.py", "api/workspace_policy.py")
-
-
-def _defined_names(tree) -> list[tuple[int, str]]:
-    """(line, name) for each function, class, parameter and module-level name *tree* defines."""
-    found = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            found.append((node.lineno, node.name))
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = node.args
-            found.extend((a.lineno, a.arg) for a in [*args.posonlyargs, *args.args, *args.kwonlyargs])
-    for node in tree.body:
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            found.extend((node.lineno, t.id) for t in targets if isinstance(t, ast.Name))
-    return found
-
-
-def test_the_workspace_code_says_user_not_member():
-    """The glossary's word is "User"; the stored ``member`` role value is not a name here."""
-    offenders = [
-        f"{rel}:{line} {name}"
-        for rel, tree in _parsed_sources()
-        if rel in WORKSPACE_MODULES
-        for line, name in _defined_names(tree)
-        if "member" in name.lower()
-    ]
-    assert not offenders, "Name these with the glossary's \"User\":\n  " + "\n  ".join(offenders)
