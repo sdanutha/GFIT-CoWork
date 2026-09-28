@@ -63,7 +63,7 @@ from api.session_events import (
     unsubscribe_session_events,
 )
 from api.gateway_restart import restart_active_profile_gateway
-from api.session_ownership import request_session_ownership
+from api.session_ownership import UNCONFINED as _UNCONFINED_OWNERSHIP, request_session_ownership
 from api.shares import create_or_refresh_share, load_share, revoke_share
 
 logger = logging.getLogger(__name__)
@@ -544,9 +544,7 @@ def _request_session_visibility_exempt(method: str, path: str | None, ownership)
     if method == "POST" and path == "/api/session/import":
         # Creates a new session with a new id; an id in the body names nothing.
         return True
-    from api.session_ownership import UNCONFINED
-
-    if ownership is not UNCONFINED:
+    if ownership is not _UNCONFINED_OWNERSHIP:
         # A User names only their own Profile's sessions, so the detail-load
         # 409, and the import and placeholder-retag rules below, never apply
         # to them: the generic guard answers first.
@@ -583,114 +581,23 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     return False
 
 
-def _session_profile_mismatch(handler, sid, session_profile):
-    """Answer a request for a session owned by another, known profile.
-
-    409 ``session_profile_mismatch`` names the owning profile so the client can
-    offer to switch to it. A request bound to one Profile (a GFIT-CoWork
-    User's) can never switch, and must not learn who owns the session, so it
-    gets the plain 404.
-    """
-    from api.access import caller_bound_profile
-
-    if caller_bound_profile():
-        return bad(handler, "Session not found", 404)
-    return j(handler, {
-        "error": "Session belongs to a different profile",
-        "code": "session_profile_mismatch",
-        "session_id": sid,
-        "profile": session_profile,
-    }, status=409)
-
-
-def _stream_id_owner_session_id(stream_id: str | None) -> str | None:
-    """Resolve stream owner session_id via active-run registry first, fallback to journal."""
-    stream_id = str(stream_id or "").strip()
-    if not stream_id:
-        return None
-    try:
-        with ACTIVE_RUNS_LOCK:
-            raw = (ACTIVE_RUNS or {}).get(stream_id)
-        if isinstance(raw, dict):
-            owner = str(raw.get("session_id") or "").strip()
-            if owner:
-                return owner
-    except Exception:
-        logger.debug("Failed reading ACTIVE_RUNS owner for stream %s", stream_id, exc_info=True)
-    try:
-        owner = stream_owner_session_id(stream_id)
-        if owner:
-            return owner
-    except Exception:
-        logger.debug("Failed reading registered owner for stream %s", stream_id, exc_info=True)
-    if not is_safe_session_id(stream_id):
-        return None
-    try:
-        summary = find_run_summary(stream_id)
-        if isinstance(summary, dict):
-            owner = str(summary.get("session_id") or "").strip()
-            return owner or None
-    except Exception:
-        logger.debug("Failed reading run summary for stream %s", stream_id, exc_info=True)
-    return None
-
-
 def _stream_id_visible_to_request_profile(
     handler,
     stream_id: str | None,
     *,
     emit_error: bool = True,
 ) -> bool:
-    """Return whether the stream owner is visible to the request's profile.
+    """Return whether this request owns the session that owns *stream_id*.
 
-    A request bound to one Profile is refused a stream whose owner cannot be
-    found, with the same 404 as another Profile's stream.
+    Session ownership answers. A User is refused a stream whose owner cannot
+    be found, with the same 404 as another Profile's stream; for the Admin a
+    known other Profile's stream is the 409 naming its owner.
     """
-    owner_session_id = _stream_id_owner_session_id(stream_id)
-    if not owner_session_id:
-        from api.access import caller_bound_profile
-
-        if not caller_bound_profile():
-            return True
-        if emit_error:
-            bad(handler, "Session not found", 404)
-        return False
-    return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
-
-
-def _bound_profile_owns_session_id(sid, bound: str) -> bool:
-    """Is *sid* a session of the Profile *bound*, which the request is bound to?
-
-    Looks in the WebUI session record, then in the Profile's own agent state
-    (CLI, messaging, cron and gateway sessions). An id found in neither is
-    refused: unknown is not allowed.
-    """
-    if not isinstance(sid, str) or not sid or not is_safe_session_id(sid):
-        return False
-    try:
-        session = get_session(sid, metadata_only=True)
-    except KeyError:
-        return state_db_has_session(sid, profile=bound)
-    except Exception:
-        return False
-    session_profile = getattr(session, "profile", None)
-    return isinstance(session_profile, str) and _profiles_match(session_profile, bound)
-
-
-def _guard_bound_session_id(handler, sid) -> bool:
-    """A request bound to one Profile may name only that Profile's sessions.
-
-    Answers 404 "Session not found", exactly as for a session that does not
-    exist, and returns False when it may not. Requests that are not bound
-    (the Admin, login turned off), and a request that names no session, pass,
-    as in the dispatch guard.
-    """
-    from api.access import caller_bound_profile
-
-    bound = caller_bound_profile()
-    if not bound or sid is None or sid == "" or _bound_profile_owns_session_id(sid, bound):
+    refusal = request_session_ownership().refuse_stream(stream_id)
+    if refusal is None:
         return True
-    bad(handler, "Session not found", 404)
+    if emit_error:
+        refusal.answer(handler)
     return False
 
 
@@ -5464,11 +5371,9 @@ def _handle_session_anchor_scene(handler, body):
     # contract at #13043 / #13493). 404 is preserved for the
     # None-profile (unknown/legacy) case so the frontend self-heal
     # path still fires for actually-missing sids.
-    _anchor_session_profile = getattr(s, "profile", None) or None
-    if not _session_visible_to_active_profile(_anchor_session_profile, handler):
-        if _anchor_session_profile:
-            return _session_profile_mismatch(handler, sid, _anchor_session_profile)
-        return bad(handler, "Session not found", 404)
+    _refusal = request_session_ownership().refuse_found_session(sid, s)
+    if _refusal is not None:
+        return _refusal.answer(handler, sid)
     with _get_session_agent_lock(sid):
         idx, message = _find_anchor_scene_message(
             getattr(s, "messages", None) or [],
@@ -5743,7 +5648,7 @@ def _resolve_share_session_pair(sid: str, handler):
             or getattr(stored_session, "profile", None)
             or None
         )
-        if not _session_visible_to_active_profile(effective_profile, handler):
+        if request_session_ownership().refuse_found_session(sid, {"profile": effective_profile}) is not None:
             raise KeyError(sid)
         stored_session = _ensure_full_session_before_mutation(sid, stored_session)
         snapshot_session = copy.copy(stored_session)
@@ -5754,8 +5659,7 @@ def _resolve_share_session_pair(sid: str, handler):
         return snapshot_session, stored_session, cli_meta or {}
     except KeyError:
         cli_meta = _lookup_cli_session_metadata(sid) or {}
-        effective_profile = cli_meta.get("profile") or None
-        if not _session_visible_to_active_profile(effective_profile, handler):
+        if request_session_ownership().refuse_found_session(sid, cli_meta) is not None:
             raise KeyError(sid) from None
         synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta)
         if reason == "was_webui" or synth is None:
@@ -13972,7 +13876,7 @@ def _handle_session_get(handler, parsed) -> bool:
         # profile's CLI/foreign session is the Admin's 409 (#5419); a missing
         # session keeps the 404 self-heal; a Profile-less Claude Code row opens
         # under any profile for the Admin, and never for a User.
-        _refusal = request_session_ownership().refuse_listed_session(sid, cli_meta or {})
+        _refusal = request_session_ownership().refuse_found_session(sid, cli_meta or {})
         if _refusal is not None:
             return _refusal.answer(handler, sid)
         synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta or {})
@@ -21751,7 +21655,7 @@ def _read_anchored_file_bytes(ws_root: Path, target: Path) -> bytes:
 
 def _handle_approval_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _guard_bound_session_id(handler, sid):
+    if not _session_id_visible_to_request_profile(handler, sid):
         return True
     with _lock:
         _head, _total, _changed = reconcile_gateway_pending_mirror_locked(sid)
@@ -21788,7 +21692,7 @@ def _handle_approval_sse_stream(handler, parsed):
     back to HTTP polling if the connection fails.
     """
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _guard_bound_session_id(handler, sid):
+    if not _session_id_visible_to_request_profile(handler, sid):
         return True
     if not sid:
         return bad(handler, "session_id is required")
@@ -21866,7 +21770,7 @@ def _handle_approval_inject(handler, parsed):
 
 def _handle_clarify_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _guard_bound_session_id(handler, sid):
+    if not _session_id_visible_to_request_profile(handler, sid):
         return True
     pending = get_clarify_pending(sid)
     if pending:
@@ -21885,7 +21789,7 @@ def _handle_clarify_sse_stream(handler, parsed):
         return bad(handler, "clarify SSE not available")
 
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _guard_bound_session_id(handler, sid):
+    if not _session_id_visible_to_request_profile(handler, sid):
         return True
     if not sid:
         return bad(handler, "session_id is required")
@@ -24694,14 +24598,13 @@ def _handle_session_compression_recovery_start(handler, body):
         source = get_session(sid)
     except KeyError:
         return bad(handler, "Session not found", 404)
-    if not _session_visible_to_active_profile(getattr(source, "profile", None), handler):
-        # #7710: same contract as the detail-load endpoint — 409
-        # ``session_profile_mismatch`` for a known other profile,
-        # 404 only for the None-profile self-heal path.
-        _recovery_session_profile = getattr(source, "profile", None)
-        if _recovery_session_profile:
-            return _session_profile_mismatch(handler, sid, _recovery_session_profile)
-        return bad(handler, "Session not found", 404)
+    # #7710: same contract as the detail-load endpoint — 409
+    # ``session_profile_mismatch`` for a known other profile, 404 only for the
+    # None-profile self-heal path. Recovery continues only into this
+    # request's own sessions.
+    _refusal = request_session_ownership().refuse_found_session(sid, source)
+    if _refusal is not None:
+        return _refusal.answer(handler, sid)
     recovery = compression_recovery_payload_for_session(source)
     if not recovery:
         return bad(handler, "Session does not have a compression recovery action.", 409)
@@ -25091,23 +24994,26 @@ def _handle_chat_start(handler, body, diag=None):
             or getattr(s, "context_messages", None)
             or getattr(s, "pending_user_message", None)
         )
-        if not _session_visible_to_active_profile(session_profile, handler):
+        ownership = request_session_ownership()
+        _refusal = ownership.refuse_found_session(body.get("session_id", ""), s)
+        if _refusal is not None:
             if (
-                requested_profile
+                ownership is _UNCONFINED_OWNERSHIP
+                and requested_profile
                 and _profiles_match(requested_profile, active_profile)
                 and not has_persisted_turns
             ):
                 # Empty placeholders can still be retagged when the
                 # requested profile matches the active request profile.
+                # Never for a User: their request names only their own
+                # Profile's sessions.
                 s.profile = requested_profile
-            elif session_profile:
+            else:
                 # #7710: known other profile → 409 ``session_profile_mismatch``
                 # so the client can offer to switch to it (#5419).
                 # 404 is preserved only for the None-profile
                 # (unknown/legacy) self-heal case.
-                return _session_profile_mismatch(handler, body.get("session_id", ""), session_profile)
-            else:
-                return bad(handler, "Session not found", 404)
+                return _refusal.answer(handler, body.get("session_id", ""))
         # Resolve durable rotations before any workspace/model/pending mutation.
         # GET navigation adopts the tip; POST never silently replays a user turn.
         from api.compression_continuation import durable_compression_continuation
@@ -27455,7 +27361,7 @@ def _session_has_pending_approval(sid: str) -> bool:
 
 def _handle_approval_respond(handler, body):
     sid = body.get("session_id", "")
-    if not _guard_bound_session_id(handler, sid):
+    if not _session_id_visible_to_request_profile(handler, sid):
         return True
     if not sid:
         return bad(handler, "session_id is required")
@@ -27766,7 +27672,7 @@ def _resolve_clarify_legacy(sid: str, clarify_id: str, response: str) -> bool:
 
 def _handle_clarify_respond(handler, body):
     sid = body.get("session_id", "")
-    if not _guard_bound_session_id(handler, sid):
+    if not _session_id_visible_to_request_profile(handler, sid):
         return True
     if not sid:
         return bad(handler, "session_id is required")
@@ -29369,13 +29275,13 @@ def _handle_session_import_cli(handler, body):
         if allow_all_profiles:
             if requested_profile and not _profiles_match(existing_profile, requested_profile):
                 return bad(handler, "Session not found in CLI store", 404)
-        elif not _session_visible_to_active_profile(existing_profile, handler):
+        else:
             # #7710: same contract as the detail-load endpoint —
             # 409 ``session_profile_mismatch`` for a known other
             # profile, 404 only for the None-profile self-heal path.
-            if existing_profile:
-                return _session_profile_mismatch(handler, sid, existing_profile)
-            return bad(handler, "Session not found in CLI store", 404)
+            _refusal = request_session_ownership().refuse_found_session(sid, existing)
+            if _refusal is not None:
+                return _refusal.answer(handler, sid, not_found="Session not found in CLI store")
         refresh_profile = requested_profile or existing_profile
         cli_meta = _resolve_cli_import_metadata(
             sid,

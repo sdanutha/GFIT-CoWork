@@ -195,29 +195,32 @@ def test_may_this_row_go_to_me(world, row, user, root, bobs, every):
 
 
 LISTED_TABLE = [
-    # (row known only from the CLI listing, User Alice, unconfined in the root Profile)
+    # (a session the route has already found, User Alice, unconfined in the root Profile)
     ({"session_id": f"{ALICE}-gateway", "profile": ALICE}, OWNED, "409 521740"),
     ({"session_id": f"{BOB}-gateway", "profile": BOB}, NOT_FOUND, OWNER_BOB),
     ({"session_id": "cli-root", "profile": "default"}, NOT_FOUND, OWNED),
     ({"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}, NOT_FOUND, OWNED),
     ({}, NOT_FOUND, OWNED),
+    (models.Session(session_id="rec-alice", profile=ALICE), OWNED, "409 521740"),
+    (models.Session(session_id="rec-bob", profile=BOB), NOT_FOUND, OWNER_BOB),
+    (None, NOT_FOUND, OWNED),
 ]
 
 
 @pytest.mark.parametrize("row,user,unconfined", LISTED_TABLE)
-def test_is_this_listed_session_mine(world, row, user, unconfined):
-    sid = row.get("session_id", "missing")
-    assert _outcome(UserSessionOwnership(ALICE).refuse_listed_session(sid, row)) == user
-    assert _outcome(UNCONFINED.refuse_listed_session(sid, row)) == unconfined
-    assert _outcome(REFUSING.refuse_listed_session(sid, row)) == NOT_FOUND
+def test_is_this_found_session_mine(world, row, user, unconfined):
+    sid = (row.get("session_id") if isinstance(row, dict) else getattr(row, "session_id", None)) or "missing"
+    assert _outcome(UserSessionOwnership(ALICE).refuse_found_session(sid, row)) == user
+    assert _outcome(UNCONFINED.refuse_found_session(sid, row)) == unconfined
+    assert _outcome(REFUSING.refuse_found_session(sid, row)) == NOT_FOUND
 
 
 def test_a_profile_less_row_opens_under_a_named_profile_for_the_admin(world, monkeypatch):
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: BOB)
     row = {"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}
-    assert UNCONFINED.refuse_listed_session("claude_code_x", row) is None
+    assert UNCONFINED.refuse_found_session("claude_code_x", row) is None
     legacy = {"session_id": "legacy", "profile": None, "source_tag": "cli"}
-    assert _outcome(UNCONFINED.refuse_listed_session("legacy", legacy)) == NOT_FOUND
+    assert _outcome(UNCONFINED.refuse_found_session("legacy", legacy)) == NOT_FOUND
 
 
 class _Handler:
@@ -252,6 +255,14 @@ def test_a_refusal_writes_its_own_answer():
     handler = _Handler()
     Refusal(owner=BOB).answer_not_found(handler)
     assert (handler.status, handler.body()) == (404, {"error": "Session not found"})
+
+    handler = _Handler()
+    Refusal(owner=BOB, session_id="owner-sid").answer(handler)
+    assert handler.body()["session_id"] == "owner-sid"
+
+    handler = _Handler()
+    Refusal().answer(handler, "sid", not_found="Session not found in CLI store")
+    assert (handler.status, handler.body()) == (404, {"error": "Session not found in CLI store"})
 
 
 # ── The choice of adapter ────────────────────────────────────────────────────
