@@ -240,7 +240,6 @@ def test_chat_start_losing_regeneration_preserves_locked_send_winner(monkeypatch
     monkeypatch.setattr(runtime_adapter, "runtime_adapter_runner_enabled", lambda: False)
     monkeypatch.setattr(routes, "_get_or_materialize_session", lambda *_args, **_kwargs: session)
     monkeypatch.setattr(routes, "_agent_runtime_barrier_response", lambda **_kwargs: None)
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_args: True)
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
     monkeypatch.setattr(routes, "_read_profile_model_config", lambda *_args: (None, None, {}))
     monkeypatch.setattr(routes, "_resolve_chat_workspace_for_regeneration", lambda *_args: "C:/workspace")

@@ -241,6 +241,18 @@ class _Handler:
         return json.loads(self.wfile.getvalue())
 
 
+def test_bound_names_only_its_own_profile(world):
+    user = UserSessionOwnership(ALICE)
+    assert user.may_name_profile(ALICE) is True
+    assert [user.may_name_profile(name) for name in (BOB, "default", "", None, 42)] == [False] * 5
+    assert user.may_switch_profile() is False
+    assert user.sees_profile_less_sessions() is False
+    assert UNCONFINED.may_name_profile(BOB) and UNCONFINED.may_switch_profile()
+    assert UNCONFINED.sees_profile_less_sessions() is True
+    assert not REFUSING.may_name_profile(ALICE) and not REFUSING.may_switch_profile()
+    assert REFUSING.sees_profile_less_sessions() is False
+
+
 def test_a_refusal_writes_its_own_answer():
     handler = _Handler()
     Refusal().answer(handler, "sid")

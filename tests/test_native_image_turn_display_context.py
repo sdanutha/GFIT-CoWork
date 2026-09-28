@@ -288,7 +288,6 @@ def test_get_session_projects_marked_payload_conflict_in_full_and_limited_paths(
     with models.LOCK:
         models.SESSIONS.pop(session_id, None)
 
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_: True)
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: set())
     monkeypatch.setattr(routes, "_lookup_cli_session_metadata", lambda *_: {})
     monkeypatch.setattr(routes, "find_run_summary", lambda *_: None)
@@ -440,7 +439,6 @@ def test_truncation_watermark_keeps_proven_retained_image_row_only(
         for message in marked_state_rows[:2]
     )
 
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_: True)
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: set())
     monkeypatch.setattr(routes, "_lookup_cli_session_metadata", lambda *_: {})
     monkeypatch.setattr(routes, "find_run_summary", lambda *_: None)
@@ -629,7 +627,6 @@ def test_get_session_projects_parent_only_payload_conflict_without_losing_parent
         models.SESSIONS.pop(session_id, None)
         models.SESSIONS.pop(parent_id, None)
 
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_: True)
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: set())
     monkeypatch.setattr(routes, "_lookup_cli_session_metadata", lambda *_: {})
     monkeypatch.setattr(routes, "find_run_summary", lambda *_: None)
@@ -831,7 +828,6 @@ def test_get_session_keeps_pending_agent_projection_private_but_in_context(
     monkeypatch.setattr(api.config, "ACTIVE_RUNS", {})
     with models.LOCK:
         models.SESSIONS.pop(session_id, None)
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_args: True)
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: set())
     monkeypatch.setattr(routes, "_lookup_cli_session_metadata", lambda *_args: {})
     monkeypatch.setattr(routes, "find_run_summary", lambda *_args: None)
@@ -1216,7 +1212,6 @@ def test_settlement_reload_and_next_turn_keep_one_clean_bubble_and_rich_context(
         "get_session",
         lambda sid, metadata_only=False: models.Session.load(sid),
     )
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_args: True)
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: set())
     monkeypatch.setattr(
         routes,

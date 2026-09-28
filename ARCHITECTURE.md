@@ -1888,28 +1888,30 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   Admission.
 - `api/session_ownership.py` — session ownership: the one answer to "whose session is
   this?". Like the Workspace policy, one adapter is chosen per request from the request's
-  Admission (`request_session_ownership`): a User's adapter (the sessions of their Profile;
-  every other id, and every id it cannot place, refused), the unconfined adapter (the Admin,
-  login turned off, worker threads: Upstream's rules, including the 409 that names the
-  owning Profile) or the refusing answer. It answers whether a session id or stream id is
-  the caller's (a `Refusal` writes its own 404 or 409), and whether a session-list event or
-  a listed row may go to the caller; a route that has already found a session (a record or
-  a listed CLI row) asks about that. The dispatch guard, the upload routes, the file-manager
-  lookup, the session list, the detail load, the session-list events stream, approvals and
-  clarify, stream ids, chat start, CLI import, compression recovery, anchor scenes and
-  share links all ask it.
-- Session ownership: a User's request names only its own Profile's sessions. The dispatch
-  guard (`routes._guard_request_session_visibility`) places each session id or stream id in
-  the bound Profile, by its WebUI record or the Profile's own agent state (`state.db`), and
-  answers anything else with 404 "Session not found". Another Profile's session and one that
-  does not exist get the same answer. For a User, no route is exempt apart from the JSON import,
-  which ignores any id in its body. Approvals and clarify
-  questions ask the same question before any pending table is read. The session-list events
-  stream carries a User only their own Profile's events and the nudges that name no Profile
-  and no session. Claude Code rows, which are scanned from the server account's home and belong
-  to no Profile, are left out for a User. The Admin keeps Upstream's rules, including the 409
-  that names the owning Profile. `tests/test_gfit_session_route_answers.py` places every User
-  route as naming a session or not, and checks each one that does.
+  Admission (`request_session_ownership`): a User's adapter, the unconfined adapter (the Admin,
+  login turned off, worker threads: Upstream's rules, including the 409 that names the owning
+  Profile) or the refusing answer (a Directory session with no Admission). It answers whether
+  a session id or stream id is the caller's (a `Refusal` writes its own 404 or 409); whether a
+  session the route has already found (a record or a listed CLI row) is; whether a
+  session-list event or a listed row may go to the caller; and whether the request may see
+  Profile-less sessions. The dispatch guard (top-level and `/api/sessions/<id>/events` ids),
+  the upload routes, the file-manager lookup, the session list and search, the detail load
+  and export, the session-list events stream, approvals and clarify, stream ids, chat start,
+  CLI import, compression recovery, anchor scenes and share links all ask it.
+  - A User's adapter owns exactly their Profile's sessions: the WebUI record, then the
+    Profile's own `state.db`. Another Profile's session, and an id or stream it cannot place,
+    get 404 "Session not found", the same as a session that does not exist. For a User no route
+    is exempt apart from the JSON import, which ignores any id in its body. The session-list
+    events stream carries a User only their own Profile's events and the nudges that name no
+    Profile and no session. Claude Code and Codex rows (scanned from the server account's home,
+    no Profile) are left out.
+  - **Bound**: the same module says a User's request may name no other Profile and may not
+    switch Profile (`may_name_profile`, `may_switch_profile`); `routes._guard_bound_profile_request`
+    asks it.
+  - `tests/test_gfit_session_ownership_guard.py` fails when code outside the module compares a
+    session's Profile with the active or bound Profile, or names a removed ownership helper
+    (its allowlist is empty). `tests/test_gfit_session_route_answers.py` places every User
+    route as naming a session or not, and checks each one that does.
 - Naming: GFIT-CoWork code uses `CONTEXT.md`'s words, "User" (not Member) and "bound" (a
   User's request is bound to their Profile; not pinned). `tests/test_gfit_naming_guard.py`
   reads GFIT-CoWork's modules and fails on a module, function, class, parameter or

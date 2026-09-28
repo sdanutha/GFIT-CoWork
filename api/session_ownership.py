@@ -15,6 +15,10 @@ policy:
   recorded Admission, or an Admission this module does not understand. It owns
   nothing.
 
+A User's request is **Bound** to their Profile: besides owning only that
+Profile's sessions, it may name no other Profile (:meth:`may_name_profile`)
+and may not switch Profile (:meth:`may_switch_profile`).
+
 Callers ask: is this session id mine (:meth:`refuse_session`; for a session
 the route has already found, a record or a listed row,
 :meth:`refuse_found_session`), is this stream
@@ -161,6 +165,20 @@ class UserSessionOwnership:
         session_profile = getattr(session, "profile", None)
         return isinstance(session_profile, str) and _profiles_match(session_profile, self.profile)
 
+    def may_name_profile(self, name) -> bool:
+        """Bound: the User's request may name only the User's own Profile."""
+        from api.profiles import _profiles_match
+
+        return isinstance(name, str) and _profiles_match(name, self.profile)
+
+    def may_switch_profile(self) -> bool:
+        """Bound: a User's request never switches Profile."""
+        return False
+
+    def sees_profile_less_sessions(self) -> bool:
+        """Never: Claude Code and Codex rows come from the server account's home."""
+        return False
+
     def refuse_session(self, session_id) -> Refusal | None:
         """None when *session_id* names nothing or a session of the User's Profile, else 404."""
         if _names_nothing(session_id) or self._owns(session_id):
@@ -214,6 +232,16 @@ class UserSessionOwnership:
 
 class _UnconfinedSessionOwnership:
     """The Admin's, and no caller's: today's rules against the request's active Profile."""
+
+    def may_name_profile(self, name) -> bool:
+        return True
+
+    def may_switch_profile(self) -> bool:
+        return True
+
+    def sees_profile_less_sessions(self) -> bool:
+        """Claude Code and Codex rows, under the setting that shows them."""
+        return True
 
     def refuse_session(self, session_id) -> Refusal | None:
         """Another known Profile's session names its owner; an id it cannot find passes."""
@@ -273,6 +301,15 @@ class _UnconfinedSessionOwnership:
 
 class _RefusingSessionOwnership:
     """The refusing answer: owns nothing."""
+
+    def may_name_profile(self, name) -> bool:
+        return False
+
+    def may_switch_profile(self) -> bool:
+        return False
+
+    def sees_profile_less_sessions(self) -> bool:
+        return False
 
     def refuse_session(self, session_id) -> Refusal:
         return NOT_FOUND

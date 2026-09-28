@@ -277,7 +277,6 @@ def test_session_reload_preserves_large_persisted_window_when_recompute_hits_256
          patch("api.routes.j", side_effect=fake_j), \
          patch("api.routes._resolve_effective_session_model_for_display", return_value="deepseek-v4-1m"), \
          patch("api.routes._resolve_effective_session_model_provider_for_display", return_value="deepseek"), \
-         patch("api.routes._session_visible_to_active_profile", return_value=True), \
          patch("api.routes._clear_stale_stream_state", return_value=None), \
          patch("api.routes._session_requires_cli_metadata_lookup", return_value=False), \
          patch("api.routes._is_messaging_session_record", return_value=False), \
@@ -347,7 +346,6 @@ def test_session_reload_preserves_large_window_for_slash_qualified_model(monkeyp
          patch("api.routes.j", side_effect=fake_j), \
          patch("api.routes._resolve_effective_session_model_for_display", return_value="deepseek/deepseek-v4-1m"), \
          patch("api.routes._resolve_effective_session_model_provider_for_display", return_value="deepseek"), \
-         patch("api.routes._session_visible_to_active_profile", return_value=True), \
          patch("api.routes._clear_stale_stream_state", return_value=None), \
          patch("api.routes._session_requires_cli_metadata_lookup", return_value=False), \
          patch("api.routes._is_messaging_session_record", return_value=False), \
@@ -428,7 +426,6 @@ def test_session_reload_accepts_real_256k_when_effective_model_changes(monkeypat
          patch("api.routes.j", side_effect=fake_j), \
          patch("api.routes._resolve_effective_session_model_for_display", return_value="deepseek-v4-256k"), \
          patch("api.routes._resolve_effective_session_model_provider_for_display", return_value="deepseek"), \
-         patch("api.routes._session_visible_to_active_profile", return_value=True), \
          patch("api.routes._clear_stale_stream_state", return_value=None), \
          patch("api.routes._session_requires_cli_metadata_lookup", return_value=False), \
          patch("api.routes._is_messaging_session_record", return_value=False), \

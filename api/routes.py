@@ -522,22 +522,6 @@ def _query_positive_int(parsed_url, name: str, *, default=None, maximum: int | N
     return value
 
 
-def _session_visible_to_active_profile(session_profile, handler=None) -> bool:
-    """Return whether a detail-load session belongs to the active profile.
-
-    Real request handlers must enforce the same profile boundary as
-    /api/sessions, even when the request has no hermes_profile cookie and the
-    process-level active profile is the default/root profile. Direct unit-callers
-    without a request handler keep the historical metadata-load behavior.
-    """
-    if handler is None:
-        return True
-    active_profile = _get_active_profile_name()
-    if not isinstance(session_profile, str):
-        session_profile = None
-    return _profiles_match(session_profile, active_profile)
-
-
 def _request_session_visibility_exempt(method: str, path: str | None, ownership) -> bool:
     if not path:
         return False
@@ -602,23 +586,21 @@ def _stream_id_visible_to_request_profile(
 
 
 def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
-    """A request bound to one Profile (a GFIT-CoWork User's) may name only that Profile.
+    """A Bound request (a GFIT-CoWork User's) may name only its own Profile.
 
+    Session ownership answers (``may_switch_profile``, ``may_name_profile``).
     Refuses with 403 a profile switch, and a ``profile`` in the query string or
     body that names another Profile. The request itself already runs in the
     bound Profile; refusing makes a forged request fail loudly instead of
     being quietly retargeted.
     """
-    from api.access import caller_bound_profile
-
-    bound = caller_bound_profile()
-    if not bound:
-        return True
+    ownership = request_session_ownership()
     named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
     if isinstance(body, dict) and body.get("profile") not in (None, ""):
         named.append(body.get("profile"))
-    if getattr(parsed, "path", "") == "/api/profile/switch" or any(
-        not isinstance(value, str) or not _profiles_match(value, bound) for value in named
+    switching = getattr(parsed, "path", "") == "/api/profile/switch"
+    if (switching and not ownership.may_switch_profile()) or any(
+        not ownership.may_name_profile(value) for value in named
     ):
         bad(handler, "Profile access forbidden", 403)
         return False
@@ -18428,9 +18410,9 @@ def _handle_session_export(handler, parsed):
         s = get_session(sid)
     except KeyError:
         return bad(handler, "Session not found", 404)
-    active_profile = get_active_profile_name()
-    if not _profiles_match(getattr(s, "profile", None), active_profile):
-        return bad(handler, "Session not found", 404)
+    _refusal = request_session_ownership().refuse_found_session(sid, s)
+    if _refusal is not None:
+        return _refusal.answer_not_found(handler)
     # ``public_session_projection`` supersedes the narrower
     # ``redact_session_data`` path so export context_messages uses the same
     # alias-stripping boundary as the visible transcript.
@@ -18524,12 +18506,11 @@ def _handle_sessions_search(handler, parsed):
     from api.profiles import get_active_profile_name
     active_profile = get_active_profile_name()
     all_profiles = _all_profiles_enabled(parsed)
-    sessions = all_sessions()
-    if not all_profiles:
-        sessions = [
-            s for s in sessions
-            if _profiles_match(s.get("profile"), active_profile)
-        ]
+    ownership = request_session_ownership()
+    sessions = [
+        s for s in all_sessions()
+        if ownership.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+    ]
     # Reject a malformed depth instead of letting int() raise ValueError and
     # surface as a confusing 500. Clamp to >= 0 so a negative value can't reach
     # the messages[:depth] slice below — messages[:-n] would silently exclude

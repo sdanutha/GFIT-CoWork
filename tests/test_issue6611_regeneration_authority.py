@@ -220,7 +220,6 @@ def test_get_and_terminal_consumers_emit_imported_marked_revision(monkeypatch):
         captured["status"] = status
 
     monkeypatch.setattr(routes, "get_session", lambda *_args, **_kwargs: session)
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_args: True)
     monkeypatch.setattr(routes, "_clear_stale_stream_state", lambda *_args: None)
     monkeypatch.setattr(routes, "_session_requires_cli_metadata_lookup", lambda *_args: False)
     monkeypatch.setattr(routes, "get_state_db_session_messages", lambda *_args, **_kwargs: [])
@@ -258,7 +257,6 @@ def test_get_and_terminal_consumers_omit_imported_unowned_revision(monkeypatch):
         captured["status"] = status
 
     monkeypatch.setattr(routes, "get_session", lambda *_args, **_kwargs: session)
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_args: True)
     monkeypatch.setattr(routes, "_clear_stale_stream_state", lambda *_args: None)
     monkeypatch.setattr(routes, "_session_requires_cli_metadata_lookup", lambda *_args: False)
     monkeypatch.setattr(routes, "get_state_db_session_messages", lambda *_args, **_kwargs: [])

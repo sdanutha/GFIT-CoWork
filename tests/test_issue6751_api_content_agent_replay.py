@@ -1218,7 +1218,6 @@ def test_issue6751_cli_refresh_ignores_internal_aliases_and_appends_new_rows(mon
     ]
 
     monkeypatch.setattr(routes.Session, "load", lambda _sid: existing)
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *_args: True)
     monkeypatch.setattr(routes, "_resolve_cli_import_metadata", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(routes, "get_cli_session_messages", lambda *_args, **_kwargs: fresh)
     monkeypatch.setattr(routes, "_is_subagent_child_session_id", lambda _sid: False)

@@ -486,7 +486,6 @@ def test_core_a_route_full_session_load_does_not_resurrect_deleted_turns(tmp_pat
 
     saved = {
         "get_state_db_session_messages": getattr(routes, "get_state_db_session_messages", None),
-        "_session_visible_to_active_profile": getattr(routes, "_session_visible_to_active_profile", None),
         "_clear_stale_stream_state": getattr(routes, "_clear_stale_stream_state", None),
         "_resolve_effective_session_model_for_display": getattr(routes, "_resolve_effective_session_model_for_display", None),
         "_resolve_effective_session_model_provider_for_display": getattr(routes, "_resolve_effective_session_model_provider_for_display", None),
@@ -500,7 +499,6 @@ def test_core_a_route_full_session_load_does_not_resurrect_deleted_turns(tmp_pat
         )
         s.save()
         routes.get_state_db_session_messages = lambda sid, profile=None, since_timestamp=None, include_inactive=False, limit=None: list(state)
-        routes._session_visible_to_active_profile = lambda profile, handler: True
         routes._clear_stale_stream_state = lambda s: None
         routes._resolve_effective_session_model_for_display = lambda s: getattr(s, "model", None)
         routes._resolve_effective_session_model_provider_for_display = lambda s: getattr(s, "model_provider", None)
