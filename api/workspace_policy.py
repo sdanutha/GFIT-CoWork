@@ -27,8 +27,8 @@ Attachments are not a Workspace: they belong to a session, and session
 ownership guards them (``api.helpers.resolve_inside``, the unconfined primitive).
 
 An explicit *profile* argument is the Admin's: the unconfined policy uses it as
-today. A User's policy is bound to that User's Profile, which wins; it takes
-no *profile*.
+today. A User's policy is bound to that User's Profile, which wins; it
+accepts *profile* only so every policy is asked the same way, and ignores it.
 """
 from __future__ import annotations
 
@@ -36,9 +36,9 @@ from pathlib import Path
 
 from api.workspace import (
     OUTSIDE_WORKSPACE_MESSAGE,
-    MEMBER_WORKSPACE_DIRNAME,
-    _clean_member_workspace_list,
+    USER_WORKSPACE_DIRNAME,
     _clean_unconfined_workspace_list,
+    _clean_user_workspace_list,
     _configured_default_workspace,
     _expanduser_path,
     _is_within,
@@ -64,13 +64,13 @@ class UserWorkspacePolicy:
     """A User's policy: everything inside their Workspace folder, ``<Profile>/workspace``.
 
     Its methods accept the unconfined policy's *profile* keyword so callers ask
-    every policy the same way; the User's own Profile wins and *profile* is not
-    used.
+    every policy the same way. The User's own Profile, fixed when the policy is
+    chosen, wins: *profile* is never used here.
     """
 
     def __init__(self, profile_home: str | Path):
         self.profile_home = _safe_resolve(Path(profile_home))
-        self.root = _safe_resolve(self.profile_home / MEMBER_WORKSPACE_DIRNAME)
+        self.root = _safe_resolve(self.profile_home / USER_WORKSPACE_DIRNAME)
 
     @classmethod
     def for_profile(cls, profile: str) -> "UserWorkspacePolicy":
@@ -86,7 +86,7 @@ class UserWorkspacePolicy:
 
     def saved_list(self, workspaces: list, *, profile=None) -> list:
         """The default Workspace first ("Home"), then saved folders inside it."""
-        return _clean_member_workspace_list(workspaces, self.root)
+        return _clean_user_workspace_list(workspaces, self.root)
 
     def may_use(self, raw: str | None, *, profile=None) -> bool:
         """May the stored value *raw* be a session's or the last-used Workspace?"""

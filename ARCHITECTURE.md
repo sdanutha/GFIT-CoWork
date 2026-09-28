@@ -1840,8 +1840,8 @@ an existing workspace. Strict: path must be under home, in the saved workspace l
 The distinction matters because add uses permissive validation to avoid the circular
 dependency: you cannot get a path into the saved list if you need the saved list to add it.
 
-**GFIT-CoWork Members.** Both functions ask the request's Workspace policy
-(`api/workspace_policy.py`). For a User's request it applies the same stricter rule instead:
+**GFIT-CoWork Users.** Both functions ask the request's Workspace policy
+(`api/workspace_policy.py`). For a User's request it applies one stricter rule instead:
 the path must resolve (after `..` and symlinks) inside `<Profile>/workspace`.
 `workspace.resolve_in_workspace` applies it again to every file operation (the unconfined
 primitive followed by the policy's `confine`), so a Workspace root that is somehow outside
@@ -1872,14 +1872,19 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   (fail closed), enforced in `check_auth`. The list names each route and method exactly, with a prefix only for a variable path part (the
   module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
   in `api/routes.py` and fails when the list and the handled routes disagree.
-- `api/workspace_policy.py` — the Workspace policy, chosen once per request from the request's
-  Admission (`request_workspace_policy`): a User's policy (everything inside
-  `<Profile>/workspace`), the unconfined policy (the Admin, login turned off, worker threads),
-  or the refusing answer (a Directory session with no Admission: `access.request_has_directory_session`).
-  Choosing and listing Workspaces, file roots and confinement, and the git, media, rollback
-  (through the saved list) and worktree checks all ask it;
-  `tests/test_gfit_workspace_policy_guard.py` fails when code outside it asks `caller_is_user`
-  to decide confinement.
+- `api/workspace_policy.py` — the Workspace policy: the one answer to "what may this request
+  touch?", as the request's Admission is the one answer to "who is calling?". It is chosen once
+  per request from the request's Admission (`request_workspace_policy`, the only mapping): a
+  User's policy (everything inside `<Profile>/workspace`), the unconfined policy (the Admin,
+  login turned off, worker threads), or the refusing answer (a Directory session with no
+  Admission: `access.request_has_directory_session`). Choosing and listing Workspaces, file
+  roots and confinement, and the git, media, rollback (through the saved list) and worktree
+  checks all ask it; no other code asks "is the caller a User?" to decide confinement, and
+  `tests/test_gfit_workspace_policy_guard.py` fails when it does (its allowlist is empty) or
+  when the Workspace modules name something "Member" rather than "User". A *profile* argument
+  to a Workspace function is the Admin's; for a User the policy's own Profile wins. Login is
+  the one place that makes a User's Workspace from an explicit Profile
+  (`workspace.ensure_user_workspace`), because it runs before the request has an Admission.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
   (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function

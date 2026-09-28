@@ -6,6 +6,14 @@ profile has its own workspace configuration.  State files live at
 ``{profile_home}/webui_state/workspaces.json`` and
 ``{profile_home}/webui_state/last_workspace.txt``.  The global STATE_DIR
 paths are used as fallback when no profile module is available.
+
+GFIT-CoWork: every Workspace answer (default, saved list, may use, resolve,
+file roots, confine) comes from the request's Workspace policy
+(:mod:`api.workspace_policy`). A *profile* argument is the Admin's: the
+unconfined policy uses it as it always has. For a User the policy is bound to
+the User's own Profile, and that Profile wins over any *profile* argument.
+Profile-scoped state files (the saved list, the last-used
+Workspace) are still read from *profile*, then cleaned by the policy.
 """
 import hashlib
 import json
@@ -419,6 +427,7 @@ def _profile_default_workspace(profile: str | Path | None = None) -> str:
 
     The request's Workspace policy answers: a User's default is always their
     Workspace folder.
+    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().default_workspace(profile=profile)
 
@@ -459,15 +468,15 @@ def _configured_default_workspace(profile: str | Path | None = None) -> str:
         return str(_resolve_path(_BOOT_DEFAULT_WORKSPACE, profile=profile))
 
 
-def _clean_member_workspace_list(workspaces: list, member_root: Path) -> list:
-    """A Member's list: their default Workspace first, then saved folders inside it."""
-    result = [{'path': str(member_root), 'name': 'Home'}]
+def _clean_user_workspace_list(workspaces: list, user_root: Path) -> list:
+    """A User's list: their default Workspace first, then saved folders inside it."""
+    result = [{'path': str(user_root), 'name': 'Home'}]
     for w in workspaces:
         path = w.get('path', '') if isinstance(w, dict) else ''
         if not path:
             continue
         p = _safe_resolve(_expanduser_path(path))
-        if p == member_root or not _is_within(p, member_root):
+        if p == user_root or not _is_within(p, user_root):
             continue
         result.append({'path': str(p), 'name': w.get('name') or p.name})
     return result
@@ -489,6 +498,7 @@ def _clean_workspace_list(workspaces: list, profile: str | Path | None = None) -
 
     The request's Workspace policy answers: a User's list is their default
     Workspace, then saved folders inside it.
+    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().saved_list(workspaces, profile=profile)
 
@@ -590,6 +600,11 @@ def _migrate_global_workspaces() -> list:
 
 
 def load_workspaces(profile: str | Path | None = None) -> list:
+    """The saved Workspace list, cleaned by the request's Workspace policy.
+
+    Reads *profile*'s saved list; for a User, the policy's Profile wins when
+    cleaning it.
+    """
     ws_file = _workspaces_file_for_profile(profile)
     if ws_file is not None and ws_file.exists():
         try:
@@ -667,6 +682,9 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
 
     Priority: profile-scoped ``last_workspace.txt`` -> profile ``config.yaml``
     ``workspace``/``default_workspace`` -> ``terminal.cwd`` -> process default.
+
+    Reads *profile*'s last-used Workspace; for a User, the policy's Profile
+    wins when deciding whether it may be used, and for the default.
     """
     policy = _request_policy()
 
@@ -685,6 +703,11 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
 
 
 def get_last_workspace(profile: str | Path | None = None) -> str:
+    """The last-used Workspace, if the request's Workspace policy may use it, else the default.
+
+    Reads *profile*'s last-used Workspace; for a User, the policy's Profile
+    wins when deciding whether it may be used, and for the default.
+    """
     policy = _request_policy()
 
     def valid_last_workspace(raw: str) -> str | None:
@@ -951,30 +974,30 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-# ── GFIT-CoWork: a Member's Workspaces live inside their Profile ─────────────
-# A request whose caller is a User (a Member, by the request's Admission) may
-# only use Workspaces inside ``<Profile>/workspace``. The check runs on fully
-# resolved paths (``..`` and symlinks already followed) and fails closed. The
-# Admin and requests with no caller are not confined.
+# ── GFIT-CoWork: a User's Workspaces live inside their Profile ───────────────
+# A User's request may only use Workspaces inside ``<Profile>/workspace``; the
+# request's Workspace policy (api.workspace_policy) applies that rule. Working
+# out a User's Workspace folder from a Profile name stays a plain function here,
+# for login, which runs before the request carries an Admission.
 
-MEMBER_WORKSPACE_DIRNAME = 'workspace'
+USER_WORKSPACE_DIRNAME = 'workspace'
 OUTSIDE_WORKSPACE_MESSAGE = "That path is outside your Workspace."
 
 
-def member_workspace_root(profile: str) -> Path:
-    """The folder Member *profile*'s Workspaces must live in."""
+def user_workspace_root(profile: str) -> Path:
+    """The folder User *profile*'s Workspaces must live in."""
     from api.profiles import _resolve_named_profile_home
 
-    return _safe_resolve(_resolve_named_profile_home(profile) / MEMBER_WORKSPACE_DIRNAME)
+    return _safe_resolve(_resolve_named_profile_home(profile) / USER_WORKSPACE_DIRNAME)
 
 
-def ensure_member_workspace(profile: str) -> Path:
+def ensure_user_workspace(profile: str) -> Path:
     """Create User *profile*'s default Workspace if missing and return it.
 
     Used at login, before the request carries an Admission; a request asks
     its Workspace policy (``default_workspace``) instead.
     """
-    root = member_workspace_root(profile)
+    root = user_workspace_root(profile)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -997,6 +1020,7 @@ def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
 
     The request's Workspace policy answers: a User reaches only their
     Workspace folder.
+    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().file_roots(profile=profile)
 
@@ -1159,6 +1183,7 @@ def resolve_trusted_workspace(path: str | Path | None = None, profile: str | Pat
 
     The request's Workspace policy answers: a User may only use folders inside
     their Workspace, and that rule replaces all of the above.
+    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().resolve_to_use(path, profile=profile)
 
@@ -1344,6 +1369,7 @@ def validate_workspace_to_add(path: str, profile: str | Path | None = None) -> P
 
     The request's Workspace policy answers: a User may only add folders inside
     their Workspace.
+    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().resolve_to_register(path, profile=profile)
 
