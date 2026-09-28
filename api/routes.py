@@ -573,8 +573,16 @@ def _is_profile_agnostic_foreign_session(cli_meta) -> bool:
     return bool(sources & profile_agnostic_sources)
 
 
-def _request_session_visibility_exempt(method: str, path: str | None) -> bool:
+def _request_session_visibility_exempt(method: str, path: str | None, *, bound: bool = False) -> bool:
     if not path:
+        return False
+    if method == "POST" and path == "/api/session/import":
+        # Creates a new session with a new id; an id in the body names nothing.
+        return True
+    if bound:
+        # A bound request names only its own Profile's sessions, so the
+        # detail-load 409, and the import and placeholder-retag rules below,
+        # never apply to it: the generic guard answers first.
         return False
     if method == "GET" and path == "/api/session":
         # Detail-load owns profile mismatch handling so the frontend can switch
@@ -587,7 +595,6 @@ def _request_session_visibility_exempt(method: str, path: str | None) -> bool:
     # chat/start has inline placeholder-retag rules that must run before the
     # generic request-session guard.
     return path in {
-        "/api/session/import",
         "/api/session/import_cli",
         "/api/chat/start",
     }
@@ -603,7 +610,20 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     frontend's self-heal (clear stale URL + localStorage) keeps firing
     for actually-missing sids. ``#7710``.
     """
-    if not isinstance(sid, str) or not sid:
+    if sid is None or sid == "":
+        return True
+    from api.access import caller_bound_profile
+
+    bound = caller_bound_profile()
+    if bound:
+        # A request bound to one Profile: another Profile's session and a
+        # session that cannot be placed get the same answer.
+        if _bound_profile_owns_session_id(sid, bound):
+            return True
+        if emit_error:
+            bad(handler, "Session not found", 404)
+        return False
+    if not isinstance(sid, str):
         return True
     if not is_safe_session_id(sid):
         return True
@@ -685,10 +705,20 @@ def _stream_id_visible_to_request_profile(
     *,
     emit_error: bool = True,
 ) -> bool:
-    """Return whether the stream owner is visible to the request's profile."""
+    """Return whether the stream owner is visible to the request's profile.
+
+    A request bound to one Profile is refused a stream whose owner cannot be
+    found, with the same 404 as another Profile's stream.
+    """
     owner_session_id = _stream_id_owner_session_id(stream_id)
     if not owner_session_id:
-        return True
+        from api.access import caller_bound_profile
+
+        if not caller_bound_profile():
+            return True
+        if emit_error:
+            bad(handler, "Session not found", 404)
+        return False
     return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
 
 
@@ -778,8 +808,11 @@ def _guard_request_session_visibility(handler, parsed, body=None, method="GET") 
     """
     if not _guard_bound_profile_request(handler, parsed, body):
         return False
+    from api.access import caller_bound_profile
+
     method = str(method).upper()
-    if _request_session_visibility_exempt(method, getattr(parsed, "path", "")):
+    bound = caller_bound_profile() is not None
+    if _request_session_visibility_exempt(method, getattr(parsed, "path", ""), bound=bound):
         return True
     sid = parse_qs(getattr(parsed, "query", "") or "").get("session_id", [None])[0]
     if not _session_id_visible_to_request_profile(handler, sid):

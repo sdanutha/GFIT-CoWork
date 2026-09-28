@@ -1886,6 +1886,17 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   Profile wins. Login is the one place that makes a User's Workspace from an explicit
   Profile (`workspace.ensure_user_workspace`), because it runs before the request has an
   Admission.
+- Session ownership: a User's request names only its own Profile's sessions. The dispatch
+  guard (`routes._guard_request_session_visibility`) places each session id or stream id in
+  the bound Profile, by its WebUI record or the Profile's own agent state (`state.db`), and
+  answers anything else with 404 "Session not found". Another Profile's session and one that
+  does not exist get the same answer, and no route is exempt for a User. Approvals and clarify
+  questions ask the same question before any pending table is read. The session-list events
+  stream carries a User only their own Profile's events and the nudges that name no Profile
+  and no session. Claude Code rows, which are scanned from the server account's home and belong
+  to no Profile, are left out for a User. The Admin keeps Upstream's rules, including the 409
+  that names the owning Profile. `tests/test_gfit_session_route_answers.py` places every User
+  route as naming a session or not, and checks each one that does.
 - Naming: GFIT-CoWork code uses `CONTEXT.md`'s words, "User" (not Member) and "bound" (a
   User's request is bound to their Profile; not pinned). `tests/test_gfit_naming_guard.py`
   reads GFIT-CoWork's modules and fails on a module, function, class, parameter or
