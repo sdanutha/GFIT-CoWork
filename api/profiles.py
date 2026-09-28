@@ -535,9 +535,14 @@ def clear_request_profile() -> None:
 
     Called by server.py in the finally block of do_GET / do_POST.
     Safe to call even if set_request_profile() was never called.
+    Also clears the request's Admission (GFIT-CoWork), which ends with the
+    request Profile, before the next keep-alive request on this thread.
     """
+    from api.access import clear_request_admission
+
     _tls.profile = None
     _tls.pinned_profile = None
+    clear_request_admission()
 
 
 def pin_request_profile(name: str) -> None:

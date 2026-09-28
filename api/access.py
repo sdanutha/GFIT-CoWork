@@ -7,6 +7,9 @@ pinned to their own Profile.
 
 This module is the one place that decides who is admitted, with which role and
 to which Profile (:func:`admit`, Admission), and what a Member may call.
+Admission runs again on every request from a Directory session, and its answer
+is kept as the request's Admission (:func:`request_admission`): the one answer
+to "who is calling?" for the rest of that request.
 :func:`member_may_call` classifies a request by method and path against
 :data:`MEMBER_ENDPOINTS`; anything not listed there is refused, including
 endpoints added later (fail closed). :data:`ADMIN_ONLY_ENDPOINTS` names the
@@ -25,6 +28,7 @@ for Members, which is cosmetic only.
 from __future__ import annotations
 
 import os
+import threading
 from typing import NamedTuple
 
 ADMIN_USERS_ENV = "HERMES_WEBUI_ADMIN_USERS"
@@ -213,6 +217,58 @@ def admit(employee_id: str) -> Admitted | Refused:
     if roster.is_disabled(employee_id):
         return Refused(REFUSED_PROFILE_NOT_ACTIVE)
     return Admitted(ROLE_MEMBER, employee_id)
+
+
+# ── The request's Admission ──────────────────────────────────────────────────
+#
+# Admission runs again on every request from a Directory session. Its answer is
+# kept for the rest of that request, on the request thread, and is the one
+# answer to "who is calling?". Only an admitted caller has one: a request with
+# no Directory session (login turned off, or a public route before login) has
+# none. Worker threads carry none. It is cleared with the request Profile
+# (api.profiles.clear_request_profile) at the end of every request, before the
+# handler serves the next keep-alive request on the same thread.
+
+_request = threading.local()
+
+
+def admit_request(session_info: dict) -> Admitted | None:
+    """Admission again for this request's Directory session.
+
+    Records the Admission as the request's Admission and returns it when it
+    still gives the session's role and Profile, or returns None (and records
+    none) when it does not: the Profile was deleted or disabled, the Admin list
+    changed, or the role is unknown. Called only by the per-request Directory
+    session check.
+    """
+    clear_request_admission()
+    admission = admit(str(session_info.get("username") or "").strip())
+    session = Admitted(session_info.get("role"), str(session_info.get("bound_profile") or "").strip())
+    if admission != session:
+        return None
+    _request.admission = admission
+    return admission
+
+
+def request_admission() -> Admitted | None:
+    """This request's Admission, or None when the caller was not admitted."""
+    return getattr(_request, "admission", None)
+
+
+def caller_is_user() -> bool:
+    """True when this request comes from an admitted User (not the Admin)."""
+    admission = request_admission()
+    return admission is not None and admission.role == ROLE_MEMBER
+
+
+def caller_bound_profile() -> str | None:
+    """The Profile an admitted User's request is bound to, else None (the Admin, or no caller)."""
+    return request_admission().profile if caller_is_user() else None
+
+
+def clear_request_admission() -> None:
+    """Forget this request's Admission. Safe to call when none was recorded."""
+    _request.admission = None
 
 
 def _segments_match(pattern: str, path: str) -> bool:

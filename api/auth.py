@@ -1008,17 +1008,17 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     configured, or when Admission (:func:`api.access.admit`) for the session's
     employee ID no longer gives the session's role and Profile -- the Profile
     was deleted or disabled, the Admin list changed, or the role is unknown.
+    Otherwise the confirmed Admission is recorded as the request's Admission.
     """
-    from api.access import ROLE_MEMBER, Admitted, admit
+    from api.access import ROLE_MEMBER, admit_request
     from api.profiles import pin_request_profile
 
-    bound_profile = str(info.get('bound_profile') or '').strip()
-    role = info.get('role')
-    valid = admit(str(info.get('username') or '').strip()) == Admitted(role, bound_profile)
-    if not is_directory_auth_enabled() or not valid:
+    admission = admit_request(info) if is_directory_auth_enabled() else None
+    if admission is None:
         invalidate_session(cookie_value)
         handler._trusted_auth_session_rejected = True
         return _remember_trusted_auth_session(handler, None)
+    role, bound_profile = admission
     if role == ROLE_MEMBER:
         pin_request_profile(bound_profile)
     _apply_trusted_session_profile(handler, bound_profile, cookie_value)
