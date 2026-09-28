@@ -1856,19 +1856,20 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
 - `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission
   (`access.admit_request`) and ends the session when it no longer gives the session's role
   and Profile; otherwise it runs the request in the Admission's Profile.
-- `api/access.py` — Admission (`admit`: from a confirmed employee ID, Admin at `default`, Member
+- `api/access.py` — Admission (`admit`: from a confirmed employee ID, Admin at `default`, User
   at their own active Profile, or refused with a reason). The answer confirmed for a request is
   kept as **the request's Admission** (`request_admission`, with `caller_is_user` and
   `caller_bound_profile`): the one answer to "who is calling?" for the rest of that request.
   The Admin gate, the page shell's role, the login status role, the profile-name guard, the
   session-ownership answer, the file viewer and Workspace confinement all ask it; none reads
-  the role from the session record. A User's request is pinned (an isolated-profile request,
-  `profiles._is_isolated_profile_mode`) exactly because its Admission is a User's; there is
-  no separate pin. It lives on the request thread (worker threads carry none) and is cleared
-  with the request Profile (`profiles.clear_request_profile`) on every exit, before the next
-  keep-alive request. `tests/test_gfit_request_admission_guard.py` fails when code outside
+  the role from the session record. A User's request is bound to their Profile (an
+  isolated-profile request, `profiles._is_isolated_profile_mode`) exactly because its
+  Admission is a User's; there is no separate pin. It lives on the request thread (worker
+  threads carry none) and is cleared with the request Profile
+  (`profiles.clear_request_profile`) on every exit, before the next keep-alive request.
+  `tests/test_gfit_request_admission_guard.py` fails when code outside
   `api/access.py` reads the session role or a pin, or when anything stores a pin again. The
-  module also holds the one list of endpoints a Member may call; everything else is Admin-only
+  module also holds the one list of endpoints a User may call; everything else is Admin-only
   (fail closed), enforced in `check_auth`. The list names each route and method exactly, with a prefix only for a variable path part (the
   module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
   in `api/routes.py` and fails when the list and the handled routes disagree.

@@ -7325,7 +7325,7 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .settings-field-highlight { animation: settings-field-pulse 1.6s ease-out; }
 @keyframes settings-field-pulse { 0% { box-shadow: 0 0 0 0 var(--focus-ring); } 35% { box-shadow: 0 0 0 4px var(--focus-ring); } 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); } }
 
-/* GFIT-CoWork: a Member does not see Admin-only menus. The server stamps
+/* GFIT-CoWork: a User does not see Admin-only menus. The server stamps
    data-gfit-role on <html> and refuses these features anyway (api/access.py);
    hiding them is cosmetic. Settings are Deployment-wide, so the whole panel is
    the Admin's. */

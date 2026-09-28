@@ -46,11 +46,11 @@ The Directory is the only way in. The upstream login methods (the shared
 header) are switched off; configuring one of them keeps the login gate on but
 never lets anyone in.
 
-### Members and the Admin
+### Users and the Admin
 
-A **Member** works only in their own Profile. Every request runs in the Profile
+A **User** works only in their own Profile. Every request runs in the Profile
 bound to their session, whatever Profile the client names; naming another one
-is refused, and a Member cannot switch Profiles. A Member's Workspaces live in
+is refused, and a User cannot switch Profiles. A User's Workspaces live in
 `<Profile>/workspace`, created at first login. Registering a Workspace outside
 it, or any file operation that resolves outside it (through `..` or a symlink),
 is refused.
@@ -59,8 +59,8 @@ The **Admin** is not confined and alone may use the server-level features:
 terminal, changing workspace git, extensions, self-update, shutdown and reload,
 server logs, YOLO mode, providers, models and MCP servers, Settings (they are
 shared by the whole Deployment), onboarding, gateway control, Profile
-management and public share links. The server refuses these to Members with
-403 (`api/access.py` lists what a Member may call; anything else is refused),
+management and public share links. The server refuses these to Users with
+403 (`api/access.py` lists what a User may call; anything else is refused),
 and the web UI hides their menus.
 
 ### Managing Profiles
@@ -89,7 +89,7 @@ the name and **Sign Out**, which ends that browser's session only.
 `deploy/` is the Deployment kit: one Docker Compose file and one config file
 per Team (Hermes Agent + GFIT-CoWork), plus a Caddy reverse proxy that serves
 every Deployment on the server over HTTPS, each on its own hostname. The
-step-by-step guide, including how to add a Team, add a Member and run a pilot,
+step-by-step guide, including how to add a Team, add a User and run a pilot,
 is [deploy/README.md](deploy/README.md).
 
 The rest of this README is the upstream Hermes WebUI documentation, kept for

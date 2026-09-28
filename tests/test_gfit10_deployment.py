@@ -113,9 +113,9 @@ def test_the_reverse_proxy_serves_each_deployment_on_its_own_hostname():
     assert not re.search(r"^http://", text, re.M)
 
 
-def test_the_guide_covers_a_new_team_a_new_member_and_the_pilot():
+def test_the_guide_covers_a_new_team_a_new_user_and_the_pilot():
     text = GUIDE.read_text(encoding="utf-8").lower()
-    for heading in ("add a new team", "add a member", "pilot"):
+    for heading in ("add a new team", "add a user", "pilot"):
         assert heading in text, heading
     assert "team.env.example" in text
     assert "caddyfile" in text
