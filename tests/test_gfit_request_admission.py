@@ -170,10 +170,12 @@ def test_a_refused_request_and_the_next_get_no_leftover_caller(srv, conn):
 def test_the_requests_admission_ends_with_the_request(srv, conn, monkeypatch, method, path, body):
     """The next request on the connection starts with no caller.
 
-    Nothing reads the request's Admission yet (tickets 02-04 move the readers),
-    so no client-visible behaviour can show a leftover. Until then this spy on
-    the route dispatch is the evidence that the end-of-request step clears it.
-    A request with no session runs no Admission, so whatever it sees is left over.
+    A Directory session's request clears any earlier Admission before recording
+    its own, and a request with no session is refused or served by a public
+    route that asks no one, so no client-visible behaviour can show a leftover.
+    This spy on the route dispatch is the evidence that the end-of-request step
+    clears it. A request with no session runs no Admission, so whatever it sees
+    is left over.
     """
     user = _session(srv, USER)
     seen = []

@@ -32,6 +32,7 @@ _ESCAPE_AUTH_TTL_SECONDS = 300
 _ESCAPE_AUTH_LOCK = threading.Lock()
 _ESCAPE_AUTH_TOKENS: dict[str, dict[str, str | int | float]] = {}
 
+from api.access import caller_bound_profile, caller_is_user
 from api.config import (
     WORKSPACES_FILE as _GLOBAL_WS_FILE,
     LAST_WORKSPACE_FILE as _GLOBAL_LW_FILE,
@@ -419,7 +420,7 @@ def _profile_default_workspace(profile: str | Path | None = None) -> str:
 
     A GFIT-CoWork Member's default is always their Profile's Workspace.
     """
-    if member_workspace_root() is not None:
+    if caller_is_user():
         return str(ensure_member_workspace())
     try:
         from api.config import get_config_for_profile_home
@@ -483,9 +484,8 @@ def _clean_workspace_list(workspaces: list, profile: str | Path | None = None) -
       confusion with the 'default' profile name).
     Returns the cleaned list (may be empty).
     """
-    member_root = member_workspace_root()
-    if member_root is not None:
-        return _clean_member_workspace_list(workspaces, member_root)
+    if caller_is_user():
+        return _clean_member_workspace_list(workspaces, _caller_workspace_root())
     hermes_profiles = (_home_path() / '.hermes' / 'profiles').resolve()
     result = []
     for w in workspaces:
@@ -650,7 +650,7 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
     def _valid(raw: str) -> str | None:
         if not raw:
             return None
-        if member_workspace_root() is not None:
+        if caller_is_user():
             return raw if _member_may_use(raw) else None
         if remote_cwd:
             if _remote_terminal_workspace_candidate(raw, profile=profile) is not None:
@@ -680,7 +680,7 @@ def get_last_workspace(profile: str | Path | None = None) -> str:
     def valid_last_workspace(raw: str) -> str | None:
         if not raw:
             return None
-        if member_workspace_root() is not None:
+        if caller_is_user():
             return raw if _member_may_use(raw) else None
         if remote_cwd:
             # For remote/SSH profiles, last_workspace is target-side state. Do
@@ -955,34 +955,47 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 # ── GFIT-CoWork: a Member's Workspaces live inside their Profile ─────────────
-# A request pinned to a Profile (a Member's) may only use Workspaces inside
-# ``<Profile>/workspace``. The check runs on fully resolved paths (``..`` and
-# symlinks already followed) and fails closed. Admin and unpinned requests are
-# not confined.
+# A request whose caller is a User (a Member, by the request's Admission) may
+# only use Workspaces inside ``<Profile>/workspace``. The check runs on fully
+# resolved paths (``..`` and symlinks already followed) and fails closed. The
+# Admin and requests with no caller are not confined.
 
 MEMBER_WORKSPACE_DIRNAME = 'workspace'
 OUTSIDE_WORKSPACE_MESSAGE = "That path is outside your Workspace."
 
 
-def member_workspace_root(profile: str | None = None) -> Path | None:
-    """The folder a Member's Workspaces must live in, or None when not confined.
+def member_workspace_root(profile: str) -> Path:
+    """The folder Member *profile*'s Workspaces must live in."""
+    from api.profiles import _resolve_named_profile_home
 
-    *profile* names a Member explicitly (e.g. at login); otherwise the request's
-    pinned Profile is used.
+    return _safe_resolve(_resolve_named_profile_home(profile) / MEMBER_WORKSPACE_DIRNAME)
+
+
+def _caller_workspace_root() -> Path:
+    """The calling Member's Workspace folder; ask only once :func:`caller_is_user` said yes.
+
+    Fails closed (raises) when the request's Admission names no Profile.
     """
-    from api.profiles import _resolve_named_profile_home, pinned_request_profile
-
-    name = profile or pinned_request_profile()
-    if not name:
-        return None
-    return _safe_resolve(_resolve_named_profile_home(name) / MEMBER_WORKSPACE_DIRNAME)
+    profile = caller_bound_profile()
+    if not profile:
+        raise ValueError(OUTSIDE_WORKSPACE_MESSAGE)
+    return member_workspace_root(profile)
 
 
 def ensure_member_workspace(profile: str | None = None) -> Path | None:
-    """Create the Member's default Workspace if missing and return it (None when not confined)."""
-    root = member_workspace_root(profile)
-    if root is not None:
-        root.mkdir(parents=True, exist_ok=True)
+    """Create a Member's default Workspace if missing and return it.
+
+    *profile* names the Member explicitly (at login, before the request carries
+    an Admission). Otherwise it is the caller's, when the caller is a User, and
+    None when not (not confined).
+    """
+    if profile is not None:
+        root = member_workspace_root(profile)
+    elif caller_is_user():
+        root = _caller_workspace_root()
+    else:
+        return None
+    root.mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -1009,9 +1022,9 @@ def _member_may_use(raw: str) -> bool:
 
 def confine_to_member_workspace(path: Path) -> Path:
     """Return resolved *path*, or raise ValueError when a Member reaches outside their Workspace."""
-    root = member_workspace_root()
-    if root is None:
+    if not caller_is_user():
         return path
+    root = _caller_workspace_root()
     resolved = _safe_resolve(Path(path))
     if not _is_within(resolved, root):
         raise ValueError(OUTSIDE_WORKSPACE_MESSAGE)
@@ -1027,8 +1040,8 @@ def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
     home / boot-default carve-outs); ``None`` keeps the historical ambient /
     global saved-list behaviour.
     """
-    member_root = member_workspace_root()
-    if member_root is not None:
+    if caller_is_user():
+        member_root = _caller_workspace_root()
         return [member_root] if member_root.is_dir() else []
     roots: list[Path] = []
 
@@ -1187,7 +1200,7 @@ def resolve_trusted_workspace(path: str | Path | None = None, profile: str | Pat
     A GFIT-CoWork Member may only use folders inside their Profile's Workspace;
     that rule replaces all of the above.
     """
-    if member_workspace_root() is not None:
+    if caller_is_user():
         return _resolve_member_workspace(path)
     if path in (None, ""):
         return _resolve_path(_BOOT_DEFAULT_WORKSPACE, profile) if profile is not None else _resolve_path(_BOOT_DEFAULT_WORKSPACE)
@@ -1368,7 +1381,7 @@ def validate_workspace_to_add(path: str, profile: str | Path | None = None) -> P
 
     A GFIT-CoWork Member may only add folders inside their Profile's Workspace.
     """
-    if member_workspace_root() is not None:
+    if caller_is_user():
         return _resolve_member_workspace(path)
     path = _strip_surrounding_quotes(path)
     candidate = _resolve_path(path, profile) if profile is not None else _resolve_path(path)

@@ -36,8 +36,6 @@ def _is_session_record(node) -> bool:
 # (file, enclosing function) -> (what it reads, how many reads). Removed ticket by ticket
 # (.scratch/request-principal/issues/02-05) until the list is empty.
 ALLOWED_READERS: dict[tuple[str, str], tuple[str, int]] = {
-    # 04: the Workspace asks whether the caller is a User
-    ("api/workspace.py", "member_workspace_root"): ("pin", 1),
 }
 
 

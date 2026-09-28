@@ -563,14 +563,6 @@ def pin_request_profile(name: str) -> None:
     _tls.profile = name
 
 
-def pinned_request_profile() -> str | None:
-    """Return the Profile this request is pinned to, or None: the caller's bound
-    Profile from the request's Admission (:func:`api.access.caller_bound_profile`)."""
-    from api.access import caller_bound_profile
-
-    return caller_bound_profile()
-
-
 def _resolve_profile_home_for_name(name: str) -> Path:
     """Resolve a logical profile name to its Hermes home path.
 
