@@ -1026,14 +1026,19 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
 
 
 def _refuse_admin_only_for_member(handler, parsed, session_info: dict) -> bool:
-    """The Admin-only gate: True (after sending 403) when a Member calls a non-Member endpoint."""
+    """The Admin-only gate: True (after sending 403) when a Member calls a non-Member endpoint.
+
+    The role is the request's Admission. A Directory session with none was not
+    admitted for this request, so it may call nothing.
+    """
     if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
         return False
-    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, member_may_call
+    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, member_may_call, request_admission
 
-    if session_info.get('role') == ROLE_ADMIN:
+    admission = request_admission()
+    if admission is not None and admission.role == ROLE_ADMIN:
         return False
-    if member_may_call(getattr(handler, 'command', 'GET'), parsed.path):
+    if admission is not None and member_may_call(getattr(handler, 'command', 'GET'), parsed.path):
         return False
     _send_forbidden(handler, parsed, ADMIN_ONLY_MESSAGE)
     return True

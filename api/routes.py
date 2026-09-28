@@ -11497,15 +11497,18 @@ button:hover{background:rgba(124,185,255,.25)}
 
 
 def _directory_session_role(handler) -> str | None:
-    """The GFIT-CoWork role (``admin``/``member``) of this request's Directory session, if any."""
-    from api.access import ROLE_ADMIN, ROLE_MEMBER
+    """The GFIT-CoWork role (``admin``/``member``) of this request's Directory session, if any.
+
+    The role is the request's Admission: a session with none has no role.
+    """
+    from api.access import request_admission
     from api.auth import DIRECTORY_AUTH_TYPE, ensure_trusted_auth_session
 
     info = ensure_trusted_auth_session(handler)
     if not info or info.get("auth_type") != DIRECTORY_AUTH_TYPE:
         return None
-    role = info.get("role")
-    return role if role in (ROLE_ADMIN, ROLE_MEMBER) else None
+    admission = request_admission()
+    return admission.role if admission is not None else None
 
 
 def _login_client_ip(handler) -> str:
@@ -14262,7 +14265,7 @@ def handle_get(handler, parsed) -> bool:
         if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
             from api.member_login import session_identity
 
-            payload["role"] = session_info.get("role")
+            payload["role"] = _directory_session_role(handler)
             payload.update(session_identity(session_info))
         return j(handler, payload)
 

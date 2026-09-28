@@ -222,3 +222,59 @@ def test_with_login_off_the_page_shell_has_no_role(login_off):
     assert status == 200
     assert "data-gfit-role" not in html
     assert EXTENSION_SCRIPT in html
+
+
+# ── A Directory session with no Admission is not admitted ────────────────────
+#
+# The per-request check always records the Admission it confirms, so no HTTP
+# request can reach these readers without one. Called directly, they show that
+# a missing Admission is "not admitted", never the session record's role.
+
+class _Handler:
+    command = "GET"
+
+    def __init__(self, session_info):
+        self._trusted_auth_session_reconciled = session_info
+        self.status = None
+        self.wfile = self
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, *_):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def write(self, _):
+        pass
+
+
+def _admin_session_record():
+    from api.auth import DIRECTORY_AUTH_TYPE
+
+    return {
+        "auth_type": DIRECTORY_AUTH_TYPE, "username": ADMIN,
+        "role": "admin", "bound_profile": "default",
+    }
+
+
+def test_the_admin_gate_refuses_a_session_with_no_admission():
+    from urllib.parse import urlparse
+
+    from api.access import clear_request_admission
+    from api.auth import _refuse_admin_only_for_member
+
+    clear_request_admission()
+    handler = _Handler(_admin_session_record())
+    assert _refuse_admin_only_for_member(handler, urlparse("/api/logs"), _admin_session_record())
+    assert handler.status == 403
+
+
+def test_the_page_shell_gives_no_role_to_a_session_with_no_admission():
+    from api.access import clear_request_admission
+    from api.routes import _directory_session_role
+
+    clear_request_admission()
+    assert _directory_session_role(_Handler(_admin_session_record())) is None

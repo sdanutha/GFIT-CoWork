@@ -36,11 +36,6 @@ def _is_session_record(node) -> bool:
 # (file, enclosing function) -> (what it reads, how many reads). Removed ticket by ticket
 # (.scratch/request-principal/issues/02-05) until the list is empty.
 ALLOWED_READERS: dict[tuple[str, str], tuple[str, int]] = {
-    # 02: the role comes from the request's Admission
-    ("api/auth.py", "_refuse_admin_only_for_member"): ("session role", 1),
-    ("api/member_login.py", "session_identity"): ("session role", 1),
-    ("api/routes.py", "_directory_session_role"): ("session role", 1),
-    ("api/routes.py", "handle_get"): ("session role", 1),
     # 03: the bound Profile comes from the request's Admission
     ("api/profiles.py", "_is_isolated_profile_mode"): ("pin", 1),
     ("api/profiles.py", "_isolated_profile_name"): ("pin", 1),

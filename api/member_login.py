@@ -91,16 +91,17 @@ def attempt_login(username, password, client_ip: str) -> LoginOutcome:
 
 
 def session_identity(session_info: dict) -> dict:
-    """The name GFIT-CoWork shows for a Directory session: display name and "name (ID)" label.
+    """The name GFIT-CoWork shows for this request's Directory session: display name and "name (ID)" label.
 
     A Member's name comes from the Profile roster (updated from the Directory
     on every login, else the name the Admin typed); an Admin's from the session.
+    Whether the caller is a Member is the request's Admission.
     """
     from api import roster
-    from api.access import ROLE_MEMBER
+    from api.access import caller_is_user
 
     employee_id = str(session_info.get("username") or "")
-    if session_info.get("role") == ROLE_MEMBER:
+    if caller_is_user():
         display_name = roster.view(employee_id)["display_name"]
     else:
         display_name = roster.directory_name(session_info.get("display_name"), employee_id)
