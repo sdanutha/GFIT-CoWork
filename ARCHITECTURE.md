@@ -1839,10 +1839,10 @@ an existing workspace. Strict: path must be under home, in the saved workspace l
 The distinction matters because add uses permissive validation to avoid the circular
 dependency: you cannot get a path into the saved list if you need the saved list to add it.
 
-**GFIT-CoWork Members.** For a request pinned to a Member's Profile, both functions apply
-the same stricter rule instead: the path must resolve (after `..` and symlinks) inside
-`<Profile>/workspace`. `helpers.safe_resolve` and `safe_resolve_ws` apply it again to every
-file operation, so a Workspace root that is somehow outside still grants nothing
+**GFIT-CoWork Members.** For a request whose Admission is a User's (`access.caller_is_user`),
+both functions apply the same stricter rule instead: the path must resolve (after `..` and
+symlinks) inside `<Profile>/workspace`. `helpers.safe_resolve` and `safe_resolve_ws` apply it
+again to every file operation, so a Workspace root that is somehow outside still grants nothing
 (`confine_to_member_workspace`). `helpers.resolve_inside` is the unconfined primitive, for
 roots that are not Workspaces (the session attachment inbox). The Admin is not confined.
 
@@ -1851,14 +1851,23 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
 - `api/directory.py` — the Directory seam (username + password → Identity); `api/ldap_directory.py`
   is the company-AD implementation (LDAPS or StartTLS only).
 - `api/member_login.py` — the login flow (rate limit → Directory → Admission → session).
-- `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission and
-  ends the session when it no longer gives the session's role and Profile; a Member session
-  pins the request to its Profile (`profiles.pin_request_profile`, which makes it an
-  isolated-profile request).
+- `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission
+  (`access.admit_request`) and ends the session when it no longer gives the session's role
+  and Profile; otherwise it runs the request in the Admission's Profile.
 - `api/access.py` — Admission (`admit`: from a confirmed employee ID, Admin at `default`, Member
-  at their own active Profile, or refused with a reason), and the one list of endpoints a Member
-  may call; everything else is Admin-only (fail closed), enforced in `check_auth`. The list
-  names each route and method exactly, with a prefix only for a variable path part (the
+  at their own active Profile, or refused with a reason). The answer confirmed for a request is
+  kept as **the request's Admission** (`request_admission`, with `caller_is_user` and
+  `caller_bound_profile`): the one answer to "who is calling?" for the rest of that request.
+  The Admin gate, the page shell's role, the login status role, the profile-name guard, the
+  session-ownership answer, the file viewer and Workspace confinement all ask it; none reads
+  the role from the session record. A User's request is pinned (an isolated-profile request,
+  `profiles._is_isolated_profile_mode`) exactly because its Admission is a User's; there is
+  no separate pin. It lives on the request thread (worker threads carry none) and is cleared
+  with the request Profile (`profiles.clear_request_profile`) on every exit, before the next
+  keep-alive request. `tests/test_gfit_request_admission_guard.py` fails when code outside
+  `api/access.py` reads the session role or a pin, or when anything stores a pin again. The
+  module also holds the one list of endpoints a Member may call; everything else is Admin-only
+  (fail closed), enforced in `check_auth`. The list names each route and method exactly, with a prefix only for a variable path part (the
   module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
   in `api/routes.py` and fails when the list and the handled routes disagree.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the

@@ -547,20 +547,7 @@ def clear_request_profile() -> None:
     from api.access import clear_request_admission
 
     _tls.profile = None
-    _tls.pinned_profile = None
     clear_request_admission()
-
-
-def pin_request_profile(name: str) -> None:
-    """Pin this request to Profile *name* (a GFIT-CoWork Member's bound Profile).
-
-    A pinned request is an isolated-profile request: every lookup clamps to
-    *name*, cross-profile reads are off, and switching, creating or deleting a
-    Profile is refused. Cleared with the request profile by
-    clear_request_profile().
-    """
-    _tls.pinned_profile = name
-    _tls.profile = name
 
 
 def _resolve_profile_home_for_name(name: str) -> Path:

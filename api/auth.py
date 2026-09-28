@@ -1000,9 +1000,10 @@ def ensure_trusted_auth_session(handler) -> dict | None:
 def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict | None:
     """Run a Directory session's request in its bound Profile, whatever the client sent.
 
-    A Member's request is pinned to the bound Profile, so no Profile the client
-    names (cookie, query or body) can reach another Profile's data. An Admin's
-    request runs in ``default``.
+    A User's request runs in, and is bound to, the Profile its Admission names
+    (:func:`api.access.caller_bound_profile`), so no Profile the client names
+    (cookie, query or body) can reach another Profile's data. An Admin's request
+    runs in ``default``.
 
     Fails closed: the session is ended when Directory login is no longer
     configured, or when Admission (:func:`api.access.admit`) for the session's
@@ -1010,18 +1011,14 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     was deleted or disabled, the Admin list changed, or the role is unknown.
     Otherwise the confirmed Admission is recorded as the request's Admission.
     """
-    from api.access import ROLE_MEMBER, admit_request
-    from api.profiles import pin_request_profile
+    from api.access import admit_request
 
     admission = admit_request(info) if is_directory_auth_enabled() else None
     if admission is None:
         invalidate_session(cookie_value)
         handler._trusted_auth_session_rejected = True
         return _remember_trusted_auth_session(handler, None)
-    role, bound_profile = admission
-    if role == ROLE_MEMBER:
-        pin_request_profile(bound_profile)
-    _apply_trusted_session_profile(handler, bound_profile, cookie_value)
+    _apply_trusted_session_profile(handler, admission.profile, cookie_value)
     return _remember_trusted_auth_session(handler, info)
 
 

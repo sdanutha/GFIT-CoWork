@@ -10,18 +10,19 @@ module asks the question another way:
 - reads the per-request Profile pin directly (``pinned_request_profile()``,
   ``_tls.pinned_profile``).
 
-:data:`ALLOWED_READERS` names the readers that predate the request's Admission,
-with how many reads each function makes. Each migration ticket removes its
-entries; a new reader, or a new read in an allowed function, fails the guard.
+There is no allowlist: every earlier reader now asks the request's Admission.
+A second guard fails when anything stores a pin of its own again (defines
+``pin_request_profile()`` or sets a ``pinned_profile`` attribute), since a
+request is pinned exactly when its Admission is a User's.
 
-Limit: a session record is recognised by its variable name (``info`` or
+Limits: a session record is recognised by its variable name (``info`` or
 ``*session_info``, the names the codebase uses), so a record read under another
-name is not seen.
+name is not seen; and a pin is recognised by those two names, so a pin stored
+under another name is not seen.
 """
 from __future__ import annotations
 
 import ast
-from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -33,15 +34,11 @@ def _is_session_record(node) -> bool:
     return isinstance(node, ast.Name) and (node.id == "info" or node.id.endswith("session_info"))
 
 
-# (file, enclosing function) -> (what it reads, how many reads). Removed ticket by ticket
-# (.scratch/request-principal/issues/02-05) until the list is empty.
-ALLOWED_READERS: dict[tuple[str, str], tuple[str, int]] = {
-}
-
-
-def _source_files():
-    yield REPO / "server.py"
-    yield from sorted((REPO / "api").rglob("*.py"))
+def _parsed_sources():
+    """(repo-relative path, syntax tree) for each application source file."""
+    for path in [REPO / "server.py", *sorted((REPO / "api").rglob("*.py"))]:
+        rel = path.relative_to(REPO).as_posix()
+        yield rel, ast.parse(path.read_text(encoding="utf-8"), filename=rel)
 
 
 def _enclosing_functions(tree) -> list[tuple[int, int, str]]:
@@ -92,43 +89,49 @@ def _reads(tree):
 def _readers() -> list[tuple[str, int, str, str]]:
     """(file, line, function, what) for every reader outside the Admission module."""
     found = []
-    for path in _source_files():
-        rel = path.relative_to(REPO).as_posix()
+    for rel, tree in _parsed_sources():
         if rel == ADMISSION_MODULE:
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
         functions = _enclosing_functions(tree)
         for line, what in _reads(tree):
             found.append((rel, line, _function_at(functions, line), what))
     return sorted(found)
 
 
-def _read_counts() -> Counter:
-    return Counter((rel, func) for rel, _, func, _ in _readers())
-
-
 def test_only_the_admission_module_says_who_is_calling():
-    counts = _read_counts()
-    offenders = [
-        f"{rel}:{line} in {func}() reads the {what}"
-        for rel, line, func, what in _readers()
-        if counts[rel, func] > ALLOWED_READERS.get((rel, func), ("", 0))[1]
-    ]
+    offenders = [f"{rel}:{line} in {func}() reads the {what}" for rel, line, func, what in _readers()]
     assert not offenders, (
         "Ask the request's Admission (api.access) who is calling, not the session "
         "record or the Profile pin:\n  " + "\n  ".join(offenders)
     )
 
 
-def test_every_allowed_reader_still_reads():
-    """An entry whose reads have moved to the request's Admission must be lowered or removed."""
-    counts = _read_counts()
-    stale = sorted(
-        (key, allowed, counts[key])
-        for key, (_, allowed) in ALLOWED_READERS.items()
-        if counts[key] < allowed
+def _pin_stores(tree):
+    """(line, what) for each definition of a pin setter or store of a pin."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "pin_request_profile":
+            yield node.lineno, "defines pin_request_profile()"
+        elif (
+            isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Store)
+            and node.attr == "pinned_profile"
+        ):
+            yield node.lineno, "stores a pinned_profile"
+        elif (
+            isinstance(node, ast.Call) and getattr(node.func, "id", None) == "setattr"
+            and len(node.args) >= 2 and _is_str(node.args[1], "pinned_profile")
+        ):
+            yield node.lineno, "stores a pinned_profile"
+
+
+def test_no_separate_pin_is_stored():
+    """A request is pinned exactly when its Admission is a User's; there is no pin of its own."""
+    stores = sorted(
+        f"{rel}:{line} {what}" for rel, tree in _parsed_sources() for line, what in _pin_stores(tree)
     )
-    assert not stale, f"Lower or remove these ALLOWED_READERS entries (allowed, found): {stale}"
+    assert not stores, (
+        "The pin is a view of the request's Admission (api.access.caller_bound_profile); "
+        "do not store one apart from it:\n  " + "\n  ".join(stores)
+    )
 
 
 def test_the_guard_catches_each_spelling():
@@ -147,4 +150,17 @@ def test_the_guard_catches_each_spelling():
     reads = sorted(_reads(ast.parse(source)))
     assert reads == [
         (2, "session role"), (3, "session role"), (4, "pin"), (5, "pin"), (6, "pin"),
+    ]
+
+
+def test_the_pin_guard_catches_each_spelling():
+    source = (
+        "def pin_request_profile(name):\n"
+        "    _tls.pinned_profile = name\n"
+        "    setattr(_tls, 'pinned_profile', name)\n"
+        "    return _tls.pinned_profile\n"       # a read, caught by the other guard
+    )
+    stores = sorted(_pin_stores(ast.parse(source)))
+    assert stores == [
+        (1, "defines pin_request_profile()"), (2, "stores a pinned_profile"), (3, "stores a pinned_profile"),
     ]
