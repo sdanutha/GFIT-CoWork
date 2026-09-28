@@ -692,13 +692,49 @@ def _stream_id_visible_to_request_profile(
     return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
 
 
+def _bound_profile_owns_session_id(sid, bound: str) -> bool:
+    """Is *sid* a session of the Profile *bound*, which the request is bound to?
+
+    Looks in the WebUI session record, then in the Profile's own agent state
+    (CLI, messaging, cron and gateway sessions; a bound request's active
+    Profile is *bound*). An id found in neither is refused: unknown is not
+    allowed.
+    """
+    if not isinstance(sid, str) or not sid or not is_safe_session_id(sid):
+        return False
+    try:
+        session = get_session(sid, metadata_only=True)
+    except KeyError:
+        return state_db_has_session(sid)
+    except Exception:
+        return False
+    session_profile = getattr(session, "profile", None)
+    return isinstance(session_profile, str) and _profiles_match(session_profile, bound)
+
+
+def _guard_bound_session_id(handler, sid) -> bool:
+    """A request bound to one Profile may name only that Profile's sessions.
+
+    Answers 404 "Session not found", exactly as for a session that does not
+    exist, and returns False when it may not. Requests that are not bound
+    (the Admin, login turned off) pass.
+    """
+    from api.access import caller_bound_profile
+
+    bound = caller_bound_profile()
+    if not bound or _bound_profile_owns_session_id(sid, bound):
+        return True
+    bad(handler, "Session not found", 404)
+    return False
+
+
 def _session_event_reaches_bound_profile(event, bound: str) -> bool:
     """May a session-list event go to a request bound to the Profile *bound*?
 
     An event that names neither a Profile nor a session carries nothing
     private and is always sent: the sidebar needs the nudge. Otherwise the
     event must name the bound Profile, and any session it names must be a
-    session of that Profile. A session that cannot be placed is refused.
+    session of that Profile.
     """
     event = event if isinstance(event, dict) else {}
     profile = str(event.get("profile") or "").strip()
@@ -707,16 +743,7 @@ def _session_event_reaches_bound_profile(event, bound: str) -> bool:
         return True
     if not profile or not _profiles_match(profile, bound):
         return False
-    if not sid:
-        return True
-    if not is_safe_session_id(sid):
-        return False
-    try:
-        session = get_session(sid, metadata_only=True)
-    except Exception:
-        return False
-    session_profile = getattr(session, "profile", None)
-    return isinstance(session_profile, str) and _profiles_match(session_profile, bound)
+    return not sid or _bound_profile_owns_session_id(sid, bound)
 
 
 def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
@@ -10841,6 +10868,7 @@ from api.models import (
     get_session_for_scan,
     find_compression_recovery_session,
     get_session_for_file_ops,
+    state_db_has_session,
     persist_recovered_workspace_binding,
     WorkspaceBindingPersistenceError,
     new_session,
@@ -21786,6 +21814,8 @@ def _read_anchored_file_bytes(ws_root: Path, target: Path) -> bytes:
 
 def _handle_approval_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not _guard_bound_session_id(handler, sid):
+        return True
     with _lock:
         _head, _total, _changed = reconcile_gateway_pending_mirror_locked(sid)
         queue = _pending.get(sid)
@@ -21821,6 +21851,8 @@ def _handle_approval_sse_stream(handler, parsed):
     back to HTTP polling if the connection fails.
     """
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not _guard_bound_session_id(handler, sid):
+        return True
     if not sid:
         return bad(handler, "session_id is required")
 
@@ -21897,6 +21929,8 @@ def _handle_approval_inject(handler, parsed):
 
 def _handle_clarify_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not _guard_bound_session_id(handler, sid):
+        return True
     pending = get_clarify_pending(sid)
     if pending:
         return j(handler, {"pending": pending})
@@ -21914,6 +21948,8 @@ def _handle_clarify_sse_stream(handler, parsed):
         return bad(handler, "clarify SSE not available")
 
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not _guard_bound_session_id(handler, sid):
+        return True
     if not sid:
         return bad(handler, "session_id is required")
 
@@ -27482,6 +27518,8 @@ def _session_has_pending_approval(sid: str) -> bool:
 
 def _handle_approval_respond(handler, body):
     sid = body.get("session_id", "")
+    if not _guard_bound_session_id(handler, sid):
+        return True
     if not sid:
         return bad(handler, "session_id is required")
     choice = body.get("choice", "deny")
@@ -27791,6 +27829,8 @@ def _resolve_clarify_legacy(sid: str, clarify_id: str, response: str) -> bool:
 
 def _handle_clarify_respond(handler, body):
     sid = body.get("session_id", "")
+    if not _guard_bound_session_id(handler, sid):
+        return True
     if not sid:
         return bad(handler, "session_id is required")
     response = body.get("response")
