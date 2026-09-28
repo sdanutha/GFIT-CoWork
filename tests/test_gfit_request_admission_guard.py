@@ -36,14 +36,6 @@ def _is_session_record(node) -> bool:
 # (file, enclosing function) -> (what it reads, how many reads). Removed ticket by ticket
 # (.scratch/request-principal/issues/02-05) until the list is empty.
 ALLOWED_READERS: dict[tuple[str, str], tuple[str, int]] = {
-    # 03: the bound Profile comes from the request's Admission
-    ("api/profiles.py", "_is_isolated_profile_mode"): ("pin", 1),
-    ("api/profiles.py", "_isolated_profile_name"): ("pin", 1),
-    ("api/profiles.py", "_isolated_profile_home"): ("pin", 1),
-    ("api/profiles.py", "pinned_request_profile"): ("pin", 1),
-    ("api/routes.py", "_session_profile_mismatch"): ("pin", 1),
-    ("api/routes.py", "_guard_pinned_profile_request"): ("pin", 1),
-    ("api/routes.py", "_handle_media"): ("pin", 1),
     # 04: the Workspace asks whether the caller is a User
     ("api/workspace.py", "member_workspace_root"): ("pin", 1),
 }

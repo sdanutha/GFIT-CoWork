@@ -296,9 +296,11 @@ def _is_isolated_profile_mode() -> bool:
     not the current os.environ value. init_profile_state() overwrites HERMES_HOME
     at startup, which would disable detection if we read it here.
     """
-    # A request pinned to one Profile (a GFIT-CoWork Member) is an isolated
-    # request, whatever the process posture.
-    if pinned_request_profile():
+    # A request bound to one Profile (a GFIT-CoWork Member's, by the request's
+    # Admission) is an isolated request, whatever the process posture.
+    from api.access import caller_bound_profile
+
+    if caller_bound_profile():
         return True
     # PRIMARY gate: explicit startup opt-in. Default OFF → a normal named-profile
     # launch is never treated as isolated, so profile switching keeps working
@@ -331,15 +333,19 @@ def _is_isolated_profile_mode() -> bool:
 
 
 def _isolated_profile_name() -> str:
-    """Return the pinned request Profile, else the directory name from _INITIAL_HERMES_HOME."""
-    return pinned_request_profile() or Path(_INITIAL_HERMES_HOME).expanduser().name
+    """Return the caller's bound Profile, else the directory name from _INITIAL_HERMES_HOME."""
+    from api.access import caller_bound_profile
+
+    return caller_bound_profile() or Path(_INITIAL_HERMES_HOME).expanduser().name
 
 
 def _isolated_profile_home() -> Path:
-    """Return the home of the pinned request Profile, else the startup HERMES_HOME."""
-    pinned = pinned_request_profile()
-    if pinned:
-        return _resolve_named_profile_home(pinned)
+    """Return the home of the caller's bound Profile, else the startup HERMES_HOME."""
+    from api.access import caller_bound_profile
+
+    bound = caller_bound_profile()
+    if bound:
+        return _resolve_named_profile_home(bound)
     return Path(_INITIAL_HERMES_HOME).expanduser()
 
 
@@ -558,8 +564,11 @@ def pin_request_profile(name: str) -> None:
 
 
 def pinned_request_profile() -> str | None:
-    """Return the Profile this request is pinned to, or None."""
-    return getattr(_tls, 'pinned_profile', None)
+    """Return the Profile this request is pinned to, or None: the caller's bound
+    Profile from the request's Admission (:func:`api.access.caller_bound_profile`)."""
+    from api.access import caller_bound_profile
+
+    return caller_bound_profile()
 
 
 def _resolve_profile_home_for_name(name: str) -> Path:

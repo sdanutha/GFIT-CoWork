@@ -635,9 +635,9 @@ def _session_profile_mismatch(handler, sid, session_profile):
     Member) can never switch, and must not learn who owns the session, so it
     gets the plain 404.
     """
-    from api.profiles import pinned_request_profile
+    from api.access import caller_bound_profile
 
-    if pinned_request_profile():
+    if caller_bound_profile():
         return bad(handler, "Session not found", 404)
     return j(handler, {
         "error": "Session belongs to a different profile",
@@ -700,9 +700,9 @@ def _guard_pinned_profile_request(handler, parsed, body=None) -> bool:
     pinned Profile; refusing makes a forged request fail loudly instead of
     being quietly retargeted.
     """
-    from api.profiles import pinned_request_profile
+    from api.access import caller_bound_profile
 
-    pinned = pinned_request_profile()
+    pinned = caller_bound_profile()
     if not pinned:
         return True
     named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
@@ -21323,9 +21323,10 @@ def _handle_media(handler, parsed):
         return bad(handler, "Invalid path", 400)
 
     # GFIT-CoWork: a Member may only view files inside their own Profile.
-    from api.profiles import _resolve_named_profile_home, pinned_request_profile
+    from api.access import caller_bound_profile
+    from api.profiles import _resolve_named_profile_home
 
-    _pinned = pinned_request_profile()
+    _pinned = caller_bound_profile()
     if _pinned and not target.is_relative_to(_resolve_named_profile_home(_pinned)):
         return bad(handler, "That file is outside your Profile.", 403)
 
