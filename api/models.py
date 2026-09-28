@@ -6233,8 +6233,12 @@ def _refresh_index_rows_from_sidecar_metadata(
     return out
 
 
-def state_db_has_session(sid: str) -> bool:
+def state_db_has_session(sid: str, *, profile: str | None = None) -> bool:
     """Return True when ``sid`` exists in the active state.db sessions table.
+
+    With *profile*, look only in that named Profile's own state.db: no
+    fallback to the active or default home, so an unresolvable Profile finds
+    nothing.
 
     Used by file-manager handlers to fall back to a state.db lookup when
     ``get_session`` raises ``KeyError`` because the session was created by
@@ -6249,7 +6253,15 @@ def state_db_has_session(sid: str) -> bool:
         import sqlite3
     except ImportError:
         return False
-    db_path = _active_state_db_path()
+    if profile is None:
+        db_path = _active_state_db_path()
+    else:
+        from api.profiles import get_hermes_home_for_profile
+
+        home = Path(get_hermes_home_for_profile(profile))
+        if home.name != profile:
+            return False
+        db_path = home / 'state.db'
     if not db_path.exists():
         return False
     try:

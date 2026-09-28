@@ -242,9 +242,6 @@ def pending(srv):
         "bob-gateway": _state_db_session(srv, BOB, "bob-gateway-1"),
         "bob-cli": _state_db_session(srv, BOB, "bob-cli-1", source="cli"),
     }
-    # The dispatch guard answers a WebUI session only once it has a saved record.
-    for kind in ("alice-webui", "bob-webui"):
-        _rename(alice if kind.startswith("alice") else bob, sids[kind], kind)
     items = {kind: (_pending_approval(sid), _pending_clarify(sid)) for kind, sid in sids.items()}
     try:
         yield alice, bob, sids, items

@@ -310,24 +310,34 @@ def _masked(answer, sid, entry) -> tuple[int, str]:
     return status, text
 
 
-def _bob_view(bob, sid):
+def _bob_view(srv, bob, sid):
+    """Bob's session as he loads it, and every file in his Workspace."""
     status, body, _ = bob.get(f"/api/session?session_id={sid}")
     session = (body or {}).get("session") if isinstance(body, dict) else None
     if isinstance(session, dict):
         session = {k: v for k, v in session.items() if k not in ("last_viewed_at", "server_time")}
-    return status, session
+    workspace = srv.profile_home(BOB) / "workspace"
+    files = {
+        str(path.relative_to(workspace)): path.read_bytes() if path.is_file() else None
+        for path in sorted(workspace.rglob("*"))
+    }
+    return status, session, files
 
 
 @pytest.mark.parametrize("method,entry", sorted(SESSION_ROUTES))
-def test_another_users_session_answers_like_a_missing_one(alice, bob, method, entry):
+def test_another_users_session_answers_like_a_missing_one(srv, alice, bob, method, entry):
     how = SESSION_ROUTES[(method, entry)]
     bob_sid = _bob_session(bob)
+    # The files the write routes name, in Bob's Workspace.
+    workspace = srv.profile_home(BOB) / "workspace"
+    (workspace / "sub").mkdir(parents=True, exist_ok=True)
+    (workspace / "notes.txt").write_text("Bob's notes")
     missing = f"missing-{bob_sid}"
     if isinstance(how, Stream):
         theirs, nobodys = _bob_stream(bob_sid), f"stream-of-{missing}"
     else:
         theirs, nobodys = bob_sid, missing
-    before = _bob_view(bob, bob_sid)
+    before = _bob_view(srv, bob, bob_sid)
     try:
         theirs_answer = _ask(alice, method, entry, how, theirs)
         missing_answer = _ask(alice, method, entry, how, nobodys)
@@ -336,4 +346,4 @@ def test_another_users_session_answers_like_a_missing_one(alice, bob, method, en
             _forget_stream(theirs)
     assert _masked(theirs_answer, theirs, entry) == _masked(missing_answer, nobodys, entry)
     assert BOB not in theirs_answer[1]
-    assert _bob_view(bob, bob_sid) == before
+    assert _bob_view(srv, bob, bob_sid) == before

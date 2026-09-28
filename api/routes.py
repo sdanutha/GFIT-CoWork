@@ -726,16 +726,15 @@ def _bound_profile_owns_session_id(sid, bound: str) -> bool:
     """Is *sid* a session of the Profile *bound*, which the request is bound to?
 
     Looks in the WebUI session record, then in the Profile's own agent state
-    (CLI, messaging, cron and gateway sessions; a bound request's active
-    Profile is *bound*). An id found in neither is refused: unknown is not
-    allowed.
+    (CLI, messaging, cron and gateway sessions). An id found in neither is
+    refused: unknown is not allowed.
     """
     if not isinstance(sid, str) or not sid or not is_safe_session_id(sid):
         return False
     try:
         session = get_session(sid, metadata_only=True)
     except KeyError:
-        return state_db_has_session(sid)
+        return state_db_has_session(sid, profile=bound)
     except Exception:
         return False
     session_profile = getattr(session, "profile", None)
@@ -747,12 +746,13 @@ def _guard_bound_session_id(handler, sid) -> bool:
 
     Answers 404 "Session not found", exactly as for a session that does not
     exist, and returns False when it may not. Requests that are not bound
-    (the Admin, login turned off) pass.
+    (the Admin, login turned off), and a request that names no session, pass,
+    as in the dispatch guard.
     """
     from api.access import caller_bound_profile
 
     bound = caller_bound_profile()
-    if not bound or _bound_profile_owns_session_id(sid, bound):
+    if not bound or sid is None or sid == "" or _bound_profile_owns_session_id(sid, bound):
         return True
     bad(handler, "Session not found", 404)
     return False

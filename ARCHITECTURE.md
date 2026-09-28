@@ -1890,7 +1890,8 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   guard (`routes._guard_request_session_visibility`) places each session id or stream id in
   the bound Profile, by its WebUI record or the Profile's own agent state (`state.db`), and
   answers anything else with 404 "Session not found". Another Profile's session and one that
-  does not exist get the same answer, and no route is exempt for a User. Approvals and clarify
+  does not exist get the same answer. For a User, no route is exempt apart from the JSON import,
+  which ignores any id in its body. Approvals and clarify
   questions ask the same question before any pending table is read. The session-list events
   stream carries a User only their own Profile's events and the nudges that name no Profile
   and no session. Claude Code rows, which are scanned from the server account's home and belong
