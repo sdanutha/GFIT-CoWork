@@ -14,7 +14,7 @@ modules are scanned, not upstream's archive code. The glossary also avoids "lock
 upstream uses it widely for real locks.
 
 :data:`KEPT` lists names kept on purpose, each with its reason. :data:`ALLOWLIST`
-names today's offenders; the migration tickets rename them and empty it. An
+named the offenders the migration tickets renamed; it is empty and stays so. An
 entry in either list that no longer matches anything fails, so both lists only
 shrink.
 """

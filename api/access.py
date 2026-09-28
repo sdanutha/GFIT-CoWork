@@ -148,7 +148,7 @@ VARIABLE_PATH_PREFIXES: dict[str, str] = {
 }
 
 # Server-level features, refused for Users. Listed so the intent is explicit:
-# none of them is on the User list, so they are refused anyway. An entry here
+# none of them is among the User endpoints, so they are refused anyway. An entry here
 # carves a hole only if it falls under a variable-path prefix above.
 ADMIN_ONLY_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_ANY, "/api/terminal/*"),                       # terminal
