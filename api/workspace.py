@@ -989,7 +989,7 @@ def ensure_member_workspace(profile: str | None = None) -> Path | None:
     an Admission). Otherwise it is the caller's, when the caller is a User, and
     None when not (not confined).
     """
-    if profile is not None:
+    if profile:
         root = member_workspace_root(profile)
     elif caller_is_user():
         root = _caller_workspace_root()
