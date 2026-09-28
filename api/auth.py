@@ -1022,20 +1022,20 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     return _remember_trusted_auth_session(handler, info)
 
 
-def _refuse_admin_only_for_member(handler, parsed, session_info: dict) -> bool:
-    """The Admin-only gate: True (after sending 403) when a Member calls a non-Member endpoint.
+def _refuse_admin_only_for_user(handler, parsed, session_info: dict) -> bool:
+    """The Admin-only gate: True (after sending 403) when a User calls a non-User endpoint.
 
     The role is the request's Admission. A Directory session with none was not
     admitted for this request, so it may call nothing.
     """
     if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
         return False
-    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, member_may_call, request_admission
+    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, request_admission, user_may_call
 
     admission = request_admission()
     if admission is not None and admission.role == ROLE_ADMIN:
         return False
-    if admission is not None and member_may_call(getattr(handler, 'command', 'GET'), parsed.path):
+    if admission is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
         return False
     _send_forbidden(handler, parsed, ADMIN_ONLY_MESSAGE)
     return True
@@ -1249,7 +1249,7 @@ def check_auth(handler, parsed) -> bool:
         return False
     session_info = ensure_trusted_auth_session(handler)
     if session_info:
-        if _refuse_admin_only_for_member(handler, parsed, session_info):
+        if _refuse_admin_only_for_user(handler, parsed, session_info):
             return False
         if not trusted_session_allows_active_profile(session_info):
             if parsed.path.startswith('/api/'):

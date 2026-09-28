@@ -15,10 +15,10 @@ from typing import NamedTuple
 import pytest
 
 from api.access import (
-    MEMBER_ENDPOINTS,
+    USER_ENDPOINTS,
     VARIABLE_PATH_PREFIXES,
-    member_entry,
-    member_may_call,
+    user_entry,
+    user_may_call,
 )
 
 ALLOWED = True
@@ -104,7 +104,7 @@ GATE_TABLE = [
 
 @pytest.mark.parametrize("method,route,expected", GATE_TABLE)
 def test_what_a_user_may_call(method, route, expected):
-    assert member_may_call(method, route) is expected
+    assert user_may_call(method, route) is expected
 
 
 # The completeness test. The routes module dispatches each HTTP method in one
@@ -196,7 +196,7 @@ def test_every_route_a_user_can_reach_is_named_exactly():
     unnamed = []
     for method, route, prefix in sorted(dispatched_routes()):
         # A prefix route stands for the routes under it: probe one of them.
-        entry = member_entry(method, route + "x" if prefix else route)
+        entry = user_entry(method, route + "x" if prefix else route)
         if entry is None or not entry.endswith("*"):
             continue
         # A prefix route may use only its own variable-path entry.
@@ -204,7 +204,7 @@ def test_every_route_a_user_can_reach_is_named_exactly():
             continue
         unnamed.append(
             f"{method} {route}{'*' if prefix else ''} reaches Users through the prefix "
-            f"{entry}: add it to the User list (MEMBER_ENDPOINTS) as an exact route "
+            f"{entry}: add it to the User list (USER_ENDPOINTS) as an exact route "
             "(a prefix route also needs its reason in VARIABLE_PATH_PREFIXES), "
             "or leave it Admin-only (off the User list, or carved out in "
             "ADMIN_ONLY_ENDPOINTS)"
@@ -216,8 +216,8 @@ def test_every_exact_user_entry_is_a_route_the_server_handles():
     handled = {(r.method, r.route) for r in dispatched_routes() if not r.prefix}
     dead = [
         f"{method} {route} is on the User list but the server does not handle it: "
-        "remove it from MEMBER_ENDPOINTS"
-        for methods, route in MEMBER_ENDPOINTS
+        "remove it from USER_ENDPOINTS"
+        for methods, route in USER_ENDPOINTS
         if not route.endswith("*")
         for method in sorted(methods)
         if (method, route) not in handled

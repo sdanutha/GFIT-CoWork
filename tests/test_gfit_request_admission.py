@@ -266,11 +266,11 @@ def test_the_admin_gate_refuses_a_session_with_no_admission():
     from urllib.parse import urlparse
 
     from api.access import clear_request_admission
-    from api.auth import _refuse_admin_only_for_member
+    from api.auth import _refuse_admin_only_for_user
 
     clear_request_admission()
     handler = _Handler(_admin_session_record())
-    assert _refuse_admin_only_for_member(handler, urlparse("/api/logs"), _admin_session_record())
+    assert _refuse_admin_only_for_user(handler, urlparse("/api/logs"), _admin_session_record())
     assert handler.status == 403
 
 

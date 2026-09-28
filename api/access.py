@@ -2,19 +2,19 @@
 
 There are two roles. An **Admin** is an employee ID named in
 ``HERMES_WEBUI_ADMIN_USERS`` (comma-separated); they log in to the ``default``
-Profile and can use everything. Everyone else who logs in is a **Member**,
-pinned to their own Profile.
+Profile and can use everything. Everyone else who logs in is a **User**,
+bound to their own Profile.
 
 This module is the one place that decides who is admitted, with which role and
-to which Profile (:func:`admit`, Admission), and what a Member may call.
+to which Profile (:func:`admit`, Admission), and what a User may call.
 Admission runs again on every request from a Directory session, and its answer
 is kept as the request's Admission (:func:`request_admission`): the one answer
 to "who is calling?" for the rest of that request.
-:func:`member_may_call` classifies a request by method and path against
-:data:`MEMBER_ENDPOINTS`; anything not listed there is refused, including
+:func:`user_may_call` classifies a request by method and path against
+:data:`USER_ENDPOINTS`; anything not listed there is refused, including
 endpoints added later (fail closed). :data:`ADMIN_ONLY_ENDPOINTS` names the
-server-level features on purpose so the intent is readable, but a Member is
-refused them simply because they are not Member endpoints. A Member entry names
+server-level features on purpose so the intent is readable, but a User is
+refused them simply because they are not User endpoints. A User entry names
 a route exactly, with the methods it handles. A prefix is allowed only where the
 path has a variable part (:data:`VARIABLE_PATH_PREFIXES`, each with its reason),
 and it covers only the one prefix route the server dispatches on: a literal
@@ -23,7 +23,7 @@ route, or a narrower prefix route, under it needs its own entry.
 User any other way, so a new route stays Admin-only until someone names it.
 
 The server gate is the source of truth. The frontend hides the matching menus
-for Members, which is cosmetic only.
+for Users, which is cosmetic only.
 """
 from __future__ import annotations
 
@@ -42,11 +42,11 @@ _READ = frozenset({"GET"})
 _WRITE = frozenset({"POST"})
 _ANY = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
 
-# (methods, path) a Member may call. A path ending in ``*`` is a prefix; a
+# (methods, path) a User may call. A path ending in ``*`` is a prefix; a
 # ``<name>`` segment matches exactly one non-empty path segment (an id).
 # Longest match wins, so a narrower Admin-only entry can carve a hole in a
-# Member prefix.
-MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
+# User prefix.
+USER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     # The app shell and its assets
     (_READ, "/"), (_READ, "/index.html"), (_READ, "/sessions"),
     (_READ, "/session/*"), (_READ, "/session/static/*"), (_READ, "/static/*"),
@@ -56,7 +56,7 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/health"), (_READ, "/plugins/*"), (_READ, "/dashboard-plugins/*"),
     # Sign in and out
     (_READ, "/api/auth/status"), (_WRITE, "/api/auth/login"), (_WRITE, "/api/auth/logout"),
-    # Sessions, each acted on by id inside the Member's pinned Profile
+    # Sessions, each acted on by id inside the User's bound Profile
     (_READ, "/api/session"), (_READ, "/api/session/compress/status"),
     (_READ, "/api/session/export"), (_READ, "/api/session/lineage/report"),
     (_READ, "/api/session/status"), (_READ, "/api/session/stream"),
@@ -101,7 +101,7 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_WRITE, "/api/client-events/log"),
     # Models the Admin configured for this Profile
     (_READ, "/api/models"), (_READ, "/api/models/live"), (_READ, "/api/model/auxiliary"),
-    # The Member's own Profile: memory, skills, cron jobs
+    # The User's own Profile: memory, skills, cron jobs
     (_READ, "/api/profiles"), (_READ, "/api/profile/active"),
     (_READ, "/api/memory"), (_WRITE, "/api/memory/write"),
     (_READ, "/api/skills"), (_READ, "/api/skills/content"), (_READ, "/api/skills/usage"),
@@ -136,7 +136,7 @@ MEMBER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_READ, "/api/health/agent"), (_READ, "/api/system/health"),
 )
 
-# A Member prefix entry is allowed only where the route has a variable part that
+# A User prefix entry is allowed only where the route has a variable part that
 # cannot be listed. Each one says why, and covers only the prefix route it names
 # (see the module docstring).
 VARIABLE_PATH_PREFIXES: dict[str, str] = {
@@ -147,8 +147,8 @@ VARIABLE_PATH_PREFIXES: dict[str, str] = {
     "/dashboard-plugins/*": "dashboard plugin assets by plugin name and file",
 }
 
-# Server-level features, refused for Members. Listed so the intent is explicit:
-# none of them is on the Member list, so they are refused anyway. An entry here
+# Server-level features, refused for Users. Listed so the intent is explicit:
+# none of them is on the User list, so they are refused anyway. An entry here
 # carves a hole only if it falls under a variable-path prefix above.
 ADMIN_ONLY_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_ANY, "/api/terminal/*"),                       # terminal
@@ -308,16 +308,16 @@ def _best_match(entries, method: str, path: str) -> tuple[int, str | None]:
     return best
 
 
-def member_entry(method: str, path: str) -> str | None:
-    """The Member entry that lets a Member call *method* *path*, or None if refused."""
+def user_entry(method: str, path: str) -> str | None:
+    """The User entry that lets a User call *method* *path*, or None if refused."""
     method = str(method or "").upper()
     path = str(path or "")
-    allowed, pattern = _best_match(MEMBER_ENDPOINTS, method, path)
+    allowed, pattern = _best_match(USER_ENDPOINTS, method, path)
     if allowed >= 0 and allowed > _best_match(ADMIN_ONLY_ENDPOINTS, method, path)[0]:
         return pattern
     return None
 
 
-def member_may_call(method: str, path: str) -> bool:
-    """True if a Member may call *method* *path*. Unclassified endpoints are refused."""
-    return member_entry(method, path) is not None
+def user_may_call(method: str, path: str) -> bool:
+    """True if a User may call *method* *path*. Unclassified endpoints are refused."""
+    return user_entry(method, path) is not None

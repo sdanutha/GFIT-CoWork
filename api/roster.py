@@ -200,7 +200,7 @@ def record_login(name: str, display_name="") -> None:
     _set(name, **fields)
 
 
-def _check_existing_member_profile(name: str) -> None:
+def _check_existing_user_profile(name: str) -> None:
     """Refuse unless *name* is an existing Profile that is not the built-in one or an Admin's."""
     from api.access import is_admin
     from api.profiles import named_profile_exists
@@ -353,7 +353,7 @@ def enable(name: str) -> None:
 
 def disable_profile(name: str) -> dict:
     """The Admin disables Profile *name*: its sessions end now and its data stays."""
-    _check_existing_member_profile(name)
+    _check_existing_user_profile(name)
     _set_status(name, STATUS_DISABLED)
     _end_sessions(name)
     return view(name)
@@ -361,7 +361,7 @@ def disable_profile(name: str) -> dict:
 
 def enable_profile(name: str) -> dict:
     """The Admin re-enables Profile *name*, so its User can log in again."""
-    _check_existing_member_profile(name)
+    _check_existing_user_profile(name)
     _set_status(name, STATUS_ACTIVE)
     return view(name)
 
