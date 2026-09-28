@@ -3017,7 +3017,6 @@ from api.helpers import (
     require,
     bad,
     resolve_inside,
-    safe_resolve,
     arm_connection_close_if_body_pending,
     j,
     t,
@@ -11061,7 +11060,7 @@ from api.workspace import (
     list_workspace_suggestions,
     read_file_content,
     read_authorized_escape_file_content,
-    safe_resolve_ws,
+    resolve_in_workspace,
     raw_authorized_escape_target,
     resolve_trusted_workspace,
     _resolve_path,
@@ -11073,10 +11072,6 @@ from api.workspace import (
     rmtree_anchored,
     rename_anchored,
     make_anchored_dir,
-    validate_workspace_to_add,
-    _is_blocked_system_path,
-    _home_path,
-    _is_within,
     _strip_surrounding_quotes,
     _is_remote_terminal_backend,
     _workspace_blocked_roots,
@@ -14906,11 +14901,11 @@ def handle_get(handler, parsed) -> bool:
                 workspace = resolve_trusted_workspace(cli_meta["workspace"])
             except (FileNotFoundError, ValueError):
                 return j(handler, {"git": None})
-        from api.workspace import confine_to_member_workspace
         from api.workspace_git import GitWorkspaceError, git_status
+        from api.workspace_policy import request_workspace_policy
 
         try:
-            workspace = confine_to_member_workspace(Path(workspace))
+            workspace = request_workspace_policy().confine(Path(workspace))
         except ValueError:
             return j(handler, {"git": None})
         try:
@@ -21322,12 +21317,11 @@ def _handle_media(handler, parsed):
     except Exception:
         return bad(handler, "Invalid path", 400)
 
-    # GFIT-CoWork: a Member may only view files inside their own Profile.
-    from api.access import caller_bound_profile
-    from api.profiles import _resolve_named_profile_home
+    # GFIT-CoWork: the request's Workspace policy says whether the media viewer
+    # may serve this file (a User: only inside their own Profile).
+    from api.workspace_policy import request_workspace_policy
 
-    _pinned = caller_bound_profile()
-    if _pinned and not target.is_relative_to(_resolve_named_profile_home(_pinned)):
+    if not request_workspace_policy().may_serve_media(target):
         return bad(handler, "That file is outside your Profile.", 403)
 
     # Allowed roots: hermes home, /tmp, and active workspace.
@@ -21501,7 +21495,7 @@ def _file_raw_target(session, sid: str, rel: str) -> tuple[Path, Path] | None:
     """Resolve /api/file/raw paths from the workspace or this session's uploads."""
     workspace_root = Path(session.workspace)
     try:
-        target = safe_resolve(workspace_root, rel)
+        target = resolve_in_workspace(workspace_root, rel)
     except ValueError:
         target = None
     if target and target.exists() and target.is_file():
@@ -21611,7 +21605,7 @@ def _handle_folder_download(handler, parsed):
 
     rel = qs.get("path", [""])[0]
     try:
-        target = safe_resolve(Path(s.workspace), rel)
+        target = resolve_in_workspace(Path(s.workspace), rel)
     except ValueError:
         return bad(handler, "invalid path", 400)
     if not target.exists():
@@ -25933,13 +25927,13 @@ def _git_session_workspace(handler, session_id: str):
 
 
 def _git_session_and_workspace(handler, session_id: str):
-    from api.workspace import confine_to_member_workspace
+    from api.workspace_policy import request_workspace_policy
 
     session = _git_session(handler, session_id)
     if session is None:
         return None, None
     try:
-        return session, confine_to_member_workspace(Path(session.workspace))
+        return session, request_workspace_policy().confine(Path(session.workspace))
     except ValueError as exc:
         bad(handler, str(exc), 403)
         return None, None
@@ -26417,7 +26411,7 @@ def _handle_file_delete(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         # Reject a symlinked entry BEFORE the follow-based exists() check: a
         # dangling symlink resolves to a missing target, so an exists()-first
         # order would misclassify it as 404 "File not found" and leave it
@@ -26449,7 +26443,7 @@ def _handle_file_save(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if (ws_root / body["path"]).is_symlink():
             return bad(handler, "Cannot save to a symlinked entry")
         if not target.exists():
@@ -26480,7 +26474,7 @@ def _handle_office_file_save(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if (ws_root / body["path"]).is_symlink():
             return bad(handler, "Cannot save to a symlinked entry")
         if not target.exists():
@@ -26515,7 +26509,7 @@ def _handle_file_create(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if target.exists():
             return bad(handler, "File already exists")
         data = str(body.get("content", "")).encode("utf-8")
@@ -26543,7 +26537,7 @@ def _handle_file_rename(handler, body):
     try:
         ws_root = Path(s.workspace)
         ws_root_resolved = ws_root.resolve()
-        source = safe_resolve(ws_root, body["path"])
+        source = resolve_in_workspace(ws_root, body["path"])
         # Reject a symlinked entry BEFORE the follow-based exists() check (see
         # _handle_file_delete): a dangling symlink would otherwise 404 and stay
         # unrenameable. is_symlink() is a no-follow lstat on the requested path.
@@ -26577,15 +26571,15 @@ def _handle_file_move(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        # safe_resolve() returns paths under the RESOLVED root, so compute
+        # resolve_in_workspace() returns paths under the RESOLVED root, so compute
         # returned relative paths against the resolved root too — otherwise a
         # symlinked workspace root (e.g. macOS /tmp -> /private/tmp) makes
         # dest.relative_to(ws_root) raise after a successful on-disk move,
         # returning a confusing 400 for a move that actually happened.
         ws_root_resolved = ws_root.resolve()
-        source = safe_resolve(ws_root, body["path"])
+        source = resolve_in_workspace(ws_root, body["path"])
         # Reject a symlinked SOURCE entry BEFORE the follow-based exists() check.
-        # safe_resolve() follows the final symlink, so source.name/source.parent
+        # resolve_in_workspace() follows the final symlink, so source.name/source.parent
         # would point at the link's TARGET, not the dragged entry — moving
         # link.txt would silently move dir/real.txt and leave link.txt dangling.
         # Detect the symlink on the lexically-requested final component (lstat,
@@ -26601,7 +26595,7 @@ def _handle_file_move(handler, body):
             dest_dir_raw = "."
         if ".." in dest_dir_raw.split("/"):
             return bad(handler, "Invalid destination")
-        dest_parent = safe_resolve(ws_root, dest_dir_raw)
+        dest_parent = resolve_in_workspace(ws_root, dest_dir_raw)
         if not dest_parent.is_dir():
             return bad(handler, "Destination folder not found", 404)
         if source.is_dir():
@@ -26675,7 +26669,7 @@ def _handle_create_dir(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if target.exists():
             return bad(handler, "Path already exists")
         make_anchored_dir(ws_root, target)
@@ -26696,7 +26690,7 @@ def _handle_file_reveal(handler, body):
     except KeyError:
         return bad(handler, "Session not found", 404)
     try:
-        target = safe_resolve(Path(s.workspace), body["path"])
+        target = resolve_in_workspace(Path(s.workspace), body["path"])
         if not target.exists():
             # Include the resolved server-side path in the error message so
             # the frontend toast can show *which* file the system expected.
@@ -26741,7 +26735,7 @@ def _handle_file_path(handler, body):
     absolute path on the user's clipboard so they can paste it into a
     terminal, editor, or anywhere else without having to round-trip through
     the OS file browser. The frontend can't compute the absolute path on
-    its own — `safe_resolve` joins against the session's workspace root
+    its own — `resolve_in_workspace` joins against the session's workspace root
     which only the server knows. The handler here is a thin lookup; no
     filesystem mutation, no OS-specific dispatch. We do NOT require the
     target to exist (unlike `_handle_file_reveal`) — copying the path of a
@@ -26757,7 +26751,7 @@ def _handle_file_path(handler, body):
     except KeyError:
         return bad(handler, "Session not found", 404)
     try:
-        target = safe_resolve(Path(s.workspace), body["path"])
+        target = resolve_in_workspace(Path(s.workspace), body["path"])
         return j(handler, {"ok": True, "path": str(target)})
     except (ValueError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
@@ -26787,7 +26781,7 @@ def _handle_file_open_vscode(handler, body):
     except KeyError:
         return bad(handler, "Session not found", 404)
     try:
-        target = safe_resolve(Path(s.workspace), body["path"])
+        target = resolve_in_workspace(Path(s.workspace), body["path"])
         if not target.exists():
             return bad(handler, f"File not found: {target}", 404)
 
@@ -26854,57 +26848,39 @@ def _handle_workspace_add(handler, body):
     # Finder's "Copy as Pathname" wraps paths in single quotes, and users
     # routinely paste those quoted strings into the Add Space input.
     # Doing this at the route entry means every downstream check (blocked
-    # system path, validate_workspace_to_add, duplicate detection) sees the
+    # system path, the Workspace policy, duplicate detection) sees the
     # cleaned form.
     path_str = _strip_surrounding_quotes(body.get("path", "").strip())
     name = body.get("name", "").strip()
     auto_create = body.get("create", False)
     if not path_str:
         return bad(handler, "path is required")
-    # Validate the path is NOT a blocked system root BEFORE any filesystem mutation.
-    # This prevents creating orphan directories on rejected paths (#782 review).
-    # _is_blocked_system_path honours user-tmp carve-outs (e.g. /var/folders on
-    # macOS) so pytest's tmp_path_factory paths and other legit user-tmp dirs
-    # still register cleanly.
+    # The request's Workspace policy checks the folder BEFORE any filesystem
+    # mutation, so a refused request leaves nothing behind (#782 review; a User
+    # may only register inside their Workspace, ADR 0002). It refuses a blocked
+    # system root (with the home carve-out) and, for a User, anything outside
+    # their Workspace; None means a target-side remote-terminal path, with
+    # nothing to create here.
+    from api.profiles import get_active_profile_name
+    from api.workspace_policy import request_workspace_policy
+    active_profile = get_active_profile_name()
+    policy = request_workspace_policy()
     try:
-        from api.workspace import _remote_terminal_workspace_candidate, _resolve_path
-        from api.profiles import get_active_profile_name
-        active_profile = get_active_profile_name()
-        remote_candidate = _remote_terminal_workspace_candidate(path_str, profile=active_profile)
-        candidate = _resolve_path(path_str, profile=active_profile)
-    except (ValueError, OSError, RuntimeError) as e:
-        # Invalid path (e.g. embedded null byte) — fail closed with a clean 400
-        # instead of letting .resolve() raise an uncaught 500.
+        candidate = policy.register_target(path_str, profile=active_profile)
+    except ValueError as e:
+        return bad(handler, str(e))
+    except (OSError, RuntimeError) as e:
+        # Invalid path — fail closed with a clean 400 instead of an uncaught 500.
         return bad(handler, f"Invalid path: {_sanitize_error(e)}")
-    if remote_candidate is None:
-        if _is_blocked_system_path(candidate):
-            # Home-directory carve-out, mirroring the validators
-            # (resolve_trusted_workspace / validate_workspace_to_add): a workspace
-            # at or under the active user's home must stay allowed even when that
-            # home lives under an otherwise-blocked root (e.g. systemd-homed
-            # /var/home/<user>/...). Without this the route rejects valid
-            # /var/home workspaces before validate_workspace_to_add()'s carve-out
-            # can run.
-            _home = _home_path()
-            if not (_home != Path("/") and (candidate == _home or _is_within(candidate, _home))):
-                return bad(handler, f"Path points to a system directory: {candidate}")
-        # Now safe to create the directory if requested
-        if auto_create:
-            # A User may only register inside their Workspace: refuse before
-            # any folder is created, so a refused request leaves nothing
-            # behind (ADR 0002). Not confined for the Admin.
-            from api.workspace import confine_to_member_workspace
-            try:
-                confine_to_member_workspace(candidate)
-            except ValueError as e:
-                return bad(handler, str(e))
-            try:
-                candidate.mkdir(parents=True, exist_ok=True)
-            except (OSError, PermissionError) as e:
-                return bad(handler, f"Could not create directory: {_sanitize_error(e)}")
+    # Now safe to create the directory if requested
+    if candidate is not None and auto_create:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            return bad(handler, f"Could not create directory: {_sanitize_error(e)}")
     # Full validation (exists, is_dir) — should pass now that dir exists
     try:
-        p = validate_workspace_to_add(path_str, profile=active_profile)
+        p = policy.resolve_to_register(path_str, profile=active_profile)
     except ValueError as e:
         return bad(handler, str(e))
     try:

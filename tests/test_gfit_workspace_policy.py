@@ -177,6 +177,12 @@ def test_register_target_is_checked_before_any_folder_is_created(homes, policy, 
     assert Path(path).exists() is existed
 
 
+def test_a_system_folder_is_refused_with_its_own_message_first(policy):
+    """As before the policy: registering a blocked system folder names it as one."""
+    with pytest.raises(ValueError, match="Path points to a system directory"):
+        policy.register_target("/etc")
+
+
 def test_the_saved_list_is_the_default_first_then_saved_folders_inside(homes, policy):
     saved = [
         {"path": str(homes.ws), "name": "duplicate of Home"},

@@ -6,7 +6,7 @@ from api.workspace import (
     list_dir,
     read_file_content,
     resolve_authorized_escape_request,
-    safe_resolve_ws,
+    resolve_in_workspace,
 )
 
 
@@ -20,7 +20,7 @@ def test_safe_resolve_blocks_external_symlink_directory(tmp_path):
 
     # The read/list gate still blocks navigation through the escape symlink.
     with pytest.raises(ValueError, match="Path traversal blocked"):
-        safe_resolve_ws(workspace, "escape")
+        resolve_in_workspace(workspace, "escape")
 
     with pytest.raises(ValueError, match="Path traversal blocked"):
         list_dir(workspace, "escape")
@@ -67,7 +67,7 @@ def test_internal_symlink_still_resolves_within_workspace(tmp_path):
     (nested / "inside.txt").write_text("inside", encoding="utf-8")
     (workspace / "inside-link.txt").symlink_to(nested / "inside.txt")
 
-    resolved = safe_resolve_ws(workspace, "inside-link.txt")
+    resolved = resolve_in_workspace(workspace, "inside-link.txt")
 
     assert resolved == (nested / "inside.txt").resolve()
     assert read_file_content(workspace, "inside-link.txt")["content"] == "inside"
@@ -168,7 +168,7 @@ def test_authorized_listing_keeps_nested_child_escape_display_only(tmp_path):
     assert "target" not in entries["nested-escape"]
 
 
-# ── TOCTOU hardening (#3398): a path that passes safe_resolve_ws() but is then
+# ── TOCTOU hardening (#3398): a path that passes resolve_in_workspace() but is then
 #    swapped to an external symlink before the open must not read/list/write
 #    outside the workspace. The read/list/write paths use a portable anchored
 #    openat-walk (openat + O_NOFOLLOW per component, dir_fd where supported). ──
@@ -176,7 +176,7 @@ def test_authorized_listing_keeps_nested_child_escape_display_only(tmp_path):
 
 def test_read_file_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch):
     """If the resolved path is swapped to an external symlink AFTER the
-    safe_resolve_ws() check, read_file_content must refuse, not follow the
+    resolve_in_workspace() check, read_file_content must refuse, not follow the
     symlink and leak external content."""
     import api.workspace as w
     if not w._DIR_FD_OK:
@@ -189,7 +189,7 @@ def test_read_file_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch
     outside.mkdir()
     (outside / "secret.txt").write_text("SECRET-LEAK", encoding="utf-8")
 
-    real_resolve = w.safe_resolve_ws
+    real_resolve = w.resolve_in_workspace
 
     def racing_resolve(root, rel):
         p = real_resolve(root, rel)
@@ -201,7 +201,7 @@ def test_read_file_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch
             p.symlink_to(outside / "secret.txt")
         return p
 
-    monkeypatch.setattr(w, "safe_resolve_ws", racing_resolve)
+    monkeypatch.setattr(w, "resolve_in_workspace", racing_resolve)
     try:
         result = w.read_file_content(workspace, "data.txt")
         assert "SECRET" not in result["content"], "TOCTOU symlink swap leaked external content"
@@ -211,7 +211,7 @@ def test_read_file_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch
 
 def test_list_dir_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch):
     """If a checked directory path is swapped to an external symlink after
-    safe_resolve_ws(), list_dir must refuse rather than enumerate the external
+    resolve_in_workspace(), list_dir must refuse rather than enumerate the external
     directory."""
     import api.workspace as w
     if not w._DIR_FD_OK:
@@ -224,7 +224,7 @@ def test_list_dir_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch)
     outside.mkdir()
     (outside / "secret.txt").write_text("x", encoding="utf-8")
 
-    real_resolve = w.safe_resolve_ws
+    real_resolve = w.resolve_in_workspace
 
     def racing_resolve(root, rel):
         p = real_resolve(root, rel)
@@ -236,7 +236,7 @@ def test_list_dir_toctou_swap_to_external_symlink_blocked(tmp_path, monkeypatch)
             p.symlink_to(outside)
         return p
 
-    monkeypatch.setattr(w, "safe_resolve_ws", racing_resolve)
+    monkeypatch.setattr(w, "resolve_in_workspace", racing_resolve)
     try:
         entries = w.list_dir(workspace, "sub")
         names = {e["name"] for e in entries}
@@ -323,7 +323,7 @@ def test_rename_anchored_reports_destination_traversal(tmp_path):
 def test_list_read_create_work_on_no_dir_fd_fallback(tmp_path, monkeypatch):
     """The no-dir_fd portability fallback (Windows path) must still list, read,
     and create within the workspace, and still hide/block external symlinks via
-    the static safe_resolve_ws guard — no fd-relative API that would brick on
+    the static resolve_in_workspace guard — no fd-relative API that would brick on
     platforms without os.supports_dir_fd."""
     import os
 
@@ -400,7 +400,7 @@ def test_read_blocked_when_workspace_root_raced_to_symlink(tmp_path):
 #    The escape filter was widened (not removed): symlinks whose resolved target
 #    sits outside the workspace root are now emitted with
 #    target_outside_workspace=True instead of being silently dropped. The
-#    read/list gate (safe_resolve_ws / open_anchored_fd) is unchanged and still
+#    read/list gate (resolve_in_workspace / open_anchored_fd) is unchanged and still
 #    blocks navigation through them. ──────────────────────────────────────────
 
 

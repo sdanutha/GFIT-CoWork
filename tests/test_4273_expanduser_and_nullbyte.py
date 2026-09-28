@@ -49,8 +49,15 @@ def test_root_remains_unblocked_for_root_deployments():
 def test_workspaces_add_route_has_home_carveout_before_block():
     # The /api/workspaces/add preflight must apply the home carve-out before
     # rejecting a blocked-system-root path, so systemd-homed /var/home/<user>
-    # workspaces register (matching the validators). Pin the carve-out exists.
-    src = (Path(__file__).resolve().parent.parent / "api" / "routes.py").read_text(encoding="utf-8")
-    assert "_home_path()" in src and "_is_within(candidate, _home)" in src, (
-        "route preflight must apply the home carve-out before _is_blocked_system_path rejection"
+    # workspaces register (matching the validators). The route asks the
+    # request's Workspace policy (register_target), whose system-folder check
+    # lives in api/workspace.py. Pin the carve-out exists there.
+    root = Path(__file__).resolve().parent.parent / "api"
+    routes_src = (root / "routes.py").read_text(encoding="utf-8")
+    assert "policy.register_target(path_str" in routes_src
+    src = (root / "workspace.py").read_text(encoding="utf-8")
+    refuse = src[src.index("def _refuse_system_folder("):]
+    refuse = refuse[:refuse.index("\ndef ")]
+    assert "_home_path()" in refuse and "_is_within(candidate, _home)" in refuse, (
+        "register preflight must apply the home carve-out before _is_blocked_system_path rejection"
     )

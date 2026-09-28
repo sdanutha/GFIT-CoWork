@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterable
 
 from api.subprocess_utils import windows_hide_flags
-from api.workspace import rmtree_anchored, safe_resolve_ws, unlink_anchored
+from api.workspace import rmtree_anchored, resolve_in_workspace, unlink_anchored
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +473,7 @@ def _workspace_pathspec(ctx: GitContext) -> str:
 
 def _repo_rel(ctx: GitContext, workspace_rel: str) -> str:
     try:
-        target = safe_resolve_ws(ctx.workspace, workspace_rel or ".")
+        target = resolve_in_workspace(ctx.workspace, workspace_rel or ".")
     except ValueError as exc:
         raise GitWorkspaceError(str(exc), "path_outside_workspace") from exc
     try:
@@ -1369,7 +1369,7 @@ def git_discard(workspace: str | Path, paths: Iterable[str], *, delete_untracked
             if state and state.get("untracked"):
                 if not delete_untracked:
                     raise GitWorkspaceError("Untracked files require delete_untracked=true")
-                target = safe_resolve_ws(ctx.workspace, workspace_rel)
+                target = resolve_in_workspace(ctx.workspace, workspace_rel)
                 if target.is_dir():
                     rmtree_anchored(ctx.workspace, target)
                 else:

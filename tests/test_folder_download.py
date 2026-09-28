@@ -23,12 +23,12 @@ def test_folder_download_dispatch_registered():
     assert "_handle_folder_download(handler, parsed)" in src
 
 
-def test_folder_download_uses_safe_resolve():
+def test_folder_download_uses_resolve_in_workspace():
     src = ROUTES_PY.read_text(encoding="utf-8")
     handler_idx = src.index("def _handle_folder_download")
     end_idx = src.index("\n\ndef ", handler_idx + 1)
     body = src[handler_idx:end_idx]
-    assert "safe_resolve(Path(s.workspace), rel)" in body
+    assert "resolve_in_workspace(Path(s.workspace), rel)" in body
     assert "ValueError" in body
 
 

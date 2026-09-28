@@ -50,8 +50,8 @@ class TestOpenInVsCodeBackendWiring:
         src = ROUTES.read_text(encoding="utf-8")
         assert "def _handle_file_open_vscode(handler, body):" in src
 
-    def test_handler_uses_safe_resolve(self):
-        """Handler must use safe_resolve to prevent path traversal."""
+    def test_handler_uses_resolve_in_workspace(self):
+        """Handler must use resolve_in_workspace to prevent path traversal."""
         src = ROUTES.read_text(encoding="utf-8")
         m = re.search(
             r"def _handle_file_open_vscode\(handler, body\):.*?(?=\ndef )",
@@ -60,7 +60,7 @@ class TestOpenInVsCodeBackendWiring:
         )
         assert m, "_handle_file_open_vscode body not found"
         body = m.group(0)
-        assert "safe_resolve(Path(s.workspace)" in body
+        assert "resolve_in_workspace(Path(s.workspace)" in body
 
     def test_handler_checks_existence(self):
         """Handler must require the target to exist (unlike copy-path)."""

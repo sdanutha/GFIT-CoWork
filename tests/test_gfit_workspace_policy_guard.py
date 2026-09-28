@@ -46,29 +46,8 @@ NOT_WORKSPACE: dict[tuple[str, str, str], str] = {
     ("api/routes.py", "handle_get", ROLE): "the app shell: no extension tags for a User",
 }
 
-# (file, function, question): today's Workspace callers, moved to the policy by tickets 06-08.
-ALLOWLIST: set[tuple[str, str, str]] = {
-    # 06: choosing a Workspace
-    ("api/workspace.py", "_profile_default_workspace", ASKS),
-    ("api/workspace.py", "_clean_workspace_list", ASKS),
-    ("api/workspace.py", "get_profile_default_workspace", ASKS),
-    ("api/workspace.py", "get_last_workspace", ASKS),
-    ("api/workspace.py", "resolve_trusted_workspace", ASKS),
-    ("api/workspace.py", "validate_workspace_to_add", ASKS),
-    ("api/workspace.py", "ensure_member_workspace", ASKS),
-    ("api/workspace.py", "_caller_workspace_root", BOUND),
-    ("api/workspace.py", "_resolve_member_workspace", CONFINES),
-    ("api/routes.py", "_handle_workspace_add", CONFINES),
-    # 07: file operations
-    ("api/workspace.py", "_trusted_workspace_roots", ASKS),
-    ("api/workspace.py", "confine_to_member_workspace", ASKS),
-    ("api/workspace.py", "safe_resolve_ws", CONFINES),
-    ("api/helpers.py", "safe_resolve", CONFINES),
-    ("api/routes.py", "handle_get", CONFINES),                 # git status
-    ("api/routes.py", "_git_session_and_workspace", CONFINES),
-    ("api/routes.py", "_handle_media", BOUND),
-    ("api/worktrees.py", "_confine_worktree", CONFINES),
-}
+# (file, function, question): Workspace callers not yet moved to the policy (none left).
+ALLOWLIST: set[tuple[str, str, str]] = set()
 
 
 def _parsed_sources():

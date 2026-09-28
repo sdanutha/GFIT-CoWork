@@ -1081,7 +1081,7 @@ def test_git_discard_untracked_delete_uses_anchored_unlink_after_validation_race
     import shutil
 
     import api.workspace_git as workspace_git
-    from api.workspace import safe_resolve_ws as real_safe_resolve_ws
+    from api.workspace import resolve_in_workspace as real_resolve_in_workspace
 
     repo = _init_repo(tmp_path / "repo")
     (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
@@ -1096,8 +1096,8 @@ def test_git_discard_untracked_delete_uses_anchored_unlink_after_validation_race
 
     state = {"calls": 0, "swapped": False}
 
-    def racing_safe_resolve(root, requested):
-        target = real_safe_resolve_ws(root, requested)
+    def racing_resolve_in_workspace(root, requested):
+        target = real_resolve_in_workspace(root, requested)
         if requested == "d/f":
             state["calls"] += 1
         # git_discard validates once for the Git pathspec and once immediately
@@ -1108,7 +1108,7 @@ def test_git_discard_untracked_delete_uses_anchored_unlink_after_validation_race
             state["swapped"] = True
         return target
 
-    monkeypatch.setattr(workspace_git, "safe_resolve_ws", racing_safe_resolve)
+    monkeypatch.setattr(workspace_git, "resolve_in_workspace", racing_resolve_in_workspace)
 
     with pytest.raises(ValueError, match="Path traversal blocked"):
         workspace_git.git_discard(repo, ["d/f"], delete_untracked=True)

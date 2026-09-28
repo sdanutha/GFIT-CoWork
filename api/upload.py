@@ -18,7 +18,7 @@ from api.helpers import (
 from api.models import get_session
 from api.profiles import _profiles_match, get_active_profile_name as _get_active_profile_name
 from api.workspace import (
-    safe_resolve_ws,
+    resolve_in_workspace,
     resolve_trusted_workspace,
     open_anchored_create_fd,
     make_anchored_dir,
@@ -207,21 +207,13 @@ def _attachment_root() -> Path:
 
     Attachments are outside Workspace confinement on purpose: they belong to a
     session, and session ownership (``_reject_invisible_session``) decides who
-    may reach them. Resolve paths inside them with the unconfined
-    :func:`_resolve_in_attachments`, never a Workspace check.
+    may reach them. Resolve paths inside them with the unconfined primitive
+    :func:`api.helpers.resolve_inside`, never a Workspace check.
     """
     override = os.getenv('HERMES_WEBUI_ATTACHMENT_DIR', '').strip()
     if override:
         return Path(override).expanduser().resolve()
     return (STATE_DIR / 'attachments').resolve()
-
-
-def _resolve_in_attachments(root: Path, requested: str) -> Path:
-    """Resolve *requested* inside attachment folder *root*; refuse ``..`` and symlink escapes."""
-    try:
-        return resolve_inside(root, requested)
-    except ValueError:
-        raise ValueError(f"Path traversal blocked: {requested}") from None
 
 
 def _upload_destination(session_id: str, safe_name: str, dest_dir: Path | None = None) -> Path:
@@ -354,11 +346,11 @@ def handle_upload(handler):
         return j(handler, {'error': 'Upload failed'}, status=500)
 
 
-def extract_archive(file_bytes: bytes, filename: str, workspace: Path, *, resolve=safe_resolve_ws):
+def extract_archive(file_bytes: bytes, filename: str, workspace: Path, *, resolve=resolve_in_workspace):
     """Extract a zip or tar archive into the folder *workspace*.
 
     The destination folder is found with *resolve*: the Workspace check by
-    default, or :func:`_resolve_in_attachments` for a session's attachment
+    default, or :func:`api.helpers.resolve_inside` for a session's attachment
     folder, which is not a Workspace (see :func:`_attachment_root`). Every
     archive entry must stay inside the destination either way.
 
@@ -520,7 +512,7 @@ def handle_upload_extract(handler):
             return True
         session_dir = _session_attachment_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
-        result = extract_archive(file_bytes, filename, session_dir, resolve=_resolve_in_attachments)
+        result = extract_archive(file_bytes, filename, session_dir, resolve=resolve_inside)
         return j(handler, {'ok': True, **result})
     except ValueError as e:
         return j(handler, {'error': str(e)}, status=400)
@@ -746,8 +738,8 @@ def handle_workspace_upload(handler):
             workspace = resolve_trusted_workspace(session.workspace)
 
         # Resolve target subdirectory within workspace
-        target_dir = safe_resolve_ws(workspace, subpath) if subpath else workspace
-        # safe_resolve_ws intentionally permits in-workspace symlinks pointing
+        target_dir = resolve_in_workspace(workspace, subpath) if subpath else workspace
+        # resolve_in_workspace intentionally permits in-workspace symlinks pointing
         # outside the root (read trust model). For an UPLOAD target that's not
         # acceptable: a planted symlink subpath would let mkdir() + writes create
         # files OUTSIDE the workspace. Require the resolved target to be inside
@@ -768,9 +760,9 @@ def handle_workspace_upload(handler):
                 continue
 
             safe_name = _sanitize_upload_name(filename)
-            dest = safe_resolve_ws(target_dir, safe_name)
+            dest = resolve_in_workspace(target_dir, safe_name)
 
-            # Path traversal guard (belt-and-suspenders: safe_resolve_ws above is
+            # Path traversal guard (belt-and-suspenders: resolve_in_workspace above is
             # the authoritative guard and raises ValueError on traversal; this
             # check catches any edge case where the resolved path escapes).
             if not dest.resolve().is_relative_to(workspace.resolve()):
@@ -781,7 +773,7 @@ def handle_workspace_upload(handler):
                 stem = dest.stem
                 suffix = dest.suffix
                 for idx in range(1, 1000):
-                    candidate = safe_resolve_ws(target_dir, f'{stem}-{idx}{suffix}')
+                    candidate = resolve_in_workspace(target_dir, f'{stem}-{idx}{suffix}')
                     if not candidate.resolve().is_relative_to(workspace.resolve()):
                         return j(handler, {'error': 'Path traversal blocked'}, status=403)
                     if not candidate.exists():

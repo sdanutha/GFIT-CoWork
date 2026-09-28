@@ -59,7 +59,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       agent_compat.py      Resolver for Hermes Agent names moved to sibling modules (compatibility-only)
       auth.py              Optional password authentication, signed cookies, passkeys/WebAuthn
       config.py            Discovery, globals, model detection, reloadable config
-      helpers.py           HTTP helpers: j(), bad(), require(), safe_resolve(), security headers
+      helpers.py           HTTP helpers: j(), bad(), require(), resolve_inside(), security headers
       goals.py             Persistent-goal commands and profile-scoped native GoalManager bridge
       models.py            Session model + CRUD, per-session profile tracking, CLI/state.db bridge
       profiles.py          Profile state management, hermes_cli wrapper
@@ -423,18 +423,19 @@ Why not cgi.FieldStorage:
 
 ### 4.7 File System Operations
 
-safe_resolve(root, requested):
-    - Resolves requested path relative to root
+resolve_in_workspace(root, requested):
+    - Resolves requested path relative to root (helpers.resolve_inside, the unconfined primitive)
     - Calls .relative_to(root) to assert the result is inside root
     - Raises ValueError on path traversal (../../etc/passwd)
+    - Then the request's Workspace policy confines it (a User: inside their Workspace)
 
 list_dir(workspace, rel='.'):
-    - Calls safe_resolve, then iterdir()
+    - Calls resolve_in_workspace, then iterdir()
     - Sorts: directories first, then files, case-insensitive alpha within each group
     - Returns up to 200 entries with {name, path, type, size}
 
 read_file_content(workspace, rel):
-    - Calls safe_resolve
+    - Calls resolve_in_workspace
     - Enforces MAX_FILE_BYTES = 200KB size limit
     - Reads as UTF-8 with errors='replace' (binary files show replacement chars)
     - Returns {path, content, size, lines}
@@ -874,7 +875,7 @@ Current structure:
         __init__.py
         routes.py             All GET + POST route handlers (~9772 lines)
         config.py             Configuration, constants, global state, model discovery (~4139 lines)
-        helpers.py            HTTP helpers: j(), bad(), require(), safe_resolve() (~302 lines)
+        helpers.py            HTTP helpers: j(), bad(), require(), resolve_inside() (~302 lines)
         models.py             Session model + CRUD (~1927 lines)
         workspace.py          File ops, workspace management (~810 lines)
         upload.py             Multipart parser, file upload handler (~284 lines)
@@ -1494,7 +1495,7 @@ Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
     /api/approval/inject_test  ?session_id=X&pattern_key=K&command=C -> test-only endpoint.
                                Injects a pending approval entry into the server process.
     /api/file/raw              ?session_id=X&path=P -> raw file bytes with correct MIME type.
-                               Used for image preview. Path traversal protected via safe_resolve.
+                               Used for image preview. Path traversal protected via resolve_in_workspace.
                                Returns 404 JSON if file not found.
 
 ### POST Endpoints
@@ -1546,7 +1547,7 @@ New endpoint in do_GET:
 
     GET /api/file/raw?session_id=X&path=relative/path
 
-- Reads raw bytes from workspace file via safe_resolve() (path traversal protected)
+- Reads raw bytes from workspace file via resolve_in_workspace() (path traversal protected)
 - Looks up MIME type from MIME_MAP constant keyed by lowercase extension
 - Falls back to 'application/octet-stream' for unknown types
 - Serves bytes directly with correct Content-Type header
@@ -1839,12 +1840,13 @@ an existing workspace. Strict: path must be under home, in the saved workspace l
 The distinction matters because add uses permissive validation to avoid the circular
 dependency: you cannot get a path into the saved list if you need the saved list to add it.
 
-**GFIT-CoWork Members.** For a request whose Admission is a User's (`access.caller_is_user`),
-both functions apply the same stricter rule instead: the path must resolve (after `..` and
-symlinks) inside `<Profile>/workspace`. `helpers.safe_resolve` and `safe_resolve_ws` apply it
-again to every file operation, so a Workspace root that is somehow outside still grants nothing
-(`confine_to_member_workspace`). `helpers.resolve_inside` is the unconfined primitive, for
-roots that are not Workspaces (the session attachment inbox). The Admin is not confined.
+**GFIT-CoWork Members.** Both functions ask the request's Workspace policy
+(`api/workspace_policy.py`). For a User's request it applies the same stricter rule instead:
+the path must resolve (after `..` and symlinks) inside `<Profile>/workspace`.
+`workspace.resolve_in_workspace` applies it again to every file operation (the unconfined
+primitive followed by the policy's `confine`), so a Workspace root that is somehow outside
+still grants nothing. `helpers.resolve_inside` is the unconfined primitive, for roots that are
+not Workspaces (the session attachment inbox). The Admin is not confined.
 
 ## GFIT-CoWork access control
 
@@ -1874,8 +1876,10 @@ roots that are not Workspaces (the session attachment inbox). The Admin is not c
   Admission (`request_workspace_policy`): a User's policy (everything inside
   `<Profile>/workspace`), the unconfined policy (the Admin, login turned off, worker threads),
   or the refusing answer (a Directory session with no Admission: `access.request_has_directory_session`).
-  Being introduced: Workspace code still asks `caller_is_user` itself until the migration
-  lands; `tests/test_gfit_workspace_policy_guard.py` lists those callers and fails on new ones.
+  Choosing and listing Workspaces, file roots and confinement, and the git, media, rollback
+  (through the saved list) and worktree checks all ask it;
+  `tests/test_gfit_workspace_policy_guard.py` fails when code outside it asks `caller_is_user`
+  to decide confinement.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
   (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function

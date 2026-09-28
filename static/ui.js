@@ -21922,7 +21922,7 @@ function _renderTreeItems(container, entries, depth){
     const isReadOnlyEscape = !!escapeGrant;
     const isNestedEscape = !!escapeGrant && !exactEscapeGrant;
     // External symlinks are display-only: not expandable, not openable.
-    // The read gate (safe_resolve_ws) still blocks navigation through them.
+    // The read gate (resolve_in_workspace) still blocks navigation through them.
     const isDirLike = !isExternalLink && (item.type === 'dir' || (isLk && item.is_dir));
     const isFileLike = !isExternalLink && !isDirLike;
     el.dataset.wsIsDir = String(isDirLike);

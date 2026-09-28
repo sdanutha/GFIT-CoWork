@@ -381,13 +381,14 @@ WORKTREE_OUTSIDE_WORKSPACE_MESSAGE = "A worktree here would be outside your Work
 
 
 def _confine_worktree(path: Path) -> None:
-    """Refuse *path* when a User's worktree would leave their Workspace; not confined for the Admin."""
-    from api.workspace import confine_to_member_workspace
+    """Refuse *path* when the request's Workspace policy says it may not become the session's Workspace.
 
-    try:
-        confine_to_member_workspace(path)
-    except ValueError:
-        raise ValueError(WORKTREE_OUTSIDE_WORKSPACE_MESSAGE) from None
+    A User's worktree must stay inside their Workspace; not confined for the Admin.
+    """
+    from api.workspace_policy import request_workspace_policy
+
+    if not request_workspace_policy().may_become_worktree(path):
+        raise ValueError(WORKTREE_OUTSIDE_WORKSPACE_MESSAGE)
 
 
 def _discard_new_worktree(worktree: Path, branch: str, repo_root: Path) -> None:

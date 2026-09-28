@@ -63,7 +63,7 @@ def make_session(created_list, ws=None):
 
 
 class TestSymlinkCycleDetection:
-    """Symlink cycle detection in list_dir / safe_resolve_ws."""
+    """Symlink cycle detection in list_dir / resolve_in_workspace."""
 
     def test_external_symlink_emitted_as_display_only(self, cleanup_test_sessions, tmp_path_factory):
         """External symlink dirs are emitted with target_outside_workspace=True (display-only)."""

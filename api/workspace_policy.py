@@ -24,7 +24,7 @@ Every path check runs on fully resolved paths (``..`` and symlinks followed).
 Refusals raise ``ValueError`` with the Workspace message.
 
 Attachments are not a Workspace: they belong to a session, and session
-ownership guards them (``api.upload._resolve_in_attachments``).
+ownership guards them (``api.helpers.resolve_inside``, the unconfined primitive).
 
 An explicit *profile* argument is the Admin's: the unconfined policy uses it as
 today. A User's policy is bound to that User's Profile, which wins; it takes
@@ -42,6 +42,7 @@ from api.workspace import (
     _configured_default_workspace,
     _expanduser_path,
     _is_within,
+    _refuse_system_folder,
     _remote_cwd_for,
     _resolve_unconfined_workspace,
     _safe_resolve,
@@ -52,6 +53,11 @@ from api.workspace import (
     _validate_unconfined_workspace_to_add,
     _workspace_access_error,
 )
+
+
+def _requested_path(path: str | Path) -> Path:
+    """A requested Workspace path, unquoted and home-expanded (not yet resolved)."""
+    return _expanduser_path(_strip_surrounding_quotes(str(path)).strip())
 
 
 class UserWorkspacePolicy:
@@ -96,7 +102,7 @@ class UserWorkspacePolicy:
         """The default Workspace for an empty path, else an existing folder inside it."""
         if path in (None, ""):
             return Path(self.default_workspace())
-        candidate = self.confine(_expanduser_path(_strip_surrounding_quotes(str(path)).strip()))
+        candidate = self.confine(_requested_path(path))
         access_error = _workspace_access_error(candidate)
         if access_error:
             raise ValueError(access_error)
@@ -107,8 +113,13 @@ class UserWorkspacePolicy:
         return self.resolve_to_use(path)
 
     def register_target(self, path: str, *, profile=None) -> Path:
-        """The folder that may be created to register *path*; refused before anything is created."""
-        return self.confine(_expanduser_path(_strip_surrounding_quotes(str(path)).strip()))
+        """The folder that may be created to register *path*; refused before anything is created.
+
+        A blocked system folder is refused with its own message first, as for the Admin.
+        """
+        candidate = _requested_path(path)
+        _refuse_system_folder(_safe_resolve(candidate))
+        return self.confine(candidate)
 
     def file_roots(self, *, profile=None) -> list[Path]:
         return [self.root] if self.root.is_dir() else []

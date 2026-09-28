@@ -63,21 +63,19 @@ def _sanitize_error(e: Exception) -> str:
 
 
 def resolve_inside(root: Path, requested: str) -> Path:
-    """Resolve a relative path inside root, raising ValueError on traversal."""
-    resolved = (root / requested).resolve()
-    resolved.relative_to(root.resolve())  # raises ValueError if outside root
-    return resolved
+    """Resolve a relative path inside root, raising ValueError on traversal.
 
-
-def safe_resolve(root: Path, requested: str) -> Path:
-    """Resolve a relative path inside the Workspace root, raising ValueError on traversal.
-
-    A GFIT-CoWork Member is also refused any path outside their Profile's
-    Workspace, whatever *root* is.
+    The unconfined primitive: both raw ``..`` traversal and symlink escapes out
+    of *root* are refused, and nothing else is checked. Use it for roots that
+    are not Workspaces (a session's attachment folder); a Workspace path goes
+    through :func:`api.workspace.resolve_in_workspace`, which also confines it.
     """
-    from api.workspace import confine_to_member_workspace
-
-    return confine_to_member_workspace(resolve_inside(root, requested))
+    resolved = (root / requested).resolve()
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError:
+        raise ValueError(f"Path traversal blocked: {requested}") from None
+    return resolved
 
 
 _CSP_CONNECT_BASE = (

@@ -32,7 +32,6 @@ _ESCAPE_AUTH_TTL_SECONDS = 300
 _ESCAPE_AUTH_LOCK = threading.Lock()
 _ESCAPE_AUTH_TOKENS: dict[str, dict[str, str | int | float]] = {}
 
-from api.access import caller_bound_profile, caller_is_user
 from api.config import (
     WORKSPACES_FILE as _GLOBAL_WS_FILE,
     LAST_WORKSPACE_FILE as _GLOBAL_LW_FILE,
@@ -418,11 +417,10 @@ def _profile_default_workspace(profile: str | Path | None = None) -> str:
 
     Falls back to the live DEFAULT_WORKSPACE from api.config.
 
-    A GFIT-CoWork Member's default is always their Profile's Workspace.
+    The request's Workspace policy answers: a User's default is always their
+    Workspace folder.
     """
-    if caller_is_user():
-        return str(ensure_member_workspace())
-    return _configured_default_workspace(profile)
+    return _request_policy().default_workspace(profile=profile)
 
 
 def _configured_default_workspace(profile: str | Path | None = None) -> str:
@@ -488,10 +486,11 @@ def _clean_workspace_list(workspaces: list, profile: str | Path | None = None) -
     - Rename any entry whose name is literally 'default' to 'Home' (avoids
       confusion with the 'default' profile name).
     Returns the cleaned list (may be empty).
+
+    The request's Workspace policy answers: a User's list is their default
+    Workspace, then saved folders inside it.
     """
-    if caller_is_user():
-        return _clean_member_workspace_list(workspaces, _caller_workspace_root())
-    return _clean_unconfined_workspace_list(workspaces, profile)
+    return _request_policy().saved_list(workspaces, profile=profile)
 
 
 def _clean_unconfined_workspace_list(workspaces: list, profile: str | Path | None = None) -> list:
@@ -669,14 +668,10 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
     Priority: profile-scoped ``last_workspace.txt`` -> profile ``config.yaml``
     ``workspace``/``default_workspace`` -> ``terminal.cwd`` -> process default.
     """
-    remote_cwd = _remote_cwd_for(profile)
+    policy = _request_policy()
 
     def _valid(raw: str) -> str | None:
-        if not raw:
-            return None
-        if caller_is_user():
-            return raw if _member_may_use(raw) else None
-        return raw if _unconfined_may_use(raw, profile, remote_cwd) else None
+        return raw if policy.may_use(raw, profile=profile) else None
 
     lw_file = _last_workspace_file_for_profile(profile)
     if lw_file is not None and lw_file.exists():
@@ -690,14 +685,10 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
 
 
 def get_last_workspace(profile: str | Path | None = None) -> str:
-    remote_cwd = _remote_cwd_for(profile)
+    policy = _request_policy()
 
     def valid_last_workspace(raw: str) -> str | None:
-        if not raw:
-            return None
-        if caller_is_user():
-            return raw if _member_may_use(raw) else None
-        return raw if _unconfined_may_use(raw, profile, remote_cwd) else None
+        return raw if policy.may_use(raw, profile=profile) else None
 
     lw_file = _last_workspace_file_for_profile(profile)
     if lw_file is not None and lw_file.exists():
@@ -977,64 +968,22 @@ def member_workspace_root(profile: str) -> Path:
     return _safe_resolve(_resolve_named_profile_home(profile) / MEMBER_WORKSPACE_DIRNAME)
 
 
-def _caller_workspace_root() -> Path:
-    """The calling Member's Workspace folder; ask only once :func:`caller_is_user` said yes.
+def ensure_member_workspace(profile: str) -> Path:
+    """Create User *profile*'s default Workspace if missing and return it.
 
-    Fails closed (raises) when the request's Admission names no Profile.
+    Used at login, before the request carries an Admission; a request asks
+    its Workspace policy (``default_workspace``) instead.
     """
-    profile = caller_bound_profile()
-    if not profile:
-        raise ValueError(OUTSIDE_WORKSPACE_MESSAGE)
-    return member_workspace_root(profile)
-
-
-def ensure_member_workspace(profile: str | None = None) -> Path | None:
-    """Create a Member's default Workspace if missing and return it.
-
-    *profile* names the Member explicitly (at login, before the request carries
-    an Admission). Otherwise it is the caller's, when the caller is a User, and
-    None when not (not confined).
-    """
-    if profile:
-        root = member_workspace_root(profile)
-    elif caller_is_user():
-        root = _caller_workspace_root()
-    else:
-        return None
+    root = member_workspace_root(profile)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-def _resolve_member_workspace(path: str | Path | None) -> Path:
-    """Resolve a Workspace a Member asked for: their default, or an existing folder inside it."""
-    if path in (None, ""):
-        return ensure_member_workspace()
-    candidate = confine_to_member_workspace(
-        _expanduser_path(_strip_surrounding_quotes(str(path)).strip())
-    )
-    access_error = _workspace_access_error(candidate)
-    if access_error:
-        raise ValueError(access_error)
-    return candidate
+def _request_policy():
+    """This request's Workspace policy (:mod:`api.workspace_policy`)."""
+    from api.workspace_policy import request_workspace_policy
 
-
-def _member_may_use(raw: str) -> bool:
-    try:
-        _resolve_member_workspace(raw)
-        return True
-    except ValueError:
-        return False
-
-
-def confine_to_member_workspace(path: Path) -> Path:
-    """Return resolved *path*, or raise ValueError when a Member reaches outside their Workspace."""
-    if not caller_is_user():
-        return path
-    root = _caller_workspace_root()
-    resolved = _safe_resolve(Path(path))
-    if not _is_within(resolved, root):
-        raise ValueError(OUTSIDE_WORKSPACE_MESSAGE)
-    return resolved
+    return request_workspace_policy()
 
 
 def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
@@ -1045,11 +994,11 @@ def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
     workspaces saved under THAT profile widen the boundary (plus the ambient
     home / boot-default carve-outs); ``None`` keeps the historical ambient /
     global saved-list behaviour.
+
+    The request's Workspace policy answers: a User reaches only their
+    Workspace folder.
     """
-    if caller_is_user():
-        member_root = _caller_workspace_root()
-        return [member_root] if member_root.is_dir() else []
-    return _unconfined_file_roots(profile)
+    return _request_policy().file_roots(profile=profile)
 
 
 def _unconfined_file_roots(profile: str | Path | None = None) -> list[Path]:
@@ -1208,12 +1157,10 @@ def resolve_trusted_workspace(path: str | Path | None = None, profile: str | Pat
     None/empty path falls back to the boot-time DEFAULT_WORKSPACE, which is always
     trusted (it was validated at server startup).
 
-    A GFIT-CoWork Member may only use folders inside their Profile's Workspace;
-    that rule replaces all of the above.
+    The request's Workspace policy answers: a User may only use folders inside
+    their Workspace, and that rule replaces all of the above.
     """
-    if caller_is_user():
-        return _resolve_member_workspace(path)
-    return _resolve_unconfined_workspace(path, profile)
+    return _request_policy().resolve_to_use(path, profile=profile)
 
 
 def _resolve_unconfined_workspace(path: str | Path | None = None, profile: str | Path | None = None) -> Path:
@@ -1395,11 +1342,10 @@ def validate_workspace_to_add(path: str, profile: str | Path | None = None) -> P
     macOS Finder's "Copy as Pathname" wraps paths in single quotes by default,
     and users routinely paste those into the Add Space input.
 
-    A GFIT-CoWork Member may only add folders inside their Profile's Workspace.
+    The request's Workspace policy answers: a User may only add folders inside
+    their Workspace.
     """
-    if caller_is_user():
-        return _resolve_member_workspace(path)
-    return _validate_unconfined_workspace_to_add(path, profile)
+    return _request_policy().resolve_to_register(path, profile=profile)
 
 
 def _unconfined_register_target(path: str, profile: str | Path | None = None) -> Path | None:
@@ -1407,17 +1353,30 @@ def _unconfined_register_target(path: str, profile: str | Path | None = None) ->
 
     None when *path* is target-side for a remote terminal (nothing to create
     here). Refuses a blocked system folder, except at or under the home
-    directory, as the Workspace add route does.
+    directory. The Workspace add route asks this (through the policy's
+    ``register_target``) before creating anything.
     """
     path = _strip_surrounding_quotes(path)
     if _remote_terminal_workspace_candidate(path, profile=profile) is not None:
         return None
     candidate = _resolve_path(path, profile=profile)
+    _refuse_system_folder(candidate)
+    return candidate
+
+
+def _refuse_system_folder(candidate: Path) -> None:
+    """Refuse a blocked system root as a folder to register (resolved *candidate*).
+
+    _is_blocked_system_path honours user-tmp carve-outs (e.g. /var/folders on
+    macOS). Home-directory carve-out, mirroring the validators
+    (resolve_trusted_workspace / validate_workspace_to_add): a workspace at or
+    under the active user's home stays allowed even when that home lives under
+    an otherwise-blocked root (e.g. systemd-homed /var/home/<user>/...).
+    """
     if _is_blocked_system_path(candidate):
         _home = _home_path()
         if not (_home != Path("/") and (candidate == _home or _is_within(candidate, _home))):
             raise ValueError(f"Path points to a system directory: {candidate}")
-    return candidate
 
 
 def _validate_unconfined_workspace_to_add(path: str, profile: str | Path | None = None) -> Path:
@@ -1448,30 +1407,30 @@ def _validate_unconfined_workspace_to_add(path: str, profile: str | Path | None 
 
     return candidate
 
-def safe_resolve_ws(root: Path, requested: str) -> Path:
-    """Resolve a relative path inside a workspace root, raising ValueError on traversal.
+def resolve_in_workspace(root: Path, requested: str) -> Path:
+    """Resolve a relative path inside Workspace *root* and confine it, raising ValueError.
 
     Both raw ``..`` traversal and symlink escapes are blocked.  Workspace file
     APIs can be reached by browser UI actions and agent/tool calls, so a symlink
     inside the workspace must not expand the trusted workspace boundary to an
     arbitrary host path.
+
+    The unconfined primitive (:func:`api.helpers.resolve_inside`) followed by
+    the request's Workspace policy's confine: a User is also refused any path
+    outside their Workspace, whatever *root* is.
     """
-    root_resolved = root.resolve()
-    resolved = (root / requested).resolve()
-    try:
-        resolved.relative_to(root_resolved)
-    except ValueError:
-        raise ValueError(f"Path traversal blocked: {requested}")
-    return confine_to_member_workspace(resolved)
+    from api.helpers import resolve_inside
+
+    return _request_policy().confine(resolve_inside(root, requested))
 
 
 # ── Race-safe (TOCTOU) anchored open ─────────────────────────────────────────
-# safe_resolve_ws() validates a path, but if callers then re-open by pathname a
+# resolve_in_workspace() validates a path, but if callers then re-open by pathname a
 # symlink swapped in AFTER the check could still escape the workspace. To close
 # that window we open the (already symlink-resolved) target component-by-component
 # from the workspace root using openat (dir_fd) + O_NOFOLLOW: every component must
 # be a real, non-symlink entry, so a component swapped to a symlink mid-flight is
-# refused. Legit in-workspace symlinks still work because safe_resolve_ws() has
+# refused. Legit in-workspace symlinks still work because resolve_in_workspace() has
 # already collapsed them to their real in-workspace target, and we walk that real
 # (symlink-free) path. Portable: uses os.supports_dir_fd where available (Linux,
 # macOS); on platforms without dir_fd support (Windows — where creating symlinks
@@ -1487,7 +1446,7 @@ _O_BINARY = getattr(os, "O_BINARY", 0)
 def open_anchored_fd(workspace: Path, target: Path, *, want_dir: bool) -> int:
     """Open ``target`` race-safely and return an owned file descriptor.
 
-    ``target`` must be the symlink-resolved path returned by safe_resolve_ws()
+    ``target`` must be the symlink-resolved path returned by resolve_in_workspace()
     (i.e. already verified to live under the workspace). Raises FileNotFoundError
     if a component is missing / wrong-type, or ValueError if a component was
     swapped to a symlink (escape attempt). Caller owns and must close the fd.
@@ -1783,7 +1742,7 @@ def serialize_workspace_entries_for_browser(entries: list[dict] | None) -> list[
 
 
 def list_dir(workspace: Path, rel: str='.'):
-    target = safe_resolve_ws(workspace, rel)
+    target = resolve_in_workspace(workspace, rel)
     if not target.is_dir():
         raise FileNotFoundError(f"Not a directory: {rel}")
     ws_resolved = workspace.resolve()
@@ -1822,7 +1781,7 @@ def list_dir(workspace: Path, rel: str='.'):
             # Tag symlinks whose resolved target escapes the workspace root.
             # Previously silently dropped; now emitted with target_outside_workspace=True
             # so the workspace tree can show the link exists (display-only — the
-            # read/list gate in safe_resolve_ws / open_anchored_fd still blocks
+            # read/list gate in resolve_in_workspace / open_anchored_fd still blocks
             # navigation through it).
             target_outside_workspace = False
             try:
@@ -1840,7 +1799,7 @@ def list_dir(workspace: Path, rel: str='.'):
                 # disclose where it points. Emit ONLY display-safe fields — never
                 # the resolved outside path, target-derived is_dir, or target size
                 # (the row exists to show the link is present; navigation/read
-                # through it stays blocked by safe_resolve_ws/open_anchored_fd).
+                # through it stays blocked by resolve_in_workspace/open_anchored_fd).
                 entry = {
                     'name': name,
                     'path': display_path,
@@ -1900,7 +1859,7 @@ def list_dir(workspace: Path, rel: str='.'):
         # #3398 TOCTOU hardening (Linux/macOS): open the directory via an anchored
         # openat-walk (O_NOFOLLOW on every component) and enumerate via the verified
         # fd (os.scandir(fd) + fd-relative fstatat/readlinkat), so a path component
-        # swapped to an escaping symlink after safe_resolve_ws() cannot redirect the
+        # swapped to an escaping symlink after resolve_in_workspace() cannot redirect the
         # listing.
         def _sort_key_de(de):
             try:
@@ -1952,9 +1911,9 @@ def list_dir(workspace: Path, rel: str='.'):
                 pass
     else:
         # Portability fallback (Windows / no dir_fd): path-based enumeration after
-        # safe_resolve_ws(). No anchored-fd race protection on these platforms, but
+        # resolve_in_workspace(). No anchored-fd race protection on these platforms, but
         # no regression vs the prior behaviour (creating symlinks on Windows needs
-        # admin anyway), and safe_resolve_ws() still blocks the static escape.
+        # admin anyway), and resolve_in_workspace() still blocks the static escape.
         def _sort_key_p(p: Path):
             is_link = p.is_symlink()
             is_file = False
@@ -2017,12 +1976,12 @@ def dir_signature(workspace: Path, rel: str = '.', entries: list[dict] | None = 
 
 
 def read_file_content(workspace: Path, rel: str) -> dict:
-    target = safe_resolve_ws(workspace, rel)
+    target = resolve_in_workspace(workspace, rel)
     if not target.is_file():
         raise FileNotFoundError(f"Not a file: {rel}")
     # #3398 TOCTOU hardening: open the resolved file via an anchored openat-walk
     # (O_NOFOLLOW on every component) so a path swapped to an escaping symlink
-    # after safe_resolve_ws() cannot be followed, then read from the fd (not the
+    # after resolve_in_workspace() cannot be followed, then read from the fd (not the
     # pathname) so the bytes returned are guaranteed to be the verified file.
     fd = open_anchored_fd(workspace, target, want_dir=False)
     with os.fdopen(fd, 'rb', closefd=True) as fh:
@@ -2070,7 +2029,7 @@ def _escape_surface_target(workspace: Path, rel: str) -> tuple[Path, Path]:
     if parent_rel in ("", "."):
         parent_path = workspace_root
     else:
-        parent_path = safe_resolve_ws(workspace_root, parent_rel)
+        parent_path = resolve_in_workspace(workspace_root, parent_rel)
     surface_path = parent_path / surface_posix.name
     if not surface_path.is_symlink():
         raise ValueError(f"Path is not an escape-target symlink: {rel}")
@@ -2232,7 +2191,7 @@ def read_authorized_escape_file_content(workspace: Path, session_id: str, token:
 
 def raw_authorized_escape_target(workspace: Path, session_id: str, token: str, rel: str) -> tuple[Path, Path]:
     resolved = resolve_authorized_escape_request(workspace, session_id, token, rel)
-    target = safe_resolve_ws(resolved["external_root"], resolved["external_rel"])
+    target = resolve_in_workspace(resolved["external_root"], resolved["external_rel"])
     return resolved["external_root"], target
 
 
