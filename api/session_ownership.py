@@ -15,7 +15,8 @@ policy:
   recorded Admission, or an Admission this module does not understand. It owns
   nothing.
 
-Callers ask: is this session id mine (:meth:`refuse_session`), is this stream
+Callers ask: is this session id mine (:meth:`refuse_session`; for a session
+known only from its listed row, :meth:`refuse_listed_session`), is this stream
 id mine (:meth:`refuse_stream`), may this session-list event go to me
 (:meth:`may_receive_event`) and may this listed row go to me
 (:meth:`may_list_row`). A refusal (:class:`Refusal`) writes its own answer:
@@ -25,7 +26,8 @@ that does not exist get exactly the same answer.
 
 The User's adapter looks in the WebUI session record, then in the Profile's own
 agent state (``state.db``: CLI, messaging, cron and gateway sessions). It never
-looks in another Profile's state or in the server account's home.
+looks in another Profile's state or in the server account's home. Only the
+unconfined adapter lets a Profile-less row (Claude Code, Codex) through.
 """
 from __future__ import annotations
 
@@ -175,14 +177,22 @@ class UserSessionOwnership:
             return False
         return not session_id or self._owns(session_id)
 
-    def may_list_row(self, row) -> bool:
-        """A row of the User's Profile; never a Profile-less one."""
+    def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
+        """A row of the User's Profile; never a Profile-less one.
+
+        *active_profile* and *all_profiles* are the Admin's view; the User's
+        own Profile wins.
+        """
         from api.profiles import _profiles_match
 
         if not isinstance(row, dict) or _is_profile_less_row(row):
             return False
         profile = row.get("profile")
         return isinstance(profile, str) and bool(profile) and _profiles_match(profile, self.profile)
+
+    def refuse_listed_session(self, session_id, row) -> Refusal | None:
+        """A session known only from its listed *row* (no WebUI record): the User's own, else 404."""
+        return None if self.may_list_row(row) else NOT_FOUND
 
 
 class _UnconfinedSessionOwnership:
@@ -215,8 +225,34 @@ class _UnconfinedSessionOwnership:
     def may_receive_event(self, event) -> bool:
         return True
 
-    def may_list_row(self, row) -> bool:
-        return True
+    def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
+        """Every Profile's rows in the all-Profiles view, else the active Profile's.
+
+        A row with no Profile counts as the root Profile's.
+        """
+        from api.profiles import _profiles_match, get_active_profile_name
+
+        if all_profiles:
+            return True
+        profile = row.get("profile") if isinstance(row, dict) else None
+        return _profiles_match(profile, active_profile or get_active_profile_name())
+
+    def refuse_listed_session(self, session_id, row) -> Refusal | None:
+        """A session known only from its listed *row* (no WebUI record).
+
+        A Profile-less row (Claude Code, Codex) belongs to no Profile and opens
+        under any. Another known Profile's row names its owner; a missing or
+        legacy row with no Profile is 404, so the client's self-heal fires.
+        """
+        from api.profiles import _profiles_match, get_active_profile_name
+
+        row = row if isinstance(row, dict) else {}
+        if _is_profile_less_row(row):
+            return None
+        profile = row.get("profile") or None
+        if _profiles_match(profile, get_active_profile_name()):
+            return None
+        return Refusal(owner=profile if isinstance(profile, str) else None)
 
 
 class _RefusingSessionOwnership:
@@ -231,8 +267,11 @@ class _RefusingSessionOwnership:
     def may_receive_event(self, event) -> bool:
         return False
 
-    def may_list_row(self, row) -> bool:
+    def may_list_row(self, row, **_kwargs) -> bool:
         return False
+
+    def refuse_listed_session(self, session_id, row) -> Refusal:
+        return NOT_FOUND
 
 
 UNCONFINED = _UnconfinedSessionOwnership()

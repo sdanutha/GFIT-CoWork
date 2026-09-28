@@ -63,6 +63,7 @@ from api.session_events import (
     unsubscribe_session_events,
 )
 from api.gateway_restart import restart_active_profile_gateway
+from api.session_ownership import request_session_ownership
 from api.shares import create_or_refresh_share, load_share, revoke_share
 
 logger = logging.getLogger(__name__)
@@ -537,42 +538,6 @@ def _session_visible_to_active_profile(session_profile, handler=None) -> bool:
     return _profiles_match(session_profile, active_profile)
 
 
-def _is_profile_agnostic_foreign_session(cli_meta) -> bool:
-    """Return whether a foreign-session row lives outside the Hermes profile tree.
-
-    Claude Code transcripts are scanned straight out of ``~/.claude/projects``
-    by ``get_claude_code_sessions()``, which stamps ``profile: None`` on every
-    row because the JSONL files belong to no Hermes profile at all. The sidebar
-    lists them under whichever profile is active, but ``_profiles_match``
-    coerces ``None`` to ``'default'``, so the detail-load profile gate 404s
-    every one of them as soon as the active profile is a named (non-root) one —
-    the session shows in the list and then renders "Session not available in
-    web UI." when clicked.
-
-    Exempt these profile-less external-agent rows from the gate so opening one
-    behaves identically on the root profile and on named profiles. Rows that
-    DO carry a profile (every state.db-backed CLI/messaging/cron session) stay
-    fully scoped.
-    """
-    if not isinstance(cli_meta, dict):
-        return False
-    if cli_meta.get("profile"):
-        return False
-    sources = {
-        str(cli_meta.get("source_tag") or "").strip().lower(),
-        str(cli_meta.get("raw_source") or "").strip().lower(),
-    }
-    # Profile-less external-agent rows that live outside the Hermes profile tree.
-    # Claude Code: scanned from ~/.claude/projects; Codex: scanned from ~/.codex/
-    profile_agnostic_sources = {CLAUDE_CODE_SOURCE}
-    try:
-        from api.codex_sessions import CODEX_SOURCE
-        profile_agnostic_sources.add(CODEX_SOURCE)
-    except ImportError:
-        pass
-    return bool(sources & profile_agnostic_sources)
-
-
 def _request_session_visibility_exempt(method: str, path: str | None, ownership) -> bool:
     if not path:
         return False
@@ -610,8 +575,6 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     (the Admin's, #7710), else 404 "Session not found". A request that names
     no session passes.
     """
-    from api.session_ownership import request_session_ownership
-
     refusal = request_session_ownership().refuse_session(sid)
     if refusal is None:
         return True
@@ -731,24 +694,6 @@ def _guard_bound_session_id(handler, sid) -> bool:
     return False
 
 
-def _session_event_reaches_bound_profile(event, bound: str) -> bool:
-    """May a session-list event go to a request bound to the Profile *bound*?
-
-    An event that names neither a Profile nor a session carries nothing
-    private and is always sent: the sidebar needs the nudge. Otherwise the
-    event must name the bound Profile, and any session it names must be a
-    session of that Profile.
-    """
-    event = event if isinstance(event, dict) else {}
-    profile = str(event.get("profile") or "").strip()
-    sid = str(event.get("session_id") or "").strip()
-    if not profile and not sid:
-        return True
-    if not profile or not _profiles_match(profile, bound):
-        return False
-    return not sid or _bound_profile_owns_session_id(sid, bound)
-
-
 def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
     """A request bound to one Profile (a GFIT-CoWork User's) may name only that Profile.
 
@@ -782,8 +727,6 @@ def _guard_request_session_visibility(handler, parsed, body=None, method="GET") 
     """
     if not _guard_bound_profile_request(handler, parsed, body):
         return False
-    from api.session_ownership import request_session_ownership
-
     method = str(method).upper()
     path = getattr(parsed, "path", "")
     if _request_session_visibility_exempt(method, path, request_session_ownership()):
@@ -2632,12 +2575,14 @@ def _build_session_list_cache_payload(
     # source. Filter first so the dedupe operates only within the active
     # profile's rows.
     diag_stage("profile_scope")
-    if all_profiles:
-        scoped = merged
-        other_profile_count = 0
-    else:
-        scoped = [s for s in merged if _profiles_match(s.get("profile"), active_profile)]
-        other_profile_count = 0 if _is_isolated_profile_mode() else len(merged) - len(scoped)
+    ownership = request_session_ownership()
+    scoped = [
+        s for s in merged
+        if ownership.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+    ]
+    other_profile_count = (
+        0 if all_profiles or _is_isolated_profile_mode() else len(merged) - len(scoped)
+    )
     diag_stage("messaging_dedupe")
     archived_scoped = _keep_latest_messaging_session_per_source(
         list(scoped),
@@ -13561,19 +13506,13 @@ def _handle_session_get(handler, parsed) -> bool:
         if _diag: _diag.stage("t1_after_get_session_check")
         s = get_session(sid, metadata_only=(not load_messages))
         _session_profile = getattr(s, 'profile', None) or None
-        if not _session_visible_to_active_profile(_session_profile, handler):
-            if _session_profile:
-                # Valid session owned by a KNOWN other profile: 409 so the
-                # client can offer to switch to it (#5419).
-                if _diag: _diag.finish()
-                return _session_profile_mismatch(handler, sid, _session_profile)
-            # Unknown/legacy None-profile sidecar: keep the original 404 so
-            # the frontend's self-heal (clear stale URL + localStorage) still
-            # fires. _profiles_match coerces None->'default', so a truly
-            # missing/legacy session under a non-default active profile would
-            # otherwise emit a useless 409 with profile=null.
+        # Session ownership answers: a KNOWN other profile's session is the
+        # Admin's 409 so the client can offer to switch to it (#5419); a
+        # legacy None-profile sidecar keeps the 404 self-heal.
+        _refusal = request_session_ownership().refuse_session(sid)
+        if _refusal is not None:
             if _diag: _diag.finish()
-            return bad(handler, "Session not found", 404)
+            return _refusal.answer(handler, sid)
         original_stream_id = getattr(s, "active_stream_id", None)
         _clear_stale_stream_state(s)
         cli_meta = _lookup_cli_session_metadata(sid) if _session_requires_cli_metadata_lookup(s) else {}
@@ -14029,23 +13968,13 @@ def _handle_session_get(handler, parsed) -> bool:
         # gate (via _is_claimable_cli_source) so the two endpoints can't
         # drift on foreign-session semantics.
         cli_meta = _lookup_cli_session_metadata(sid)
-        _session_profile = (cli_meta or {}).get("profile") or None
-        # Claude Code rows are profile-less by construction (they come from
-        # ~/.claude/projects, not from any profile's state.db), so the gate
-        # below would 404 every one of them under a named active profile
-        # even though /api/sessions happily lists them. Exempt them.
-        _profile_agnostic = _is_profile_agnostic_foreign_session(cli_meta)
-        if not _profile_agnostic and not _session_visible_to_active_profile(_session_profile, handler):
-            if _session_profile:
-                # Valid CLI/foreign session owned by a KNOWN other profile:
-                # 409 so the client can offer to switch to it (#5419).
-                return _session_profile_mismatch(handler, sid, _session_profile)
-            # Missing session (cli_meta={} -> profile=None): keep the 404
-            # self-heal path. _profiles_match coerces None->'default', so a
-            # truly-missing session under a non-default active profile would
-            # otherwise emit a useless 409 with profile=null and skip the
-            # frontend self-heal + spin the SSE reconnect against a dead sid.
-            return bad(handler, "Session not found", 404)
+        # Session ownership answers from the listed row: another KNOWN
+        # profile's CLI/foreign session is the Admin's 409 (#5419); a missing
+        # session keeps the 404 self-heal; a Profile-less Claude Code row opens
+        # under any profile for the Admin, and never for a User.
+        _refusal = request_session_ownership().refuse_listed_session(sid, cli_meta or {})
+        if _refusal is not None:
+            return _refusal.answer(handler, sid)
         synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta or {})
         if reason == "was_webui":
             # Deleted WebUI session: 404 so the client self-heals
@@ -20116,11 +20045,10 @@ def _handle_session_events_stream(handler):
     end_sse_headers(handler)
     _sse_set_write_deadline(handler)  # Defect A: slow tab can't pin this thread
 
-    # The subscriber's own Admission, captured once: events are filtered for
-    # whoever opened the stream, never for whoever published the event.
-    from api.access import caller_bound_profile
-
-    bound = caller_bound_profile()
+    # The subscriber's own session ownership, chosen once from its Admission:
+    # events are filtered for whoever opened the stream, never for whoever
+    # published the event.
+    ownership = request_session_ownership()
     q = subscribe_session_events()
     try:
         while True:
@@ -20130,7 +20058,7 @@ def _handle_session_events_stream(handler):
                 handler.wfile.write(b': keepalive\n\n')
                 handler.wfile.flush()
                 continue
-            if bound and not _session_event_reaches_bound_profile(event_data, bound):
+            if not ownership.may_receive_event(event_data):
                 continue
             _sse(handler, event_data.get('type', 'sessions_changed'), event_data)
     except _CLIENT_DISCONNECT_ERRORS:

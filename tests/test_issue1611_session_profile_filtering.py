@@ -375,12 +375,16 @@ def test_get_session_rejects_session_from_inactive_profile():
 
     parsed = urlparse("/api/session?session_id=foreign_001&messages=1&resolve_model=0")
     with patch("api.routes._get_active_profile_name", return_value="default"), \
+         patch("api.profiles.get_active_profile_name", return_value="default"), \
          patch("api.routes.get_session", return_value=_ProfileScopedSession()), \
+         patch("api.models.get_session", return_value=_ProfileScopedSession()), \
          patch("api.routes._clear_stale_stream_state", return_value=False), \
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.get_state_db_session_messages", return_value=[]), \
          patch("api.routes.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.session_ownership.bad", side_effect=fake_bad), \
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=default"}), parsed)
 
     # #5419: a valid-but-wrong-profile session now returns a structured 409
@@ -407,9 +411,13 @@ def test_get_session_rejects_metadata_only_session_from_inactive_profile():
 
     parsed = urlparse("/api/session?session_id=foreign_001&messages=0&resolve_model=0")
     with patch("api.routes._get_active_profile_name", return_value="default"), \
+         patch("api.profiles.get_active_profile_name", return_value="default"), \
          patch("api.routes.get_session", return_value=_ProfileScopedSession()), \
+         patch("api.models.get_session", return_value=_ProfileScopedSession()), \
          patch("api.routes.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.session_ownership.bad", side_effect=fake_bad), \
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=default"}), parsed)
 
     _assert_profile_mismatch_envelope(captured, "foreign_001", "other",
@@ -432,9 +440,13 @@ def test_get_session_rejects_cookieless_session_from_inactive_profile():
 
     parsed = urlparse("/api/session?session_id=foreign_001&messages=0&resolve_model=0")
     with patch("api.routes._get_active_profile_name", return_value="default"), \
+         patch("api.profiles.get_active_profile_name", return_value="default"), \
          patch("api.routes.get_session", return_value=_ProfileScopedSession()), \
+         patch("api.models.get_session", return_value=_ProfileScopedSession()), \
          patch("api.routes.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.session_ownership.bad", side_effect=fake_bad), \
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={}), parsed)
 
     _assert_profile_mismatch_envelope(captured, "foreign_001", "other",
@@ -457,12 +469,16 @@ def test_get_session_rejects_cli_session_from_inactive_profile():
 
     parsed = urlparse("/api/session?session_id=cli_foreign&messages=1&resolve_model=0")
     with patch("api.routes._get_active_profile_name", return_value="default"), \
+         patch("api.profiles.get_active_profile_name", return_value="default"), \
          patch("api.routes.get_session", side_effect=KeyError), \
+         patch("api.models.get_session", side_effect=KeyError), \
          patch("api.routes.SESSION_INDEX_FILE", SimpleNamespace(exists=lambda: False)), \
          patch("api.routes._lookup_cli_session_metadata", return_value={"profile": "other"}), \
          patch("api.routes.get_cli_session_messages", return_value=[{"role": "user", "content": "foreign profile secret"}]), \
          patch("api.routes.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.session_ownership.bad", side_effect=fake_bad), \
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=default"}), parsed)
 
     _assert_profile_mismatch_envelope(captured, "cli_foreign", "other",
@@ -494,10 +510,14 @@ def test_missing_session_under_nondefault_profile_still_404_primary_branch():
     # None-profile sidecar (legacy/missing) + a NON-DEFAULT active profile.
     parsed = urlparse("/api/session?session_id=ghost_001&messages=0&resolve_model=0")
     with patch("api.routes._get_active_profile_name", return_value="research"), \
+         patch("api.profiles.get_active_profile_name", return_value="research"), \
          patch("api.routes.get_session", return_value=_ProfileScopedSession(session_id="ghost_001", profile=None)), \
+         patch("api.models.get_session", return_value=_ProfileScopedSession(session_id="ghost_001", profile=None)), \
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.session_ownership.bad", side_effect=fake_bad), \
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=research"}), parsed)
 
     assert captured.get("bad", {}).get("status") == 404, (
@@ -524,11 +544,15 @@ def test_missing_session_under_nondefault_profile_still_404_cli_branch():
 
     parsed = urlparse("/api/session?session_id=ghost_cli&messages=1&resolve_model=0")
     with patch("api.routes._get_active_profile_name", return_value="research"), \
+         patch("api.profiles.get_active_profile_name", return_value="research"), \
          patch("api.routes.get_session", side_effect=KeyError), \
+         patch("api.models.get_session", side_effect=KeyError), \
          patch("api.routes.SESSION_INDEX_FILE", SimpleNamespace(exists=lambda: False)), \
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.session_ownership.bad", side_effect=fake_bad), \
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=research"}), parsed)
 
     assert captured.get("bad", {}).get("status") == 404, (
@@ -586,8 +610,10 @@ def test_session_export_rejects_session_from_inactive_profile():
     handler = _ExportCaptureHandler()
     parsed = urlparse("/api/session/export?session_id=foreign_export_001")
     with patch("api.routes.get_session", return_value=foreign), \
+         patch("api.models.get_session", return_value=foreign), \
          patch("api.routes.get_active_profile_name", return_value="default"), \
-         patch("api.routes.bad", side_effect=fake_bad):
+         patch("api.routes.bad", side_effect=fake_bad), \
+         patch("api.session_ownership.bad", side_effect=fake_bad):
         routes._handle_session_export(handler, parsed)
 
     assert captured.get("bad", {}).get("status") == 404
@@ -608,6 +634,7 @@ def test_session_export_allows_session_from_active_profile():
     handler = _ExportCaptureHandler()
     parsed = urlparse("/api/session/export?session_id=active_export_001")
     with patch("api.routes.get_session", return_value=active), \
+         patch("api.models.get_session", return_value=active), \
          patch("api.routes.get_active_profile_name", return_value="default"), \
          patch("api.routes.redact_session_data", side_effect=lambda data: data):
         routes._handle_session_export(handler, parsed)
@@ -669,7 +696,8 @@ def test_session_import_stamps_active_profile():
          patch("api.routes.Session", side_effect=lambda **kwargs: _ImportedSessionStub(**kwargs)), \
          patch.object(routes, "SESSIONS", sessions), \
          patch("api.routes.publish_session_list_changed"), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes._handle_session_import(SimpleNamespace(headers={}), body)
 
     session = captured["json"]["data"]["session"]
@@ -697,7 +725,8 @@ def test_session_import_default_profile_remains_default_owned():
          patch("api.routes.Session", side_effect=lambda **kwargs: _ImportedSessionStub(**kwargs)), \
          patch.object(routes, "SESSIONS", sessions), \
          patch("api.routes.publish_session_list_changed"), \
-         patch("api.routes.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j), \
+         patch("api.session_ownership.j", side_effect=fake_j):
         routes._handle_session_import(SimpleNamespace(headers={}), body)
 
     session = captured["json"]["data"]["session"]

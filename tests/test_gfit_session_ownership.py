@@ -172,21 +172,52 @@ def test_may_this_event_go_to_me(world, event, user):
 
 
 ROW_TABLE = [
-    ({"session_id": "alice-webui", "profile": ALICE}, True),
-    ({"session_id": f"{ALICE}-gateway", "profile": ALICE, "source_tag": "telegram"}, True),
-    ({"session_id": "bob-webui", "profile": BOB}, False),
-    ({"session_id": "root-webui", "profile": "default"}, False),
-    ({"session_id": "legacy", "profile": None}, False),
-    ({"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}, False),
-    ("not a row", False),
+    # (row, User Alice, unconfined in the root Profile, unconfined in Bob's, all Profiles)
+    ({"session_id": "alice-webui", "profile": ALICE}, True, False, False, True),
+    ({"session_id": f"{ALICE}-gateway", "profile": ALICE, "source_tag": "telegram"}, True, False, False, True),
+    ({"session_id": "bob-webui", "profile": BOB}, False, False, True, True),
+    ({"session_id": "root-webui", "profile": "default"}, False, True, False, True),
+    ({"session_id": "legacy", "profile": None}, False, True, False, True),
+    ({"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}, False, True, False, True),
+    ("not a row", False, True, False, True),
 ]
 
 
-@pytest.mark.parametrize("row,user", ROW_TABLE)
-def test_may_this_row_go_to_me(world, row, user):
+@pytest.mark.parametrize("row,user,root,bobs,every", ROW_TABLE)
+def test_may_this_row_go_to_me(world, row, user, root, bobs, every):
     assert UserSessionOwnership(ALICE).may_list_row(row) is user
-    assert UNCONFINED.may_list_row(row) is True
+    # The User's own Profile wins over any view the request asks for.
+    assert UserSessionOwnership(ALICE).may_list_row(row, active_profile=BOB, all_profiles=True) is user
+    assert UNCONFINED.may_list_row(row) is root
+    assert UNCONFINED.may_list_row(row, active_profile=BOB) is bobs
+    assert UNCONFINED.may_list_row(row, all_profiles=True) is every
     assert REFUSING.may_list_row(row) is False
+
+
+LISTED_TABLE = [
+    # (row known only from the CLI listing, User Alice, unconfined in the root Profile)
+    ({"session_id": f"{ALICE}-gateway", "profile": ALICE}, OWNED, "409 521740"),
+    ({"session_id": f"{BOB}-gateway", "profile": BOB}, NOT_FOUND, OWNER_BOB),
+    ({"session_id": "cli-root", "profile": "default"}, NOT_FOUND, OWNED),
+    ({"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}, NOT_FOUND, OWNED),
+    ({}, NOT_FOUND, OWNED),
+]
+
+
+@pytest.mark.parametrize("row,user,unconfined", LISTED_TABLE)
+def test_is_this_listed_session_mine(world, row, user, unconfined):
+    sid = row.get("session_id", "missing")
+    assert _outcome(UserSessionOwnership(ALICE).refuse_listed_session(sid, row)) == user
+    assert _outcome(UNCONFINED.refuse_listed_session(sid, row)) == unconfined
+    assert _outcome(REFUSING.refuse_listed_session(sid, row)) == NOT_FOUND
+
+
+def test_a_profile_less_row_opens_under_a_named_profile_for_the_admin(world, monkeypatch):
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: BOB)
+    row = {"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}
+    assert UNCONFINED.refuse_listed_session("claude_code_x", row) is None
+    legacy = {"session_id": "legacy", "profile": None, "source_tag": "cli"}
+    assert _outcome(UNCONFINED.refuse_listed_session("legacy", legacy)) == NOT_FOUND
 
 
 class _Handler:

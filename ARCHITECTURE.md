@@ -1893,8 +1893,9 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   login turned off, worker threads: Upstream's rules, including the 409 that names the
   owning Profile) or the refusing answer. It answers whether a session id or stream id is
   the caller's (a `Refusal` writes its own 404 or 409), and whether a session-list event or
-  a listed row may go to the caller. The upload routes ask it; the other callers below move
-  to it.
+  a listed row may go to the caller. The dispatch guard, the upload routes, the file-manager
+  lookup, the session list, the detail load and the session-list events stream ask it; the
+  other callers below move to it.
 - Session ownership: a User's request names only its own Profile's sessions. The dispatch
   guard (`routes._guard_request_session_visibility`) places each session id or stream id in
   the bound Profile, by its WebUI record or the Profile's own agent state (`state.db`), and
