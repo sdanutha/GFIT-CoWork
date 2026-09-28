@@ -1852,7 +1852,7 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
 
 - `api/directory.py` — the Directory seam (username + password → Identity); `api/ldap_directory.py`
   is the company-AD implementation (LDAPS or StartTLS only).
-- `api/member_login.py` — the login flow (rate limit → Directory → Admission → session).
+- `api/login.py` — the login flow (rate limit → Directory → Admission → session).
 - `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission
   (`access.admit_request`) and ends the session when it no longer gives the session's role
   and Profile; otherwise it runs the request in the Admission's Profile.
@@ -1902,8 +1902,8 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   Profile exists; delete disables the Profile (ending its sessions) before deleting it, and a
   deletion that cannot finish leaves it disabled. A disabled Profile's sessions are also
   refused on every request (`auth._reconcile_directory_session`).
-- `api/member_login.py` also writes the Directory display name into the roster on every
-  Member login (an Admin's rides on the session record, since an Admin has no Profile);
+- `api/login.py` also writes the Directory display name into the roster on every
+  User login (an Admin's rides on the session record, since an Admin has no Profile);
   `session_identity` gives `/api/auth/status` the `display_name` and "name (ID)" `label`
   the Profile chip shows. The chip opens an identity menu (`openIdentityMenu`) with Sign
   Out instead of the Profile switcher.

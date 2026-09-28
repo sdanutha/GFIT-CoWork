@@ -1,13 +1,13 @@
-"""GFIT-CoWork -- the login decision for a Directory login.
+"""GFIT-CoWork -- the login decision for a Directory login, for the Admin and Users.
 
 The order matters (spec, "Login decision"):
 
 1. rate-limit check (per IP)
 2. Directory authenticate
-3. Admission (:func:`api.access.admit`): an employee ID on the Admin list is
-   bound to ``default`` as an Admin; anyone else needs a Profile named after
+3. Admission (:func:`api.access.admit`): an employee ID on the Admin list logs
+   in to ``default`` as an Admin; anyone else needs a Profile named after
    their employee ID, and it must not be disabled in the Profile roster
-4. issue a session bound to that Profile, with the role
+4. issue a session for that Profile, with the role
 
 A wrong password and a missing Profile get different messages, but neither the
 password nor anything derived from it is logged or stored.
@@ -93,9 +93,9 @@ def attempt_login(username, password, client_ip: str) -> LoginOutcome:
 def session_identity(session_info: dict) -> dict:
     """The name GFIT-CoWork shows for this request's Directory session: display name and "name (ID)" label.
 
-    A Member's name comes from the Profile roster (updated from the Directory
+    A User's name comes from the Profile roster (updated from the Directory
     on every login, else the name the Admin typed); an Admin's from the session.
-    Whether the caller is a Member is the request's Admission.
+    Whether the caller is a User is the request's Admission.
     """
     from api import roster
     from api.access import caller_is_user

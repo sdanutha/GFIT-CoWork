@@ -32,7 +32,7 @@ GFIT_MODULES = (
     "api/auth.py",
     "api/directory.py",
     "api/ldap_directory.py",
-    "api/member_login.py",
+    "api/login.py",
     "api/profiles.py",
     "api/roster.py",
     "api/routes.py",
@@ -52,10 +52,8 @@ KEPT: dict[tuple[str, str], str] = {
     ("api/routes.py", "_PinnedHTTPSHandler"): "upstream: TTS requests pinned to resolved addresses",
 }
 
-# (file, name): GFIT-CoWork names not yet renamed (one-word-per-idea tickets 02-04).
-ALLOWLIST: set[tuple[str, str]] = {
-    ("api/member_login.py", "member_login"),                 # 04: the module itself
-}
+# (file, name): GFIT-CoWork names not yet renamed (none left).
+ALLOWLIST: set[tuple[str, str]] = set()
 
 
 def _words(name: str) -> set[str]:

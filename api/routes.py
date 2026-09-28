@@ -11524,7 +11524,7 @@ def _login_client_ip(handler) -> str:
 def _handle_directory_login(handler, body, client_ip: str) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
-    from api.member_login import attempt_login
+    from api.login import attempt_login
 
     outcome = attempt_login(body.get("username"), body.get("password"), client_ip)
     if outcome.status != 200:
@@ -14258,7 +14258,7 @@ def handle_get(handler, parsed) -> bool:
             payload["user"] = session_info.get("username")
             payload["bound_profile"] = session_info.get("bound_profile")
         if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
-            from api.member_login import session_identity
+            from api.login import session_identity
 
             payload["role"] = _directory_session_role(handler)
             payload.update(session_identity(session_info))
