@@ -198,6 +198,9 @@ def _start_deployment(root: Path, team: str, users_file: Path, profiles=()):
         "HERMES_WEBUI_ADMIN_USERS": ADMIN,
         "HERMES_WEBUI_TEST_NETWORK_BLOCK": "1",
         "AWS_EC2_METADATA_DISABLED": "true",
+        # Keeps the agent's import-time launch preparation from rewriting the
+        # real agent launchers (see tests/conftest.py).
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
     }
     if HERMES_AGENT:
         env["HERMES_WEBUI_AGENT_DIR"] = str(HERMES_AGENT)

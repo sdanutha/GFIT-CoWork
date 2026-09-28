@@ -180,6 +180,15 @@ os.environ['HERMES_BASE_HOME'] = str(TEST_STATE_DIR)
 # ~/.hermes/config.yaml.  Override it before any product modules are imported so
 # tests that read/write config.yaml stay inside the isolated test home.
 os.environ['HERMES_CONFIG_PATH'] = str(TEST_STATE_DIR / 'config.yaml')
+# Every agent entry point (run_agent, which server.py imports) runs the agent's
+# hermes_bootstrap -> venv_sync.prepare_launch() against the REAL agent checkout.
+# With HERMES_HOME at the test dir, a self-managed checkout looks like an
+# unfinished source update: it installs a Python under TEST_STATE_DIR and
+# publish_launchers() rewrites <agent>/.hermes/bin/hermes and hermes-acp to exec
+# that temp Python, which breaks `hermes` once the test dir is gone. This is the
+# agent's switch for hermetic test harnesses; the test server env is copied from
+# os.environ, so it inherits it too.
+os.environ['HERMES_DISABLE_LAZY_INSTALLS'] = '1'
 
 # Model-selection env overrides must NOT leak from the runner into tests.
 # get_effective_default_model() (api/config.py) treats HERMES_MODEL / OPENAI_MODEL
