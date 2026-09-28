@@ -135,7 +135,6 @@ def _configure_direct_office_upload(monkeypatch, tmp_path):
     session = SimpleNamespace(workspace=workspace, profile="default")
 
     monkeypatch.setattr(upload, "get_session", lambda _sid: session)
-    monkeypatch.setattr(upload, "_reject_invisible_session", lambda *_args: False)
     monkeypatch.setattr(upload, "resolve_trusted_workspace", lambda path, **_kw: path)
     return upload, office_documents, workspace
 

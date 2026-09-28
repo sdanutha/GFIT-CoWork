@@ -10,7 +10,7 @@ and the non-raced happy path / dedup behavior must stay unchanged.
 Test-pattern cribbed from tests/test_raw_audio_upload.py (real multipart body
 through parse_multipart + fake handler) and
 tests/test_session_active_profile_authorization.py (monkeypatched
-get_session / _get_active_profile_name).
+get_session).
 """
 import io
 import json
@@ -76,7 +76,6 @@ def attachment_env(tmp_path, monkeypatch):
         "get_session",
         lambda sid: SimpleNamespace(session_id=sid, profile=None),
     )
-    monkeypatch.setattr(upload, "_get_active_profile_name", lambda: "default")
     return root
 
 
