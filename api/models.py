@@ -6386,15 +6386,19 @@ def persist_recovered_workspace_binding(
 
 
 def get_session_for_file_ops(sid: str):
-    """Return a profile-authorized session-like object for file-manager handlers.
+    """Return the session-like object file-manager handlers work on.
 
-    Tries ``get_session`` first (preserves all existing behavior for WebUI
-    sessions) and only returns that session when its stored profile belongs to
-    the active request profile.  If that lookup fails, checks state.db; when the
-    session exists there, returns an ``_ExternalSessionView`` whose ``workspace``
-    is the active WebUI workspace. If neither has the session, re-raises
-    ``KeyError`` so callers continue to return their existing 404.
+    Session ownership decides first (:mod:`api.session_ownership`): a session
+    the request does not own raises ``KeyError``, so callers return their
+    existing 404. Then ``get_session`` (WebUI sessions, whose missing
+    Workspace is recovered), or, for a session found only in state.db, an
+    ``_ExternalSessionView`` whose ``workspace`` is the active WebUI
+    workspace. If neither has the session, re-raises ``KeyError``.
     """
+    from api.session_ownership import request_session_ownership
+
+    if request_session_ownership().refuse_session(sid) is not None:
+        raise KeyError(sid)
     try:
         session = get_session(sid, metadata_only=True)
     except KeyError:
@@ -6402,19 +6406,7 @@ def get_session_for_file_ops(sid: str):
             return _ExternalSessionView(str(sid), str(get_last_workspace()))
         raise
 
-    from api.profiles import _profiles_match, get_active_profile_name
-
     session_profile = getattr(session, 'profile', None)
-    active_profile = get_active_profile_name()
-    if not _profiles_match(session_profile, active_profile):
-        logger.debug(
-            "Rejected file-manager session for foreign profile: "
-            "session_id=%s session_profile=%r active_profile=%r",
-            sid,
-            session_profile,
-            active_profile,
-        )
-        raise KeyError(sid)
     try:
         from api.workspace import resolve_implicit_workspace_with_recovery
 

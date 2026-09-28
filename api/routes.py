@@ -573,16 +573,18 @@ def _is_profile_agnostic_foreign_session(cli_meta) -> bool:
     return bool(sources & profile_agnostic_sources)
 
 
-def _request_session_visibility_exempt(method: str, path: str | None, *, bound: bool = False) -> bool:
+def _request_session_visibility_exempt(method: str, path: str | None, ownership) -> bool:
     if not path:
         return False
     if method == "POST" and path == "/api/session/import":
         # Creates a new session with a new id; an id in the body names nothing.
         return True
-    if bound:
-        # A bound request names only its own Profile's sessions, so the
-        # detail-load 409, and the import and placeholder-retag rules below,
-        # never apply to it: the generic guard answers first.
+    from api.session_ownership import UNCONFINED
+
+    if ownership is not UNCONFINED:
+        # A User names only their own Profile's sessions, so the detail-load
+        # 409, and the import and placeholder-retag rules below, never apply
+        # to them: the generic guard answers first.
         return False
     if method == "GET" and path == "/api/session":
         # Detail-load owns profile mismatch handling so the frontend can switch
@@ -601,50 +603,21 @@ def _request_session_visibility_exempt(method: str, path: str | None, *, bound: 
 
 
 def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = True) -> bool:
-    """Return whether ``sid`` belongs to the active profile.
+    """Return whether this request owns ``sid``, asking session ownership.
 
-    On a profile mismatch, the helper mirrors the detail-load endpoint's
-    contract (#13043, #13493): return ``409 session_profile_mismatch`` for
-    a session owned by a KNOWN other profile, and keep ``404 Session
-    not found`` only for the unknown/legacy None-profile case so the
-    frontend's self-heal (clear stale URL + localStorage) keeps firing
-    for actually-missing sids. ``#7710``.
+    When it does not, and *emit_error* is set, the refusal writes its own
+    answer: 409 ``session_profile_mismatch`` naming a known owning Profile
+    (the Admin's, #7710), else 404 "Session not found". A request that names
+    no session passes.
     """
-    if sid is None or sid == "":
-        return True
-    from api.access import caller_bound_profile
+    from api.session_ownership import request_session_ownership
 
-    bound = caller_bound_profile()
-    if bound:
-        # A request bound to one Profile: another Profile's session and a
-        # session that cannot be placed get the same answer.
-        if _bound_profile_owns_session_id(sid, bound):
-            return True
-        if emit_error:
-            bad(handler, "Session not found", 404)
-        return False
-    if not isinstance(sid, str):
+    refusal = request_session_ownership().refuse_session(sid)
+    if refusal is None:
         return True
-    if not is_safe_session_id(sid):
-        return True
-    try:
-        session = get_session(sid, metadata_only=True)
-    except KeyError:
-        return True
-    session_profile = getattr(session, "profile", None) or None
-    if not _session_visible_to_active_profile(session_profile, handler):
-        if emit_error:
-            if session_profile:
-                _session_profile_mismatch(handler, sid, session_profile)
-            else:
-                # Unknown/legacy None-profile sidecar: keep the 404 so the
-                # frontend's self-heal still fires. _profiles_match coerces
-                # None->'default', so a truly missing/legacy session under a
-                # non-default active profile would otherwise emit a useless
-                # 409 with profile=null.
-                bad(handler, "Session not found", 404)
-        return False
-    return True
+    if emit_error:
+        refusal.answer(handler, sid)
+    return False
 
 
 def _session_profile_mismatch(handler, sid, session_profile):
@@ -801,19 +774,23 @@ def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
 
 
 def _guard_request_session_visibility(handler, parsed, body=None, method="GET") -> bool:
-    """Apply request session-profile visibility check to request-supplied IDs.
+    """Ask session ownership about the session ids a request names.
 
-    Covers top-level `session_id` in the query/body. Routes that accept session
-    IDs under other keys must enforce their own visibility checks.
+    Covers the top-level `session_id` in the query and body, and the id in a
+    `/api/sessions/<id>/events` path. Routes that accept session ids under
+    other keys ask session ownership themselves.
     """
     if not _guard_bound_profile_request(handler, parsed, body):
         return False
-    from api.access import caller_bound_profile
+    from api.session_ownership import request_session_ownership
 
     method = str(method).upper()
-    bound = caller_bound_profile() is not None
-    if _request_session_visibility_exempt(method, getattr(parsed, "path", ""), bound=bound):
+    path = getattr(parsed, "path", "")
+    if _request_session_visibility_exempt(method, path, request_session_ownership()):
         return True
+    path_sid = _session_events_path_session_id(path)
+    if path_sid is not None and not _session_id_visible_to_request_profile(handler, path_sid):
+        return False
     sid = parse_qs(getattr(parsed, "query", "") or "").get("session_id", [None])[0]
     if not _session_id_visible_to_request_profile(handler, sid):
         return False
@@ -19682,8 +19659,7 @@ def _handle_sse_stream(handler, parsed):
 
 
 def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
-    if not _session_id_visible_to_request_profile(handler, session_id):
-        return True
+    # The dispatch guard has asked session ownership about the id in the path.
     try:
         session = get_session(session_id, metadata_only=True)
     except KeyError:
