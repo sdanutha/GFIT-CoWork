@@ -377,15 +377,58 @@ def _setup_agent_worktree(repo_root: str) -> dict:
     return info
 
 
+WORKTREE_OUTSIDE_WORKSPACE_MESSAGE = "A worktree here would be outside your Workspace."
+
+
+def _confine_worktree(path: Path) -> None:
+    """Refuse *path* when a User's worktree would leave their Workspace; not confined for the Admin."""
+    from api.workspace import confine_to_member_workspace
+
+    try:
+        confine_to_member_workspace(path)
+    except ValueError:
+        raise ValueError(WORKTREE_OUTSIDE_WORKSPACE_MESSAGE) from None
+
+
+def _discard_new_worktree(worktree: Path, branch: str, repo_root: Path) -> None:
+    """Remove a worktree and branch the agent has just created; fail-soft.
+
+    Forced: nothing has used the worktree yet. It is unlocked first, as in
+    :func:`remove_worktree_for_session`, because the agent locks every worktree
+    it creates.
+    """
+    for args in (
+        ["worktree", "unlock", str(worktree)],
+        ["worktree", "remove", "--force", str(worktree)],
+        ["worktree", "prune"],
+        ["branch", "-D", branch],
+    ):
+        try:
+            _run_git(args, repo_root, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            logger.warning("Could not discard worktree %s: git %s failed", worktree, args[0:2])
+
+
 def create_worktree_for_workspace(workspace: str | Path) -> dict:
     repo_root = find_git_repo_root(workspace)
+    # The agent places the worktree beside the enclosing repository, so a
+    # User's repository must itself be inside their Workspace (ADR 0002).
+    # Refused before the agent is asked to create anything.
+    _confine_worktree(repo_root)
     info = _setup_agent_worktree(str(repo_root))
     path = info.get("path")
     branch = info.get("branch")
     if not path or not branch:
         raise RuntimeError("Hermes Agent returned incomplete worktree metadata")
+    worktree = Path(path).expanduser().resolve()
+    try:
+        _confine_worktree(worktree)
+    except ValueError:
+        logger.warning("Hermes Agent placed a worktree outside the caller's Workspace: %s", worktree)
+        _discard_new_worktree(worktree, str(branch), repo_root)
+        raise
     return {
-        "path": str(Path(path).expanduser().resolve()),
+        "path": str(worktree),
         "branch": str(branch),
         "repo_root": str(Path(info.get("repo_root") or repo_root).expanduser().resolve()),
         "created_at": time.time(),

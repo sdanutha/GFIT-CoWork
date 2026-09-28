@@ -26890,6 +26890,14 @@ def _handle_workspace_add(handler, body):
                 return bad(handler, f"Path points to a system directory: {candidate}")
         # Now safe to create the directory if requested
         if auto_create:
+            # A User may only register inside their Workspace: refuse before
+            # any folder is created, so a refused request leaves nothing
+            # behind (ADR 0002). Not confined for the Admin.
+            from api.workspace import confine_to_member_workspace
+            try:
+                confine_to_member_workspace(candidate)
+            except ValueError as e:
+                return bad(handler, str(e))
             try:
                 candidate.mkdir(parents=True, exist_ok=True)
             except (OSError, PermissionError) as e:

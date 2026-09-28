@@ -11,6 +11,7 @@ from api.config import MAX_UPLOAD_BYTES, STATE_DIR
 from api.helpers import (
     arm_connection_close_if_body_pending,
     j,
+    resolve_inside,
     unreadable_content_length,
     unsupported_transfer_encoding,
 )
@@ -203,11 +204,24 @@ def _attachment_root() -> Path:
     Plain chat attachments are transient context for the agent, not project
     source files.  Keep them out of the active workspace by default while still
     allowing operators to move the inbox with HERMES_WEBUI_ATTACHMENT_DIR.
+
+    Attachments are outside Workspace confinement on purpose: they belong to a
+    session, and session ownership (``_reject_invisible_session``) decides who
+    may reach them. Resolve paths inside them with the unconfined
+    :func:`_resolve_in_attachments`, never a Workspace check.
     """
     override = os.getenv('HERMES_WEBUI_ATTACHMENT_DIR', '').strip()
     if override:
         return Path(override).expanduser().resolve()
     return (STATE_DIR / 'attachments').resolve()
+
+
+def _resolve_in_attachments(root: Path, requested: str) -> Path:
+    """Resolve *requested* inside attachment folder *root*; refuse ``..`` and symlink escapes."""
+    try:
+        return resolve_inside(root, requested)
+    except ValueError:
+        raise ValueError(f"Path traversal blocked: {requested}") from None
 
 
 def _upload_destination(session_id: str, safe_name: str, dest_dir: Path | None = None) -> Path:
@@ -340,8 +354,13 @@ def handle_upload(handler):
         return j(handler, {'error': 'Upload failed'}, status=500)
 
 
-def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
-    """Extract a zip or tar archive into the workspace.
+def extract_archive(file_bytes: bytes, filename: str, workspace: Path, *, resolve=safe_resolve_ws):
+    """Extract a zip or tar archive into the folder *workspace*.
+
+    The destination folder is found with *resolve*: the Workspace check by
+    default, or :func:`_resolve_in_attachments` for a session's attachment
+    folder, which is not a Workspace (see :func:`_attachment_root`). Every
+    archive entry must stay inside the destination either way.
 
     Returns a dict with ``extracted`` (int), ``files`` (list[str]).
     Raises ValueError on zip-slip or unsupported format.
@@ -360,7 +379,7 @@ def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
         raise ValueError(f'Unsupported archive format: {filename}')
 
     # Determine destination directory — use archive stem as folder name
-    dest_dir = safe_resolve_ws(workspace, stem)
+    dest_dir = resolve(workspace, stem)
     # Avoid overwriting existing files by appending a suffix (bounded — astronomically
     # unlikely to collide, but never spin forever).
     if dest_dir.exists():
@@ -369,7 +388,7 @@ def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
             if not dest_dir.exists():
                 break
             suffix = ''.join(random.choices(string.digits, k=3))
-            dest_dir = safe_resolve_ws(workspace, stem).with_name(stem + '_' + suffix)
+            dest_dir = resolve(workspace, stem).with_name(stem + '_' + suffix)
         else:
             raise ValueError('Could not allocate a unique extraction directory')
     # #3398: create the extraction root race-safely under the true workspace root.
@@ -501,7 +520,7 @@ def handle_upload_extract(handler):
             return True
         session_dir = _session_attachment_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
-        result = extract_archive(file_bytes, filename, session_dir)
+        result = extract_archive(file_bytes, filename, session_dir, resolve=_resolve_in_attachments)
         return j(handler, {'ok': True, **result})
     except ValueError as e:
         return j(handler, {'error': str(e)}, status=400)

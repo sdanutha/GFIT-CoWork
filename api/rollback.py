@@ -71,14 +71,13 @@ def _resolve_workspace(workspace: str) -> str:
     """Validate and return the canonical workspace path.
 
     Security: workspace must match a known configured workspace
-    (from workspaces.json or session-attached workspaces).
+    (from workspaces.json or session-attached workspaces). Membership is
+    checked before existence, so a path outside the caller's Workspaces gets
+    the same refusal whether or not it exists on the server.
     """
     if not workspace or not isinstance(workspace, str):
         raise ValueError("workspace is required")
-    # Basic path validation
     resolved = os.path.realpath(workspace)
-    if not os.path.isdir(resolved):
-        raise ValueError(f"Workspace does not exist: {workspace}")
     # Security: confirm workspace is in the known list
     try:
         from api.workspace import load_workspaces
@@ -91,6 +90,8 @@ def _resolve_workspace(workspace: str) -> str:
             raise ValueError(f"Workspace not in configured list: {workspace}")
     except ImportError:
         logger.warning("Could not load workspace list for rollback validation")
+    if not os.path.isdir(resolved):
+        raise ValueError(f"Workspace does not exist: {workspace}")
     return resolved
 
 
