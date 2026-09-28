@@ -427,7 +427,6 @@ def _profile_default_workspace(profile: str | Path | None = None) -> str:
 
     The request's Workspace policy answers: a User's default is always their
     Workspace folder.
-    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().default_workspace(profile=profile)
 
@@ -498,7 +497,6 @@ def _clean_workspace_list(workspaces: list, profile: str | Path | None = None) -
 
     The request's Workspace policy answers: a User's list is their default
     Workspace, then saved folders inside it.
-    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().saved_list(workspaces, profile=profile)
 
@@ -600,11 +598,6 @@ def _migrate_global_workspaces() -> list:
 
 
 def load_workspaces(profile: str | Path | None = None) -> list:
-    """The saved Workspace list, cleaned by the request's Workspace policy.
-
-    Reads *profile*'s saved list; for a User, the policy's Profile wins when
-    cleaning it.
-    """
     ws_file = _workspaces_file_for_profile(profile)
     if ws_file is not None and ws_file.exists():
         try:
@@ -682,9 +675,6 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
 
     Priority: profile-scoped ``last_workspace.txt`` -> profile ``config.yaml``
     ``workspace``/``default_workspace`` -> ``terminal.cwd`` -> process default.
-
-    Reads *profile*'s last-used Workspace; for a User, the policy's Profile
-    wins when deciding whether it may be used, and for the default.
     """
     policy = _request_policy()
 
@@ -703,11 +693,6 @@ def get_profile_default_workspace(profile: str | Path | None = None) -> str:
 
 
 def get_last_workspace(profile: str | Path | None = None) -> str:
-    """The last-used Workspace, if the request's Workspace policy may use it, else the default.
-
-    Reads *profile*'s last-used Workspace; for a User, the policy's Profile
-    wins when deciding whether it may be used, and for the default.
-    """
     policy = _request_policy()
 
     def valid_last_workspace(raw: str) -> str | None:
@@ -1020,7 +1005,6 @@ def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
 
     The request's Workspace policy answers: a User reaches only their
     Workspace folder.
-    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().file_roots(profile=profile)
 
@@ -1183,7 +1167,6 @@ def resolve_trusted_workspace(path: str | Path | None = None, profile: str | Pat
 
     The request's Workspace policy answers: a User may only use folders inside
     their Workspace, and that rule replaces all of the above.
-    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().resolve_to_use(path, profile=profile)
 
@@ -1369,7 +1352,6 @@ def validate_workspace_to_add(path: str, profile: str | Path | None = None) -> P
 
     The request's Workspace policy answers: a User may only add folders inside
     their Workspace.
-    For a User, the policy's Profile wins over *profile*.
     """
     return _request_policy().resolve_to_register(path, profile=profile)
 
