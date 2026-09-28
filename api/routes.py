@@ -692,6 +692,33 @@ def _stream_id_visible_to_request_profile(
     return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
 
 
+def _session_event_reaches_bound_profile(event, bound: str) -> bool:
+    """May a session-list event go to a request bound to the Profile *bound*?
+
+    An event that names neither a Profile nor a session carries nothing
+    private and is always sent: the sidebar needs the nudge. Otherwise the
+    event must name the bound Profile, and any session it names must be a
+    session of that Profile. A session that cannot be placed is refused.
+    """
+    event = event if isinstance(event, dict) else {}
+    profile = str(event.get("profile") or "").strip()
+    sid = str(event.get("session_id") or "").strip()
+    if not profile and not sid:
+        return True
+    if not profile or not _profiles_match(profile, bound):
+        return False
+    if not sid:
+        return True
+    if not is_safe_session_id(sid):
+        return False
+    try:
+        session = get_session(sid, metadata_only=True)
+    except Exception:
+        return False
+    session_profile = getattr(session, "profile", None)
+    return isinstance(session_profile, str) and _profiles_match(session_profile, bound)
+
+
 def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
     """A request bound to one Profile (a GFIT-CoWork User's) may name only that Profile.
 
@@ -20052,6 +20079,11 @@ def _handle_session_events_stream(handler):
     end_sse_headers(handler)
     _sse_set_write_deadline(handler)  # Defect A: slow tab can't pin this thread
 
+    # The subscriber's own Admission, captured once: events are filtered for
+    # whoever opened the stream, never for whoever published the event.
+    from api.access import caller_bound_profile
+
+    bound = caller_bound_profile()
     q = subscribe_session_events()
     try:
         while True:
@@ -20060,6 +20092,8 @@ def _handle_session_events_stream(handler):
             except queue.Empty:
                 handler.wfile.write(b': keepalive\n\n')
                 handler.wfile.flush()
+                continue
+            if bound and not _session_event_reaches_bound_profile(event_data, bound):
                 continue
             _sse(handler, event_data.get('type', 'sessions_changed'), event_data)
     except _CLIENT_DISCONNECT_ERRORS:

@@ -42,6 +42,7 @@ NOT_WORKSPACE: dict[tuple[str, str, str], str] = {
     ("api/profiles.py", "_isolated_profile_name", BOUND): "Profile binding: the Profile a request is bound to",
     ("api/profiles.py", "_isolated_profile_home", BOUND): "Profile binding: the home of the Profile a request is bound to",
     ("api/routes.py", "_session_profile_mismatch", BOUND): "session ownership: a User must not learn another Profile's name",
+    ("api/routes.py", "_handle_session_events_stream", BOUND): "session ownership: a User's events stream carries only their Profile",
     ("api/routes.py", "_guard_bound_profile_request", BOUND): "Profile binding: a User may not name another Profile",
     ("api/routes.py", "handle_get", ROLE): "the app shell: no extension tags for a User",
 }
