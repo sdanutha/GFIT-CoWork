@@ -296,7 +296,7 @@ def _is_isolated_profile_mode() -> bool:
     not the current os.environ value. init_profile_state() overwrites HERMES_HOME
     at startup, which would disable detection if we read it here.
     """
-    # A request bound to one Profile (a GFIT-CoWork Member's, by the request's
+    # A request bound to one Profile (a GFIT-CoWork User's, by the request's
     # Admission) is an isolated request, whatever the process posture.
     from api.access import caller_bound_profile
 

@@ -54,7 +54,6 @@ KEPT: dict[tuple[str, str], str] = {
 
 # (file, name): GFIT-CoWork names not yet renamed (one-word-per-idea tickets 02-04).
 ALLOWLIST: set[tuple[str, str]] = {
-    ("api/routes.py", "_guard_pinned_profile_request"),      # 03
     ("api/member_login.py", "member_login"),                 # 04: the module itself
 }
 

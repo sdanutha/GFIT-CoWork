@@ -631,8 +631,8 @@ def _session_profile_mismatch(handler, sid, session_profile):
     """Answer a request for a session owned by another, known profile.
 
     409 ``session_profile_mismatch`` names the owning profile so the client can
-    offer to switch to it. A request pinned to one Profile (a GFIT-CoWork
-    Member) can never switch, and must not learn who owns the session, so it
+    offer to switch to it. A request bound to one Profile (a GFIT-CoWork
+    User's) can never switch, and must not learn who owns the session, so it
     gets the plain 404.
     """
     from api.access import caller_bound_profile
@@ -692,24 +692,24 @@ def _stream_id_visible_to_request_profile(
     return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
 
 
-def _guard_pinned_profile_request(handler, parsed, body=None) -> bool:
-    """A request pinned to one Profile (a GFIT-CoWork Member) may name only that Profile.
+def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
+    """A request bound to one Profile (a GFIT-CoWork User's) may name only that Profile.
 
     Refuses with 403 a profile switch, and a ``profile`` in the query string or
     body that names another Profile. The request itself already runs in the
-    pinned Profile; refusing makes a forged request fail loudly instead of
+    bound Profile; refusing makes a forged request fail loudly instead of
     being quietly retargeted.
     """
     from api.access import caller_bound_profile
 
-    pinned = caller_bound_profile()
-    if not pinned:
+    bound = caller_bound_profile()
+    if not bound:
         return True
     named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
     if isinstance(body, dict) and body.get("profile") not in (None, ""):
         named.append(body.get("profile"))
     if getattr(parsed, "path", "") == "/api/profile/switch" or any(
-        not isinstance(value, str) or not _profiles_match(value, pinned) for value in named
+        not isinstance(value, str) or not _profiles_match(value, bound) for value in named
     ):
         bad(handler, "Profile access forbidden", 403)
         return False
@@ -722,7 +722,7 @@ def _guard_request_session_visibility(handler, parsed, body=None, method="GET") 
     Covers top-level `session_id` in the query/body. Routes that accept session
     IDs under other keys must enforce their own visibility checks.
     """
-    if not _guard_pinned_profile_request(handler, parsed, body):
+    if not _guard_bound_profile_request(handler, parsed, body):
         return False
     method = str(method).upper()
     if _request_session_visibility_exempt(method, getattr(parsed, "path", "")):
@@ -14089,9 +14089,9 @@ def handle_get(handler, parsed) -> bool:
 
             role = _directory_session_role(handler)
             if role:
-                # GFIT-CoWork: the stylesheet hides Admin-only menus for Members
+                # GFIT-CoWork: the stylesheet hides Admin-only menus for Users
                 # (cosmetic; the server gate is the source of truth). Extensions
-                # are Admin-only, so a Member's shell does not load them.
+                # are Admin-only, so a User's shell does not load them.
                 html = html.replace("<html ", f'<html data-gfit-role="{role}" ', 1)
             return t(
                 handler,
