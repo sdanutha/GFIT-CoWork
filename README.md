@@ -42,9 +42,12 @@ password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
 stand-in (see its README).
 
 The Directory is the only way in. The upstream login methods (the shared
-`HERMES_WEBUI_PASSWORD` or Settings password, passkeys, OIDC and the trusted
-header) are switched off; configuring one of them keeps the login gate on but
-never lets anyone in, and startup reports it as ignored.
+`HERMES_WEBUI_PASSWORD` or Settings password, passkeys and OIDC) are switched
+off; configuring one of them keeps the login gate on but never lets anyone in,
+and startup reports it as ignored. Trusted-header login is removed: its
+settings are ignored and reported at startup. The trusted proxy settings
+(`HERMES_WEBUI_TRUST_FORWARDED_FOR`, `HERMES_WEBUI_TRUSTED_PROXY_CIDRS`) stay
+for the rate limit.
 
 On a network address (anything but loopback, e.g. `0.0.0.0` in a container) the
 server does not start without a Directory: it exits and names the Directory
@@ -670,10 +673,11 @@ Both compose files use **named Docker volumes** by default, which solves the UID
 
 For the deep dive on each of these, see [`docs/docker.md`](docs/docker.md).
 
-> **Note:** By default, Docker Compose binds to `127.0.0.1` (localhost only).
-> To expose on a network, change the port to `"8787:8787"` in `docker-compose.yml`
-> and configure a Directory (`HERMES_WEBUI_DIRECTORY`); without one the server
-> refuses to start on a network address.
+> **Note:** Inside the container the server binds to `0.0.0.0`, a network
+> address, so it needs a Directory (`HERMES_WEBUI_DIRECTORY`): without one it
+> refuses to start. The published port is `127.0.0.1` (localhost only) by
+> default; to expose it on a network, change it to `"8787:8787"` in
+> `docker-compose.yml`. The Deployment kit in `deploy/` configures the Directory.
 
 ---
 

@@ -38,10 +38,11 @@ so it works well as a daily-driver agent interface from your phone.
 
 1. Install [Tailscale](https://tailscale.com/download) on your server and
    your iPhone/Android.
-2. Keep the WebUI bound to localhost and enable password auth:
+2. Keep the WebUI bound to localhost and turn login on with a Directory
+   (see the README's "Login with an employee ID"):
 
 ```bash
-HERMES_WEBUI_PASSWORD=your-secret ./start.sh
+HERMES_WEBUI_DIRECTORY=ldap ./start.sh   # plus the HERMES_WEBUI_LDAP_* settings
 ```
 
 3. Publish the local WebUI port through Tailscale Serve:
@@ -71,11 +72,11 @@ tailscale serve --bg 8787
 **Fallback: direct tailnet IP**
 
 Use direct tailnet access when Tailscale Serve is unavailable, disabled, or not
-permitted. Because this binds WebUI beyond loopback, always enable password
-auth:
+permitted. This binds WebUI beyond loopback, so a Directory is required: without
+one the server refuses to start.
 
 ```bash
-HERMES_WEBUI_HOST=0.0.0.0 HERMES_WEBUI_PASSWORD=your-secret ./start.sh
+HERMES_WEBUI_HOST=0.0.0.0 HERMES_WEBUI_DIRECTORY=ldap ./start.sh   # plus the HERMES_WEBUI_LDAP_* settings
 ```
 
 Then open `http://<server-tailscale-ip>:8787` in your phone's browser (find
@@ -103,7 +104,7 @@ reload when switching apps, and disabling battery optimization for the terminal
 or VM host may be needed for longer-running sessions.
 
 > **Tip:** If using Docker, set `HERMES_WEBUI_HOST=0.0.0.0` in your
-> `docker-compose.yml` environment (already the default) and set
-> `HERMES_WEBUI_PASSWORD`.
+> `docker-compose.yml` environment (already the default) and configure a
+> Directory (`HERMES_WEBUI_DIRECTORY`); without one the server refuses to start.
 
 ---

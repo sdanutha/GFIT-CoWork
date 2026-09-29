@@ -40,7 +40,7 @@
 .EXAMPLE
     $env:HERMES_WEBUI_HOST = '0.0.0.0'
     .\start.ps1
-    # Bind to all interfaces (set a password first via env or Settings).
+    # Bind to all interfaces (needs a Directory: set HERMES_WEBUI_DIRECTORY first).
 
 .LINK
     https://github.com/nesquena/hermes-webui/issues/1952

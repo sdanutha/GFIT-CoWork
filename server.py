@@ -559,10 +559,10 @@ def main() -> None:
     # Login is the Directory: a network address with no Directory would serve
     # with login off, so refuse before touching any state.
     from api.login import startup_check
-    serve, login_lines = startup_check(HOST)
-    for line in login_lines:
+    login_check = startup_check(HOST)
+    for line in login_check.lines:
         print(line, flush=True)
-    if not serve:
+    if not login_check.serve:
         sys.exit(1)
 
     fd_limit = _raise_fd_soft_limit()

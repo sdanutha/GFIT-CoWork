@@ -1,7 +1,7 @@
 """
-Hermes Web UI -- optional authentication.
-Off by default. Enable by setting HERMES_WEBUI_PASSWORD, configuring a
-password in Settings, registering passkeys, or configuring native OIDC SSO.
+Hermes Web UI -- authentication: the session store, the session cookie, CSRF,
+the signed Profile cookie and the per-request gate.
+Login is the Directory (api.login, ADR 0004); off when no Directory is configured.
 """
 import hashlib
 import hmac

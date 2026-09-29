@@ -136,6 +136,7 @@ _LEFTOVER_ENV = (
     "HERMES_WEBUI_TRUSTED_GROUPS_HEADER",
     "HERMES_WEBUI_GROUP_PROFILE_MAP",
     "HERMES_WEBUI_TRUSTED_AUTH_LOGOUT_URL",
+    "HERMES_WEBUI_TRUSTED_GROUPS_PIPE_SEPARATOR",
 )
 _LEFTOVER_CONFIG_KEYS = ("webui_passkey_enabled", "webui_oidc")
 
@@ -144,10 +145,12 @@ def _is_loopback_host(host: str) -> bool:
     if host.strip().lower() == "localhost":
         return True
     try:
-        return ipaddress.ip_address(host.strip().strip("[]")).is_loopback
+        ip = ipaddress.ip_address(host.strip().strip("[]"))
     except ValueError:
         # Any other hostname may resolve to a network address: treat it as one.
         return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return ip.is_loopback or bool(mapped and mapped.is_loopback)
 
 
 def _leftover_login_settings() -> list[str]:
@@ -168,10 +171,15 @@ def _leftover_login_settings() -> list[str]:
     return found
 
 
-def startup_check(host: str) -> tuple[bool, list[str]]:
+class StartupCheck(NamedTuple):
+    serve: bool
+    lines: list[str]
+
+
+def startup_check(host: str) -> StartupCheck:
     """Decide from the bind address and the Directory whether the server may serve.
 
-    Returns ``(serve, lines)``: the lines are what startup prints. A network
+    ``lines`` is what startup prints. A network
     address with no Directory would serve with login off, so the server must
     not start. The loopback address with no Directory serves with login off,
     for local development and the test suite.
@@ -181,7 +189,7 @@ def startup_check(host: str) -> tuple[bool, list[str]]:
         for setting in _leftover_login_settings()
     ]
     if is_directory_enabled():
-        return True, lines
+        return StartupCheck(True, lines)
     if not _is_loopback_host(host):
         lines += [
             f"[!!] Refusing to start: no Directory is configured, so binding to {host} would serve with login off.",
@@ -189,7 +197,7 @@ def startup_check(host: str) -> tuple[bool, list[str]]:
             f"     To serve on a network address, {_DIRECTORY_HINT}.",
             "     For local development without login, bind to 127.0.0.1.",
         ]
-        return False, lines
+        return StartupCheck(False, lines)
     if auth.is_auth_enabled():
         lines.append(f"[!!] No Directory is configured, so nobody can log in. To turn login on, {_DIRECTORY_HINT}.")
     else:
@@ -198,4 +206,4 @@ def startup_check(host: str) -> tuple[bool, list[str]]:
             "        can use every Profile through the local API.",
             f"        To turn login on, {_DIRECTORY_HINT}.",
         ]
-    return True, lines
+    return StartupCheck(True, lines)

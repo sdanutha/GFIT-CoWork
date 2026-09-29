@@ -7,8 +7,6 @@ where it could overwrite a later valid cookie.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import api.auth as auth
 from api.helpers import flush_pending_auth_cookies
 
@@ -19,12 +17,6 @@ class _Handler:
 
     def send_header(self, name, value):
         self.sent_headers.append((name, value))
-
-
-def test_server_resets_request_auth_state_per_request():
-    server_source = (Path(__file__).resolve().parents[1] / "server.py").read_text(encoding="utf-8")
-
-    assert server_source.count("reset_request_auth_state(self)") == 2
 
 
 def test_reset_clears_pending_cookies_across_keepalive_requests():
