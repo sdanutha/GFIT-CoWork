@@ -199,9 +199,9 @@ class TestBootstrapStructure:
         )
 
 
-class TestLeakedWebuiPasswordIsolation:
-    """#7168 review: a local repo .env containing HERMES_WEBUI_PASSWORD leaks
-    into os.environ when any test imports bootstrap (import-time
+class TestLeakedDirectoryIsolation:
+    """#7168 review: a local repo .env configuring the Directory leaks into
+    os.environ when any test imports bootstrap (import-time
     _load_repo_dotenv() runs OUTSIDE monkeypatch's undo scope). The conftest
     autouse guard strips the leaked var around every test so later tests
     don't see is_auth_enabled()==True (the #5588 failure shape)."""
@@ -213,30 +213,30 @@ class TestLeakedWebuiPasswordIsolation:
         spec = importlib.util.spec_from_file_location("_test_conftest", cpath)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return mod._strip_leaked_webui_password_env
+        return mod._strip_leaked_login_env
 
-    def test_conftest_guard_strips_leaked_password(self):
+    def test_conftest_guard_strips_leaked_directory(self):
         strip = self._load_guard()
 
-        os.environ["HERMES_WEBUI_PASSWORD"] = "leaked-from-repo-dotenv"
+        os.environ["HERMES_WEBUI_DIRECTORY"] = "ldap"
         try:
             strip()
-            assert "HERMES_WEBUI_PASSWORD" not in os.environ
+            assert "HERMES_WEBUI_DIRECTORY" not in os.environ
         finally:
-            os.environ.pop("HERMES_WEBUI_PASSWORD", None)
+            os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
 
     def test_conftest_guard_preserves_intentional_empty_override(self):
         """ctl.sh-style override semantics: an explicitly empty value means
-        'keep auth off' and must survive the strip."""
+        'keep login off' and must survive the strip."""
         strip = self._load_guard()
 
         sentinel = object()
-        os.environ["HERMES_WEBUI_PASSWORD"] = ""
+        os.environ["HERMES_WEBUI_DIRECTORY"] = ""
         try:
             strip()
-            assert os.environ.get("HERMES_WEBUI_PASSWORD", sentinel) == ""
+            assert os.environ.get("HERMES_WEBUI_DIRECTORY", sentinel) == ""
         finally:
-            os.environ.pop("HERMES_WEBUI_PASSWORD", None)
+            os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
 
 
 class TestLeakedHermesCommandIsolation:
@@ -255,7 +255,7 @@ class TestLeakedHermesCommandIsolation:
         spec = importlib.util.spec_from_file_location("_test_conftest_hc", cpath)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return mod._strip_leaked_webui_password_env
+        return mod._strip_leaked_login_env
 
     def test_conftest_guard_strips_leaked_hermes_command(self):
         strip = self._load_guard()
@@ -267,17 +267,17 @@ class TestLeakedHermesCommandIsolation:
         finally:
             os.environ.pop("HERMES_COMMAND", None)
 
-    def test_conftest_guard_still_strips_password_when_command_leaks(self):
-        """Both leaked vars are stripped in one pass (password branch must
+    def test_conftest_guard_still_strips_directory_when_command_leaks(self):
+        """Both leaked vars are stripped in one pass (the Directory branch must
         not be short-circuited by the HERMES_COMMAND handling)."""
         strip = self._load_guard()
 
-        os.environ["HERMES_WEBUI_PASSWORD"] = "leaked-from-repo-dotenv"
+        os.environ["HERMES_WEBUI_DIRECTORY"] = "ldap"
         os.environ["HERMES_COMMAND"] = "/machine/local/hermes-gateway-wrapper"
         try:
             strip()
-            assert "HERMES_WEBUI_PASSWORD" not in os.environ
+            assert "HERMES_WEBUI_DIRECTORY" not in os.environ
             assert "HERMES_COMMAND" not in os.environ
         finally:
-            os.environ.pop("HERMES_WEBUI_PASSWORD", None)
+            os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
             os.environ.pop("HERMES_COMMAND", None)

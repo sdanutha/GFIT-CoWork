@@ -6351,8 +6351,7 @@ def _onboarding_request_is_local(handler) -> bool:
     * When the peer is NOT a trusted proxy, forwarded headers are ignored and the
       request is classified by the raw socket peer directly. A direct loopback or
       private/LAN client (no proxy) is therefore still correctly local — so
-      onboarding, first-password setup, and passwordless embedded-terminal
-      access keep working on the common direct-LAN deployment.
+      onboarding and embedded-terminal access with login off keep working on the common direct-LAN deployment.
     * HERMES_WEBUI_TRUST_FORWARDED_FOR=1 is the opt-in that makes us CONSULT the
       forwarded chain at all; without it the raw peer is authoritative. Either
       way the classification fails closed on malformed/empty chains.
@@ -6392,8 +6391,8 @@ def _onboarding_request_is_local(handler) -> bool:
     # (public) client we can't see. Deny in that case; require the operator to
     # opt in via HERMES_WEBUI_TRUST_FORWARDED_FOR (+ HERMES_WEBUI_TRUSTED_PROXY_CIDRS
     # for a non-loopback proxy). With NO forwarded header, a direct private/LAN
-    # client (the common direct-LAN deployment) stays local so onboarding,
-    # first-password setup, and passwordless terminal keep working.
+    # client (the common direct-LAN deployment) stays local so onboarding and
+    # the terminal keep working with login off.
     forwarded_present = bool(
         (handler.headers.get("X-Forwarded-For", "") or "").strip()
         or (handler.headers.get("X-Real-IP", "") or "").strip()
@@ -13979,13 +13978,7 @@ def handle_get(handler, parsed) -> bool:
         return t(handler, _page, content_type="text/html; charset=utf-8")
 
     if parsed.path == "/api/auth/status":
-        from api.auth import (
-            ensure_request_session,
-            is_auth_enabled,
-            is_directory_auth_enabled,
-            is_password_auth_enabled,
-            DIRECTORY_AUTH_TYPE,
-        )
+        from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session, is_auth_enabled
         logged_in = False
         session_info = None
         auth_enabled = is_auth_enabled()
@@ -13995,10 +13988,9 @@ def handle_get(handler, parsed) -> bool:
         payload = {
             "auth_enabled": auth_enabled,
             "logged_in": logged_in,
-            "password_auth_enabled": is_password_auth_enabled(),
             "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
         }
-        if is_directory_auth_enabled():
+        if auth_enabled:
             payload["directory_auth_enabled"] = True
         if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
             from api.login import session_identity
@@ -14277,7 +14269,8 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/settings":
         settings = load_settings()
         settings["persisted_speech_keys"] = persisted_speech_settings_keys()
-        # Never expose the stored password hash to clients
+        # A password hash stored by the Upstream password login is left on disk
+        # and ignored; never send it to a client.
         settings.pop("password_hash", None)
         settings.setdefault("max_tokens", None)
         settings.setdefault("max_tokens_effective", None)
@@ -14289,17 +14282,9 @@ def handle_get(handler, parsed) -> bool:
             settings["max_tokens"] = None
             settings["max_tokens_effective"] = None
             settings["max_tokens_fallback"] = None
-        # Surface env-var precedence so the UI can disable the password field
-        # instead of silently no-oping the save (#1560). The setting takes
-        # precedence in api.auth.get_password_hash(), but until now the UI
-        # had no way to know — see issue #1139 / #1560.
-        settings["password_env_var"] = bool(
-            os.getenv("HERMES_WEBUI_PASSWORD", "").strip()
-        )
-        # Auth-state fields for frontend safety badge / confirmation flows
-        from api.auth import is_auth_enabled, is_password_auth_enabled
+        # Auth-state field for the frontend's unauthenticated warning
+        from api.auth import is_auth_enabled
         settings["auth_enabled"] = is_auth_enabled()
-        settings["password_auth_enabled"] = is_password_auth_enabled()
         # Inject the running version so the UI badge stays in sync with git tags
         # without any manual release step.
         try:
@@ -17218,85 +17203,20 @@ def handle_post(handler, parsed) -> bool:
 
     # ── Settings (POST) ──
     if parsed.path == "/api/settings":
-        from api.auth import (
-            create_session,
-            get_password_hash,
-            is_auth_enabled,
-            is_password_auth_enabled,
-            parse_cookie,
-            set_auth_cookie,
-            verify_password,
-            verify_session,
-        )
+        from api.auth import is_auth_enabled
 
         if "bot_name" in body:
             body["bot_name"] = (str(body["bot_name"]) or "").strip() or "Hermes"
-
-        auth_enabled_before = is_auth_enabled()
-        password_auth_enabled_before = auth_enabled_before and get_password_hash() is not None
-        current_cookie = parse_cookie(handler)
-        logged_in_before = bool(current_cookie and verify_session(current_cookie))
-        requested_password = bool(
-            isinstance(body.get("_set_password"), str)
-            and body.get("_set_password", "").strip()
-        )
-        requested_clear_password = bool(body.get("_clear_password"))
-
-        current_password = body.pop("_current_password", None)
-
-        # #1560: HERMES_WEBUI_PASSWORD env var takes precedence in
-        # api.auth.get_password_hash(), so writing password_hash to settings.json
-        # has no effect on auth. Refuse loudly with 409 instead of silently
-        # succeeding — the previous behaviour returned 200 + a green save toast
-        # while every subsequent login still required the env-var password.
-        if requested_password or requested_clear_password:
-            if os.getenv("HERMES_WEBUI_PASSWORD", "").strip():
-                return bad(
-                    handler,
-                    "HERMES_WEBUI_PASSWORD env var is set — it overrides the settings password. "
-                    "Unset the env var and restart the server before changing the password here.",
-                    409,
-                )
 
         max_tokens_provided = "max_tokens" in body
         max_tokens_status = None
         max_tokens_value = body.pop("max_tokens", None) if max_tokens_provided else None
 
-        # First password creation decides who owns a previously passwordless
-        # WebUI. While auth is disabled, the generic /api/settings route is also
-        # unauthenticated, so gate bootstrap password setup the same way as
-        # onboarding setup: local/private networks only, unless the operator
-        # explicitly opts into remote bootstrap with HERMES_WEBUI_ONBOARDING_OPEN.
-        if requested_password and not auth_enabled_before:
-            if not _onboarding_gate_allows(handler, auth_enabled_before):
-                return bad(
-                    handler,
-                    "First password setup is only available from local networks when auth is not enabled. "
-                    "To bootstrap this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.",
-                    403,
-                )
-
-        # Auth-disable safety: when password auth is currently enabled, require
-        # the current password to change or clear it.
-        if auth_enabled_before and password_auth_enabled_before and (requested_password or requested_clear_password):
-            if not isinstance(current_password, str) or not current_password:
-                return bad(
-                    handler,
-                    "Current password is required to change or disable authentication.",
-                    403,
-                )
-            if not verify_password(current_password):
-                return bad(
-                    handler,
-                    "Current password is incorrect.",
-                    403,
-                )
-
         # Handle auth_disabled_acknowledged setting
         ack = body.pop("_auth_disabled_acknowledged", None)
         if ack is not None and not is_auth_enabled():
             body["auth_disabled_acknowledged"] = bool(ack)
-        elif is_auth_enabled() or requested_password:
+        elif is_auth_enabled():
             body["auth_disabled_acknowledged"] = False
 
         from api.config import get_max_tokens_status, set_max_tokens
@@ -17305,7 +17225,9 @@ def handle_post(handler, parsed) -> bool:
         saved["persisted_speech_keys"] = persisted_speech_settings_keys()
         if max_tokens_provided:
             max_tokens_status = set_max_tokens(max_tokens_value)
-        saved.pop("password_hash", None)  # never expose hash to client
+        # A password hash stored by the Upstream password login is left on disk
+        # and ignored; never send it to a client.
+        saved.pop("password_hash", None)
         saved.update(max_tokens_status if max_tokens_provided else get_max_tokens_status())
 
         # Settings that change which sessions appear in the sidebar must
@@ -17338,35 +17260,8 @@ def handle_post(handler, parsed) -> bool:
             except Exception:
                 pass
 
-        auth_enabled_after = is_auth_enabled()
-        auth_just_enabled = bool(
-            requested_password and auth_enabled_after and not auth_enabled_before
-        )
-        logged_in_after = logged_in_before
-        new_cookie = None
-
-        if auth_just_enabled and not logged_in_before:
-            new_cookie = create_session()
-            logged_in_after = True
-
-        saved["auth_enabled"] = auth_enabled_after
-        saved["password_auth_enabled"] = is_password_auth_enabled()
-        saved["logged_in"] = logged_in_after
-        saved["auth_just_enabled"] = auth_just_enabled
-
-        if not new_cookie:
-            return j(handler, saved)
-
-        response_body = json.dumps(saved, ensure_ascii=False, indent=2).encode("utf-8")
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json; charset=utf-8")
-        handler.send_header("Content-Length", str(len(response_body)))
-        handler.send_header("Cache-Control", "no-store")
-        set_auth_cookie(handler, new_cookie)
-        _security_headers(handler)
-        handler.end_headers()
-        handler.wfile.write(response_body)
-        return True
+        saved["auth_enabled"] = is_auth_enabled()
+        return j(handler, saved)
 
     if parsed.path == "/api/onboarding/oauth/start":
         if not _onboarding_gate_allows(handler):
@@ -17841,8 +17736,7 @@ def handle_post(handler, parsed) -> bool:
 
         if not is_auth_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
-        # GFIT-CoWork: the Directory is the only way in (ADR 0004). With a
-        # legacy method configured but no Directory, every login is refused.
+        # GFIT-CoWork: the Directory is the only way in (ADR 0004).
         return _handle_directory_login(handler, body, _login_client_ip(handler))
 
     if parsed.path == "/api/auth/logout":

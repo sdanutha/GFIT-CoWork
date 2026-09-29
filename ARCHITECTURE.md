@@ -52,12 +52,13 @@ actions. The topbar remains focused on conversation context and the workspace/fi
     ctl.sh                 Daemon lifecycle wrapper (start/stop/restart/status/logs) for homelab installs.
     pyproject.toml         Standard build metadata plus the Ruff lint gate; source-checkout launch surface still centers on bootstrap.py / start.sh / ctl.sh.
     Dockerfile             python:3.12-slim container image
-    docker-compose.yml     Compose config with named volume and optional auth
+    docker-compose.yml     Compose config with named volume
     .dockerignore          Excludes .git, tests/, .env* from Docker builds
     api/
       __init__.py          Package marker
       agent_compat.py      Resolver for Hermes Agent names moved to sibling modules (compatibility-only)
-      auth.py              Optional password authentication, signed cookies
+      auth.py              Session store and cookie, CSRF, signed Profile cookie, per-request gate
+      login.py             Directory login, rate limit, startup login check
       config.py            Discovery, globals, model detection, reloadable config
       helpers.py           HTTP helpers: j(), bad(), require(), resolve_inside(), security headers
       goals.py             Persistent-goal commands and profile-scoped native GoalManager bridge
@@ -136,7 +137,7 @@ Environment variables controlling behavior:
     HERMES_WEBUI_STATE_DIR         Where sessions/ folder lives
     HERMES_CONFIG_PATH             Path to ~/.hermes/config.yaml
     HERMES_WEBUI_DEFAULT_MODEL     Optional model override; unset means provider default
-    HERMES_WEBUI_PASSWORD          Optional: enable password auth (off by default)
+    HERMES_WEBUI_DIRECTORY         Login: the Directory (ldap or memory); unset = login off (loopback only)
     HERMES_WEBUI_SKIP_ONBOARDING   Optional: bypass the first-run onboarding wizard
     HERMES_PREFILL_MESSAGES_FILE   Optional JSON message list for browser-turn prefill context
     HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT Optional command that prints JSON messages or plain-text user prefill context
@@ -974,15 +975,11 @@ Replacing with marked.js + DOMPurify is a future improvement (not blocking).
 2. Enhanced /health: COMPLETE (Sprint 7). Returns `active_streams`, `uptime_seconds`.
 3. GET /api/debug/stats: NOT YET IMPLEMENTED. Low priority.
 
-### Phase H: Authentication (Priority: Low, Effort: Medium)
+### Phase H: Authentication -- REPLACED
 
-Optional password gate for non-SSH-tunnel deployments.
-
-1. HERMES_WEBUI_PASSWORD env var enables auth
-2. Login page: minimal dark form, POST /api/auth/login
-3. Server sets HttpOnly + SameSite=Strict cookie on successful login
-4. All API endpoints check cookie if HERMES_WEBUI_PASSWORD is set
-5. Cookie validity: 30 days from last activity
+Login is the company Directory (ADR 0004); see "GFIT-CoWork access control"
+below. The Upstream shared password, passkeys, OIDC and trusted-header login
+are removed.
 
 ### Phase I: Test Infrastructure -- COMPLETE
 
@@ -1852,7 +1849,10 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
 
 - `api/directory.py` — the Directory seam (username + password → Identity); `api/ldap_directory.py`
   is the company-AD implementation (LDAPS or StartTLS only).
-- `api/login.py` — the login flow (rate limit → Directory → Admission → session).
+- `api/login.py` — the login flow (rate limit → Directory → Admission → session) and the
+  startup check: login is on exactly when a Directory is configured, and with none the
+  server serves only on the loopback address. Leftover Upstream login settings are ignored
+  and reported.
 - `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission
   (`access.admit_request`) and ends the session when it no longer gives the session's role
   and Profile; otherwise it runs the request in the Admission's Profile.

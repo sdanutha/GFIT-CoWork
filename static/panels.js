@@ -9084,14 +9084,11 @@ async function _autosavePreferencesSettings(payload){
     _settingsPreferencesAutosaveRetryPayload=null;
     _setPreferencesAutosaveStatus('saved');
     // Only clear the global dirty flag and hide the unsaved-changes bar when
-    // there is no pending edit on a manually-saved field. Password and model
-    // are still committed via the explicit "Save Settings" button (password
-    // for security; model goes through /api/default-model). Without this
-    // guard, autosaving a checkbox right after a user typed in the password
-    // field would silently dismiss the password edit. (Opus pre-release
+    // there is no pending edit on a manually-saved field. The model is still
+    // committed via the explicit "Save Settings" button (it goes through
+    // /api/default-model). Without this guard, autosaving a checkbox right
+    // after a model pick would silently dismiss that edit. (Opus pre-release
     // review of v0.50.250, SHOULD-FIX Q1.)
-    const pwField=$('settingsPassword');
-    const pwDirty=!!(pwField&&pwField.value);
     const modelSel=$('settingsModel');
     const modelState=(typeof _captureModelDropdownSelection==='function'&&modelSel)
       ? (_captureModelDropdownSelection(modelSel)||{model:String((modelSel&&modelSel.value)||''),model_provider:null})
@@ -9102,7 +9099,7 @@ async function _autosavePreferencesSettings(payload){
         ((modelState.model_provider||null)!==(_settingsHermesDefaultModelProviderOnOpen||null))
       )
     );
-    if(!pwDirty&&!modelDirty){
+    if(!modelDirty){
       const maxTokensField=$('settingsMaxTokens');
       const maxTokensDirty=!!(
         maxTokensField&&
@@ -9878,42 +9875,13 @@ async function loadSettingsPanel(){
         botNameTimer=setTimeout(_schedulePreferencesAutosave,500);
       },{once:false});
     }
-    // Password field: always blank (we don't send hash back)
-    const pwField=$('settingsPassword');
-    if(pwField){pwField.value='';pwField.addEventListener('input',_markSettingsDirty,{once:false});}
-    // #1560: when HERMES_WEBUI_PASSWORD env var is set, the settings password
-    // field silently no-ops. Disable it + reveal the lock banner so the UI
-    // tells the truth before a user tries (and the backend now also returns
-    // 409 as defense-in-depth).
-    const pwEnvLocked=!!settings.password_env_var;
-    _settingsPasswordEnvLocked=pwEnvLocked;
-    const pwLockBanner=$('settingsPasswordEnvLock');
-    if(pwField){
-      pwField.disabled=pwEnvLocked;
-      if(pwEnvLocked){
-        pwField.value='';
-        pwField.placeholder=t('password_env_var_locked_placeholder')||pwField.placeholder;
-      }
-    }
-    if(pwLockBanner) pwLockBanner.style.display=pwEnvLocked?'block':'none';
     // Show auth buttons only when auth is active
     try{
       const authStatus=await api('/api/auth/status');
-      _settingsPasswordAuthEnabled=!!authStatus.password_auth_enabled;
       _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
-      _renderSettingsAuthStatus(authStatus);
-      _updateCurrentPasswordVisibility();
       _updateAuthWarningBadge(authStatus);
       _updateAuthDisabledWarning(authStatus);
     }catch(e){}
-    // #1560: env-var-locked password also disables the Disable Auth button —
-    // clearing settings.password_hash is silent no-op when the env var is set,
-    // and the backend now returns 409 anyway, so don't offer the action.
-    // Sign Out remains available since it only clears the session cookie.
-    if(pwEnvLocked){
-      const disableBtn=$('btnDisableAuth');
-      if(disableBtn) disableBtn.style.display='none';
-    }
     _syncHermesPanelSessionActions();
     if(typeof loadDashboardSettings==='function') loadDashboardSettings();
     loadProvidersPanel(); // load provider cards in background
@@ -12074,34 +12042,9 @@ async function _refreshProviderModels(providerId, btn){
   }
 }
 
-let _settingsPasswordEnvLocked=false;
-let _settingsPasswordAuthEnabled=false;
 function _setSettingsAuthButtonsVisible(active){
   const signOutBtn=$('btnSignOut');
   if(signOutBtn) signOutBtn.style.display=active?'':'none';
-  const disableBtn=$('btnDisableAuth');
-  if(disableBtn) disableBtn.style.display=active?'':'none';
-}
-
-function _renderSettingsAuthStatus(authStatus){
-  const el=$('settingsAuthStatus');
-  if(!el) return;
-  // Login through the Directory carries no password badge.
-  if(!authStatus || (authStatus.auth_enabled && !authStatus.password_auth_enabled)) { el.style.display='none'; return; }
-  el.style.display='block';
-  let label='',cls='detail-badge ok';
-  if(authStatus.auth_enabled){
-    label=t('auth_status_password'); cls='detail-badge ok';
-  }else{
-    label=t('auth_status_unauthenticated'); cls='detail-badge err';
-  }
-  el.innerHTML='<span class="'+cls+'" style="font-size:11px">'+label+'</span>';
-}
-
-function _updateCurrentPasswordVisibility(){
-  const block=$('settingsCurrentPasswordBlock');
-  if(!block) return;
-  block.style.display=_settingsPasswordAuthEnabled?'block':'none';
 }
 
 function _updateAuthWarningBadge(authStatus){
@@ -12842,7 +12785,6 @@ async function saveSettings(andClose){
   const showKanbanSessions=!!($('settingsShowKanbanSessions')||{}).checked;
   const showPreviousMessagingSessions=!!($('settingsShowPreviousMessagingSessions')||{}).checked;
   const pinnedSessionsLimit=parseInt(($('settingsPinnedSessionsLimit')||{}).value,10)||3;
-  const pw=($('settingsPassword')||{}).value;
   const theme=($('settingsTheme')||{}).value||'dark';
   const skin=($('settingsSkin')||{}).value||'default';
   const fontSize=($('settingsFontSize')||{}).value||localStorage.getItem('hermes-font-size')||'default';
@@ -12912,53 +12854,6 @@ async function saveSettings(andClose){
   body.auto_title_refresh_every=(($('settingsAutoTitleRefresh')||{}).value||'0');
   const botName=(($('settingsBotName')||{}).value||'').trim();
   body.bot_name=botName||'Hermes';
-  // Password: only act if the field has content; blank = leave auth unchanged
-  if(pw && pw.trim()){
-    const currentPwField=$('settingsCurrentPassword');
-    const currentPw=(currentPwField||{}).value||'';
-    if(_settingsPasswordAuthEnabled && !currentPw.trim()){
-      if(currentPwField) currentPwField.focus();
-      showToast(t('current_password_required'));
-      return;
-    }
-    const payload={...body,_set_password:pw.trim()};
-    if(_settingsPasswordAuthEnabled) payload._current_password=currentPw;
-    try{
-      const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-      if(modelChanged && model){
-        try{
-        await api('/api/default-model',{method:'POST',body:JSON.stringify({model,provider:modelState.model_provider||null})});
-        body.default_model=model;
-        body.default_model_provider=(modelState&&modelState.model===model)?(modelState.model_provider||null):null;
-        }catch(_modelErr){
-          // A 400 here (e.g. an ambiguous custom-provider slug collision: rename
-          // one provider) is user-fixable, not a partial success. Surface the
-          // message, abort before "settings saved", and retain dirty state so the
-          // user can fix and retry instead of the error being swallowed.
-          const _msg=(_modelErr&&_modelErr.message)?_modelErr.message:'';
-          if(typeof showToast==='function') showToast('Failed to update default model'+(_msg?(': '+_msg):''),6000,'error');
-          return;
-        }
-      }
-      _applySavedSettingsUi(saved, body, {sendKey,showTokenUsage,showQuotaChip,showConversationOutline,showBusyPlaceholderHint,showTps,fadeTextEffect,showCliSessions,theme,skin,language,sidebarDensity,fontSize});
-      showToast(t(saved.auth_just_enabled?'settings_saved_pw':'settings_saved_pw_updated'));
-      const cpField=$('settingsCurrentPassword'); if(cpField) cpField.value='';
-      const pwField=$('settingsPassword'); if(pwField) pwField.value='';
-      _settingsPasswordAuthEnabled=!!saved.password_auth_enabled;
-      _updateCurrentPasswordVisibility();
-      try{
-        const authStatus=await api('/api/auth/status');
-        _renderSettingsAuthStatus(authStatus);
-        _updateAuthWarningBadge(authStatus);
-        _updateAuthDisabledWarning(authStatus);
-      }catch(e){}
-      _settingsDirty=false;
-      _resetSettingsPanelState();
-      if(!andClose) _pendingSettingsTargetPanel = null;
-      if(andClose) _hideSettingsPanel();
-      return;
-    }catch(e){showToast(t('settings_save_failed')+e.message);return;}
-  }
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(body)});
     if(modelChanged && model){
@@ -12993,40 +12888,6 @@ async function signOut(){
     window.location.href='login';
   }catch(e){
     showToast(t('sign_out_failed')+e.message);
-  }
-}
-
-async function disableAuth(){
-  const currentPwField=$('settingsCurrentPassword');
-  const currentPw=(currentPwField||{}).value||'';
-  if(_settingsPasswordAuthEnabled && !currentPw.trim()){
-    if(currentPwField) currentPwField.focus();
-    showToast(t('current_password_required'));
-    return;
-  }
-  const confirmText='DISABLE AUTH';
-  const userInput=await showPromptDialog({title:t('disable_auth_confirm_title'),message:t('disable_auth_confirm_message')+' '+t('disable_auth_typed_confirm'),placeholder:confirmText,confirmLabel:t('disable_auth'),danger:true});
-  if(!userInput || userInput.trim()!==confirmText) return;
-  const payload={_clear_password:true};
-  if(_settingsPasswordAuthEnabled) payload._current_password=currentPw;
-  try{
-    const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-    showToast(t('auth_disabled'));
-    const disableBtn=$('btnDisableAuth');
-    if(disableBtn) disableBtn.style.display='none';
-    const signOutBtn=$('btnSignOut');
-    if(signOutBtn) signOutBtn.style.display='none';
-    _settingsPasswordAuthEnabled=false;
-    _updateCurrentPasswordVisibility();
-    const cpField=$('settingsCurrentPassword'); if(cpField) cpField.value='';
-    try{
-      const authStatus=await api('/api/auth/status');
-      _renderSettingsAuthStatus(authStatus);
-      _updateAuthWarningBadge(authStatus);
-      _updateAuthDisabledWarning(authStatus);
-    }catch(e){}
-  }catch(e){
-    showToast(t('disable_auth_failed')+e.message);
   }
 }
 

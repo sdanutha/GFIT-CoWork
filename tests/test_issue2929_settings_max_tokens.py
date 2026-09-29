@@ -263,9 +263,6 @@ def test_post_settings_bridges_max_tokens_without_polluting_settings_payload(mon
     captured = {}
 
     monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(auth, "get_password_hash", lambda: None)
-    monkeypatch.setattr(auth, "parse_cookie", lambda handler: "")
-    monkeypatch.setattr(auth, "verify_session", lambda cookie: False)
     def _fake_save_settings(body):
         captured["body"] = dict(body)
         return {"send_key": body.get("send_key")}
@@ -297,9 +294,6 @@ def test_post_settings_keeps_current_max_tokens_on_unrelated_save(monkeypatch):
     from api.routes import handle_post
 
     monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(auth, "get_password_hash", lambda: None)
-    monkeypatch.setattr(auth, "parse_cookie", lambda handler: "")
-    monkeypatch.setattr(auth, "verify_session", lambda cookie: False)
     monkeypatch.setattr("api.routes.save_settings", lambda body: {"language": body.get("language")})
     monkeypatch.setattr(
         "api.config.get_max_tokens_status",
@@ -325,44 +319,6 @@ def test_post_settings_keeps_current_max_tokens_on_unrelated_save(monkeypatch):
     assert payload["max_tokens_fallback"] is None
 
 
-def test_post_settings_does_not_write_max_tokens_before_auth_failures(monkeypatch):
-    import api.auth as auth
-    from api.routes import handle_post
-
-    saw_set_max_tokens = {"called": False}
-
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
-    monkeypatch.setattr(auth, "get_password_hash", lambda: "hash")
-    monkeypatch.setattr(auth, "parse_cookie", lambda handler: "")
-    monkeypatch.setattr(auth, "verify_session", lambda cookie: False)
-    monkeypatch.setattr(auth, "verify_password", lambda current_password: False)
-    monkeypatch.setattr(
-        "api.config.set_max_tokens",
-        lambda value: saw_set_max_tokens.__setitem__("called", True),
-    )
-    monkeypatch.setattr(
-        "api.routes.save_settings",
-        lambda body: (_ for _ in ()).throw(AssertionError("save_settings should not run")),
-    )
-
-    handler = _FakeHandler(
-        json.dumps(
-            {
-                "send_key": "enter",
-                "max_tokens": 123,
-                "_clear_password": True,
-                "_current_password": "wrong",
-            }
-        ).encode("utf-8")
-    )
-    handle_post(handler, urlparse("http://example.com/api/settings"))
-    payload = handler.json_body()
-
-    assert handler.status == 403
-    assert payload["error"] == "Current password is incorrect."
-    assert saw_set_max_tokens["called"] is False
-
-
 def test_post_settings_does_not_write_max_tokens_when_save_settings_fails(monkeypatch):
     import api.auth as auth
     from api.routes import handle_post
@@ -370,9 +326,6 @@ def test_post_settings_does_not_write_max_tokens_when_save_settings_fails(monkey
     saw_set_max_tokens = {"called": False}
 
     monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(auth, "get_password_hash", lambda: None)
-    monkeypatch.setattr(auth, "parse_cookie", lambda handler: "")
-    monkeypatch.setattr(auth, "verify_session", lambda cookie: False)
     monkeypatch.setattr(
         "api.routes.save_settings",
         lambda body: (_ for _ in ()).throw(RuntimeError("save_settings failed")),
@@ -415,7 +368,7 @@ def test_settings_panel_wires_max_tokens_for_dirty_state_and_manual_save():
     assert "const maxTokensField=$('settingsMaxTokens');" in autosave_block
     assert "String(maxTokensField.value||'')!==String(maxTokensField.dataset.initialValue||'')" in autosave_block.replace(" ", "")
     compact_autosave = autosave_block.replace(" ", "")
-    assert "if(!pwDirty&&!modelDirty)" in compact_autosave
+    assert "if(!modelDirty)" in compact_autosave
     assert "if(!maxTokensDirty)" in compact_autosave
 
     prefs_block = _function_block(panels_js, "_preferencesPayloadFromUi")

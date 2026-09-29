@@ -536,7 +536,7 @@ browser session.
 
 For shared or remotely exposed installations:
 
-- keep `HERMES_WEBUI_PASSWORD` enabled
+- keep login on (configure the Directory)
 - bind to loopback unless you intentionally expose the service
 - review extension code before enabling it
 - prefer small, auditable extension files

@@ -41,11 +41,12 @@ be reached, login says the directory is unavailable rather than that the
 password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
 stand-in (see its README).
 
-The Directory is the only way in. The upstream shared password
-(`HERMES_WEBUI_PASSWORD` or the Settings password) is switched off;
-configuring it keeps the login gate on but never lets anyone in, and startup
-reports it as ignored. Trusted-header, OIDC and passkey login are removed:
-their settings are ignored and reported at startup. The trusted proxy settings
+The Directory is the only way in, and whether login is on depends on it alone.
+The upstream login methods (the shared `HERMES_WEBUI_PASSWORD` or Settings
+password, passkeys, OIDC and the trusted header) are removed: a leftover
+setting of theirs neither turns login on nor lets anyone in, and startup
+reports it as ignored. A stored upstream password hash or passkey file is left
+on disk and ignored. The trusted proxy settings
 (`HERMES_WEBUI_TRUST_FORWARDED_FOR`, `HERMES_WEBUI_TRUSTED_PROXY_CIDRS`) stay
 for the rate limit.
 
@@ -368,9 +369,8 @@ If an AI assistant is helping with install, reinstall, bootstrap, provider setup
 - Per-session profile tracking (records which profile was active at creation)
 
 ### Authentication and security
-- Optional password auth -- off by default, zero friction for localhost
-- Enable via `HERMES_WEBUI_PASSWORD` env var or Settings panel
-- Installed PWAs work best with WebUI's own password. Reverse proxies are supported, but proxy basic auth can block the service-worker update fetches an installed app needs and leave it on a blank screen after an update; see `docs/troubleshooting.md` for recovery steps.
+- Login through the company Directory (see "Login" above) -- off on the loopback address with no Directory, for local development
+- Installed PWAs work best with WebUI's own login. Reverse proxies are supported, but proxy basic auth can block the service-worker update fetches an installed app needs and leave it on a blank screen after an update; see `docs/troubleshooting.md` for recovery steps.
 - Signed HMAC HTTP-only cookie with 24h TTL
 - Minimal dark-themed login page at `/login`
 - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
@@ -470,7 +470,6 @@ Full list of environment variables:
 | `HERMES_WEBUI_SETTINGS_FILE` | `<state dir>/settings.json` | Optional path for this instance's WebUI settings file (sessions, workspaces and projects stay in the state directory). Read once at startup, so restart after changing it |
 | `HERMES_WEBUI_DEFAULT_WORKSPACE` | `~/workspace` | Default workspace |
 | `HERMES_WEBUI_DEFAULT_MODEL` | *(provider default)* | Optional model override; leave unset to use the active Hermes provider default |
-| `HERMES_WEBUI_PASSWORD` | *(unset)* | Set to enable password authentication |
 | `HERMES_WEBUI_CSP_CONNECT_EXTRA` | *(unset)* | Optional space-separated `http(s)://` or `ws(s)://` origins to append to the enforced and report-only CSP `connect-src` directives for trusted reverse-proxy, tunnel, or extension sidecar deployments |
 | `HERMES_WEBUI_SSE_CHUNKED` | *(unset)* | Set truthy (`1`/`true`/`yes`/`on`) to send SSE with `Transfer-Encoding: chunked`. Needed behind buffering reverse proxies (e.g. `jupyter-server-proxy`) that otherwise buffer the whole stream; harmless but unnecessary for directly-served deployments |
 | `HERMES_WEBUI_EXTENSION_DIR` | *(unset)* | Optional local directory served at `/extensions/`; must point to an existing directory before extension injection is enabled |
@@ -603,12 +602,10 @@ Run Compose as the user who owns your Hermes home. `sudo docker compose up -d` c
 
 The container auto-detects your UID/GID from the mounted `~/.hermes` volume so files written by the agent stay readable by you on the host.
 
-To enable password protection (required if you expose the port outside `127.0.0.1`):
-
-```bash
-echo "HERMES_WEBUI_PASSWORD=change-me-to-something-strong" >> .env
-docker compose up -d --force-recreate
-```
+The container binds to a network address, so the server does not start
+without a Directory. Configure `HERMES_WEBUI_DIRECTORY` and the
+`HERMES_WEBUI_LDAP_*` settings (see "Login" above); the GFIT-CoWork Deployment
+kit in `deploy/` does this for a Team (see `deploy/README.md`).
 
 ### Manual `docker run` (no compose)
 
@@ -722,7 +719,8 @@ and vanilla JS. The backend lives in `api/`, the frontend in `static/`.
 ```
 server.py         HTTP routing shell + auth middleware
 api/
-  auth.py         Optional password authentication, signed cookies
+  auth.py         Session store and cookie, CSRF, signed Profile cookie, per-request gate
+  login.py        Directory login, rate limit, startup login check
   config.py       Discovery, globals, model detection, reloadable config
   helpers.py      HTTP helpers, security headers
   models.py       Session model + CRUD + CLI/state.db bridge

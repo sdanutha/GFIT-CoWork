@@ -10,7 +10,7 @@ Covers:
   6. HMAC signature length — 32-char hex (128-bit), not 16
   7. Skills path traversal — path outside SKILLS_DIR rejected
   8. Content-Disposition for dangerous MIME types — HTML/SVG force download
-  9. PBKDF2 password hashing — save_settings uses auth._hash_password
+  9. (PBKDF2 password hashing — removed with the Upstream shared password)
   10. Non-loopback startup warning (manual / integration test)
   11. SSRF DNS check logic (unit test on helper function)
   12. ENV_LOCK export — _ENV_LOCK importable from streaming module
@@ -629,68 +629,6 @@ class TestContentDisposition:
         assert disp.startswith("inline; ")
         assert "filename*=UTF-8''" in disp
         disp.encode("latin-1")
-
-
-# ── 9. PBKDF2 Password Hashing ───────────────────────────────────────────
-
-
-class TestPasswordHashing:
-    def test_hash_password_is_hex(self):
-        """_hash_password must produce a non-empty hex string (PBKDF2-SHA256)."""
-        from api.auth import _hash_password
-        result = _hash_password("mysecretpassword")
-        assert isinstance(result, str) and len(result) == 64, \
-            f"Expected 64-char hex hash (SHA-256 output), got len={len(result)}: {result}"
-        # Hex-only chars
-        assert all(c in "0123456789abcdef" for c in result), \
-            f"Hash must be hex string, got: {result}"
-
-    def test_hash_password_is_deterministic_with_same_salt(self):
-        """_hash_password must return the same hash for same input (signing key is stable)."""
-        from api.auth import _hash_password
-        h1 = _hash_password("consistent_password")
-        h2 = _hash_password("consistent_password")
-        assert h1 == h2, "Same password must produce same hash (stable signing key)"
-
-    def test_hash_password_different_inputs_differ(self):
-        """Different passwords must produce different hashes."""
-        from api.auth import _hash_password
-        assert _hash_password("password_a") != _hash_password("password_b"), \
-            "Different passwords must produce different hashes"
-
-    def test_hash_password_longer_than_sha256(self):
-        """PBKDF2 with 600k iterations is much stronger than single SHA-256.
-        We verify indirectly: the code must call pbkdf2_hmac, not sha256 directly."""
-        import inspect
-        from api import auth as _auth
-        src = inspect.getsource(_auth._hash_password)
-        assert "pbkdf2_hmac" in src, \
-            "_hash_password must use pbkdf2_hmac, not raw sha256"
-        assert "600_000" in src or "600000" in src, \
-            "_hash_password must use 600,000 iterations"
-
-    def test_save_settings_stores_64char_hex_hash(self):
-        """save_settings with _set_password must store a 64-char hex hash (PBKDF2)."""
-        from api.config import save_settings, load_settings, SETTINGS_FILE
-        import json
-
-        # Remember original content so we can restore it
-        original = None
-        if SETTINGS_FILE.exists():
-            original = SETTINGS_FILE.read_text()
-
-        try:
-            save_settings({"_set_password": "test_pbkdf2_pw"})
-            settings = load_settings()
-            ph = settings.get("password_hash", "")
-            assert len(ph) == 64 and all(c in "0123456789abcdef" for c in ph), \
-                f"save_settings must store 64-char hex PBKDF2 hash, got: {ph!r}"
-        finally:
-            # Restore original settings
-            if original is not None:
-                SETTINGS_FILE.write_text(original)
-            else:
-                save_settings({"_clear_password": True})
 
 
 # ── 11. SSRF DNS Check ─────────────────────────────────────────────────────

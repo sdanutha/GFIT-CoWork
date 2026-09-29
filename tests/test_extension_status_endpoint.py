@@ -35,19 +35,15 @@ class FakeHandler:
 
 @pytest.fixture(autouse=True)
 def _clear_extension_env(monkeypatch):
-    from api import auth as auth_mod
-
     for name in (
         "HERMES_WEBUI_EXTENSION_DIR",
         "HERMES_WEBUI_EXTENSION_MANIFEST",
         "HERMES_WEBUI_EXTENSION_SCRIPT_URLS",
         "HERMES_WEBUI_EXTENSION_STYLESHEET_URLS",
-        "HERMES_WEBUI_PASSWORD",
+        "HERMES_WEBUI_DIRECTORY",
     ):
         monkeypatch.delenv(name, raising=False)
-    auth_mod._invalidate_password_hash_cache()
     yield
-    auth_mod._invalidate_password_hash_cache()
 
 
 def _use_extension_state_dir(monkeypatch, tmp_path):
@@ -1242,10 +1238,9 @@ def test_set_extension_user_enabled_rejects_when_extensions_unconfigured(monkeyp
 
 
 def test_extension_toggle_route_uses_csrf_gate(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
-    from api import auth as auth_mod, routes
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+    from api import routes
 
-    auth_mod._invalidate_password_hash_cache()
     handler = FakeHandler()
     handler.headers = {
         "Origin": "http://example.com",
@@ -1261,12 +1256,10 @@ def test_extension_toggle_route_uses_csrf_gate(monkeypatch):
 
 
 def test_extension_toggle_route_requires_webui_auth(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
 
-    from api import auth as auth_mod
     from api.auth import check_auth
 
-    auth_mod._invalidate_password_hash_cache()
     handler = FakeHandler()
 
     assert check_auth(handler, SimpleNamespace(path="/api/extensions/toggle", query="")) is False
@@ -1341,7 +1334,7 @@ def test_extension_status_route_is_wired(monkeypatch):
 
 
 def test_extension_status_route_requires_webui_auth(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
 
     from api.auth import check_auth
 

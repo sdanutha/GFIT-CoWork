@@ -198,12 +198,9 @@ def startup_check(host: str) -> StartupCheck:
             "     For local development without login, bind to 127.0.0.1.",
         ]
         return StartupCheck(False, lines)
-    if auth.is_auth_enabled():
-        lines.append(f"[!!] No Directory is configured, so nobody can log in. To turn login on, {_DIRECTORY_HINT}.")
-    else:
-        lines += [
-            "  [tip] Login is off: no Directory is configured. Any process on this machine",
-            "        can use every Profile through the local API.",
-            f"        To turn login on, {_DIRECTORY_HINT}.",
-        ]
+    lines += [
+        "  [tip] Login is off: no Directory is configured. Any process on this machine",
+        "        can use every Profile through the local API.",
+        f"        To turn login on, {_DIRECTORY_HINT}.",
+    ]
     return StartupCheck(True, lines)

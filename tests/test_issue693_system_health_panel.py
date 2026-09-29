@@ -224,24 +224,15 @@ def test_system_health_route_registered_and_auth_gated(monkeypatch):
     assert "build_system_health_payload()" in ROUTES_PY
     assert '"/api/system/health"' not in AUTH_PY, "system metrics must not be public"
 
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
-    from api import auth as _auth
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
     from api.auth import check_auth
-
-    # The password hash is cached process-wide (PBKDF2 is ~1s). A prior test may
-    # have populated the cache with "no password" (None), so the env var we just
-    # set would be ignored on the fast path. Invalidate before AND after so this
-    # test sees its own password and doesn't leak the test-password cache to the
-    # next test — required for order-independence under sharded/random runs.
-    _auth._invalidate_password_hash_cache()
 
     handler = _FakeHandler()
     try:
         assert check_auth(handler, SimpleNamespace(path="/api/system/health", query="")) is False
         assert handler.status in (302, 401)
     finally:
-        monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-        _auth._invalidate_password_hash_cache()
+        monkeypatch.delenv("HERMES_WEBUI_DIRECTORY", raising=False)
 
 
 def test_system_health_route_returns_only_sanitized_payload(monkeypatch):
@@ -1041,19 +1032,16 @@ def test_stream_snapshot_failure():
 
 
 def test_runtime_route_auth_and_privacy(monkeypatch):
-    from api import auth as _auth
     from api.auth import check_auth
     from api import system_health
 
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
-    _auth._invalidate_password_hash_cache()
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
     handler = _FakeHandler()
     try:
         assert check_auth(handler, SimpleNamespace(path="/api/system/health", query="")) is False
         assert handler.status in (302, 401)
     finally:
-        monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-        _auth._invalidate_password_hash_cache()
+        monkeypatch.delenv("HERMES_WEBUI_DIRECTORY", raising=False)
 
     monkeypatch.setattr(system_health, "_cpu_percent", lambda: 1.0)
     payload = system_health.build_system_health_payload()

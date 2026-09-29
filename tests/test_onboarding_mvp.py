@@ -81,7 +81,7 @@ def test_onboarding_status_defaults_incomplete():
     data, status = get("/api/onboarding/status")
     assert status == 200
     assert data["completed"] is False
-    assert data["settings"]["password_enabled"] is False
+    assert "password_enabled" not in data["settings"]
     assert data["system"]["provider_configured"] is False
     assert data["system"]["chat_ready"] is False
     assert data["system"]["setup_state"] in {"needs_provider", "agent_unavailable"}

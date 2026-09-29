@@ -1557,26 +1557,6 @@
                 <span id="checkUpdatesStatus"></span>
               </div>
             </div>
-            <div class="settings-field">
-              <label for="settingsPassword" data-i18n="settings_label_password">Access Password</label>
-              <div style="font-size:11px;color:var(--muted);margin-bottom:6px" data-i18n="settings_desc_password">Enter a new password to set or change it. Leave blank to keep current setting.</div>
-              <div id="settingsAuthStatus" style="margin-bottom:8px;display:none"></div>
-              <!-- These password inputs need an explicit <form> owner. Without one they are
-                   "unowned" fields, so Chromium groups every field in the document into a
-                   single synthetic password form and picks the first text input in the DOM
-                   (the sidebar conversation filter) as the form's username field — which it
-                   then autofills with the saved account name. display:contents keeps the
-                   layout byte-identical; onsubmit is neutralised because the panel saves via
-                   JS, not a form submit. -->
-              <form id="settingsPasswordForm" style="display:contents" autocomplete="off" onsubmit="return false">
-              <input type="password" id="settingsPassword" autocomplete="new-password" placeholder="Enter new password…" data-i18n-placeholder="password_placeholder" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
-              <div id="settingsCurrentPasswordBlock" style="display:none;margin-top:6px">
-                <label for="settingsCurrentPassword" style="font-size:11px;display:block;margin-bottom:4px" data-i18n="current_password_label">Current Password</label>
-                <input type="password" id="settingsCurrentPassword" autocomplete="current-password" placeholder="Enter current password…" data-i18n-placeholder="current_password_placeholder" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
-              </div>
-              </form>
-              <div id="settingsPasswordEnvLock" data-i18n="password_env_var_locked" style="display:none;margin-top:6px;padding:8px 10px;font-size:11px;color:var(--muted);background:var(--code-bg);border:1px solid var(--border2);border-radius:6px;line-height:1.45">The HERMES_WEBUI_PASSWORD environment variable is currently set and takes precedence. Unset it and restart the server to manage the password from here.</div>
-            </div>
             <div id="settingsAuthDisabledWarning" style="display:none;margin-top:8px;padding:10px 12px;border-radius:8px;border:1px solid rgba(220,80,80,.35);background:rgba(220,80,80,.08)">
               <div style="font-size:12px;font-weight:700;color:rgba(220,80,80,.95);margin-bottom:6px" data-i18n="auth_status_unauthenticated">Unauthenticated</div>
               <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.45" data-i18n="auth_disabled_warning_message">This instance is accessible without authentication.</div>
@@ -1585,7 +1565,6 @@
                 <span data-i18n="auth_acknowledged_label">I’ve reviewed this risk; show a less-urgent nav warning.</span>
               </label>
             </div>
-            <button class="sm-btn" id="btnDisableAuth" onclick="disableAuth()" style="margin-top:6px;width:100%;padding:8px;font-weight:600;color:#e8a030;border-color:rgba(232,160,48,.3);display:none" data-i18n="disable_auth">Disable Auth</button>
             <button class="sm-btn" id="btnSignOut" onclick="signOut()" style="margin-top:6px;width:100%;padding:8px;font-weight:600;color:var(--accent);border-color:rgba(233,69,96,.3);display:none" data-i18n="sign_out">Sign Out</button>
             <div class="settings-field" id="shutdownServerBlock" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
               <label data-i18n="settings_label_shutdown">Stop the GFIT-CoWork server</label>

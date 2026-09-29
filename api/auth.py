@@ -32,8 +32,7 @@ SESSION_TTL = 86400 * 30  # 30 days
 def _resolve_session_ttl() -> int:
     """Resolve session TTL from env > settings > default.
 
-    Priority mirrors get_password_hash(): HERMES_WEBUI_SESSION_TTL env var
-    first, then settings.json, falling back to ``SESSION_TTL`` (30 days).
+    HERMES_WEBUI_SESSION_TTL env var first, then settings.json, falling back to ``SESSION_TTL`` (30 days).
     Clamped to [60s, 1 year] to prevent runaway cookies or self-lockout.
     """
     env_v = os.getenv('HERMES_WEBUI_SESSION_TTL', '').strip()
@@ -331,15 +330,7 @@ def _load_key(filename: str) -> bytes:
     return key
 
 
-_PBKDF2_KEY_CACHE: bytes | None = None
 _SIGNING_KEY_CACHE: bytes | None = None
-
-
-def _pbkdf2_key() -> bytes:
-    global _PBKDF2_KEY_CACHE
-    if _PBKDF2_KEY_CACHE is None:
-        _PBKDF2_KEY_CACHE = _load_key('.pbkdf2_key')
-    return _PBKDF2_KEY_CACHE
 
 
 def _signing_key() -> bytes:
@@ -349,138 +340,15 @@ def _signing_key() -> bytes:
     return _SIGNING_KEY_CACHE
 
 
-def _hash_password(password, *, salt: bytes | None = None) -> str:
-    """PBKDF2-SHA256 with 600k iterations (OWASP recommendation).
-    Salt is the persisted PBKDF2 key, which is secret and unique per
-    installation. This keeps the stored hash format a plain hex string
-    (no format change to settings.json) while replacing the predictable
-    STATE_DIR-derived salt from the original implementation.
-
-    The *salt* parameter exists solely to support transparent migration
-    of password hashes that were computed with a different key (e.g. the
-    old `.signing_key`). Normal callers should never pass it.
-    """
-    if salt is None:
-        salt = _pbkdf2_key()
-    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 600_000)
-    return dk.hex()
-
-
-_AUTH_HASH_LOCK = threading.Lock()
-_AUTH_HASH_COMPUTED: bool = False
-_AUTH_HASH_CACHE: str | None = None
-
-
-def _invalidate_password_hash_cache() -> None:
-    """Invalidate the in-process password hash cache so the next call to
-    get_password_hash() re-reads from settings.json or the env var."""
-    global _AUTH_HASH_COMPUTED, _AUTH_HASH_CACHE
-    with _AUTH_HASH_LOCK:
-        _AUTH_HASH_COMPUTED = False
-        _AUTH_HASH_CACHE = None
-
-
-def get_password_hash() -> str | None:
-    """Return the active password hash, or None if auth is disabled.
-    Priority: env var > settings.json.
-
-    The hash is computed once and cached for the lifetime of the process.
-    PBKDF2-600k takes ~1 s and is called on nearly every HTTP request via
-    check_auth → is_auth_enabled, so caching avoids wasting a full second
-    of CPU per request after the first one.
-
-    Thread-safe: double-checked locking ensures that under a burst of
-    concurrent requests only one thread computes PBKDF2, while the fast
-    path (after initialisation) requires zero locks.
-    """
-    global _AUTH_HASH_COMPUTED, _AUTH_HASH_CACHE
-
-    # Fast path — no lock needed once cache is populated.
-    if _AUTH_HASH_COMPUTED:
-        return _AUTH_HASH_CACHE
-
-    with _AUTH_HASH_LOCK:
-        # Re-check inside lock — another thread may have populated while
-        # we were waiting to acquire.
-        if _AUTH_HASH_COMPUTED:
-            return _AUTH_HASH_CACHE
-
-        env_pw = os.getenv('HERMES_WEBUI_PASSWORD', '').strip()
-        if env_pw:
-            result = _hash_password(env_pw)
-        else:
-            result = load_settings().get('password_hash') or None
-
-        _AUTH_HASH_CACHE = result
-        _AUTH_HASH_COMPUTED = True
-        return result
-
-
-# ── GFIT-CoWork: the shared password is off (ADR 0004, ticket 09) ──────────
-# The Directory is the only way in. The single shared password reports "not
-# enabled", so login never checks it and the UI hides it. A configured password
-# still turns the auth gate on (see is_auth_enabled), so a Deployment that set a
-# password but no Directory is locked rather than open.
-
-def is_password_auth_enabled() -> bool:
-    """Always False: the single shared password is off in GFIT-CoWork."""
-    return False
-
-
-def _legacy_login_configured() -> bool:
-    """True if the Upstream shared password is configured, though it is not honoured."""
-    return get_password_hash() is not None
-
-
 # Session ``auth_type`` for a GFIT-CoWork Directory login.
 DIRECTORY_AUTH_TYPE = 'directory'
 
 
-def is_directory_auth_enabled() -> bool:
-    """True if GFIT-CoWork Directory login (employee ID + password) is configured."""
+def is_auth_enabled() -> bool:
+    """True if login is on: a Directory is configured (the only login, ADR 0004)."""
     from api.directory import is_directory_enabled
 
     return is_directory_enabled()
-
-
-def is_auth_enabled() -> bool:
-    """True if Directory login, or any Upstream login method, is configured.
-
-    Only the Directory can log anyone in; a configured Upstream method keeps
-    the gate on so the Deployment fails closed.
-    """
-    return is_directory_auth_enabled() or _legacy_login_configured()
-
-
-def verify_password(plain: str) -> bool:
-    """Verify a plaintext password against the stored hash.
-
-    Supports transparent migration of password hashes that were computed
-    with the old `.signing_key` salt.  When the two keys differ and the
-    legacy-salted hash matches, the password is transparently re-hashed
-    with the current `.pbkdf2_key` and persisted to settings.json.
-    """
-    expected = get_password_hash()
-    if not expected:
-        return False
-    # Fast path: current PBKDF2 key
-    if hmac.compare_digest(_hash_password(plain), expected):
-        return True
-    # Migration: some hashes were computed with `.signing_key` before the
-    # PBKDF2 key was separated.  Try the legacy salt; if it matches,
-    # transparently upgrade so the next login uses the fast path.
-    legacy_salt = _signing_key()
-    current_salt = _pbkdf2_key()
-    if legacy_salt != current_salt:
-        if hmac.compare_digest(_hash_password(plain, salt=legacy_salt), expected):
-            from api.config import save_settings
-
-            save_settings({'_set_password': plain})
-            # Password re-hashed and persisted to disk using the current salt.
-            # Cache invalidation is handled by fix 2/3 (#2192) which adds the
-            # _invalidate_password_hash_cache() call inside save_settings().
-            return True
-    return False
 
 
 def create_session(
@@ -698,7 +566,7 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     """
     from api.access import admit_request
 
-    admission = admit_request(info) if is_directory_auth_enabled() else None
+    admission = admit_request(info) if is_auth_enabled() else None
     if admission is None:
         invalidate_session(cookie_value)
         handler._request_session_rejected = True

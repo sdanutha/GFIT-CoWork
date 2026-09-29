@@ -1,4 +1,4 @@
-"""Regression coverage for two Docker-compose gaps found in the field.
+"""Regression coverage for a Docker-compose gap found in the field.
 
 1. Gateway API not reachable out of the box. The two/three-container compose
    files set ``HERMES_API_URL=http://hermes-agent:8642`` on the WebUI but
@@ -8,11 +8,6 @@
    forward ``API_SERVER_KEY`` from ``.env`` and bind the listener on
    0.0.0.0, and the WebUI receives the matching
    ``HERMES_WEBUI_GATEWAY_API_KEY`` so its health probe authenticates.
-
-2. ``HERMES_WEBUI_PASSWORD`` set in ``.env`` had no effect. Docker Compose
-   uses ``.env`` only for variable interpolation — a value is not injected
-   into a container unless the compose file references it. All three compose
-   files now forward ``HERMES_WEBUI_PASSWORD`` into the WebUI service.
 """
 
 from __future__ import annotations
@@ -22,7 +17,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 MULTI = ("docker-compose.two-container.yml", "docker-compose.three-container.yml")
-ALL = ("docker-compose.yml",) + MULTI
 
 
 # ── 1: gateway API server forwarding (multi-container only) ────────────────
@@ -56,22 +50,6 @@ def test_webui_service_forwards_gateway_api_key():
         assert "- HERMES_WEBUI_GATEWAY_API_KEY=${API_SERVER_KEY:-}" in src, (
             f"{fn}: WebUI must forward HERMES_WEBUI_GATEWAY_API_KEY from the "
             "same API_SERVER_KEY so the gateway health probe authenticates."
-        )
-
-
-# ── 2: HERMES_WEBUI_PASSWORD forwarding (all compose files) ────────────────
-
-
-def test_webui_service_forwards_password():
-    """HERMES_WEBUI_PASSWORD set in .env must reach the WebUI container.
-    .env is only for compose interpolation; without this forwarding line the
-    password silently does nothing."""
-    for fn in ALL:
-        src = (REPO / fn).read_text(encoding="utf-8")
-        assert "- HERMES_WEBUI_PASSWORD=${HERMES_WEBUI_PASSWORD:-}" in src, (
-            f"{fn}: WebUI must forward HERMES_WEBUI_PASSWORD from .env — "
-            "setting it only in .env does nothing unless the compose file "
-            "references it."
         )
 
 

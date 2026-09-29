@@ -16,9 +16,9 @@ const CACHE_NAME = 'hermes-shell-__WEBUI_VERSION__';
 // here, every cache lookup against `?v=...` URLs would miss and fall through
 // to network, defeating the pre-cache.
 //
-// Do not pre-cache './' or login assets here: under password auth they can be
+// Do not pre-cache './' or login assets here: with login on they can be
 // either the authenticated app shell or login code, and stale cached responses
-// can make valid password submits fail until the user clears browser cache.
+// can make valid login submits fail until the user clears browser cache.
 // Navigations populate './' only after a successful non-redirect network load.
 const VQ = '?v=__WEBUI_VERSION__';
 const SHELL_ASSETS = [

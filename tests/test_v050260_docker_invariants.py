@@ -116,7 +116,7 @@ def test_env_docker_example_exists():
 
     # Must document the critical vars
     for var in ("UID", "GID", "HERMES_HOME", "HERMES_WORKSPACE",
-                "HERMES_WEBUI_PASSWORD", "HERMES_SKIP_CHMOD", "HERMES_HOME_MODE"):
+                "HERMES_WEBUI_DIRECTORY", "HERMES_SKIP_CHMOD", "HERMES_HOME_MODE"):
         assert var in src, (
             f".env.docker.example must document {var} — without it, users "
             f"hit by the related failure mode have no in-template hint."

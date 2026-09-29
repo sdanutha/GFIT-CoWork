@@ -243,11 +243,6 @@ LOGIN_FLOW_TRANSLATED_KEYS = (
     "login_conn_failed",
     "sign_out",
     "sign_out_failed",
-    "password_placeholder",
-    "settings_saved_pw",
-    "settings_saved_pw_updated",
-    "auth_disabled",
-    "disable_auth_confirm_title",
 )
 
 

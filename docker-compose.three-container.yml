@@ -123,7 +123,7 @@ services:
       - hermes-agent
     ports:
       # Expose on localhost only. Remove 127.0.0.1: to expose on all interfaces
-      # (set HERMES_WEBUI_PASSWORD if doing so).
+      # (configure the Directory if doing so; see deploy/README.md).
       - "127.0.0.1:8787:8787"
     volumes:
       # Same hermes home as the agent — shares config, sessions, state
@@ -155,9 +155,8 @@ services:
       # Forward the API server key so the WebUI's gateway health probe can
       # authenticate (must match the agent's API_SERVER_KEY above).
       - HERMES_WEBUI_GATEWAY_API_KEY=${API_SERVER_KEY:-}
-      # Optional: enable password auth. Set HERMES_WEBUI_PASSWORD in .env
-      # (required if you expose the port beyond 127.0.0.1).
-      - HERMES_WEBUI_PASSWORD=${HERMES_WEBUI_PASSWORD:-}
+      # Login is the Directory (HERMES_WEBUI_DIRECTORY and HERMES_WEBUI_LDAP_*);
+      # see deploy/README.md for the GFIT-CoWork Deployment kit.
       # NOTE: When using bind-mount volumes shared across containers, ALL containers
       # that write to the same host directory must run as the same UID/GID.
       # If hermes-agent initialises the state dir as root (UID 0), hermes-webui

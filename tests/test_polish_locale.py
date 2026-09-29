@@ -121,7 +121,6 @@ def test_polish_settings_detail_descriptions_are_translated():
         "settings_desc_sync_insights: 'Odzwierciedla zużycie tokenów WebUI w state.db, dzięki czemu hermes /insights uwzględnia dane sesji przeglądarki. Domyślnie wyłączone.'",
         "settings_desc_check_updates: 'Pokaż baner, gdy dostępne są nowsze wersje WebUI lub Agenta. Okresowo uruchamia pobieranie git fetch w tle.'",
         "settings_desc_bot_name: 'Używane tylko dla profilu domyślnego. Inne profile używają własnych nazw profilu.'",
-        "settings_desc_password: 'Wpisz nowe hasło, aby je ustawić lub zmienić. Pozostaw puste, aby zachować obecne ustawienie.'",
     ]
     for entry in expected:
         assert entry in pl_block

@@ -1,8 +1,10 @@
 """GFIT-CoWork: the Directory is the only login (``.scratch/login-is-the-directory``).
 
-The Upstream login methods are deleted one kind per change. Once a kind is
-gone, its leftover settings neither turn the login gate on nor open a way in,
-and the login status and sign-out carry no fields for it.
+The Upstream login methods (trusted header, OIDC, passkeys, the shared
+password) are deleted one kind per change. Once a kind is gone, its leftover
+settings neither turn the login gate on nor open a way in, its routes answer
+like routes the server does not have, and the login status, sign-out and
+Settings carry no fields for it.
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
@@ -201,3 +203,116 @@ def test_the_terminal_refusal_names_the_directory(server, monkeypatch):
         assert "HERMES_WEBUI_DIRECTORY" in message
         assert "passkey" not in message.lower()
         assert "password" not in message.lower()
+
+
+# ── the shared password (ticket 05) ─────────────────────────────────────────
+
+LEFTOVER_PASSWORD = "the-old-shared-password"
+PASSWORD_ENV = {"HERMES_WEBUI_PASSWORD": LEFTOVER_PASSWORD}
+PASSWORD_FIELDS = ("password_auth_enabled", "password_env_var", "auth_just_enabled")
+
+
+@pytest.fixture
+def stored_password(monkeypatch, tmp_path):
+    """A Settings file holding a password hash stored by the Upstream password login."""
+    import api.config as config
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text('{"password_hash": "a-stored-upstream-hash"}', encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_FILE", settings_file)
+    return settings_file
+
+
+@pytest.mark.parametrize("leftover", ["environment", "settings"])
+def test_a_leftover_password_does_not_turn_login_on(server, leftover, request):
+    legacy_env = PASSWORD_ENV if leftover == "environment" else None
+    if leftover == "settings":
+        request.getfixturevalue("stored_password")
+    with server(directory="", legacy_env=legacy_env) as srv:
+        client = srv.client()
+        status, body, _ = client.get("/api/auth/status")
+        assert body["auth_enabled"] is False, body
+        assert client.get("/api/sessions")[0] == 200
+
+
+@pytest.mark.parametrize("leftover", ["environment", "settings"])
+@pytest.mark.parametrize("body", [
+    {"password": LEFTOVER_PASSWORD},
+    {"username": "admin", "password": LEFTOVER_PASSWORD},
+    {"username": MEMBER, "password": LEFTOVER_PASSWORD},
+])
+def test_with_a_directory_a_leftover_password_opens_no_way_in(server, leftover, body, request):
+    legacy_env = PASSWORD_ENV if leftover == "environment" else None
+    if leftover == "settings":
+        request.getfixturevalue("stored_password")
+    with server(legacy_env=legacy_env) as srv:
+        client = srv.client()
+        status, payload, set_cookies = client.post("/api/auth/login", body)
+        assert status == 401, payload
+        assert not _session_cookies(set_cookies)
+        assert client.get("/api/sessions")[0] == 401
+        user = srv.logged_in(MEMBER)
+        assert user.get("/api/sessions")[0] == 200
+
+
+def test_setting_a_password_in_settings_does_nothing(server, stored_password):
+    # With no Directory, Settings is open: a password sent to it is ignored
+    # like any unknown setting, and neither turns login on nor logs anyone in.
+    with server(directory="") as srv:
+        client = srv.client()
+        status, saved, set_cookies = client.post(
+            "/api/settings", {"_set_password": "a-new-password", "_current_password": "x"},
+        )
+        assert status == 200, saved
+        assert not _session_cookies(set_cookies)
+        assert not set(PASSWORD_FIELDS) & set(saved), saved
+        assert client.get("/api/auth/status")[1]["auth_enabled"] is False
+        stored = stored_password.read_text(encoding="utf-8")
+        assert "a-stored-upstream-hash" in stored  # left on disk, unchanged
+
+
+def test_clearing_the_password_in_settings_does_nothing(server, stored_password):
+    with server() as srv:
+        admin = srv.logged_in(ADMIN)
+        status, saved, _ = admin.post("/api/settings", {"_clear_password": True})
+        assert status == 200, saved
+        assert admin.get("/api/sessions")[0] == 200
+        assert "a-stored-upstream-hash" in stored_password.read_text(encoding="utf-8")
+
+
+def test_the_login_status_settings_and_onboarding_name_no_password(server):
+    with server(legacy_env=PASSWORD_ENV) as srv:
+        status, body, _ = srv.client().get("/api/auth/status")
+        assert not set(PASSWORD_FIELDS) & set(body), body
+        admin = srv.logged_in(ADMIN)
+        status, body, _ = admin.get("/api/auth/status")
+        assert not set(PASSWORD_FIELDS) & set(body), body
+        status, settings, _ = admin.get("/api/settings")
+        assert status == 200
+        assert not set(PASSWORD_FIELDS) & set(settings), settings
+        assert "password_hash" not in settings
+        status, onboarding, _ = admin.get("/api/onboarding/status")
+        assert status == 200
+        assert "password_enabled" not in onboarding["settings"], onboarding
+        status, shell, _ = admin.get("/")
+        assert status == 200
+        for control in ("settingsPassword", "settingsCurrentPassword", "btnDisableAuth", "settingsPasswordEnvLock"):
+            assert control not in shell, control
+
+
+def test_the_login_page_is_the_directory_form(server):
+    with server() as srv:
+        status, html, _ = srv.client().get("/login")
+        assert status == 200
+        assert 'id="username"' in html
+        assert 'id="pw"' in html
+        assert "{{" not in html
+
+
+
+def test_a_session_not_issued_by_a_directory_login_is_not_honoured(server):
+    with server() as srv:
+        client = srv.client()
+        client.cookies[auth._resolve_cookie_name()] = auth.create_session()
+        assert client.get("/api/sessions")[0] == 401
+        assert client.get("/api/auth/status")[1]["logged_in"] is False

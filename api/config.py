@@ -11618,7 +11618,6 @@ _SETTINGS_DEFAULTS = {
     "sidebar_density": "compact",  # compact | detailed
     "auto_title_refresh_every": "0",  # adaptive title refresh: 0=off, 5/10/20=every N exchanges
     "default_message_mode": "steer",  # behavior when sending while agent is running: queue | interrupt | steer
-    "password_hash": None,  # PBKDF2-HMAC-SHA256 hash; None = auth disabled
     "auth_disabled_acknowledged": False,  # user acknowledged unauthenticated risk
     "provider_cost_budget": None,
 }
@@ -11856,7 +11855,6 @@ def load_settings() -> dict:
 
 
 _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
-    "password_hash",
     "default_model",
     "simplified_tool_calling",
 } | {
@@ -11968,7 +11966,7 @@ def _atomic_write_settings_text(path: Path, text: str) -> None:
     ``settings.json`` was rewritten with a plain ``Path.write_text``, which
     truncates the file in place: a crash or full disk mid-write leaves it
     truncated/empty, so the next start loses every persisted setting (theme,
-    workspace, tab order, and the login ``password_hash``). Writing to a
+    workspace, tab order). Writing to a
     sibling temp file, fsyncing, then ``os.replace`` keeps the old contents
     intact until the rename commits the new ones in one step.  Mirrors the
     tempfile+fsync+os.replace pattern already used by
@@ -11977,7 +11975,7 @@ def _atomic_write_settings_text(path: Path, text: str) -> None:
     The existing file's mode is carried onto the replacement: ``os.replace``
     swaps in the temp file's inode, and a plain ``open`` respects the umask
     (typically 0644), so without this an operator-hardened ``settings.json``
-    (chmod 0600 because it holds the password hash) would be silently loosened
+    (chmod 0600) would be silently loosened
     on the next save.  New files fall back to the umask-adjusted default.
 
     A symlinked target is written through to its referent (same follow-through
@@ -12056,19 +12054,6 @@ def save_settings(settings: dict) -> dict:
     pending_skin = current.get("skin")
     theme_was_explicit = False
     skin_was_explicit = False
-    # Handle _set_password: hash and store as password_hash
-    _password_changed = False
-    raw_pw = settings.pop("_set_password", None)
-    if raw_pw and isinstance(raw_pw, str) and raw_pw.strip():
-        # Use PBKDF2 from auth module (600k iterations) -- never raw SHA-256
-        from api.auth import _hash_password
-
-        current["password_hash"] = _hash_password(raw_pw.strip())
-        _password_changed = True
-    # Handle _clear_password: explicitly disable auth
-    if settings.pop("_clear_password", False):
-        current["password_hash"] = None
-        _password_changed = True
     # Deep-merge dashboard_plugins dict (plugin_name -> bool)
     _dashboard_plugins = settings.get("dashboard_plugins")
     if isinstance(_dashboard_plugins, dict):
@@ -12186,12 +12171,6 @@ def save_settings(settings: dict) -> dict:
     global _SETTINGS_WRITE_VERSION
     with _SETTINGS_WRITE_LOCK:
         _SETTINGS_WRITE_VERSION += 1
-    # Invalidate the in-memory password hash cache so the next call to
-    # get_password_hash() picks up the new value from disk immediately.
-    if _password_changed:
-        from api.auth import _invalidate_password_hash_cache
-
-        _invalidate_password_hash_cache()
     # Update runtime defaults so new sessions use them immediately
     global DEFAULT_WORKSPACE
     if "default_workspace" in current:

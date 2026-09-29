@@ -83,7 +83,7 @@ Then open `http://<server-tailscale-ip>:8787` in your phone's browser (find
 your server's Tailscale IP in the Tailscale app or with `tailscale ip -4` on
 the server).
 
-That's it. Traffic is encrypted end-to-end by WireGuard, and password auth
+That's it. Traffic is encrypted end-to-end by WireGuard, and the Directory login
 protects the UI at the application level. You can add it to your home screen
 for an app-like experience.
 

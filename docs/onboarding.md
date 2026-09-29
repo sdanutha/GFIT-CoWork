@@ -9,7 +9,8 @@ setup, or first-run support, read
 running commands or inspecting logs.
 
 The short version: run the bootstrap, open the WebUI, choose a provider, choose
-a workspace, optionally set a password, then start a chat. If you are using a
+a workspace, then start a chat. Login is the company Directory, configured by
+the operator (see the README), not in onboarding. If you are using a
 local model server from Docker, pay special attention to the Base URL section
 below.
 

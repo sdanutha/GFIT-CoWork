@@ -4,6 +4,11 @@
 > 重点覆盖 Windows 原生环境。命令与安全约定以官方脚本（`start.sh` / `start.ps1` /
 > `scripts/windows/setup_webui_autostart.ps1`）为准。
 
+> **GFIT-CoWork 注意：** 本文中的 `HERMES_WEBUI_PASSWORD` 密码登录已被移除，设置它不会
+> 开启登录。登录只通过公司目录（Directory，`HERMES_WEBUI_DIRECTORY` 与
+> `HERMES_WEBUI_LDAP_*`）。未配置目录时服务器只能绑定回环地址；绑定其他地址前请先配置
+> 目录，参见 [`README.md`](../README.md) 与 [`deploy/README.md`](../deploy/README.md)。
+
 Hermes WebUI 默认只绑定 `127.0.0.1`（仅本机回环），这是刻意的安全默认值。
 要从手机或另一台电脑访问，需要显式选择一条安全通道。本文按推荐程度排序：
 

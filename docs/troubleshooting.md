@@ -261,9 +261,9 @@ python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confir
 
 ---
 
-## 404 after login when password auth is enabled
+## 404 after login when login is on
 
-**Symptom.** After enabling password authentication (`HERMES_WEBUI_PASSWORD`), logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
+**Symptom.** With login on (a Directory configured), logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
 
 **Why.** The server-side redirect after login targets `/sessions` (plural), but that path was missing from the explicit SPA-shell allowlist in `handle_get()`. Without auth the bug is invisible because the SPA handles `/sessions` client-side and the server route is never hit — only the server-side post-login redirect exposes it.
 

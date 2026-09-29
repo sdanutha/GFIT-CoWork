@@ -5,8 +5,9 @@
 document.addEventListener('DOMContentLoaded', function () {
   var form = document.getElementById('login-form');
   var input = document.getElementById('pw');
+  var userField = document.getElementById('username');
 
-  if (!form) return;
+  if (!form || !input || !userField) return;
 
   var invalidPw = form.getAttribute('data-invalid-pw') || 'Invalid password';
   var connFailed = form.getAttribute('data-conn-failed') || 'Connection failed';
@@ -58,15 +59,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
   async function doLogin(e) {
     e.preventDefault();
-    // No password input on a passwordless deployment: nothing to submit.
-    if (!input) return;
-    var pw = input.value;
     hideErr();
-    // GFIT-CoWork Directory login: the server renders the username field only
-    // when Directory login is configured.
-    var userField = document.getElementById('username');
-    var payload = { password: pw };
-    if (userField) payload.username = userField.value;
+    // GFIT-CoWork Directory login: employee ID and AD password.
+    var payload = { username: userField.value, password: input.value };
     try {
       var res = await fetch('api/auth/login', {
         method: 'POST',
@@ -88,14 +83,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
   form.addEventListener('submit', doLogin);
 
-  if (input) {
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        doLogin(e);
-      }
-    });
-  }
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doLogin(e);
+    }
+  });
 
   // On page load, probe the server so we can distinguish "can't reach server"
   // (Tailscale off, wrong network) from "session expired / need to log in".
@@ -106,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var retryTimer = null;
 
     function setFormDisabled(disabled) {
-      if (input) input.disabled = disabled;
+      input.disabled = disabled;
       var btn = form.querySelector('button');
       if (btn) btn.disabled = disabled;
     }

@@ -168,3 +168,16 @@ def test_leftover_upstream_login_settings_are_reported_as_ignored(start_server, 
     for name in LEFTOVER_ENV:
         assert any(name in line for line in ignored), (name, server.output)
     assert any("password" in line.lower() and "settings" in line.lower() for line in ignored), server.output
+
+
+def test_a_leftover_password_on_the_loopback_address_leaves_login_off(start_server):
+    server = start_server(
+        "127.0.0.1", {"HERMES_WEBUI_PASSWORD": "the-old-shared-password"},
+        settings={"password_hash": "left-over-hash"},
+    )
+    assert server.serving(), server.output
+    assert server.status("/api/sessions") == 200
+    output = server.output
+    assert "login is off" in output.lower(), output
+    assert any("HERMES_WEBUI_PASSWORD" in line and "ignor" in line.lower() for line in output.splitlines()), output
+    assert "nobody can log in" not in output.lower()

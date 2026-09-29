@@ -129,9 +129,8 @@ services:
       # Forward the API server key so the WebUI's gateway health probe can
       # authenticate (must match the agent's API_SERVER_KEY above).
       - HERMES_WEBUI_GATEWAY_API_KEY=${API_SERVER_KEY:-}
-      # Optional: enable password auth. Set HERMES_WEBUI_PASSWORD in .env
-      # (required if you expose the port beyond 127.0.0.1).
-      - HERMES_WEBUI_PASSWORD=${HERMES_WEBUI_PASSWORD:-}
+      # Login is the Directory (HERMES_WEBUI_DIRECTORY and HERMES_WEBUI_LDAP_*);
+      # see deploy/README.md for the GFIT-CoWork Deployment kit.
       # Bind-mount permission handling for the WebUI (fixes #1389, #1399).
       # NOTE: WebUI's HERMES_HOME_MODE is a credential-file threshold (allow
       # group bits on .env/.signing_key/etc.), DIFFERENT from the agent's

@@ -5167,13 +5167,11 @@ main.main > #mainPlugin{display:none;}
   background:var(--accent-hover);
 }
 
-/* Secondary sm-btn fallback (Sign out / Disable auth) — neutral outline. */
+/* Secondary sm-btn fallback (Sign out) — neutral outline. */
 #mainSettings .sm-btn{border-radius:8px;padding:9px 16px;font-weight:600;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);cursor:pointer;transition:background .15s,border-color .15s;}
 #mainSettings .sm-btn:hover{background:var(--accent-bg);border-color:var(--accent-bg-strong);}
 /* Neutralise legacy inline accent tints so secondary buttons stay theme-safe */
-#mainSettings #btnDisableAuth[style],
 #mainSettings #btnSignOut[style]{color:var(--text)!important;border-color:var(--border)!important;}
-#mainSettings #btnDisableAuth:hover,
 #mainSettings #btnSignOut:hover{color:var(--accent-text)!important;border-color:var(--accent-bg-strong)!important;}
 
 /* MCP Server Management */
@@ -7346,12 +7344,5 @@ html[data-gfit-role="member"] #providerQuotaChip,
 html[data-gfit-role="member"] #composerMobileQuotaAction,
 html[data-gfit-role="member"] #btnShareSession,
 html[data-gfit-role="member"] [data-gfit-admin-only] {
-  display: none !important;
-}
-
-/* GFIT-CoWork: the Directory is the only way in (ADR 0004), so Settings has no
-   shared-password field. Disable Auth stays hidden because the server reports
-   the password off. */
-.settings-field:has(> #settingsPasswordForm) {
   display: none !important;
 }

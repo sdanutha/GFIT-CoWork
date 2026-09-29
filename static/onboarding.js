@@ -1,4 +1,4 @@
-const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','password','finish'],form:{provider:'openrouter',workspace:'',model:'',password:'',apiKey:'',baseUrl:''},active:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''}};
+const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','finish'],form:{provider:'openrouter',workspace:'',model:'',apiKey:'',baseUrl:''},active:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''}};
 
 // ── Onboarding base-URL probe (#1499) ───────────────────────────────────────
 // Probes <base_url>/models so the wizard can validate the configured endpoint
@@ -122,7 +122,6 @@ function _onboardingStepMeta(key){
     system:{title:t('onboarding_step_system_title'),desc:t('onboarding_step_system_desc')},
     setup:{title:t('onboarding_step_setup_title'),desc:t('onboarding_step_setup_desc')},
     workspace:{title:t('onboarding_step_workspace_title'),desc:t('onboarding_step_workspace_desc')},
-    password:{title:t('onboarding_step_password_title'),desc:t('onboarding_step_password_desc')},
     finish:{title:t('onboarding_step_finish_title'),desc:t('onboarding_step_finish_desc')}
   })[key];
 }
@@ -254,7 +253,6 @@ function _renderOnboardingBody(){
   if(!body||!ONBOARDING.status)return;
   const key=ONBOARDING.steps[ONBOARDING.step];
   const system=ONBOARDING.status.system||{};
-  const settings=ONBOARDING.status.settings||{};
   const setup=ONBOARDING.status.setup||{};
   const nextBtn=$('onboardingNextBtn');
   const backBtn=$('onboardingBackBtn');
@@ -270,7 +268,6 @@ function _renderOnboardingBody(){
       <div class="onboarding-panel-grid">
         <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>${t('onboarding_check_agent')}</strong><span>${hermesOk?t('onboarding_check_agent_ready'):t('onboarding_check_agent_missing')}</span></div>
         <div class="onboarding-check ${(setupOk?'ok':system.provider_configured?'warn':'muted')}"><strong>${t('onboarding_check_provider')}</strong><span>${_providerStatusLabel(system)}</span></div>
-        <div class="onboarding-check ${(settings.password_enabled?'ok':'muted')}"><strong>${t('onboarding_check_password')}</strong><span>${settings.password_enabled?t('onboarding_check_password_enabled'):t('onboarding_check_password_disabled')}</span></div>
       </div>
       <div class="onboarding-copy">
         <p><strong>${t('onboarding_config_file')}</strong> ${esc(system.config_path||t('onboarding_unknown'))}</p>
@@ -394,21 +391,6 @@ function _renderOnboardingBody(){
     return;
   }
 
-  if(key==='password'){
-    _setOnboardingNotice(settings.password_enabled?t('onboarding_notice_password_enabled'):t('onboarding_notice_password_recommended'), settings.password_enabled?'success':'info');
-    // See the api-key field above: the <form> owner keeps this password input from
-    // turning the whole document into one synthetic credential form.
-    body.innerHTML=`
-      <form style="display:contents" autocomplete="off" onsubmit="return false">
-      <label class="onboarding-field">
-        <span>${t('onboarding_password_label')}</span>
-        <input id="onboardingPasswordInput" type="password" autocomplete="new-password" value="${esc(ONBOARDING.form.password||'')}" placeholder="${t('onboarding_password_placeholder')}" oninput="ONBOARDING.form.password=this.value">
-      </label>
-      </form>
-      <p class="onboarding-copy">${t('onboarding_password_help')}</p>`;
-    return;
-  }
-
   const provider=_getOnboardingSetupProvider(ONBOARDING.form.provider);
   _setOnboardingNotice(t('onboarding_notice_finish'), 'success');
   body.innerHTML=`
@@ -416,17 +398,9 @@ function _renderOnboardingBody(){
       <div><strong>${t('onboarding_provider_label')}</strong><span>${esc((provider&&provider.label)||ONBOARDING.form.provider||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_model_label')}</strong><span>${esc(_getOnboardingSelectedModel()||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div>
-      <div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>
     </div>
     ${ONBOARDING.form.baseUrl?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
     <p class="onboarding-copy">${t('onboarding_finish_help')}</p>`;
-}
-
-function _getOnboardingPasswordSummaryKey(settings){
-  const hasExistingPassword=!!(settings&&settings.password_enabled);
-  const hasNewPassword=!!((ONBOARDING.form.password||'').trim());
-  if(hasNewPassword) return hasExistingPassword?'onboarding_password_will_replace':'onboarding_password_will_enable';
-  return hasExistingPassword?'onboarding_password_keep_existing':'onboarding_password_remains_disabled';
 }
 
 function syncOnboardingWorkspaceSelect(value){
@@ -459,7 +433,6 @@ async function loadOnboardingWizard(){
     ONBOARDING.form.provider=current.provider||'openrouter';
     ONBOARDING.form.workspace=(status.workspaces&&status.workspaces.last)||status.settings.default_workspace||'';
     ONBOARDING.form.model=status.settings.default_model||current.model||'';
-    ONBOARDING.form.password='';
     ONBOARDING.form.apiKey='';
     ONBOARDING.form.baseUrl=current.base_url||'';
     ONBOARDING.active=!status.completed;
@@ -506,7 +479,6 @@ async function _saveOnboardingProviderSetup(){
 async function _saveOnboardingDefaults(){
   const workspace=(ONBOARDING.form.workspace||'').trim();
   const model=(ONBOARDING.form.model||'').trim();
-  const password=(ONBOARDING.form.password||'').trim();
   if(!workspace) throw new Error(t('onboarding_error_choose_workspace'));
   if(!model) throw new Error(t('onboarding_error_choose_model'));
   const known=_getOnboardingWorkspaceChoices().some(ws=>ws.path===workspace);
@@ -515,11 +487,7 @@ async function _saveOnboardingDefaults(){
   }
   // Model persisted by /api/onboarding/setup — no /api/default-model call needed here
   const body={default_workspace:workspace};
-  if(password) body._set_password=password;
-  const saved=await api('/api/settings',{method:'POST',body:JSON.stringify(body)});
-  if(ONBOARDING.status){
-    ONBOARDING.status.settings={...(ONBOARDING.status.settings||{}),password_enabled:!!saved.auth_enabled};
-  }
+  await api('/api/settings',{method:'POST',body:JSON.stringify(body)});
   try{localStorage.setItem('hermes-webui-model',model)}catch{}
   if($('modelSelect')) _applyModelToDropdown(model,$('modelSelect'));
 }
@@ -585,9 +553,6 @@ async function nextOnboardingStep(){
       ONBOARDING.form.model=(($('onboardingModelInput')||{}).value||($('onboardingModelSelect')||{}).value||ONBOARDING.form.model||'').trim();
       if(!ONBOARDING.form.workspace) throw new Error(t('onboarding_error_workspace_required'));
       if(!ONBOARDING.form.model) throw new Error(t('onboarding_error_model_required'));
-    }
-    if(ONBOARDING.steps[ONBOARDING.step]==='password'){
-      ONBOARDING.form.password=(($('onboardingPasswordInput')||{}).value||'').trim();
     }
     if(ONBOARDING.step===ONBOARDING.steps.length-1){
       await _finishOnboarding();

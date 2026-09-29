@@ -574,17 +574,15 @@ class TestSessionManifestAuthExemption:
     can fetch the manifest during PWA install without being redirected."""
 
     def test_session_manifest_json_is_public(self, monkeypatch):
-        monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
-        from api.auth import check_auth, _invalidate_password_hash_cache
+        monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+        from api.auth import check_auth
         from types import SimpleNamespace
-        _invalidate_password_hash_cache()
         handler = _FakeHandler()
         assert check_auth(handler, SimpleNamespace(path="/session/manifest.json", query="")) is True
 
     def test_session_manifest_webmanifest_is_public(self, monkeypatch):
-        monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
-        from api.auth import check_auth, _invalidate_password_hash_cache
+        monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+        from api.auth import check_auth
         from types import SimpleNamespace
-        _invalidate_password_hash_cache()
         handler = _FakeHandler()
         assert check_auth(handler, SimpleNamespace(path="/session/manifest.webmanifest", query="")) is True

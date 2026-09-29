@@ -173,7 +173,7 @@ def test_save_settings_syncs_default_model_provider_with_saved_model():
     panels_js = Path("static/panels.js").read_text(encoding="utf-8")
     save_block = _extract_function(panels_js, "async function saveSettings")
     apply_saved_block = _extract_function(panels_js, "function _applySavedSettingsUi")
-    autosave_block = panels_js[panels_js.index("const pwField=$('settingsPassword');"):panels_js.index("if(!pwDirty&&!modelDirty){", panels_js.index("const pwField=$('settingsPassword');")) + 24]
+    autosave_block = _extract_function(panels_js, "async function _autosavePreferencesSettings")
 
     assert "_captureModelDropdownSelection($('settingsModel'))" in save_block
     assert "JSON.stringify({model,provider:modelState.model_provider||null})" in save_block

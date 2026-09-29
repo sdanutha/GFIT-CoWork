@@ -1628,8 +1628,8 @@ def set_extension_sidecar_proxy_consent(extension_id: object, approved: object) 
                 from api.auth import is_auth_enabled
                 if not is_auth_enabled():
                     raise ExtensionSidecarProxyError(
-                        "Sidecar token-v1 proxy requires WebUI authentication; "
-                        "set a password in Settings before granting consent.",
+                        "Sidecar token-v1 proxy requires login; configure the "
+                        "Directory before granting consent.",
                         status=403,
                     )
                 from api import extension_sidecar_auth as _sc_auth
@@ -1719,8 +1719,7 @@ def resolve_extension_sidecar_proxy_target(
         # auth was enabled cannot be exercised after auth is turned off.)
         if not is_auth_enabled():
             raise ExtensionSidecarProxyError(
-                "Sidecar token-v1 proxy requires WebUI authentication; "
-                "set a password in Settings.",
+                "Sidecar token-v1 proxy requires login; configure the Directory.",
                 status=403,
             )
         token = _sc_auth.current_token(ext_id) or _sc_auth.ensure_token(ext_id)
