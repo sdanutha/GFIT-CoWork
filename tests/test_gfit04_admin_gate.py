@@ -31,7 +31,6 @@ ADMIN_ONLY = [
     ("POST", "/api/git/discard", {}),
     # extensions
     ("GET", "/api/extensions/status", None),
-    ("POST", "/api/extensions/install", {}),
     ("POST", "/api/extensions/toggle", {}),
     ("GET", "/api/extensions/some-ext/sidecar/x", None),
     ("GET", "/extensions/some-ext/app.js", None),

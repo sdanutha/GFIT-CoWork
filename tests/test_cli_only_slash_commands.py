@@ -388,8 +388,6 @@ def test_cli_only_slugs_reserve_skill_autocomplete_namespace():
         const use = await getSlashAutocompleteMatches('/use');
         return {
           pet_names: pet.map(item => item.name),
-          pet_sources: pet.map(item => item.source),
-          pet_descs: pet.map(item => item.desc),
           browser_names: browser.map(item => item.name),
           handoff_names: handoff.map(item => item.name),
           delegate_names: delegate.map(item => item.name),
@@ -405,9 +403,8 @@ def test_cli_only_slugs_reserve_skill_autocomplete_namespace():
         """
     )
 
-    assert result["pet_names"] == ["pet"]
-    assert result["pet_sources"] == ["agent"]
-    assert result["pet_descs"] == ["Desktop Companion command"]
+    # A CLI-only agent command is hidden like any other; GFIT-CoWork has no /pet hand-off.
+    assert result["pet_names"] == []
     assert result["browser_names"] == []
     assert result["handoff_names"] == []
     assert result["delegate_names"] == []
@@ -788,9 +785,9 @@ def test_autocomplete_allowlist_is_exact_parity_with_dispatchers():
     assert announced_backend == backend_allowed
 
     # Every remaining announced command must be a native WebUI behavior that
-    # send() handles without an agent round-trip (moa/sessions/resume/pet).
+    # send() handles without an agent round-trip (moa/sessions/resume).
     native = announced - announced_backend
-    assert native == {"moa", "sessions", "resume", "pet"}
+    assert native == {"moa", "sessions", "resume"}
 
     # The plugin transport is parity by rule, not by list: the filter accepts
     # category==='Plugin' and the dispatcher routes the exact same value.

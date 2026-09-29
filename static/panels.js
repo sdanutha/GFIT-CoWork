@@ -7685,9 +7685,7 @@ let _settingsIndexPromise = null;
 let _settingsSearchSeq = 0;
 let _extensionsStatusData = null;
 let _extensionsSidecarMonitorSeq = 0;
-let _extensionsGalleryData = null;
-let _extensionsGalleryLoaded = false;
-let _extensionsActiveTab = 'gallery';
+let _extensionsActiveTab = 'installed';
 let _settingsSearchDismissListenerRegistered = false;
 let _settingsAppearanceAutosaveTimer = null;
 let _settingsAppearanceAutosaveRetryPayload = null;
@@ -10164,7 +10162,7 @@ function _renderExtensionsPanel(data,seq){
   const copyBtn=$('extensionsCopyDiagnosticsBtn');
   if(!target) return;
   _extensionsStatusData=data||null;
-  if(_extensionsGalleryData) _extensionsGalleryData.statusData=data||null;
+  _renderInstalledExtensionsSurface(data);
   _configureExtensionSettingsFromStatus(data);
   if(copyBtn) copyBtn.disabled=!data;
   const manifest=(data&&data.manifest)||{};
@@ -10428,7 +10426,6 @@ async function loadExtensionsPanel(opts){
     if(copyBtn) copyBtn.disabled=true;
     target.innerHTML='<div class="extensions-error">Failed to load extension diagnostics: '+esc(e.message||String(e))+'</div>';
   }
-  if(_extensionsActiveTab==='gallery'&&!_extensionsGalleryLoaded) loadExtensionsGallery();
 }
 
 function switchExtensionsTab(tab){
@@ -10439,8 +10436,7 @@ function switchExtensionsTab(tab){
   document.querySelectorAll('[data-extensions-pane]').forEach(pane=>{
     pane.hidden=pane.dataset.extensionsPane!==tab;
   });
-  if(tab==='diagnostics') loadExtensionsPanel({preserveExisting:true});
-  if(tab==='gallery'&&!_extensionsGalleryLoaded) loadExtensionsGallery();
+  if(tab==='diagnostics'||tab==='installed') loadExtensionsPanel({preserveExisting:true});
 }
 
 function _handleExtensionConfigureChange(change){
@@ -10449,168 +10445,11 @@ function _handleExtensionConfigureChange(change){
     _syncExtensionConfigureButtonState(change.id);
     return;
   }
-  if(_extensionsGalleryData&&_extensionsGalleryData.statusData){
-    _renderInstalledExtensionsSurface(_extensionsGalleryData.statusData);
-  }
+  if(_extensionsStatusData) _renderInstalledExtensionsSurface(_extensionsStatusData);
 }
 
 if(window.HermesExtensionSettings&&typeof window.HermesExtensionSettings._onConfigureChange==='function'){
   window.HermesExtensionSettings._onConfigureChange(_handleExtensionConfigureChange);
-}
-
-function _extensionSafeHttpUrl(value){
-  if(!value) return '';
-  const raw=String(value).trim();
-  if(!/^https?:\/\//i.test(raw)) return '';
-  try{
-    const url=new URL(raw);
-    if(url.username||url.password) return '';
-    return (url.protocol==='http:'||url.protocol==='https:')?url.href:'';
-  }catch(_){
-    return '';
-  }
-}
-
-function _extensionRegistrySourceUrl(entryPath){
-  const raw=String(entryPath||'').trim();
-  if(!raw||raw.startsWith('/')||raw.includes('\\')||raw.includes('\0')) return '';
-  const parts=raw.split('/').filter(Boolean);
-  if(parts.length===0||parts.some(part=>part==='.'||part==='..')) return '';
-  const folder=parts.length>1?parts.slice(0,-1):parts;
-  return 'https://github.com/hermes-webui/hermes-webui-extensions/tree/main/'+folder.map(encodeURIComponent).join('/');
-}
-
-function _extensionSourceUrl(entry){
-  if(!entry||typeof entry!=='object') return '';
-  const candidates=[
-    entry.homepage,
-    entry.repository_url,
-    entry.repo_url,
-    entry.source_url,
-    entry.source,
-  ];
-  const repository=entry.repository;
-  if(typeof repository==='string'){
-    candidates.push(repository);
-  }else if(repository&&typeof repository==='object'){
-    candidates.push(repository.url,repository.html_url);
-  }
-  for(const candidate of candidates){
-    const safe=_extensionSafeHttpUrl(candidate);
-    if(safe) return safe;
-  }
-  return _extensionSafeHttpUrl(_extensionRegistrySourceUrl(entry.entry_path||entry.runtime_manifest_path));
-}
-
-function _extensionSourceLink(entry){
-  const url=_extensionSourceUrl(entry);
-  if(!url) return '';
-  return `<a class="extension-gallery-source-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Source</a>`;
-}
-
-function _extensionPermissionList(value){
-  if(!Array.isArray(value)) return '';
-  const items=value
-    .map(item=>String(item||'').trim())
-    .filter(Boolean);
-  return items.length?items.join(', '):'';
-}
-
-function _extensionPermissionRows(perms){
-  if(!perms||typeof perms!=='object') return [];
-  const rows=[];
-  const api=(perms.webui_api&&typeof perms.webui_api==='object')?perms.webui_api:{};
-  const apiRead=_extensionPermissionList(api.read);
-  const apiWrite=_extensionPermissionList(api.write);
-  if(apiRead) rows.push(['WebUI API reads',apiRead]);
-  if(apiWrite) rows.push(['WebUI API writes',apiWrite]);
-  if(perms.webui_navigation===true) rows.push(['Navigation','Can open or switch WebUI views']);
-
-  const sidecarCommands=(perms.sidecar_commands&&typeof perms.sidecar_commands==='object')?perms.sidecar_commands:{};
-  const commandLabels=[
-    ['from_loopback','accepts loopback commands'],
-    ['can_switch_sessions','switch sessions'],
-    ['can_write_drafts','write drafts'],
-    ['can_autosend','auto-send drafts'],
-    ['can_respond_approval','respond to approvals'],
-    ['can_respond_clarify','respond to clarifications'],
-  ];
-  const commands=commandLabels
-    .filter(([key])=>sidecarCommands[key]===true)
-    .map(([,label])=>label);
-  if(commands.length) rows.push(['Sidecar commands',commands.join(', ')]);
-
-  const dom=(perms.dom&&typeof perms.dom==='object')?perms.dom:{};
-  const domItems=[];
-  if(dom.owned===true) domItems.push('renders extension-owned UI');
-  if(dom.mutates_core_views===true) domItems.push('can alter core WebUI views');
-  if(domItems.length) rows.push(['DOM access',domItems.join(', ')]);
-
-  const storage=(perms.storage&&typeof perms.storage==='object')?perms.storage:{};
-  const ownedStorage=_extensionPermissionList(storage.owned||storage.owned_keys);
-  const sharedStorage=_extensionPermissionList(storage.shared_webui_keys);
-  if(ownedStorage) rows.push(['Owned storage keys',ownedStorage]);
-  if(sharedStorage) rows.push(['Shared WebUI storage',sharedStorage]);
-
-  if(perms.loopback_sidecar===true) rows.push(['Loopback sidecar','Can contact a declared local loopback helper']);
-  if(perms.native_host===true) rows.push(['Native host','Requires a local native host or desktop app']);
-
-  const filesystem=(perms.filesystem&&typeof perms.filesystem==='object')?perms.filesystem:{};
-  if(filesystem.arbitrary===true){
-    rows.push(['Filesystem','Can access arbitrary filesystem paths']);
-  }else if(filesystem.serves_bundled_assets===true){
-    rows.push(['Filesystem','Serves bundled extension assets only']);
-  }
-  if(perms.network_external===true||perms.external_network===true){
-    rows.push(['External network','Can contact external network origins']);
-  }
-  return rows;
-}
-
-function _extensionPermissionSummary(perms){
-  const rows=_extensionPermissionRows(perms);
-  const body=rows.length
-    ? '<div class="extension-gallery-permission-list">'+rows.map(([label,value])=>`
-      <div class="extension-gallery-permission-row">
-        <span class="extension-gallery-permission-label">${esc(label)}</span>
-        <span class="extension-gallery-permission-value">${esc(value)}</span>
-      </div>`).join('')+'</div>'
-    : `<div class="extension-gallery-permission-empty">${esc(t('ext_gallery_permissions_empty'))}</div>`;
-  return `<details class="extension-gallery-perms">
-    <summary>${esc(t('ext_gallery_permissions_show'))}</summary>
-    ${body}
-  </details>`;
-}
-
-function _extensionPostInstallNote(entry,isInstalled){
-  const lifecycle=(entry&&entry.lifecycle&&typeof entry.lifecycle==='object')?entry.lifecycle:{};
-  const post=(entry&&entry.post_install&&typeof entry.post_install==='object')?entry.post_install:null;
-  const needsSidecar=!!lifecycle.sidecar_start_required;
-  const needsNative=!!lifecycle.native_host_start_required;
-  const summary=post&&post.summary?String(post.summary):(
-    (needsSidecar||needsNative)
-      ? t('ext_gallery_local_component_required')
-      : ''
-  );
-  if(!summary) return '';
-  const docsUrl=_extensionSafeHttpUrl(post&&post.docs_url);
-  const localAppLabel=post&&post.local_app_label?String(post.local_app_label):t('ext_gallery_local_app_label');
-  const chips=[];
-  if(post&&post.requires_local_app===true) chips.push(t('ext_gallery_required_suffix',localAppLabel));
-  if(needsSidecar) chips.push(t('ext_gallery_sidecar_required'));
-  if(needsNative) chips.push(t('ext_gallery_native_host_required'));
-  const chipHtml=chips.length
-    ? '<div class="extension-gallery-next-chips">'+chips.map(item=>`<span>${esc(item)}</span>`).join('')+'</div>'
-    : '';
-  const docsHtml=docsUrl
-    ? `<a class="extension-gallery-next-link" href="${esc(docsUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('ext_gallery_open_setup_guide'))}</a>`
-    : '';
-  return `<div class="extension-gallery-next-step">
-    <div class="extension-gallery-next-label">${esc(t(isInstalled?'ext_gallery_next_step':'ext_gallery_after_install'))}</div>
-    <div class="extension-gallery-next-summary">${esc(summary)}</div>
-    ${chipHtml}
-    ${docsHtml}
-  </div>`;
 }
 
 function _renderInstalledExtensionsSurface(statusData){
@@ -10624,141 +10463,6 @@ function _renderInstalledExtensionsSurface(statusData){
   _bindExtensionToggleButtons(installedEl);
   _bindExtensionSettingsButtons(installedEl);
   _bindExtensionConfigureButtons(installedEl);
-}
-
-async function loadExtensionsGallery(){
-  _extensionsGalleryLoaded=true;
-  const galleryEl=$('extensionsGallery');
-  const installedEl=$('extensionsInstalled');
-  if(galleryEl) galleryEl.innerHTML='<div class="extensions-loading">Loading gallery…</div>';
-  if(installedEl) installedEl.innerHTML='<div class="extensions-loading">Loading installed extensions…</div>';
-  try{
-    const [regData,statusData]=await Promise.all([
-      api('/api/extensions/registry'),
-      api('/api/extensions/status'),
-    ]);
-    _extensionsGalleryData={regData,statusData};
-    _renderExtensionsGallery(regData.entries||[],statusData);
-  }catch(e){
-    _extensionsGalleryLoaded=false;
-    const msg=esc(e&&e.message?e.message:String(e));
-    if(galleryEl) galleryEl.innerHTML='<div class="extensions-error">Failed to load gallery: '+msg+'</div>';
-    if(installedEl) installedEl.innerHTML='<div class="extensions-error">Failed to load extension status.</div>';
-  }
-}
-
-function _renderExtensionsGallery(entries,statusData){
-  const galleryEl=$('extensionsGallery');
-  _configureExtensionSettingsFromStatus(statusData);
-  const installedIds=new Set();
-  if(statusData&&statusData.gallery_installed){
-    Object.keys(statusData.gallery_installed).forEach(id=>installedIds.add(id));
-  }
-  if(statusData&&Array.isArray(statusData.extensions)){
-    statusData.extensions.forEach(e=>{ if(e&&e.id) installedIds.add(e.id); });
-  }
-  if(!Array.isArray(entries)||entries.length===0){
-    if(galleryEl) galleryEl.innerHTML='<div class="extensions-empty">No extensions found in the registry.</div>';
-    _renderInstalledExtensionsSurface(statusData);
-    return;
-  }
-  const galleryCards=[];
-  for(const entry of entries){
-    const id=esc(String(entry.id||''));
-    const name=esc(String(entry.name||entry.id||''));
-    const author=esc(String(entry.author||''));
-    const version=esc(String(entry.version||''));
-    const desc=esc(String(entry.description||''));
-    const caps=Array.isArray(entry.capabilities)?entry.capabilities:[];
-    const perms=entry.permissions||null;
-    const isInstalled=installedIds.has(String(entry.id||''));
-    const restartRequired=!!(entry.lifecycle&&(entry.lifecycle.restart_required||entry.lifecycle.webui_restart_required));
-    const badgesHtml=caps.map(c=>`<span class="extension-gallery-badge">${esc(String(c))}</span>`).join('');
-    const metaBits=[];
-    if(author) metaBits.push('by '+author);
-    if(version) metaBits.push('v'+version);
-    const sourceLinkHtml=_extensionSourceLink(entry);
-    const metaHtml=(metaBits.length||sourceLinkHtml)
-      ? `<div class="extension-gallery-meta">${metaBits.length?`<span>${metaBits.join(' · ')}</span>`:''}${sourceLinkHtml}</div>`
-      : '';
-    const permsHtml=perms?_extensionPermissionSummary(perms):'';
-    const postInstallHtml=_extensionPostInstallNote(entry,isInstalled);
-    const actionBtn=isInstalled
-      ?`<button class="extension-gallery-uninstall-btn" data-ext-uninstall-id="${id}" type="button" data-i18n="ext_gallery_uninstall">Uninstall</button>`
-      :`<button class="extension-gallery-install-btn" data-ext-install-id="${id}" type="button" data-i18n="ext_gallery_install">Install</button>`;
-    const installedBadge=isInstalled?'<span class="extension-gallery-installed-badge">Installed</span>':'';
-    const card=`<div class="extension-gallery-card">
-      <div class="extension-gallery-head">
-        <div class="extension-gallery-info">
-          <div class="extension-gallery-name">${name}${installedBadge}</div>
-          ${metaHtml}
-        </div>
-      </div>
-      <div class="extension-gallery-desc">${desc}</div>
-      ${badgesHtml?'<div class="extension-gallery-badge-row">'+badgesHtml+'</div>':''}
-      ${postInstallHtml}
-      ${permsHtml}
-      <div class="extension-gallery-actions">${actionBtn}</div>
-    </div>`;
-    galleryCards.push(card);
-  }
-  if(galleryEl) galleryEl.innerHTML=galleryCards.length?galleryCards.join(''):'<div class="extensions-empty">No extensions found.</div>';
-  _renderInstalledExtensionsSurface(statusData);
-  _bindExtensionGalleryButtons(entries);
-}
-
-function _bindExtensionGalleryButtons(entries){
-  const entryMap=new Map();
-  if(Array.isArray(entries)) entries.forEach(e=>{if(e&&e.id)entryMap.set(String(e.id),e);});
-  document.querySelectorAll('[data-ext-install-id]').forEach(btn=>{
-    const entry=entryMap.get(btn.dataset.extInstallId);
-    if(entry) btn.addEventListener('click',()=>handleExtensionInstall(btn,entry));
-  });
-  document.querySelectorAll('[data-ext-uninstall-id]').forEach(btn=>{
-    btn.addEventListener('click',()=>handleExtensionUninstall(btn,btn.dataset.extUninstallId));
-  });
-}
-
-async function handleExtensionInstall(btn,entry){
-  if(!btn||btn.disabled) return;
-  const previousText=btn.textContent;
-  btn.disabled=true;
-  btn.textContent=t('ext_gallery_installing');
-  try{
-    const result=await api('/api/extensions/install',{method:'POST',body:JSON.stringify({
-      id:entry.id,
-      download_url:entry.download_url||entry.download,
-      sha256:entry.sha256,
-    })});
-    const restart=!!(entry.lifecycle&&(entry.lifecycle.restart_required||entry.lifecycle.webui_restart_required));
-    const hasPostInstall=!!(entry.post_install||(entry.lifecycle&&(entry.lifecycle.sidecar_start_required||entry.lifecycle.native_host_start_required)));
-    showToast(restart
-      ? t('ext_gallery_install_restart_required')
-      : (hasPostInstall?t('ext_gallery_install_followup'):t('ext_gallery_install_ok')));
-    _extensionsGalleryLoaded=false;
-    await loadExtensionsGallery();
-  }catch(e){
-    btn.disabled=false;
-    btn.textContent=previousText;
-    showToast('Install failed: '+(e&&e.message?e.message:String(e)));
-  }
-}
-
-async function handleExtensionUninstall(btn,id){
-  if(!btn||btn.disabled) return;
-  const previousText=btn.textContent;
-  btn.disabled=true;
-  btn.textContent='Uninstalling…';
-  try{
-    await api('/api/extensions/uninstall',{method:'POST',body:JSON.stringify({id})});
-    showToast('Extension uninstalled.');
-    _extensionsGalleryLoaded=false;
-    await loadExtensionsGallery();
-  }catch(e){
-    btn.disabled=false;
-    btn.textContent=previousText;
-    showToast('Uninstall failed: '+(e&&e.message?e.message:String(e)));
-  }
 }
 
 async function copyExtensionsDiagnostics(){

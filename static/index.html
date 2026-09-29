@@ -1452,15 +1452,11 @@
             <div class="settings-section-head">
               <div>
                 <div class="settings-section-title" data-i18n="settings_tab_extensions">Extensions</div>
-                <div class="settings-section-meta" data-i18n="settings_extensions_meta">Browse, install, and manage GFIT-CoWork extensions.</div>
+                <div class="settings-section-meta" data-i18n="settings_extensions_meta">Manage the GFIT-CoWork extensions in the extension folder.</div>
               </div>
             </div>
             <div class="extensions-tab-bar" role="tablist">
               <button class="extensions-tab-btn extensions-tab-active" role="tab"
-                      data-extensions-tab="gallery"
-                      onclick="switchExtensionsTab('gallery')" type="button"
-                      data-i18n="settings_extensions_gallery_tab">Gallery</button>
-              <button class="extensions-tab-btn" role="tab"
                       data-extensions-tab="installed"
                       onclick="switchExtensionsTab('installed')" type="button"
                       data-i18n="settings_extensions_installed_tab">Installed</button>
@@ -1469,12 +1465,7 @@
                       onclick="switchExtensionsTab('diagnostics')" type="button"
                       data-i18n="settings_extensions_diagnostics_tab">Diagnostics</button>
             </div>
-            <div data-extensions-pane="gallery">
-              <div id="extensionsGallery" class="extensions-gallery" aria-live="polite">
-                <div class="extensions-loading" data-i18n="settings_extensions_gallery_loading">Loading gallery…</div>
-              </div>
-            </div>
-            <div data-extensions-pane="installed" hidden>
+            <div data-extensions-pane="installed">
               <div id="extensionsInstalled" class="extensions-gallery" aria-live="polite">
                 <div class="extensions-loading" data-i18n="settings_extensions_installed_loading">Loading installed extensions…</div>
               </div>

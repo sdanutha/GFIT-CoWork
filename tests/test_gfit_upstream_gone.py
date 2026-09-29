@@ -1,7 +1,9 @@
 """GFIT-CoWork: features that reached Upstream are gone (upstream-gone tickets 03, 04).
 
 A Deployment is upgraded by rebuilding its image, so the update check and its
-routes are gone. A removed route answers like any route the server does not
+routes are gone. The extension Gallery installed code from Upstream's registry,
+so its routes are gone too, while extensions from the configured extension
+folder keep working. A removed route answers like any route the server does not
 know: 404 for the Admin, and the Admin gate's refusal for a User.
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 
@@ -28,6 +30,18 @@ REMOVED = [
     ("POST", "/api/updates/summary", {"updates": {}}),
 ]
 
+GALLERY_REMOVED = [
+    ("GET", "/api/extensions/registry", None),
+    ("POST", "/api/extensions/install", {"id": "x", "download_url": "https://example.invalid/x.zip", "sha256": "0" * 64}),
+    ("POST", "/api/extensions/uninstall", {"id": "x"}),
+]
+
+EXTENSION_ROUTES_KEPT = [
+    ("GET", "/api/extensions/status", None),
+    ("POST", "/api/extensions/toggle", {"id": "no-such-extension", "enabled": False}),
+    ("POST", "/api/extensions/sidecar-proxy-consent", {"id": "no-such-extension", "approved": False}),
+]
+
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
@@ -38,20 +52,42 @@ def srv(monkeypatch, tmp_path):
         yield s
 
 
-@pytest.mark.parametrize("method,path,body", REMOVED)
+@pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED)
 def test_removed_route_answers_the_admin_like_an_unknown_route(srv, method, path, body):
     admin = srv.logged_in(ADMIN)
-    unknown = admin.request(method, UNKNOWN, body)[0]
+    unknown_status, unknown_payload, _ = admin.request(method, UNKNOWN, body)
     status, payload, _ = admin.request(method, path, body)
-    assert status == unknown == 404, (method, path, payload)
+    assert status == unknown_status == 404, (method, path, payload)
+    assert payload == unknown_payload, (method, path, payload)
 
 
-@pytest.mark.parametrize("method,path,body", REMOVED)
+@pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED)
 def test_removed_route_answers_a_user_like_an_unknown_route(srv, method, path, body):
     user = srv.logged_in(USER)
-    unknown = user.request(method, UNKNOWN, body)[0]
+    unknown_status, unknown_payload, _ = user.request(method, UNKNOWN, body)
     status, payload, _ = user.request(method, path, body)
-    assert status == unknown == 403, (method, path, payload)
+    assert status == unknown_status == 403, (method, path, payload)
+    assert payload == unknown_payload, (method, path, payload)
+
+
+@pytest.mark.parametrize("method,path,body", EXTENSION_ROUTES_KEPT)
+def test_extension_routes_for_the_extension_folder_still_answer_the_admin(srv, method, path, body):
+    admin = srv.logged_in(ADMIN)
+    unknown_payload = admin.request(method, UNKNOWN, body)[1]
+    status, payload, _ = admin.request(method, path, body)
+    assert status < 500, (method, path, payload)
+    assert payload != unknown_payload, (method, path, payload)
+
+
+def test_extension_status_no_longer_reports_gallery_installs(srv, monkeypatch, tmp_path):
+    ext_dir = tmp_path / "extensions"
+    ext_dir.mkdir()
+    monkeypatch.setenv("HERMES_WEBUI_EXTENSION_DIR", str(ext_dir))
+    status, body, _ = srv.logged_in(ADMIN).get("/api/extensions/status")
+    assert status == 200
+    assert body["extension_dir_configured"] is True
+    assert body["extension_dir_valid"] is True
+    assert "gallery_installed" not in body
 
 
 def test_settings_report_both_versions_and_no_update_settings(srv):
@@ -89,3 +125,33 @@ def test_a_settings_file_with_the_old_update_keys_loads_and_saves_without_them(m
     on_disk = json.loads(settings_path.read_text(encoding="utf-8"))
     assert on_disk["send_key"] == "enter"
     assert not set(STALE_UPDATE_SETTINGS) & set(on_disk)
+
+
+def _slash_matches(prefix: str, agent_commands: list) -> list:
+    """Run the real slash-command menu from static/commands.js under node."""
+    import json
+    import subprocess
+    from pathlib import Path
+
+    commands_js = (Path(__file__).resolve().parents[1] / "static" / "commands.js").read_text(encoding="utf-8")
+    script = f"""
+    const vm = require('vm');
+    const ctx = {{
+      console, window: {{}},
+      localStorage: {{ getItem(){{return null;}}, setItem(){{}}, removeItem(){{}} }},
+      t: key => key,
+    }};
+    vm.createContext(ctx);
+    vm.runInContext({json.dumps(commands_js)}, ctx);
+    vm.runInContext('_agentCommandCache = ' + {json.dumps(json.dumps(agent_commands))} + ';', ctx);
+    const names = vm.runInContext('getMatchingCommands(' + {json.dumps(json.dumps(prefix))} + ').map(c => c.name)', ctx);
+    process.stdout.write(JSON.stringify(names));
+    """
+    proc = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    return json.loads(proc.stdout)
+
+
+def test_the_slash_menu_offers_no_pet_command():
+    agent = [{"name": "pet", "description": "Desktop Companion command", "cli_only": True}]
+    assert "pet" not in _slash_matches("pe", agent)
+    assert "pet" not in _slash_matches("pe", [])
