@@ -1,8 +1,7 @@
 # 远程访问（中文指南）
 
 > 本文是 [`docs/remote-access.md`](remote-access.md) 的中文姊妹篇，面向中文用户，
-> 重点覆盖 Windows 原生环境。命令与安全约定以官方脚本（`start.sh` / `start.ps1` /
-> `scripts/windows/setup_webui_autostart.ps1`）为准。
+> 重点覆盖 Windows 原生环境。命令与安全约定以官方脚本（`start.sh` / `start.ps1`）为准。
 
 > **GFIT-CoWork 注意：** 上游的 `HERMES_WEBUI_PASSWORD` 密码登录已被移除，设置它不会
 > 开启登录。登录只通过公司目录（Directory，`HERMES_WEBUI_DIRECTORY` 与
@@ -197,70 +196,18 @@ New-NetFirewallRule -DisplayName "Hermes WebUI (Tailscale only)" `
 - 不要写 `-Profile Any -RemoteAddress Any` 这类全放行规则——那是把服务
   直接暴露到公网的行为，见"安全边界"。
 
-## 四、WSL 用户：Windows 开机自启
-
-> **本节只适用于在 WSL2 内运行 WebUI 的用户。** 原生 Windows 启动请看
-> 上一节"三、Windows 原生部署"——`start.ps1` 本身不自带开机自启
-> （Windows 登录时不会自动拉起 PowerShell 脚本），需要自启的话请改
-> 用 WSL 路径或自行配置 NSSM / Task Scheduler 启动 `start.ps1`。
-
-官方 WSL 自启通道是 **Windows 任务计划程序 + WSL 启动脚本**，配套脚本在
-[`scripts/windows/setup_webui_autostart.ps1`](../scripts/windows/setup_webui_autostart.ps1)。
-它注册一个"登录时启动"的计划任务，通过 `wsl.exe` 在 WSL 发行版内执行启动脚本。
-该脚本幂等：重复运行只更新已有任务，不会创建重复项。
-
-前置：WSL2 内已能手动启动 WebUI（见 [`docs/wsl-autostart.md`](wsl-autostart.md)），
-并确保启动脚本可执行：
-
-```bash
-chmod +x /path/to/hermes-webui/scripts/wsl/hermes_webui_autostart.sh
-```
-
-然后回到 Windows PowerShell 注册计划任务（`-WslScriptPath` 是 **WSL 内部路径**）：
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\scripts\windows\setup_webui_autostart.ps1 `
-  -WslScriptPath "/home/你的用户名/hermes-webui/scripts/wsl/hermes_webui_autostart.sh" `
-  -Distro "Ubuntu"
-```
-
-参数说明：
-
-- `-Distro` 可省略，省略时使用默认 WSL 发行版。
-- 任务默认名 `HermesWebUIAutoStart`，需要改名传 `-TaskName`。
-- 加 `-RunNow` 注册后立即启动；加 `-WhatIf` 只预览不注册；
-  仅当 WSL 路径尚不存在时才需要 `-SkipValidation`。
-
-事后查看或移除任务：
-
-```powershell
-Get-ScheduledTask -TaskName HermesWebUIAutoStart
-Unregister-ScheduledTask -TaskName HermesWebUIAutoStart -Confirm:$false
-```
-
-自启日志位置（WSL 内）：
-
-```text
-$HOME/.hermes/webui/logs/webui_autostart.log
-$HOME/.hermes/webui/logs/hermes_webui.log
-```
-
----
-
-## 五、常见问题
+## 四、常见问题
 
 | 症状 | 可能原因 | 处理 |
 |---|---|---|
 | 手机打不开地址 | WebUI 没绑定到可达接口 | 方案 A 检查 Serve 状态（`tailscale serve status`）；方案 B 确认 `HERMES_WEBUI_HOST=0.0.0.0` 且防火墙已放行 Tailscale |
 | 任务计划已建但 WebUI 没起来 | WSL 脚本路径写错/发行版不对 | 用正确的 `-WslScriptPath` 与 `-Distro` 重跑注册脚本 |
-| 打开 WSL 才启动，登录时不启动 | 用的是会话级自启而非计划任务 | 按"四、WSL 用户：Windows 开机自启"装任务计划程序 |
 | 健康检查失败但进程存在 | 端口不一致或仍在启动 | 核对 `HERMES_WEBUI_PORT` 与 `hermes_webui.log` |
 | 服务器启动即退出，提示需要目录 | 非回环地址但未配置目录 | 配置 `HERMES_WEBUI_DIRECTORY` 与 `HERMES_WEBUI_LDAP_*`，或改回回环绑定 |
 
 ---
 
-## 六、安全边界（重要）
+## 五、安全边界（重要）
 
 **区分三种暴露范围：**
 
@@ -287,4 +234,4 @@ $HOME/.hermes/webui/logs/hermes_webui.log
 
 ---
 
-*原文：[`docs/remote-access.md`](remote-access.md) · 部署相关：[`docs/docker.md`](docker.md) · Windows/WSL 自启：[`docs/wsl-autostart.md`](wsl-autostart.md)*
+*原文：[`docs/remote-access.md`](remote-access.md) · 部署相关：[`docs/docker.md`](docker.md)*

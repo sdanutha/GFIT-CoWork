@@ -26,8 +26,7 @@ by the bootstrap yet. A community native Windows setup is being tracked in
 - [Native Windows guide](https://github.com/markwang2658/hermes-windows-native-guide)
 - [Native Windows setup scripts](https://github.com/markwang2658/hermes-windows-native)
 
-For Windows users who want the supported path today, use WSL2 and see
-[Windows / WSL auto-start](wsl-autostart.md).
+For Windows users who want the supported path today, use WSL2.
 
 ## Install path choices
 

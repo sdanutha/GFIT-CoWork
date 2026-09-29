@@ -59,8 +59,6 @@ extend-exclude = [
     "node_modules",
     "static",
     ".git",
-    "scripts/windows",
-    "scripts/wsl",
 ]
 
 [tool.ruff.lint]
