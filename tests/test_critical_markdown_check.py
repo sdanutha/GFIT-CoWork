@@ -7,7 +7,7 @@ Each case is asserted against the intended CommonMark behavior. Where markdown-i
 is installed the test additionally cross-checks the checker's verdict against the
 reference parser; when it isn't, the hand-labeled expectations still run.
 
-Run: pytest scripts/test_critical_markdown_check.py -v
+Run: ./scripts/test.sh tests/test_critical_markdown_check.py -v
 """
 import importlib.util
 import tempfile
@@ -17,7 +17,7 @@ import pytest
 
 _spec = importlib.util.spec_from_file_location(
     "critical_markdown_check",
-    str(Path(__file__).with_name("critical_markdown_check.py")),
+    str(Path(__file__).resolve().parents[1] / "scripts" / "critical_markdown_check.py"),
 )
 cmc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cmc)

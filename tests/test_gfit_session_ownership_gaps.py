@@ -399,6 +399,3 @@ def test_a_users_own_cli_sessions_still_show(srv, claude_code):
     status, body, _ = alice.get("/api/session?session_id=alice-cli-1")
     assert status == 200, body
 
-
-def test_a_user_is_not_shown_codex_sessions(srv):
-    pytest.importorskip("api.codex_sessions", reason="the Codex scanner is not available")

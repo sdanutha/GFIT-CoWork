@@ -33,7 +33,7 @@ that does not exist get exactly the same answer.
 The User's adapter looks in the WebUI session record, then in the Profile's own
 agent state (``state.db``: CLI, messaging, cron and gateway sessions). It never
 looks in another Profile's state or in the server account's home. Only the
-unconfined adapter lets a Profile-less row (Claude Code, Codex) through, and
+unconfined adapter lets a Profile-less row (Claude Code) through, and
 only on the detail load. Only the unconfined adapter keeps Upstream's own route
 rules on top (:meth:`keeps_upstream_rules`).
 """
@@ -134,7 +134,7 @@ def _profile_of(found) -> str | None:
 
 
 def _is_profile_less_row(row) -> bool:
-    """A row scanned from outside every Profile (Claude Code, Codex): it carries no Profile."""
+    """A row scanned from outside every Profile (Claude Code): it carries no Profile."""
     from api.models import CLAUDE_CODE_SOURCE
 
     if row is None or _field(row, "profile"):
@@ -143,14 +143,7 @@ def _is_profile_less_row(row) -> bool:
         str(_field(row, "source_tag") or "").strip().lower(),
         str(_field(row, "raw_source") or "").strip().lower(),
     }
-    profile_less = {CLAUDE_CODE_SOURCE}
-    try:
-        from api.codex_sessions import CODEX_SOURCE
-
-        profile_less.add(CODEX_SOURCE)
-    except ImportError:
-        pass
-    return bool(sources & profile_less)
+    return CLAUDE_CODE_SOURCE in sources
 
 
 class UserSessionOwnership:
@@ -185,7 +178,7 @@ class UserSessionOwnership:
         return False
 
     def sees_profile_less_sessions(self) -> bool:
-        """Never: Claude Code and Codex rows come from the server account's home."""
+        """Never: Claude Code rows come from the server account's home."""
         return False
 
     def refuse_session(self, session_id) -> Refusal | None:
@@ -255,7 +248,7 @@ class _UnconfinedSessionOwnership:
         return True
 
     def sees_profile_less_sessions(self) -> bool:
-        """Claude Code and Codex rows, under the setting that shows them."""
+        """Claude Code rows, under the setting that shows them."""
         return True
 
     def keeps_upstream_rules(self) -> bool:
@@ -311,7 +304,7 @@ class _UnconfinedSessionOwnership:
     def refuse_listed_session(self, session_id, row) -> Refusal | None:
         """A session known only from its listed row, opened by the detail load.
 
-        A Profile-less row (Claude Code, Codex) belongs to no Profile and opens
+        A Profile-less row (Claude Code) belongs to no Profile and opens
         under any; otherwise as any found session.
         """
         if _is_profile_less_row(row):
