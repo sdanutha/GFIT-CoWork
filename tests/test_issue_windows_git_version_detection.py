@@ -20,7 +20,7 @@ environment or filesystem.
 import sys
 from unittest.mock import MagicMock, patch
 
-import api.updates as updates
+import api.version as version_mod
 
 # Deterministic install root used by the winreg stub. Kept as a forward-slash
 # string so the expected git path is identical regardless of the host's
@@ -58,18 +58,18 @@ def _patch_join_forward_slash():
     """
     def fake_join(*parts):
         return '/'.join(p.rstrip('/\\') for p in parts)
-    return patch.object(updates.os.path, 'join', side_effect=fake_join)
+    return patch.object(version_mod.os.path, 'join', side_effect=fake_join)
 
 
 def test_resolve_git_executable_uses_registry_on_windows():
     winreg = _fake_winreg()
 
-    with patch.object(updates.shutil, 'which', return_value=None), \
+    with patch.object(version_mod.shutil, 'which', return_value=None), \
          patch.object(sys, 'platform', 'win32'), \
          patch.dict('sys.modules', {'winreg': winreg}), \
          _patch_join_forward_slash(), \
-         patch.object(updates.os.path, 'exists', side_effect=lambda p: p == FAKE_GIT_EXE):
-        resolved = updates._resolve_git_executable()
+         patch.object(version_mod.os.path, 'exists', side_effect=lambda p: p == FAKE_GIT_EXE):
+        resolved = version_mod._resolve_git_executable()
 
     assert resolved == FAKE_GIT_EXE
 
@@ -90,12 +90,12 @@ def test_resolve_git_executable_probes_known_dirs_when_registry_absent():
         # Other candidates resolve to a sentinel that never "exists".
         return '/nonexistent/' + s
 
-    with patch.object(updates.shutil, 'which', return_value=None), \
+    with patch.object(version_mod.shutil, 'which', return_value=None), \
          patch.object(sys, 'platform', 'win32'), \
          patch.dict('sys.modules', {'winreg': winreg}), \
-         patch.object(updates.os.path, 'expandvars', side_effect=fake_expandvars), \
-         patch.object(updates.os.path, 'exists', side_effect=lambda p: p == probed):
-        resolved = updates._resolve_git_executable()
+         patch.object(version_mod.os.path, 'expandvars', side_effect=fake_expandvars), \
+         patch.object(version_mod.os.path, 'exists', side_effect=lambda p: p == probed):
+        resolved = version_mod._resolve_git_executable()
 
     assert resolved == probed
 
@@ -104,12 +104,12 @@ def test_resolve_git_executable_returns_none_on_windows_when_git_truly_absent():
     winreg = _fake_winreg()
     winreg.QueryValueEx.side_effect = OSError('no InstallPath')
 
-    with patch.object(updates.shutil, 'which', return_value=None), \
+    with patch.object(version_mod.shutil, 'which', return_value=None), \
          patch.object(sys, 'platform', 'win32'), \
          patch.dict('sys.modules', {'winreg': winreg}), \
-         patch.object(updates.os.path, 'expandvars', side_effect=lambda s: s), \
-         patch.object(updates.os.path, 'exists', return_value=False):
-        resolved = updates._resolve_git_executable()
+         patch.object(version_mod.os.path, 'expandvars', side_effect=lambda s: s), \
+         patch.object(version_mod.os.path, 'exists', return_value=False):
+        resolved = version_mod._resolve_git_executable()
 
     assert resolved is None
 
@@ -118,11 +118,11 @@ def test_non_windows_never_touches_registry_fallback():
     """Falsifiable guard: the registry path must be Windows-only."""
     winreg = _fake_winreg()
 
-    with patch.object(updates.shutil, 'which', return_value=None), \
+    with patch.object(version_mod.shutil, 'which', return_value=None), \
          patch.object(sys, 'platform', 'linux'), \
          patch.dict('sys.modules', {'winreg': winreg}), \
-         patch.object(updates.os.path, 'exists', return_value=True):
-        resolved = updates._resolve_git_executable()
+         patch.object(version_mod.os.path, 'exists', return_value=True):
+        resolved = version_mod._resolve_git_executable()
 
     assert resolved is None
     winreg.OpenKey.assert_not_called()
@@ -143,13 +143,13 @@ def test_detect_webui_version_recovers_via_windows_registry_fallback(tmp_path):
             return MagicMock(returncode=0, stdout='', stderr='')
         raise AssertionError(f'unexpected git args: {cmd[1:]!r}')
 
-    with patch.object(updates.shutil, 'which', return_value=None), \
+    with patch.object(version_mod.shutil, 'which', return_value=None), \
          patch.object(sys, 'platform', 'win32'), \
          patch.dict('sys.modules', {'winreg': winreg}), \
          _patch_join_forward_slash(), \
-         patch.object(updates.os.path, 'exists', side_effect=fake_exists), \
-         patch.object(updates, 'REPO_ROOT', tmp_path), \
-         patch.object(updates.subprocess, 'run', side_effect=fake_run):
-        version = updates._detect_webui_version()
+         patch.object(version_mod.os.path, 'exists', side_effect=fake_exists), \
+         patch.object(version_mod, 'REPO_ROOT', tmp_path), \
+         patch.object(version_mod.subprocess, 'run', side_effect=fake_run):
+        version = version_mod._detect_webui_version()
 
     assert version == 'v0.51.999'

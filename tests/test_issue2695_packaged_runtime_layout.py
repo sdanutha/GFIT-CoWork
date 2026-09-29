@@ -87,7 +87,7 @@ def test_extracted_wheel_resolves_static_root_without_console_entrypoint_contrac
     _, extract_dir = extracted_wheel
     script = """
 import api.config as api_config
-from api.updates import WEBUI_VERSION
+from api.version import WEBUI_VERSION
 print(api_config.__file__)
 print(api_config.get_static_root())
 print(api_config.get_index_html_path())

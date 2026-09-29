@@ -66,7 +66,7 @@ it, or any file operation that resolves outside it (through `..` or a symlink),
 is refused.
 
 The **Admin** is not confined and alone may use the server-level features:
-terminal, changing workspace git, extensions, self-update, shutdown and reload,
+terminal, changing workspace git, extensions, shutdown and reload,
 server logs, YOLO mode, providers, models and MCP servers, Settings (they are
 shared by the whole Deployment), onboarding, gateway control, Profile
 management and public share links. The server refuses these to Users with
@@ -588,7 +588,7 @@ api/
   routes.py       All GET + POST route handlers (if/elif dispatch, no decorators)
   state_sync.py   /insights sync — message_count to state.db
   streaming.py    SSE engine, run_agent, cancellation, compression
-  updates.py      Self-update check and release notes
+  version.py      Running GFIT-CoWork and Hermes Agent versions
   upload.py       Multipart parser, file upload handler
   workspace.py    File ops, workspace helpers, git detection
 ```

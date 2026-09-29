@@ -396,28 +396,6 @@
   <div class="resize-handle" id="sidebarResize"></div>
   </aside>
   <main class="main">
-    <div class="update-banner" id="updateBanner">
-      <div style="display:flex;flex-direction:column;flex:1;min-width:0">
-        <span id="updateMsg"></span>
-        <div id="updateWhatsNewLinks" style="display:none;font-size:11px;margin-left:8px;white-space:nowrap"></div>
-        <div id="updateSummaryPanel" style="display:none;font-size:12px;line-height:1.45;margin-top:6px;padding:8px 10px;border:1px solid var(--border2);border-radius:8px;background:rgba(255,255,255,.04);max-width:720px;white-space:normal">
-          <div id="updateSummaryToolbar" style="display:none;justify-content:flex-end;margin-bottom:6px">
-            <button type="button" id="btnUpdateSummaryExpand" class="linklike update-summary-toggle" aria-expanded="false" onclick="toggleUpdateSummaryExpanded()">Expand summary</button>
-          </div>
-          <div id="updateSummaryScroll">
-            <div id="updateSummaryText"></div>
-            <div id="updateSummaryDiffLinks" style="display:none;font-size:11px;margin-top:8px"></div>
-          </div>
-        </div>
-        <div id="updateError" style="display:none;font-size:12px;color:var(--error,#e05);margin-top:4px;word-break:break-word"></div>
-      </div>
-      <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap">
-        <button class="update-btn" onclick="dismissUpdate()" data-i18n="update_later">Later</button>
-        <button class="update-btn update-primary" id="btnApplyUpdate" onclick="applyUpdates()" data-i18n="update_now">Update Now</button>
-        <button class="update-btn" id="btnForceUpdate" style="display:none;background:var(--error,#e05);color:#fff;border-color:var(--error,#e05)" onclick="forceUpdate(this)" data-i18n="update_force">Force update</button>
-        <button class="update-btn" id="btnClearUpdateLock" style="display:none" onclick="applyClearUpdateLock(this)" data-i18n="update_clear_lock_retry">Clear lock and retry update</button>
-      </div>
-    </div>
     <div class="update-banner" id="staleClientBanner">
       <div style="display:flex;flex-direction:column;flex:1;min-width:0">
         <span id="staleClientMessage"></span>
@@ -1435,35 +1413,6 @@
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_sync_insights">Mirrors GFIT-CoWork token usage to state.db so <code>hermes /insights</code> includes browser session data. Off by default.</div>
             </div>
             <div class="settings-field">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="checkbox" id="settingsCheckUpdates" style="width:15px;height:15px;accent-color:var(--accent)">
-                <span data-i18n="settings_label_check_updates">Check for updates</span>
-              </label>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_check_updates">Show a banner when newer versions of GFIT-CoWork or Hermes Agent are available. Runs a background git fetch periodically.</div>
-            </div>
-            <div class="settings-field">
-              <label for="settingsUpdateChannel" data-i18n="settings_label_update_channel">Update channel</label>
-              <select id="settingsUpdateChannel" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
-                <option value="stable" data-i18n="settings_update_channel_stable">Stable (recommended)</option>
-                <option value="experimental" data-i18n="settings_update_channel_experimental">Experimental</option>
-              </select>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_update_channel">Stable gets soak-tested, proven releases. Experimental gets every release as it lands — faster, but may hit rough edges. Switching back to Stable keeps your current version until Stable catches up. Applies to GFIT-CoWork updates only.</div>
-            </div>
-            <div class="settings-field">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="checkbox" id="settingsIgnoreAgentUpdates" style="width:15px;height:15px;accent-color:var(--accent)">
-                <span data-i18n="settings_label_ignore_agent_updates">Ignore Agent updates</span>
-              </label>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_ignore_agent_updates">Keep GFIT-CoWork update checks on, but hide Agent update notices and skip Agent update fetches.</div>
-            </div>
-            <div class="settings-field">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="checkbox" id="settingsWhatsNewSummary" style="width:15px;height:15px;accent-color:var(--accent)">
-                <span data-i18n="settings_label_whats_new_summary">Summarize What's New with AI</span>
-              </label>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_whats_new_summary">Changes the What's New action from opening the raw diff first to generating a short, human-readable summary. The regular diff comparison stays available after the summary.</div>
-            </div>
-            <div class="settings-field">
               <label for="settingsBotName" data-i18n="settings_label_bot_name">Default assistant name</label>
               <div style="font-size:11px;color:var(--muted);margin-bottom:6px" data-i18n="settings_desc_bot_name">Used for the default profile only. Other profiles use their own profile names.</div>
               <input type="text" id="settingsBotName" placeholder="Hermes" maxlength="64" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
@@ -1550,11 +1499,9 @@
                 <div class="settings-section-title" data-i18n="settings_section_system_title">System</div>
                 <div class="settings-section-meta" data-i18n="settings_section_system_meta">Instance version and access controls.</div>
               </div>
-              <div id="checkUpdatesBlock">
+              <div id="settingsVersionBlock">
                 <span class="settings-version-badge" id="settings-webui-version-badge">GFIT-CoWork: —</span>
                 <span class="settings-version-badge" id="settings-agent-version-badge">Agent: not detected</span>
-                <button class="btn-tiny" id="btnCheckUpdatesNow" onclick="checkUpdatesNow()" title="Check for updates now" data-i18n-title="settings_check_now"><svg id="checkUpdatesSpinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spinner-xs" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg><span id="checkUpdatesLabel" data-i18n="settings_check_now">Check now</span></button>
-                <span id="checkUpdatesStatus"></span>
               </div>
             </div>
             <div id="settingsAuthDisabledWarning" style="display:none;margin-top:8px;padding:10px 12px;border-radius:8px;border:1px solid rgba(220,80,80,.35);background:rgba(220,80,80,.08)">

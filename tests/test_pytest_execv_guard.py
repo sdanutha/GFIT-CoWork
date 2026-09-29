@@ -1,7 +1,7 @@
 """Regression guard for the pytest "hangs at 99% then restarts from 0%" loop.
 
-Root cause documented in tests/conftest.py — daemon threads spawned by
-api.updates._schedule_restart() can fire os.execv() AFTER monkeypatch
+Root cause documented in tests/conftest.py — a daemon thread spawned by a
+delayed restart can fire os.execv() AFTER monkeypatch
 teardown restores the real os.execv, which re-execs the entire pytest
 process. The conftest installs a permanent no-op wrapper on os.execv that
 shadows any late-firing daemon thread.

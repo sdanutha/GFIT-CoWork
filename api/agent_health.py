@@ -496,7 +496,7 @@ def _remote_gateway_base_url() -> str | None:
     (e.g. ``GATEWAY_HEALTH_URL=http://host:8642/health``). Since the probe
     appends ``/health/detailed`` etc. to the returned base, strip a trailing
     health-path suffix first so we don't build ``/health/health/detailed``
-    (mirrors the normalization in api/updates.py).
+    (mirrors the normalization in api/version.py).
     """
     for var in (
         "GATEWAY_HEALTH_URL",

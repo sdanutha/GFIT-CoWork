@@ -457,19 +457,18 @@ def pytest_report_collectionfinish(config, items):
 os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 
 # ── Permanent os.execv guard for the pytest session ────────────────────────
-# Several tests in tests/test_update_banner_fixes.py exercise
-# api.updates._schedule_restart(), which spawns a DAEMON thread that sleeps
-# for a short delay and then calls ``os.execv(sys.executable, sys.argv)``.
-# Those tests monkeypatch ``os.execv`` to a no-op for the test scope, but
-# monkeypatch teardown happens at test exit — if the daemon thread has not
-# yet woken up by then (system load, GC pause, _apply_lock contention), the
-# real ``os.execv`` is restored before the thread fires it. The daemon then
+# A restart path that spawns a DAEMON thread which sleeps for a short delay
+# and then calls ``os.execv(sys.executable, sys.argv)`` (the removed
+# self-update restart was one) is unsafe under pytest. A test that
+# monkeypatches ``os.execv`` to a no-op for its scope restores the real one at
+# teardown — if the daemon thread has not yet woken up by then (system load,
+# GC pause, lock contention), the real ``os.execv`` fires. The daemon then
 # REPLACES the pytest process image with a fresh ``pytest tests/ -q ...``
 # invocation, looking from the outside like pytest "hangs at 99%" and then
 # restarts the entire suite from 0% — a self-perpetuating loop.
 #
 # Daemon threads cannot be reliably joined from a test fixture (they live in
-# ``api.updates`` module scope), so the only safe answer is to render
+# module scope), so the only safe answer is to render
 # ``os.execv`` permanently inert for the pytest session. Production code is
 # unaffected because production never imports this conftest.
 #
@@ -1209,25 +1208,6 @@ _REAL_HERMES_STATE = sys.modules.get("hermes_state")
 _AGENT_PATH_ENV_KEYS = ("HERMES_WEBUI_AGENT_DIR", "PYTHONPATH", "HERMES_WEBUI_PYTHON")
 _REAL_AGENT_ENV = {k: os.environ.get(k) for k in _AGENT_PATH_ENV_KEYS}
 _REAL_SYS_PATH = list(sys.path)
-
-# Keep the Windows restart seams inert after the suite isolation snapshots.
-from api import updates as _updates
-
-_real_windows_restart_spawn = _updates._windows_restart_spawn
-_real_windows_restart_exit = _updates._windows_restart_exit
-
-
-def _pytest_session_safe_windows_restart_spawn(_args, **_kwargs):  # pragma: no cover
-    return None
-
-
-def _pytest_session_safe_windows_restart_exit(_code):  # pragma: no cover
-    return None
-
-
-_updates._windows_restart_spawn = _pytest_session_safe_windows_restart_spawn
-_updates._windows_restart_exit = _pytest_session_safe_windows_restart_exit
-
 
 def _hermes_cli_is_healthy() -> bool:
     mod = sys.modules.get("hermes_cli")

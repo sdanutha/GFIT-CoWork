@@ -155,7 +155,6 @@ ADMIN_ONLY_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
     (_ANY, "/api/git/*"),                            # mutating workspace git
     (_ANY, "/api/session/worktree/remove"),
     (_ANY, "/api/extensions/*"), (_ANY, "/extensions/*"),  # extensions
-    (_ANY, "/api/updates/*"),                        # self-update
     (_ANY, "/api/shutdown"), (_ANY, "/api/health/restart"), (_ANY, "/api/admin/reload"),
     (_ANY, "/api/logs"),                             # server logs
     (_WRITE, "/api/session/yolo"),                   # YOLO mode

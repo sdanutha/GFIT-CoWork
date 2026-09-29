@@ -2674,7 +2674,7 @@ function _normalizeWebUIVersion(value){
   if(!s) return '';
   // Suppress placeholder / non-version sentinels (case-insensitive) so a real
   // client version never "mismatches" against a server that couldn't detect its
-  // own version. api/updates.py can emit 'unknown' (git describe failure in a
+  // own version. api/version.py can emit 'unknown' (git describe failure in a
   // Docker/CI image); comparing a real version against 'unknown' would FALSELY
   // fire the stale-client banner. (Codex #5480 gate)
   const lower=s.toLowerCase();
@@ -8905,15 +8905,6 @@ function _preferencesPayloadFromUi(){
   if(showPreviousMessagingCb) payload.show_previous_messaging_sessions=showPreviousMessagingCb.checked;
   const syncCb=$('settingsSyncInsights');
   if(syncCb) payload.sync_to_insights=syncCb.checked;
-  const updateCb=$('settingsCheckUpdates');
-  if(updateCb) payload.check_for_updates=updateCb.checked;
-  // update_channel is NOT included here — it has its own dedicated write path
-  // (_saveUpdateChannelFromSelector) so a stale tab's generic autosave cannot
-  // overwrite a newer channel selection made in another tab. (#6612)
-  const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
-  if(ignoreAgentUpdatesCb) payload.ignore_agent_updates=ignoreAgentUpdatesCb.checked;
-  const whatsNewSummaryCb=$('settingsWhatsNewSummary');
-  if(whatsNewSummaryCb) payload.whats_new_summary_enabled=whatsNewSummaryCb.checked;
   const soundCb=$('settingsSoundEnabled');
   if(soundCb) payload.sound_enabled=soundCb.checked;
   const rtlCb=$('settingsRtl');
@@ -8980,7 +8971,7 @@ function _enqueueSettingsPost(options){
 }
 
 // Ownership token for the shared preferences autosave status slot. Prevents
-// the channel writer from clearing or overwriting a 'failed'+Retry state the
+// another writer from clearing or overwriting a 'failed'+Retry state the
 // generic preferences autosave set; that Retry button has exactly one call
 // site and becomes unreachable if another writer replaces the node.
 let _preferencesAutosaveStatusOwner=null;
@@ -9123,57 +9114,6 @@ function _retryPreferencesAutosave(){
   _autosavePreferencesSettings(payload);
 }
 
-let _channelSaveSeq=0;
-// Last server-confirmed update_channel value. Seeded at panel hydration so the
-// failure-revert path always has a known-good value. _confirmedUpdateChannel is
-// the only reliable "previous" value: by the time a change event fires the
-// browser has already applied the picked option to the <select>, so
-// channelSel.value inside the handler IS the new value, not the old one.
-let _confirmedUpdateChannel=null;
-
-async function _saveUpdateChannelFromSelector(channelSel){
-  // #6612: dedicated write path for update_channel so the generic preferences
-  // autosave payload never carries this field. A stale tab toggling an unrelated
-  // preference must not overwrite a newer channel selection from another tab.
-  if(!channelSel) return;
-  const val=channelSel.value==='experimental'?'experimental':'stable';
-  const seq=++_channelSaveSeq;
-  if(typeof _setPreferencesAutosaveStatus==='function') _setPreferencesAutosaveStatus('saving','channel');
-  try{
-    const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify({update_channel:val})});
-    const confirmed=(saved&&(saved.update_channel==='experimental'||saved.update_channel==='stable'))
-      ?saved.update_channel:val;
-    _confirmedUpdateChannel=confirmed;
-    // The queue makes the server state FIFO; the sequence guard protects only
-    // the selector and other response-driven UI from stale completions.
-    if(seq!==_channelSaveSeq) return;
-    channelSel.value=confirmed;
-    if(typeof _setPreferencesAutosaveStatus==='function') _setPreferencesAutosaveStatus('saved','channel');
-    // Run the update check and badge sync against the confirmed server value,
-    // not the optimistic pre-save value.
-    if(typeof checkUpdatesNow==='function'){
-      try{checkUpdatesNow(confirmed);}catch(_){}
-    }
-    if(typeof _syncUpdateChannelBadge==='function') _syncUpdateChannelBadge(confirmed);
-  }catch(e){
-    console.warn('[settings] update_channel save failed',e);
-    // Revert selector and badge to the last server-confirmed value so both
-    // controls agree with what the server actually holds. Status clear and
-    // revert are both inside the seq guard so a superseded in-flight failure
-    // does not clear status that a newer write or the generic autosave owns.
-    if(seq===_channelSaveSeq){
-      const revertTo=_confirmedUpdateChannel||'stable';
-      channelSel.value=revertTo;
-      if(typeof _syncUpdateChannelBadge==='function') _syncUpdateChannelBadge(revertTo);
-      // Do not call _setPreferencesAutosaveStatus('failed','channel'): its retry
-      // button replays _retryPreferencesAutosave(), which cannot contain
-      // update_channel (#6612). Clear the saving indicator instead; the selector
-      // snap-back is the user's signal.
-      if(typeof _setPreferencesAutosaveStatus==='function') _setPreferencesAutosaveStatus(null,'channel');
-    }
-  }
-}
-
 function _syncSettingsMaxTokensPlaceholder(field, fallbackValue){
   if(!field) return;
   const parsedFallback=parseInt(fallbackValue,10);
@@ -9192,22 +9132,8 @@ async function loadSettingsPanel(){
     checkWebUIVersionSkew(settings);
     // Populate the version badges from the server — keeps them in sync with git
     // tags automatically without any manual release step.
-    //
-    // The DISPLAY badge uses update_channel_version (a channel-scoped
-    // `git describe --match`), which is SEPARATE from settings.webui_version.
-    // webui_version is load-bearing for asset cache-busting / SW cache / stale-
-    // client skew detection and must stay channel-neutral — never render it as
-    // the channel badge. See api/updates.channel_version_badge().
     const webuiBadge = $('settings-webui-version-badge');
-    if(webuiBadge){
-      const chanVer = settings.update_channel_version || settings.webui_version || 'not detected';
-      const chan = settings.update_channel==='experimental' ? 'experimental' : 'stable';
-      // Only annotate the channel when on experimental — stable is the implicit
-      // default and needs no extra chrome.
-      webuiBadge.textContent = chan==='experimental'
-        ? `GFIT-CoWork: ${chanVer} · Experimental`
-        : `GFIT-CoWork: ${chanVer}`;
-    }
+    if(webuiBadge) webuiBadge.textContent = `GFIT-CoWork: ${settings.webui_version || 'not detected'}`;
     const agentBadge = $('settings-agent-version-badge');
     if(agentBadge){
       const agentVersion = (settings.agent_version || 'not detected').toString().trim() || 'not detected';
@@ -9642,24 +9568,6 @@ async function loadSettingsPanel(){
     if(showPreviousMessagingCb){showPreviousMessagingCb.checked=!!settings.show_previous_messaging_sessions;showPreviousMessagingCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const syncCb=$('settingsSyncInsights');
     if(syncCb){syncCb.checked=!!settings.sync_to_insights;syncCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const updateCb=$('settingsCheckUpdates');
-    if(updateCb){updateCb.checked=settings.check_for_updates!==false;updateCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const updateChannelSel=$('settingsUpdateChannel');
-    if(updateChannelSel){
-      updateChannelSel.value=settings.update_channel==='experimental'?'experimental':'stable';
-      _confirmedUpdateChannel=updateChannelSel.value; // #6612: seed revert baseline
-      updateChannelSel.addEventListener('change',function(){
-        // #6612: use the dedicated channel writer so generic preference autosaves
-        // from a stale tab cannot overwrite a newer explicit channel selection.
-        // Update check, badge sync, and failure status are handled inside
-        // _saveUpdateChannelFromSelector after the POST is confirmed.
-        _saveUpdateChannelFromSelector(updateChannelSel);
-      },{once:false});
-    }
-    const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
-    if(ignoreAgentUpdatesCb){ignoreAgentUpdatesCb.checked=!!settings.ignore_agent_updates;ignoreAgentUpdatesCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const whatsNewSummaryCb=$('settingsWhatsNewSummary');
-    if(whatsNewSummaryCb){whatsNewSummaryCb.checked=!!settings.whats_new_summary_enabled;whatsNewSummaryCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const soundCb=$('settingsSoundEnabled');
     if(soundCb){soundCb.checked=!!settings.sound_enabled;soundCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     // Right-to-left chat layout (#1721 salvage) — Settings-only, no composer button.
@@ -12097,7 +12005,6 @@ function _applySavedSettingsUi(saved, body, opts){
   window._showPreviousMessagingSessions=!!body.show_previous_messaging_sessions;
   window._soundEnabled=body.sound_enabled;
   window._notificationsEnabled=body.notifications_enabled;
-  window._whatsNewSummaryEnabled=!!body.whats_new_summary_enabled;
   window._showThinking=body.show_thinking!==false;
   window._simplifiedToolCalling=true;
   _syncChatActivityDisplayModeControl(body.chat_activity_display_mode);
@@ -12172,103 +12079,6 @@ function _applySavedSettingsUi(saved, body, opts){
   renderMessages();
   if(typeof syncTopbar==='function') syncTopbar();
   if(typeof renderSessionList==='function') renderSessionList();
-}
-
-// Instant client-side badge feedback when the update channel is toggled, before
-// the server round-trip that authoritatively re-renders the badge from
-// update_channel_version. Keeps the "· Experimental" suffix in sync immediately.
-function _syncUpdateChannelBadge(channel){
-  try{
-    const badge=$('settings-webui-version-badge');
-    if(!badge) return;
-    let base=badge.textContent||'';
-    // Strip any existing " · Experimental" suffix, then re-append if needed.
-    base=base.replace(/\s·\sExperimental\s*$/,'');
-    badge.textContent = channel==='experimental' ? (base+' · Experimental') : base;
-  }catch(e){}
-}
-
-async function checkUpdatesNow(channelOverride){
-  const btn=$('btnCheckUpdatesNow');
-  const label=$('checkUpdatesLabel');
-  const spinner=$('checkUpdatesSpinner');
-  const status=$('checkUpdatesStatus');
-  if(!btn||!label) return;
-  // Disable button, show spinner
-  btn.disabled=true;
-  if(spinner) spinner.style.display='';
-  if(label) label.textContent=t('settings_checking');
-  if(status) status.textContent='';
-
-  try {
-    // Pass the channel explicitly when the caller has one (e.g. the dropdown
-    // just switched) so the check cannot race the debounced settings autosave
-    // and answer for the previous channel. Omit otherwise → server uses the
-    // saved setting. (Fable UX gate.)
-    const _checkBody={force:true};
-    if(channelOverride==='stable'||channelOverride==='experimental') _checkBody.channel=channelOverride;
-    const data=await api('/api/updates/check',{method:'POST',body:JSON.stringify(_checkBody),timeoutMs:300000});
-    if(data.disabled){
-      if(status){status.textContent=t('settings_updates_disabled');status.style.color='var(--muted)';}
-    } else {
-      const errorParts=[];
-      const formatUpdateError=(typeof _formatUpdateCheckError==='function')
-        ? _formatUpdateCheckError
-        : ((label,info)=>info&&info.error?label:null);
-      const webuiError=formatUpdateError('WebUI',data.webui);
-      const agentError=formatUpdateError('Agent',data.agent);
-      if(webuiError) errorParts.push(webuiError);
-      if(agentError) errorParts.push(agentError);
-      const parts=[];
-      const formatUpdatePart=(typeof _formatUpdateTargetStatus==='function')
-        ? _formatUpdateTargetStatus
-        : ((label,info)=>info&&info.behind>0?label+': '+info.behind:null);
-      const webuiPart=formatUpdatePart('WebUI',data.webui);
-      const agentPart=formatUpdatePart('Agent',data.agent);
-      if(webuiPart) parts.push(webuiPart);
-      if(agentPart) parts.push(agentPart);
-      const manualInstruction=(typeof _formatManualUpdateInstruction==='function')
-        ? _formatManualUpdateInstruction(data.webui)
-        : null;
-      // Track non-git targets separately so a mixed deployment (one git
-      // checkout + one no-git install) never hides the "can't check" state
-      // behind an up-to-date summary (#4356).
-      const noGitParts=[];
-      if(data.webui&&data.webui.no_git&&!data.webui.manual_update) noGitParts.push('WebUI');
-      if(data.agent&&data.agent.no_git&&!data.agent.ignored) noGitParts.push('Agent');
-      if(parts.length){
-        let txt=t('settings_updates_available').replace('{count}',parts.join(', '));
-        if(manualInstruction) txt+=' · '+manualInstruction;
-        if(noGitParts.length) txt+=' · '+t('settings_update_no_git');
-        if(status){status.textContent=txt;status.style.color='var(--accent)';}
-        // Also trigger the update banner
-        if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
-      } else if(errorParts.length){
-        if(status){status.textContent=t('settings_update_check_failed')+': '+errorParts.join(', ');status.style.color='var(--error)';}
-      } else if(noGitParts.length){
-        if(status){status.textContent=t('settings_update_no_git');status.style.color='var(--muted)';}
-      } else {
-        if(status){status.textContent=t('settings_up_to_date');status.style.color='var(--success)';}
-        if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
-      }
-    }
-  } catch(e){
-    // Never expose raw e.message in UI — log to console for debugging only
-    console.warn('[checkUpdatesNow]', e);
-    // Show a generic user-facing error; if the API returned a message body use it
-    let userMsg=t('settings_update_check_failed');
-    if(e&&e.response){
-      try{
-        const body=JSON.parse(e.response);
-        if(body.error) userMsg=String(body.error).substring(0,120);
-      }catch(_){}
-    }
-    if(status){status.textContent=userMsg;status.style.color='var(--error)';}
-  } finally {
-    btn.disabled=false;
-    if(spinner) spinner.style.display='none';
-    if(label) label.textContent=t('settings_check_now');
-  }
 }
 
 // ── Auxiliary Models ──────────────────────────────────────────────────────────
@@ -12842,9 +12652,6 @@ async function saveSettings(andClose){
   body.show_previous_messaging_sessions=showPreviousMessagingSessions;
   body.pinned_sessions_limit=pinnedSessionsLimit;
   body.sync_to_insights=!!($('settingsSyncInsights')||{}).checked;
-  body.check_for_updates=!!($('settingsCheckUpdates')||{}).checked;
-  body.ignore_agent_updates=!!($('settingsIgnoreAgentUpdates')||{}).checked;
-  body.whats_new_summary_enabled=!!($('settingsWhatsNewSummary')||{}).checked;
   body.sound_enabled=!!($('settingsSoundEnabled')||{}).checked;
   body.rtl=!!($('settingsRtl')||{}).checked;
   body.notifications_enabled=!!($('settingsNotificationsEnabled')||{}).checked;

@@ -118,7 +118,7 @@ def test_settings_api_accepts_appearance_only_payload_without_overwriting_other_
         "font_size": original.get("font_size", "default"),
         "show_token_usage": original.get("show_token_usage"),
         "show_cli_sessions": original.get("show_cli_sessions"),
-        "check_for_updates": original.get("check_for_updates"),
+        "sync_to_insights": original.get("sync_to_insights"),
     }
     try:
         d, status = _post("/api/settings", {"theme": "system", "skin": "charizard", "font_size": "large"})
@@ -129,7 +129,7 @@ def test_settings_api_accepts_appearance_only_payload_without_overwriting_other_
         reloaded, _ = _get("/api/settings")
         assert reloaded.get("show_token_usage") == snapshot["show_token_usage"]
         assert reloaded.get("show_cli_sessions") == snapshot["show_cli_sessions"]
-        assert reloaded.get("check_for_updates") == snapshot["check_for_updates"]
+        assert reloaded.get("sync_to_insights") == snapshot["sync_to_insights"]
     finally:
         _post("/api/settings", {
             "theme": snapshot["theme"],

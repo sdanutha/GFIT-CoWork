@@ -194,8 +194,8 @@ def test_settings_system_version_controls_wrap_on_phone_widths():
     assert "flex-direction:column" in mobile_css.replace(" ", ""), (
         "Settings section header should stack vertically on mobile."
     )
-    assert "#checkUpdatesBlock" in mobile_css, (
-        "Settings update/version controls need a mobile rule."
+    assert "#settingsVersionBlock" in mobile_css, (
+        "Settings version badges need a mobile rule."
     )
     assert "flex-wrap:wrap" in mobile_css.replace(" ", ""), (
         "Version badges and Check now button must wrap instead of overflowing."

@@ -40,11 +40,11 @@ def test_save_models_cache_to_disk_preserves_response_metadata(tmp_path, monkeyp
     # Plus the disk-only metadata stamps added by #1633 — present but not part
     # of the response payload.
     assert "_schema_version" in on_disk
-    # _webui_version may be absent in early-init paths where api.updates isn't
-    # yet imported; in normal test runs api.updates IS imported, so assert it.
+    # _webui_version may be absent in early-init paths where api.version isn't
+    # yet imported; in normal test runs api.version IS imported, so assert it.
     import sys
-    if "api.updates" in sys.modules:
-        assert on_disk.get("_webui_version") == sys.modules["api.updates"].WEBUI_VERSION
+    if "api.version" in sys.modules:
+        assert on_disk.get("_webui_version") == sys.modules["api.version"].WEBUI_VERSION
 
     # Load returns the response-shape fields (stamps stripped) plus `aliases`,
     # which the loader reconstructs from current config because the save path

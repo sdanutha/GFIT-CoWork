@@ -620,7 +620,7 @@ def main() -> int:
         # spawns a new process instead of replacing (Python calls CreateProcess),
         # orphaning it from any supervisor. Use Popen + exit there instead.
         if sys.platform == "win32":
-            # Mirror the robust pattern from api/updates._schedule_restart:
+            # Restart robustly on Windows:
             # 1. Prefer pythonw.exe (windowless subsystem) over python.exe
             #    so the restarted server never creates a visible console window.
             # 2. DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW

@@ -1,6 +1,5 @@
 import io
 from types import SimpleNamespace
-from urllib.parse import urlsplit
 from pathlib import Path
 
 
@@ -93,57 +92,6 @@ def test_docker_env_log_obfuscates_password_and_secret_names():
     assert "TOKEN" in line
     assert "API" in line
     assert "KEY" in line
-
-
-def test_get_update_check_returns_cache_without_fetch(monkeypatch):
-    from api import routes, updates
-
-    monkeypatch.setattr(routes, "load_settings", lambda: {"check_for_updates": True})
-    monkeypatch.setattr(updates, "cached_update_status", lambda include_agent=True: {"checked_at": 123, "webui": None, "agent": None, "include_agent": include_agent})
-    monkeypatch.setattr(updates, "check_for_updates", lambda *a, **k: (_ for _ in ()).throw(AssertionError("GET must not fetch")))
-
-    handler = _Handler(client_ip="127.0.0.1")
-    routes.handle_get(handler, urlsplit("/api/updates/check?force=1"))
-    assert handler.status == 200
-
-
-def test_cached_update_status_does_not_drop_agent_info_when_reenabled(monkeypatch):
-    from api import updates
-
-    cached_agent = {"name": "agent", "behind": 2}
-    monkeypatch.setattr(
-        updates,
-        "_update_cache",
-        {
-            "webui": {"name": "webui", "behind": 0},
-            "agent": cached_agent,
-            "checked_at": 123,
-            "include_agent": False,
-        },
-    )
-
-    result = updates.cached_update_status(include_agent=True)
-
-    assert result["agent"] == cached_agent
-
-
-def test_post_update_check_performs_forced_fetch(monkeypatch):
-    from api import routes
-
-    calls = []
-    monkeypatch.setattr(routes, "load_settings", lambda: {"check_for_updates": True})
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-
-    def fake_check(*, force=False, include_agent=True, channel="stable"):
-        calls.append((force, include_agent))
-        return {"checked_at": 456, "webui": None, "agent": None}
-
-    monkeypatch.setattr("api.updates.check_for_updates", fake_check)
-    body = b'{"force": true}'
-    handler = _Handler(client_ip="127.0.0.1", body=body, headers={"Content-Length": str(len(body))})
-    routes.handle_post(handler, SimpleNamespace(path="/api/updates/check", query=""))
-    assert handler.status == 200
-    assert calls == [(True, True)]
 
 
 def test_onboarding_untrusted_forwarded_header_denies_lan_proxy_socket(monkeypatch):

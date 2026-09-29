@@ -7548,11 +7548,11 @@ _provider_models_invalidated_ts: dict[str, float] = {}  # provider_id -> timesta
 def _current_webui_version() -> str | None:
     """Lazy resolver for the WebUI version, used to stamp the disk cache (#1633).
 
-    `api.updates` imports `api.config` at module-load time, so we cannot
-    `from api.updates import WEBUI_VERSION` at the top of this module without a
+    `api.version` imports `api.config` at module-load time, so we cannot
+    `from api.version import WEBUI_VERSION` at the top of this module without a
     circular import. Instead we resolve lazily on each cache load/save.
 
-    Returns the runtime version string (e.g. ``v0.50.293``) when api.updates
+    Returns the runtime version string (e.g. ``v0.50.293``) when api.version
     has been imported, or None if it isn't loaded yet (boot-time corner case
     before the server has finished initializing). A None return is treated as
     "do not stamp / do not validate" by the cache layer so cache reads/writes
@@ -7562,7 +7562,7 @@ def _current_webui_version() -> str | None:
     try:
         # Read attribute via dotted lookup so we don't add an import-time edge.
         import sys as _sys
-        mod = _sys.modules.get('api.updates')
+        mod = _sys.modules.get('api.version')
         if mod is None:
             return None
         v = getattr(mod, 'WEBUI_VERSION', None)
@@ -8212,7 +8212,7 @@ def _save_models_cache_to_disk(cache: dict) -> None:
     The version stamp is omitted (not the literal None — the field is just
     skipped) when the runtime version cannot be resolved at the moment of
     save, which would happen only in a very early boot path before
-    api.updates is loaded. _is_loadable_disk_cache treats a missing field as
+    api.version is loaded. _is_loadable_disk_cache treats a missing field as
     a mismatch (since runtime_version is non-None on every subsequent call),
     so this is safe — at worst we write one cache file that gets rejected
     once on the next boot.
@@ -11517,10 +11517,6 @@ _SETTINGS_DEFAULTS = {
     "show_kanban_sessions": False,  # surface kanban worker sessions in the sidebar (subordinate to show_cli_sessions)
     "show_previous_messaging_sessions": False,  # show older Telegram/Discord/etc. reset segments
     "sync_to_insights": False,  # mirror WebUI token usage to state.db for /insights
-    "check_for_updates": True,  # check if webui/agent repos are behind upstream
-    "update_channel": "stable",  # stable | experimental — which release stream to track (stable = soaked/promoted; experimental = every batch)
-    "ignore_agent_updates": False,  # keep WebUI update notices but suppress Agent update checks
-    "whats_new_summary_enabled": False,  # show an LLM-written What's New summary before diff links
     "tts_enabled": False,
     "tts_auto_read": False,
     "tts_engine": "browser",
@@ -11614,6 +11610,11 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     "default_model",
     "activity_feed_expanded_default",
     "simplified_tool_calling",
+    # The update check is gone: a Deployment is upgraded by rebuilding its image.
+    "check_for_updates",
+    "update_channel",
+    "ignore_agent_updates",
+    "whats_new_summary_enabled",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -11844,7 +11845,6 @@ _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
 _SETTINGS_ENUM_VALUES = {
     "send_key": {"enter", "ctrl+enter", "shift+enter"},
     "sidebar_density": {"compact", "detailed"},
-    "update_channel": {"stable", "experimental"},
     "font_size": {"small", "default", "large", "xlarge"},
     "auto_title_refresh_every": {"0", "5", "10", "20"},
     "default_message_mode": {"queue", "interrupt", "steer"},
@@ -11885,9 +11885,6 @@ _SETTINGS_BOOL_KEYS = {
     "show_kanban_sessions",
     "show_previous_messaging_sessions",
     "sync_to_insights",
-    "check_for_updates",
-    "ignore_agent_updates",
-    "whats_new_summary_enabled",
     "tts_enabled",
     "tts_auto_read",
     "voice_mode_button",

@@ -13099,7 +13099,7 @@ def _render_index_shell_base() -> str:
     extension-tag injection are intentionally NOT applied here — they vary per
     request and are applied by the caller against this base string.
     """
-    from api.updates import WEBUI_VERSION
+    from api.version import WEBUI_VERSION
 
     index_path = api_config.get_index_html_path()
     st = index_path.stat()
@@ -13790,7 +13790,7 @@ def handle_get(handler, parsed) -> bool:
             _resolve_login_locale_key(_lang)
         ])
         from urllib.parse import quote
-        from api.updates import WEBUI_VERSION
+        from api.version import WEBUI_VERSION
         # GFIT-CoWork: the Directory login (employee ID + password) is the only
         # way in (ADR 0004), so it is the only form. Locales without Directory
         # copy yet fall back to English.
@@ -13874,7 +13874,7 @@ def handle_get(handler, parsed) -> bool:
             # Inject the current git-derived version as the cache name so the
             # service worker cache busts automatically on every new deploy.
             from urllib.parse import quote
-            from api.updates import WEBUI_VERSION
+            from api.version import WEBUI_VERSION
             version_token = quote(WEBUI_VERSION, safe="")
             text = sw_path.read_text(encoding="utf-8").replace(
                 "__WEBUI_VERSION__", version_token
@@ -14135,19 +14135,9 @@ def handle_get(handler, parsed) -> bool:
         # Inject the running version so the UI badge stays in sync with git tags
         # without any manual release step.
         try:
-            from api.updates import AGENT_VERSION, WEBUI_VERSION
+            from api.version import AGENT_VERSION, WEBUI_VERSION
             settings["webui_version"] = WEBUI_VERSION
             settings["agent_version"] = AGENT_VERSION
-        except Exception:
-            pass
-        # Channel-scoped display badge — SEPARATE from webui_version (which is
-        # load-bearing for asset cache-busting / SW cache / skew detection and
-        # must stay channel-neutral). update_channel_version is display-only.
-        try:
-            from api.updates import channel_version_badge, _read_update_channel
-            channel = _read_update_channel()
-            settings["update_channel"] = channel
-            settings["update_channel_version"] = channel_version_badge(channel)
         except Exception:
             pass
         return j(handler, settings)
@@ -14506,46 +14496,6 @@ def handle_get(handler, parsed) -> bool:
             return j(handler, resolve_moa_config())
         except RuntimeError as e:
             return bad(handler, str(e), 503)
-
-    if parsed.path == "/api/updates/check":
-        settings = load_settings()
-        if not settings.get("check_for_updates", True):
-            return j(handler, {"disabled": True})
-        include_agent_updates = not bool(settings.get("ignore_agent_updates"))
-        qs = parse_qs(parsed.query)
-        # ?simulate=1 returns fake behind counts for UI testing (localhost only)
-        if (
-            qs.get("simulate", ["0"])[0] == "1"
-            and handler.client_address[0] == "127.0.0.1"
-        ):
-            return j(
-                handler,
-                {
-                    "webui": {
-                        "name": "webui",
-                        "behind": 3,
-                        "current_sha": "abc1234",
-                        "latest_sha": "def5678",
-                        "branch": "master",
-                        "repo_url": "https://github.com/nesquena/hermes-webui",
-                        "compare_url": "https://github.com/nesquena/hermes-webui/compare/abc1234...def5678",
-                    },
-                    "agent": {
-                        "name": "agent",
-                        "behind": 1 if include_agent_updates else 0,
-                        "ignored": not include_agent_updates,
-                        "current_sha": "aaa0001",
-                        "latest_sha": "bbb0002",
-                        "branch": "master",
-                        "repo_url": "https://github.com/NousResearch/hermes-agent",
-                        "compare_url": "https://github.com/NousResearch/hermes-agent/compare/aaa0001...bbb0002",
-                    },
-                    "checked_at": 0,
-                },
-            )
-        from api.updates import cached_update_status
-
-        return j(handler, cached_update_status(include_agent=include_agent_updates))
 
     if parsed.path == "/api/chat/stream/status":
         stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
@@ -15121,95 +15071,6 @@ def _resolve_new_session_workspace(body, visible_prev_session_id, profile=None):
     return str(workspace)
 
 
-def _llm_update_summary(system_prompt: str, user_prompt: str, active_profile: str | None = None) -> str:
-    from api import profiles as profiles_api
-
-    profile = active_profile or profiles_api.get_active_profile_name() or "default"
-
-    with profiles_api.profile_env_for_background_worker(
-        profile,
-        "update summary",
-        logger_override=logger,
-    ):
-        from api.config import (
-            get_effective_default_model,
-            resolve_model_provider,
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        _main_model, _main_provider, _main_base_url = resolve_model_provider(get_effective_default_model())
-        _main_api_key = None
-        _rt = None
-        try:
-            from api.oauth import resolve_runtime_provider_with_anthropic_env_lock
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-
-            _rt = resolve_runtime_provider_with_anthropic_env_lock(
-                resolve_runtime_provider,
-                requested=_main_provider,
-            )
-            _main_api_key = _rt.get("api_key")
-            if not _main_provider:
-                _main_provider = _rt.get("provider")
-            if not _main_base_url:
-                _main_base_url = _rt.get("base_url")
-        except Exception as _e:
-            logger.debug("update summary runtime provider resolution failed: %s", _e)
-        # Atomic custom-provider authority (see the /api/chat note): the record
-        # that supplies the endpoint must also supply the credential — and the
-        # wire protocol, credential pool and ACP transport that go with it.
-        _bundle = _resolve_agent_connection_bundle(
-            _main_provider, _main_api_key, _main_base_url, _rt
-        )
-        _main_provider = _bundle["provider"]
-        _main_api_key = _bundle["api_key"]
-        _main_base_url = _bundle["base_url"]
-
-        main_runtime = _auxiliary_main_runtime(_bundle, _main_model)
-
-        ensure_agent_runtime_current()
-        try:
-            from agent.auxiliary_client import get_text_auxiliary_client
-
-            aux_client, aux_model = get_text_auxiliary_client(
-                "compression",
-                main_runtime=main_runtime,
-            )
-            if aux_client is not None and aux_model:
-                response = aux_client.chat.completions.create(
-                    model=aux_model,
-                    messages=messages,
-                )
-                return str(response.choices[0].message.content or "").strip()
-        except Exception as _e:
-            logger.debug("update summary auxiliary model failed; falling back to main model: %s", _e)
-
-        AIAgent = require_ai_agent_class()
-
-        agent = AIAgent(
-            model=_main_model,
-            provider=_main_provider,
-            base_url=_main_base_url,
-            api_key=_main_api_key,
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=[],
-            session_id=f"updates-summary-{uuid.uuid4().hex[:8]}",
-            **_agent_bundle_kwargs(AIAgent, _bundle),
-        )
-        result = agent.run_conversation(
-            user_message=user_prompt,
-            system_message=system_prompt,
-            conversation_history=[],
-            task_id=f"updates-summary-{uuid.uuid4().hex[:8]}",
-        )
-        return str(result.get("final_response") or "").strip()
-
-
 def _profile_refused(handler, refusal):
     """Answer a refused Profile management action (``roster.ProfileRefused``) with its HTTP status."""
     from api import roster
@@ -15337,40 +15198,6 @@ def handle_post(handler, parsed) -> bool:
 
     if parsed.path == "/api/escape/authorize":
         return _handle_escape_authorize(handler, parsed, body)
-
-    if parsed.path == "/api/updates/check":
-        settings = load_settings()
-        if not settings.get("check_for_updates", True):
-            force = bool(body.get("force", False)) if isinstance(body, dict) else False
-            if force:
-                # Manual force-check bypasses auto-check toggle (#6082)
-                pass
-            else:
-                return j(handler, {"disabled": True})
-        include_agent_updates = not bool(settings.get("ignore_agent_updates"))
-        force = bool(body.get("force", False))
-        # Allow the client to pass the channel explicitly in the POST body. This
-        # avoids a race on channel switch: the Settings dropdown re-checks
-        # immediately, but its autosave PUT (debounced) may not have landed
-        # server-side yet, so reading the saved setting here could answer for the
-        # OLD channel. An explicit body channel (validated against the enum) wins;
-        # otherwise fall back to the saved setting. (Fable UX gate.)
-        channel = body.get("channel") if isinstance(body, dict) else None
-        if channel not in ("stable", "experimental"):
-            channel = settings.get("update_channel")
-        from api.updates import check_for_updates
-
-        logger.info("checking for updates (force=%s, include_agent=%s, channel=%s)", force, include_agent_updates, channel)
-        # Defensive-only guard: wrap check_for_updates() for consistent
-        # exception protection across all route handlers. Does NOT fix #6086
-        # (root cause is likely signal/process-group reaping, per maintainer analysis).
-        try:
-            payload = check_for_updates(force=force, include_agent=include_agent_updates, channel=channel)
-        except Exception:
-            logger.exception("update check failed unexpectedly (defensive guard caught exception)")
-            return bad(handler, "Update check failed, see server log for details", status=500)
-        logger.info("update check completed")
-        return j(handler, payload)
 
     if parsed.path == "/api/extensions/toggle":
         from api.extensions import ExtensionToggleError, set_extension_user_enabled
@@ -17522,56 +17349,6 @@ def handle_post(handler, parsed) -> bool:
     # ── Session import from JSON (POST) ──
     if parsed.path == "/api/session/import":
         return _handle_session_import(handler, body)
-
-    # ── Self-update (POST) ──
-    if parsed.path == "/api/updates/apply":
-        target = body.get("target", "")
-        if target not in ("webui", "agent"):
-            return bad(handler, 'target must be "webui" or "agent"')
-        # Honor an explicit validated body channel (the client sends the channel
-        # the banner was offering) so a channel switch whose debounced autosave
-        # hasn't landed can't make apply read the OLD saved channel (Codex gate).
-        # Fall back to the saved setting when absent/invalid.
-        _apply_channel = body.get("channel") if isinstance(body, dict) else None
-        if _apply_channel not in ("stable", "experimental"):
-            _apply_channel = None
-        from api.updates import apply_update
-
-        return j(handler, apply_update(target, _apply_channel))
-
-    if parsed.path == "/api/updates/force":
-        target = body.get("target", "")
-        if target not in ("webui", "agent"):
-            return bad(handler, 'target must be "webui" or "agent"')
-        _force_channel = body.get("channel") if isinstance(body, dict) else None
-        if _force_channel not in ("stable", "experimental"):
-            _force_channel = None
-        from api.updates import apply_force_update
-
-        return j(handler, apply_force_update(target, _force_channel))
-
-    if parsed.path == "/api/updates/clear_lock":
-        # Manual-instruction recovery for the .git/index.lock case. The
-        # endpoint NEVER removes a lock file from the server -- it returns
-        # the diagnostic + the exact 'rm' command for the operator, and on
-        # a re-click with the lock already gone, it re-runs the normal
-        # non-destructive apply path. See apply_clear_lock for the v2.2
-        # design rationale (round-2 gate cert: fcntl-flock cannot detect
-        # git's O_CREAT|O_EXCL locks, so any auto-delete path races).
-        target = body.get("target", "")
-        if target not in ("webui", "agent"):
-            return bad(handler, 'target must be "webui" or "agent"')
-        from api.updates import apply_clear_lock
-
-        return j(handler, apply_clear_lock(target))
-
-    if parsed.path == "/api/updates/summary":
-        from api.updates import summarize_update_payload
-
-        updates = body.get("updates") if isinstance(body, dict) else {}
-        target = body.get("target") if isinstance(body, dict) else None
-
-        return j(handler, summarize_update_payload(updates, llm_callback=_llm_update_summary, target=target))
 
     # ── CLI session import (POST) ──
     if parsed.path == "/api/session/import_cli":

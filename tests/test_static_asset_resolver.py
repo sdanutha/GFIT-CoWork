@@ -82,10 +82,10 @@ def test_service_worker_and_favicon_follow_selected_static_root(tmp_path, monkey
     monkeypatch.setattr(api_config, "get_static_root", lambda: static_root)
 
     sw_handler = _get("/sw.js")
-    # The route resolves api.updates dynamically on each request. Other update
+    # The route resolves api.version dynamically on each request. Other update
     # tests deliberately evict and re-import that module, so a collection-time
     # alias can become stale even though the checkout and runtime module agree.
-    webui_version = importlib.import_module("api.updates").WEBUI_VERSION
+    webui_version = importlib.import_module("api.version").WEBUI_VERSION
     expected = sw_path.read_text(encoding="utf-8").replace(
         "__WEBUI_VERSION__", quote(webui_version, safe="")
     ).encode("utf-8")

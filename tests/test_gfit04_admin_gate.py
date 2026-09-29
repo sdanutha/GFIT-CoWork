@@ -35,10 +35,6 @@ ADMIN_ONLY = [
     ("POST", "/api/extensions/toggle", {}),
     ("GET", "/api/extensions/some-ext/sidecar/x", None),
     ("GET", "/extensions/some-ext/app.js", None),
-    # self-update
-    ("GET", "/api/updates/check", None),
-    ("POST", "/api/updates/apply", {}),
-    ("POST", "/api/updates/force", {}),
     # shutdown / reload
     ("POST", "/api/shutdown", {}),
     ("POST", "/api/health/restart", {}),

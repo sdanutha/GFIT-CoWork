@@ -17,7 +17,7 @@ A person who logs in to GFIT-CoWork with their company AD account. Each User own
 _Avoid_: account, member
 
 **Admin**:
-An AD user named in the Deployment's config; a Deployment may have several. The Admin logs in directly to the `default` Profile and has no personal Profile. Only the Admin can create, disable and delete Profiles, and use server-level features (terminal, updates, extensions, logs).
+An AD user named in the Deployment's config; a Deployment may have several. The Admin logs in directly to the `default` Profile and has no personal Profile. Only the Admin can create, disable and delete Profiles, and use server-level features (terminal, extensions, logs).
 _Avoid_: root, superuser, owner
 
 **Profile**:
