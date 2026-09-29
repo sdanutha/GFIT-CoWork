@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from api.config import STATE_DIR, get_config, load_settings
+from api.config import STATE_DIR, load_settings
 from api.helpers import request_declares_body
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,6 @@ def _resolve_session_ttl() -> int:
 PUBLIC_PATHS = frozenset({
     '/login', '/health', '/favicon.ico', '/sw.js',
     '/api/auth/login', '/api/auth/status',
-    '/api/auth/oidc/start', '/api/auth/oidc/callback',
     '/api/auth/passkey/options', '/api/auth/passkey/login',
     '/share',
     '/manifest.json', '/manifest.webmanifest',
@@ -419,8 +418,8 @@ def get_password_hash() -> str | None:
 
 
 # ── GFIT-CoWork: the Upstream login methods are off (ADR 0004, ticket 09) ────
-# The Directory is the only way in. The single shared password, passkeys and
-# OIDC report "not enabled", so every one of their endpoints
+# The Directory is the only way in. The single shared password and passkeys
+# report "not enabled", so every one of their endpoints
 # refuses and the UI hides them. Their configuration still turns the auth gate
 # on (see is_auth_enabled), so a Deployment that set a password but no
 # Directory is locked rather than open. Deleting their code is left to later
@@ -436,17 +435,11 @@ def _passkey_feature_flag_enabled() -> bool:
     return False
 
 
-def is_oidc_auth_enabled() -> bool:
-    """Always False: OIDC login is off in GFIT-CoWork."""
-    return False
-
-
 def _legacy_login_configured() -> bool:
     """True if an Upstream login method is configured, though none of them is honoured."""
     return (
         get_password_hash() is not None
         or _passkey_feature_flag_configured()
-        or _oidc_configured()
     )
 
 
@@ -493,85 +486,6 @@ def are_passkeys_enabled() -> bool:
     except Exception as exc:
         logger.debug("Failed to inspect passkey availability: %s", exc)
         return False
-
-
-def _oidc_configured() -> bool:
-    """True if native OIDC login is configured for WebUI sessions."""
-    try:
-        from api.auth_oidc import is_oidc_enabled
-
-        return is_oidc_enabled()
-    except Exception as exc:
-        logger.debug("Failed to inspect OIDC availability: %s", exc)
-        return False
-
-
-def get_oidc_startup_warning() -> str | None:
-    """Return a startup warning when OIDC auth is only partially configured,
-    or when allow_values uses whitespace that is no longer a separator."""
-    try:
-        cfg = get_config()
-        raw = cfg.get("webui_oidc") if isinstance(cfg, dict) else {}
-        if not isinstance(raw, dict):
-            raw = {}
-    except Exception:
-        logger.debug("Failed to read webui_oidc config", exc_info=True)
-        raw = {}
-
-    def pick(name: str, env_name: str) -> str:
-        env_value = os.getenv(env_name)
-        value = env_value if env_value is not None else raw.get(name)
-        return str(value or "").strip()
-
-    issuer = bool(pick("issuer", "HERMES_WEBUI_OIDC_ISSUER"))
-    client_id = bool(pick("client_id", "HERMES_WEBUI_OIDC_CLIENT_ID"))
-    allow_claim = bool(pick("allow_claim", "HERMES_WEBUI_OIDC_ALLOW_CLAIM"))
-    raw_allow_env = os.getenv("HERMES_WEBUI_OIDC_ALLOW_VALUES")
-    raw_allow = raw_allow_env if raw_allow_env is not None else raw.get("allow_values")
-    normalized_allow_values = []
-    allow_values_warning = None
-    try:
-        from api import auth_oidc
-
-        normalized_allow_values = auth_oidc._normalize_allow_values(raw_allow)
-        allow_values_warning = auth_oidc._ALLOW_VALUES_WHITESPACE_WARNING
-    except Exception:
-        logger.debug("Failed to normalize OIDC allow_values", exc_info=True)
-    allow_values = bool(normalized_allow_values)
-
-    if not any((issuer, client_id, allow_claim, allow_values)):
-        return None
-
-    warnings = []
-
-    if not (issuer and client_id and allow_claim and allow_values):
-        missing = []
-        if not issuer:
-            missing.append("issuer")
-        if not client_id:
-            missing.append("client_id")
-        if not allow_claim:
-            missing.append("allow_claim")
-        if not allow_values:
-            missing.append("allow_values")
-        joined = ", ".join(missing)
-        warnings.append(
-            "Native OIDC login is only partially configured; missing "
-            f"{joined}. The WebUI will not enable OIDC auth until all four fields are set."
-        )
-
-    # Detect whitespace-only allow_values scalar that may contain multiple intended values.
-    # Runs unconditionally so the warning reaches startup even when other auth methods
-    # short-circuit is_auth_enabled() before the OIDC branch is evaluated.
-    if (
-        allow_values_warning is not None
-        and raw_allow is not None
-        and not isinstance(raw_allow, (list, tuple, set))
-        and any(any(ch.isspace() for ch in v) for v in normalized_allow_values)
-    ):
-        warnings.append(allow_values_warning)
-
-    return "\n".join(warnings) if warnings else None
 
 
 # Session ``auth_type`` for a GFIT-CoWork Directory login.
@@ -1014,7 +928,7 @@ def _safe_login_inner_next(query: str | None) -> str:
     itself safe (path-absolute, not protocol-relative/backslash, no control
     chars) AND not login-shaped / not itself carrying a nested next param.
     Anything else collapses to '' (no inner redirect), which kills the
-    self-referential chain. Mirrors _safe_login_redirect_path().
+    self-referential chain. Mirrors login.js `_safeNextPath()`.
     """
     import urllib.parse as _u
     raw = _u.parse_qs(query or "").get("next", [""])[0]

@@ -42,10 +42,10 @@ password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
 stand-in (see its README).
 
 The Directory is the only way in. The upstream login methods (the shared
-`HERMES_WEBUI_PASSWORD` or Settings password, passkeys and OIDC) are switched
+`HERMES_WEBUI_PASSWORD` or Settings password, and passkeys) are switched
 off; configuring one of them keeps the login gate on but never lets anyone in,
-and startup reports it as ignored. Trusted-header login is removed: its
-settings are ignored and reported at startup. The trusted proxy settings
+and startup reports it as ignored. Trusted-header and OIDC login are removed:
+their settings are ignored and reported at startup. The trusted proxy settings
 (`HERMES_WEBUI_TRUST_FORWARDED_FOR`, `HERMES_WEBUI_TRUSTED_PROXY_CIDRS`) stay
 for the rate limit.
 
@@ -373,8 +373,6 @@ If an AI assistant is helping with install, reinstall, bootstrap, provider setup
 - Installed PWAs work best with WebUI's own password. Reverse proxies are supported, but proxy basic auth can block the service-worker update fetches an installed app needs and leave it on a blank screen after an update; see `docs/troubleshooting.md` for recovery steps.
 - Optional passkeys/WebAuthn -- register from Settings -> System after signing in with a password; the login page only shows passkey sign-in after at least one passkey exists
 - After registering at least one passkey, Settings -> System can remove the password and keep passkey-only sign-in enabled. Password auth remains the bootstrap/recovery path until you choose to go passwordless; passkeys are same-origin and stored locally in the WebUI state directory
-- Optional native OIDC login for WebUI sessions -- configure `webui_oidc.issuer`, `client_id`, `allow_claim`, and `allow_values` in `config.yaml`, or set the matching `HERMES_WEBUI_OIDC_*` environment variables. OIDC stays disabled until all four are present, and startup prints a warning if the config is partial.
-- Native OIDC stores the PKCE/state nonce flow in process memory. That works for the shipped single-process server, and it also works behind a load balancer when callbacks stay sticky to the same WebUI instance. Multi-instance deployments need session affinity, or the callback can land on a different process and fail state validation.
 - Signed HMAC HTTP-only cookie with 24h TTL
 - Minimal dark-themed login page at `/login`
 - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)

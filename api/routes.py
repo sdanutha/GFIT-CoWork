@@ -32,7 +32,7 @@ import socket as _socket
 from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from contextlib import closing
-from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 from api.agent_runtime import (
@@ -11389,10 +11389,6 @@ button{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(12
   border:1px solid rgba(124,185,255,.3);color:#7cb9ff;font-size:14px;font-weight:600;cursor:pointer;
   transition:all .15s}
 button:hover{background:rgba(124,185,255,.25)}
-.oidc-login{display:block;margin-top:10px;padding:10px;border-radius:10px;text-decoration:none;
-  background:rgba(255,255,255,.04);border:1px solid rgba(111,214,164,.35);color:#6fd6a4;
-  font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
-.oidc-login:hover{background:rgba(111,214,164,.12)}
 .passkey-login{margin-top:10px;background:rgba(255,255,255,.04);border-color:rgba(232,160,48,.35);color:#e8a030}
 .err{color:#e94560;font-size:12px;margin-top:10px;display:none}
 </style></head><body>
@@ -11402,7 +11398,6 @@ button:hover{background:rgba(124,185,255,.25)}
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
     {{PASSWORD_FORM_HTML}}
-    {{OIDC_LOGIN_HTML}}
   </form>
   <div class="err" id="err"></div>
 </div>
@@ -11472,75 +11467,6 @@ def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bo
     handler.end_headers()
     handler.wfile.write(payload)
     return True
-
-
-def _safe_login_redirect_path(raw_path: str | None) -> str:
-    path = str(raw_path or "").strip()
-    if not path:
-        return "/"
-    if path[0] != "/":
-        return "/"
-    if path[1:2] in {"/", "\\"}:
-        return "/"
-    if re.search(r"[\x00-\x1f\x7f\s]", path):
-        return "/"
-    # #5578: reject a `next` that points back at the login page, so an
-    # expired-auth bounce on the login page can't feed the redirect its own
-    # address and grow the URL exponentially. Length cap is belt-and-suspenders:
-    # a legitimate app path is never this long.
-    if len(path) > 2048:
-        return "/"
-    # Detect a login-route target even through nested percent-encoding: a nested
-    # login-redirect chain looks like `/session/login%3Fnext%3D...`, where the
-    # `?` separating the path from the query is itself encoded, so a plain
-    # split("?") wouldn't isolate the real path. Fully decode (bounded) and check
-    # the leading PATH of EVERY decode level, including the final fully-decoded
-    # form. Only collapse login-route chains — a legitimate non-login path that
-    # merely carries its own `next=` query key (e.g. `/admin?action=foo&next=/x`)
-    # must still round-trip (regression guarded by test_v050258_opus_followups.py).
-    _probe = path
-    for _ in range(8):
-        _path_only = _probe.split("?", 1)[0].split("#", 1)[0].split("&", 1)[0].rstrip("/")
-        if _path_only.endswith("/login") or _path_only == "/login":
-            return "/"
-        _decoded = unquote(_probe)
-        if _decoded == _probe:
-            break
-        _probe = _decoded
-    else:
-        # Loop exhausted the cap while STILL decoding (pathologically deep
-        # encoding): check the final decoded form too, then fail closed — an
-        # 8-level-deep encoded value is never a legitimate redirect.
-        _path_only = _probe.split("?", 1)[0].split("#", 1)[0].split("&", 1)[0].rstrip("/")
-        if _path_only.endswith("/login") or _path_only == "/login":
-            return "/"
-        return "/"
-    return path
-
-
-def _request_base_url(handler) -> str:
-    from api.auth import _is_secure_context
-
-    scheme = "https" if _is_secure_context(handler) else "http"
-    host = str(handler.headers.get("Host") or "").strip() or "127.0.0.1:8787"
-    return f"{scheme}://{host}"
-
-
-def _oidc_login_html(parsed) -> str:
-    from api.auth import is_oidc_auth_enabled
-
-    if not is_oidc_auth_enabled():
-        return ""
-    next_path = _safe_login_redirect_path(
-        parse_qs(parsed.query or "").get("next", [""])[0]
-    )
-    href = "/api/auth/oidc/start"
-    if next_path != "/":
-        href += "?next=" + quote(next_path, safe="/")
-    return (
-        '<a id="oidc-login" class="oidc-login" '
-        f'href="{_html.escape(href, quote=True)}">Continue with SSO</a>'
-    )
 
 
 # ── Logs endpoint ─────────────────────────────────────────────────────────────
@@ -14051,71 +13977,8 @@ def handle_get(handler, parsed) -> bool:
             .replace(
                 "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])
             )
-            .replace("{{OIDC_LOGIN_HTML}}", _oidc_login_html(parsed))
         )
         return t(handler, _page, content_type="text/html; charset=utf-8")
-
-    if parsed.path in ("/api/auth/oidc/start", "/api/auth/oidc/callback"):
-        from api.auth import is_oidc_auth_enabled
-
-        if not is_oidc_auth_enabled():
-            return j(handler, {"error": "OIDC login is disabled"}, status=404)
-
-    if parsed.path == "/api/auth/oidc/start":
-        from api.auth_oidc import OIDCAuthError, OIDCConfigError, build_authorization_redirect
-
-        next_path = _safe_login_redirect_path(
-            parse_qs(parsed.query or "").get("next", [""])[0]
-        )
-        try:
-            location = build_authorization_redirect(
-                _request_base_url(handler), next_path
-            )
-        except OIDCConfigError as exc:
-            return j(handler, {"error": str(exc)}, status=404)
-        except OIDCAuthError as exc:
-            return j(handler, {"error": str(exc)}, status=exc.status_code)
-        handler.send_response(302)
-        handler.send_header("Location", location)
-        handler.send_header("Cache-Control", "no-store")
-        handler.send_header("Content-Length", "0")
-        _security_headers(handler)
-        handler.end_headers()
-        return True
-
-    if parsed.path == "/api/auth/oidc/callback":
-        from api.auth import create_session, set_auth_cookie
-        from api.auth_oidc import OIDCAuthError, OIDCConfigError, complete_authorization_code_flow
-
-        query = parse_qs(parsed.query or "")
-        error = str(query.get("error", [""])[0] or "").strip()
-        if error:
-            description = str(query.get("error_description", [""])[0] or "").strip()
-            return j(handler, {"error": description or error}, status=401)
-        state = str(query.get("state", [""])[0] or "").strip()
-        code = str(query.get("code", [""])[0] or "").strip()
-        if not state or not code:
-            return j(handler, {"error": "Missing OIDC callback state or code"}, status=400)
-        try:
-            result = complete_authorization_code_flow(
-                _request_base_url(handler), state, code
-            )
-        except OIDCConfigError as exc:
-            return j(handler, {"error": str(exc)}, status=404)
-        except OIDCAuthError as exc:
-            return j(handler, {"error": str(exc)}, status=exc.status_code)
-        cookie_val = create_session()
-        handler.send_response(302)
-        handler.send_header(
-            "Location",
-            _safe_login_redirect_path(result.get("next_path")),
-        )
-        handler.send_header("Cache-Control", "no-store")
-        _security_headers(handler)
-        set_auth_cookie(handler, cookie_val)
-        handler.send_header("Content-Length", "0")
-        handler.end_headers()
-        return True
 
     if parsed.path == "/api/auth/status":
         from api.auth import (
@@ -14123,7 +13986,6 @@ def handle_get(handler, parsed) -> bool:
             ensure_request_session,
             is_auth_enabled,
             is_directory_auth_enabled,
-            is_oidc_auth_enabled,
             is_password_auth_enabled,
             DIRECTORY_AUTH_TYPE,
         )
@@ -14132,7 +13994,6 @@ def handle_get(handler, parsed) -> bool:
         logged_in = False
         session_info = None
         auth_enabled = is_auth_enabled()
-        oidc_enabled = is_oidc_auth_enabled()
         if auth_enabled:
             session_info = ensure_request_session(handler)
             logged_in = bool(session_info)
@@ -14142,7 +14003,6 @@ def handle_get(handler, parsed) -> bool:
         payload = {
             "auth_enabled": auth_enabled,
             "logged_in": logged_in,
-            "oidc_enabled": oidc_enabled,
             "password_auth_enabled": password_auth_enabled,
             "passwordless_enabled": bool(passkeys) and not password_auth_enabled,
             "passkeys_enabled": bool(passkeys),

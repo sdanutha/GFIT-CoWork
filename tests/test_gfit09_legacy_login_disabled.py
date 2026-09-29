@@ -1,7 +1,7 @@
 """GFIT-CoWork ticket 09: the Upstream login methods are off (ADR 0004).
 
-The Directory login is the only way in. A single shared password, passkeys,
-OIDC and a trusted header all refuse, even when fully configured. Their
+The Directory login is the only way in. A single shared password and passkeys
+refuse, even when configured. Their
 configuration still turns the auth gate on, so a Deployment that set a password
 but no Directory is locked rather than open (fail closed).
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
@@ -19,11 +19,6 @@ LEGACY_PASSWORD = "the-old-shared-password"
 LEGACY_ENV = {
     "HERMES_WEBUI_PASSWORD": LEGACY_PASSWORD,
     "HERMES_WEBUI_PASSKEY": "1",
-    "HERMES_WEBUI_OIDC_ISSUER": "https://idp.example.com",
-    "HERMES_WEBUI_OIDC_CLIENT_ID": "gfit-cowork",
-    "HERMES_WEBUI_OIDC_CLIENT_SECRET": "s3cret",
-    "HERMES_WEBUI_OIDC_ALLOW_CLAIM": "groups",
-    "HERMES_WEBUI_OIDC_ALLOW_VALUES": "staff",
     "HERMES_WEBUI_TRUSTED_AUTH_HEADER": "X-Remote-User",
 }
 
@@ -75,17 +70,6 @@ def test_passkey_endpoints_refuse(srv, path):
     assert _locked(client)
 
 
-@pytest.mark.parametrize("path", [
-    "/api/auth/oidc/start",
-    "/api/auth/oidc/callback?state=abc&code=def",
-])
-def test_oidc_endpoints_refuse_even_when_configured(srv, path):
-    client = srv.client()
-    status, payload, _ = client.get(path)
-    assert status == 404, payload
-    assert _locked(client)
-
-
 def test_a_trusted_header_creates_no_session(srv):
     client = srv.client()
     status, _, set_cookies = client.get("/api/sessions", headers={"X-Remote-User": MEMBER})
@@ -104,14 +88,12 @@ def test_login_page_offers_only_the_directory_form(srv):
     assert status == 200
     assert 'id="username"' in html
     assert 'id="passkey-login"' not in html
-    assert "/api/auth/oidc/start" not in html
 
 
 def test_auth_status_reports_the_legacy_methods_off(srv):
     status, body, _ = srv.client().get("/api/auth/status")
     assert body.get("password_auth_enabled") is False
     assert body.get("passkeys_enabled", False) is False
-    assert body.get("oidc_enabled", False) is False
     assert not body.get("trusted_auth_enabled")
 
 

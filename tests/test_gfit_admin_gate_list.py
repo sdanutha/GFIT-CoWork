@@ -187,7 +187,7 @@ def test_the_dispatched_routes_are_found():
     routes = dispatched_routes()
     assert DispatchedRoute("GET", "/api/session", False) in routes
     assert DispatchedRoute("POST", "/api/session/new", False) in routes
-    assert DispatchedRoute("GET", "/api/auth/oidc/start", False) in routes  # literal set
+    assert DispatchedRoute("GET", "/session/manifest.json", False) in routes  # literal set
     assert DispatchedRoute("GET", "/static/", True) in routes
     assert DispatchedRoute("DELETE", "/api/prompts", False) in routes
 

@@ -7,8 +7,8 @@ document.addEventListener('DOMContentLoaded', function () {
   var input = document.getElementById('pw');
   var passkeyBtn = document.getElementById('passkey-login');
 
-  // #7056: the password input is absent on a passwordless deployment (OIDC-only,
-  // or passkey-only). The form itself still renders and carries the i18n data
+  // #7056: the password input is absent on a passwordless deployment
+  // (passkey-only). The form itself still renders and carries the i18n data
   // attributes, and the passkey button below must still be wired up, so only the
   // form is required here — every password-specific path is guarded individually.
   if (!form) return;
