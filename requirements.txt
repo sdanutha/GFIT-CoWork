@@ -1,4 +1,4 @@
-# Hermes Web UI -- minimal Python dependencies
+# GFIT-CoWork -- minimal Python dependencies
 # The server uses PyYAML. cryptography served the Upstream passkeys, which are
 # removed; dropping the dependency is left to its own change.
 # All heavy ML/agent deps live in the Hermes agent venv.

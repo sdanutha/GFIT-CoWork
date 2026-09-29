@@ -1,4 +1,4 @@
-"""Hermes Web UI -- the trusted proxy: whose address is this request from?
+"""GFIT-CoWork -- the trusted proxy: whose address is this request from?
 
 A request's socket peer is its address, unless the peer is a trusted proxy
 (loopback, or an address in ``HERMES_WEBUI_TRUSTED_PROXY_CIDRS``) speaking for

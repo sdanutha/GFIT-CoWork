@@ -50,7 +50,7 @@ def test_local_test_runner_uses_supported_venv_before_pytest_collection():
     # Destructive-fs guard: never create/clear a virtualenv through a symlinked .venv
     # (`python -m venv --clear` would empty the symlink's target).
     assert '-L "$VENV_DIR"' in runner
-    assert "Hermes WebUI tests require Python 3.11, 3.12, or 3.13" in conftest
+    assert "GFIT-CoWork tests require Python 3.11, 3.12, or 3.13" in conftest
     assert "Run ./scripts/test.sh" in conftest
 
 

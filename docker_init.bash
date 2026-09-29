@@ -365,7 +365,7 @@ rm -f $it || error_exit "Failed to delete test file in /app"
 
 ######## Environment variables (consume AFTER the load_env)
 
-echo ""; echo "== Checking required environment variables for hermes-webui"
+echo ""; echo "== Checking required environment variables for GFIT-CoWork"
 
 echo ""; echo "-- HERMES_WEBUI_STATE_DIR: Where to store sessions, workspaces, and other state (default: ~/.hermes/webui)"
 if [ -z "${HERMES_WEBUI_STATE_DIR+x}" ]; then error_exit "HERMES_WEBUI_STATE_DIR not set"; fi; 
@@ -393,7 +393,7 @@ else
 fi
 
 echo ""; echo "==================="
-echo ""; echo "== Installing uv and creating a new virtual environment for hermes-webui"
+echo ""; echo "== Installing uv and creating a new virtual environment for GFIT-CoWork"
 
 export PATH="/home/hermeswebui/.local/bin/:$PATH"
 if command -v uv &>/dev/null; then
@@ -419,7 +419,7 @@ export VIRTUAL_ENV=/app/venv
 test -d /app/venv
 test -f /app/venv/bin/activate
 
-echo "";echo "== Activating hermes webui's virtual environment"
+echo "";echo "== Activating the GFIT-CoWork virtual environment"
 source /app/venv/bin/activate || error_exit "Failed to activate hermeswebui virtual environment"
 test -x /app/venv/bin/python3
 
@@ -439,7 +439,7 @@ ensure_hindsight_client_docker_dependency() {
 if [ -f /app/venv/.deps_installed ]; then
   echo ""; echo "== Dependencies already installed — skipping (fast restart)"
 else
-  echo ""; echo "== Installing hermes-webui dependencies"
+  echo ""; echo "== Installing GFIT-CoWork dependencies"
   uv pip install -r requirements.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
   uv pip install -U pip setuptools --trusted-host pypi.org --trusted-host files.pythonhosted.org
   test -x /app/venv/bin/pip
@@ -459,10 +459,10 @@ else
   if [ -n "$_agent_src" ]; then
     if [ -w "$_agent_src" ]; then
       echo ""
-      echo "!! WARNING: hermes-agent source mount is writable from the WebUI container."
+      echo "!! WARNING: hermes-agent source mount is writable from the GFIT-CoWork container."
       echo "!!   Path: $_agent_src"
       echo "!! The multi-container compose defaults use a read-only mount for defence-in-depth."
-      echo "!! If this is not an intentional local development checkout, switch the WebUI"
+      echo "!! If this is not an intentional local development checkout, switch the GFIT-CoWork"
       echo "!! agent source volume/bind mount to read-only. See docs/rfcs/agent-source-boundary.md."
       echo ""
     fi
@@ -518,7 +518,7 @@ else
     echo "!! WARNING: hermes-agent source not found."
     echo "!!   Looked in: ${_agent_paths[0]}"
     echo "!!              ${_agent_paths[1]}"
-    echo "!! The WebUI will start with reduced functionality (no model auto-detection,"
+    echo "!! GFIT-CoWork will start with reduced functionality (no model auto-detection,"
     echo "!! no personality routing, no CLI session imports)."
     echo "!! To fix: mount the agent source volume into the container:"
     echo "!!   -v /path/to/hermes-agent:/home/hermeswebui/.hermes/hermes-agent"
@@ -531,8 +531,8 @@ fi
 
 ensure_hindsight_client_docker_dependency
 
-echo ""; echo "== Running hermes-webui"
-cd /app; python server.py || error_exit "hermes-webui failed or exited with an error"
+echo ""; echo "== Running GFIT-CoWork"
+cd /app; python server.py || error_exit "GFIT-CoWork failed or exited with an error"
 
 # we should never be here because the server should be running indefinitely, but if we are, we exit safely
 ok_exit "Clean exit"

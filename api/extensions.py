@@ -1,4 +1,4 @@
-"""Opt-in WebUI extension hooks.
+"""Opt-in GFIT-CoWork extension hooks.
 
 This module intentionally provides a small, self-hosted extension surface:
 configured same-origin script/style injection plus sandboxed static file serving.

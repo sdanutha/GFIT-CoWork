@@ -1,4 +1,4 @@
-"""Helpers for WebUI-managed Hermes Agent git worktrees."""
+"""Helpers for GFIT-CoWork-managed Hermes Agent git worktrees."""
 
 from __future__ import annotations
 

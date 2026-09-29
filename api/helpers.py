@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- HTTP helper functions.
+GFIT-CoWork -- HTTP helper functions.
 """
 import base64 as _base64
 import binascii as _binascii

@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- Optional state.db sync bridge.
+GFIT-CoWork -- Optional state.db sync bridge.
 
 Mirrors WebUI session metadata (token usage, title, model) into the
 hermes-agent state.db so that /insights, session lists, and cost

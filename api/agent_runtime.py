@@ -1,6 +1,6 @@
 """Fail-closed guard for in-process Hermes Agent source revisions.
 
-Hermes WebUI currently imports ``run_agent.AIAgent`` into its long-lived server
+GFIT-CoWork currently imports ``run_agent.AIAgent`` into its long-lived server
 process. If the Agent checkout changes while that process is alive, Python may
 combine already-cached modules with newly-read source. Refuse to reuse that
 mixed runtime and require a clean WebUI restart instead.
@@ -28,10 +28,10 @@ from api.config import (
 from api.subprocess_utils import windows_hide_flags
 
 _RESTART_REQUIRED_MESSAGE = (
-    "Hermes Agent was updated while Hermes WebUI was running. "
-    "WebUI cannot verify that the Agent update completed safely. "
+    "Hermes Agent was updated while GFIT-CoWork was running. "
+    "GFIT-CoWork cannot verify that the Agent update completed safely. "
     "Check the Agent update outcome and environment first. "
-    "Restart Hermes WebUI manually before retrying this action."
+    "Restart GFIT-CoWork manually before retrying this action."
 )
 _AGENT_UPDATE_MARKER = ".hermes-update-in-progress"
 _AGENT_RECOVERY_MARKERS = (".update-incomplete", ".lazy-refresh-incomplete")

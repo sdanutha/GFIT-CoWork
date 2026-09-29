@@ -1,4 +1,4 @@
-"""Shared path helpers for Hermes WebUI.
+"""Shared path helpers for GFIT-CoWork.
 
 Keep low-level filesystem defaults here instead of in ``api.config`` so modules
 that need the default Hermes home can import them without triggering config's

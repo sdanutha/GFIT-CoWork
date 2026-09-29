@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- authentication: the session store, the session cookie, CSRF,
+GFIT-CoWork -- authentication: the session store, the session cookie, CSRF,
 the signed Profile cookie and the per-request gate.
 Login is the Directory (api.login, ADR 0004); off when no Directory is configured.
 """

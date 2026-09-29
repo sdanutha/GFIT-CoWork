@@ -134,7 +134,7 @@ def test_unverified_update_keeps_manual_409_without_restart(
     assert payload["retryable"] is True
     assert payload["restart_scheduled"] is False
     assert payload["agent_update_state"] == diagnostic
-    assert "Restart Hermes WebUI manually" in payload["error"]
+    assert "Restart GFIT-CoWork manually" in payload["error"]
     assert "success" not in payload["error"].lower()
 
 
@@ -199,7 +199,7 @@ def test_async_compression_preserves_manual_restart_diagnostics(
         assert payload["retryable"] is True
         assert payload["restart_scheduled"] is False
         assert payload["agent_update_state"] == "incomplete"
-        assert "Restart Hermes WebUI manually" in payload["error"]
+        assert "Restart GFIT-CoWork manually" in payload["error"]
 
 
 def test_loaded_agent_runtime_fails_closed_after_source_revision_changes(tmp_path: Path):
@@ -262,14 +262,14 @@ try:
 except RuntimeError as exc:
     message = str(exc)
     assert "Hermes Agent was updated" in message
-    assert "Restart Hermes WebUI manually" in message
+    assert "Restart GFIT-CoWork manually" in message
 else:
     raise AssertionError("stale in-process AIAgent was reused after its source revision changed")
 
 try:
     agent_runtime.require_ai_agent_class()
 except agent_runtime.AgentRuntimeChangedError as exc:
-    assert "Restart Hermes WebUI manually" in str(exc)
+    assert "Restart GFIT-CoWork manually" in str(exc)
 else:
     raise AssertionError("unguarded AIAgent import was allowed after its source revision changed")
 """.strip()

@@ -1,4 +1,4 @@
-"""Hermes Web UI -- startup helpers."""
+"""GFIT-CoWork -- startup helpers."""
 from __future__ import annotations
 import os, stat, subprocess, sys
 from pathlib import Path

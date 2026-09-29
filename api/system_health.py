@@ -1,4 +1,4 @@
-"""Safe aggregate host resource metrics for the WebUI system panel (#693).
+"""Safe aggregate host resource metrics for the GFIT-CoWork system panel (#693).
 
 The browser only needs coarse CPU/RAM/disk usage. Linux uses procfs first;
 platforms without procfs (for example macOS) fall back to psutil for aggregate

@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- Route handlers for GET and POST endpoints.
+GFIT-CoWork -- Route handlers for GET and POST endpoints.
 Extracted from server.py (Sprint 11) so server.py is a thin shell.
 """
 

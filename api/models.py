@@ -1,4 +1,4 @@
-"""Hermes Web UI -- Session model and in-memory session store."""
+"""GFIT-CoWork -- Session model and in-memory session store."""
 import collections
 import contextvars
 import copy

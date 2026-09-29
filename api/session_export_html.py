@@ -1,4 +1,4 @@
-"""Self-contained HTML export for a hermes-webui session transcript.
+"""Self-contained HTML export for a GFIT-CoWork session transcript.
 
 Produces a single static HTML file (no external assets, no CDN) that renders
 the conversation the same way the WebUI does: Markdown, code blocks, tables,

@@ -1,4 +1,4 @@
-"""Crash-safe WebUI turn journal helpers.
+"""Crash-safe GFIT-CoWork turn journal helpers.
 
 The journal is deliberately tiny: one JSONL file per session, append-only events,
 and read helpers that tolerate malformed lines. Recovery and repair can then

@@ -1,4 +1,4 @@
-"""Clarify prompt state for the WebUI.
+"""Clarify prompt state for GFIT-CoWork.
 
 This mirrors the approval flow structure, but the response is a free-form
 clarification string instead of an approval decision.

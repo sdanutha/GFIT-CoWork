@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hermes WebUI MCP Server — exposes project and session management
+GFIT-CoWork MCP Server — exposes project and session management
 as MCP tools for any MCP-compatible agent.
 
 Option A rewrite (2026-05-08): imports api.models and api.profiles
@@ -12,17 +12,17 @@ locking, profile scoping, index consistency, and validation.
 
 MCP config for Hermes Agent (add to config.yaml):
     mcp_servers:
-      hermes-webui:
+      gfit-cowork:
         command: /path/to/venv/bin/python3
-        args: [/path/to/hermes-webui/mcp_server.py]
+        args: [/path/to/gfit-cowork/mcp_server.py]
 
-The session tools call the WebUI API without a login, so they work only
-while the WebUI runs on the loopback address with login turned off. When
-the WebUI has a Directory configured it requires a Directory login, which
+The session tools call the GFIT-CoWork API without a login, so they work only
+while GFIT-CoWork runs on the loopback address with login turned off. When
+GFIT-CoWork has a Directory configured it requires a Directory login, which
 the MCP server cannot perform, and those tools say so.
 
 Profile override (optional):
-        args: [/path/to/hermes-webui/mcp_server.py, --profile, myprofile]
+        args: [/path/to/gfit-cowork/mcp_server.py, --profile, myprofile]
 
 AI-authoring disclosure: this file was rewritten by MILO (Hermes Agent)
 under human direction, per maintainer guidelines for #1616.
@@ -74,12 +74,12 @@ WEBUI_HOST = os.environ.get("HERMES_WEBUI_HOST", "127.0.0.1")
 WEBUI_PORT = os.environ.get("HERMES_WEBUI_PORT", "8787")
 WEBUI_URL = f"http://{WEBUI_HOST}:{WEBUI_PORT}"
 LOGIN_REQUIRED_MESSAGE = (
-    "The WebUI requires a Directory login, which the MCP server cannot "
-    "perform. Session changes through the MCP server work only while the "
-    "WebUI runs on the loopback address with no Directory configured."
+    "GFIT-CoWork requires a Directory login, which the MCP server cannot "
+    "perform. Session changes through the MCP server work only while "
+    "GFIT-CoWork runs on the loopback address with no Directory configured."
 )
 
-server = Server("hermes-webui")
+server = Server("gfit-cowork")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

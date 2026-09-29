@@ -1,5 +1,5 @@
 """
-Hermes WebUI memory-provider session lifecycle.
+GFIT-CoWork memory-provider session lifecycle.
 
 Batch-extraction memory providers (OpenViking, Holographic) only extract memories
 when AIAgent.commit_memory_session() invokes provider on_session_end(). WebUI

@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- File upload: multipart parser and upload handler.
+GFIT-CoWork -- File upload: multipart parser and upload handler.
 """
 import mimetypes
 import os

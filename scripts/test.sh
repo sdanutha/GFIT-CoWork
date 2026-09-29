@@ -97,7 +97,7 @@ venv_guidance() {
   if [[ -n "$base_py" ]]; then
     echo "Could not create a working .venv with $base_py ($(python_version "$base_py"))." >&2
   else
-    echo "Could not create a working .venv for Hermes WebUI tests." >&2
+    echo "Could not create a working .venv for GFIT-CoWork tests." >&2
   fi
   echo "Install the matching Python venv/ensurepip package (for example python3.x-venv on Debian/Ubuntu)" >&2
   echo "or set HERMES_WEBUI_TEST_PYTHON to a supported Python 3.11, 3.12, or 3.13 interpreter." >&2
@@ -154,7 +154,7 @@ select_python() {
       return 2
     fi
     if ! is_supported_python "$requested_path"; then
-      echo "Unsupported Python for Hermes WebUI tests: $requested_path ($(python_version "$requested_path"))" >&2
+      echo "Unsupported Python for GFIT-CoWork tests: $requested_path ($(python_version "$requested_path"))" >&2
       echo "Use Python 3.11, 3.12, or 3.13." >&2
       return 2
     fi
@@ -163,7 +163,7 @@ select_python() {
   else
     base_py="$(find_supported_base_python || true)"
     if [[ -z "$base_py" ]]; then
-      echo "No supported Python found for Hermes WebUI tests." >&2
+      echo "No supported Python found for GFIT-CoWork tests." >&2
       echo "Install Python 3.11, 3.12, or 3.13, then rerun ./scripts/test.sh." >&2
       return 2
     fi
@@ -216,7 +216,7 @@ fi
 if missing="$(missing_dev_deps "$PYTHON_BIN" 2>/dev/null)"; then
   :
 else
-  echo "Installing missing Hermes WebUI test dependencies in $PYTHON_BIN ($(python_version "$PYTHON_BIN"))." >&2
+  echo "Installing missing GFIT-CoWork test dependencies in $PYTHON_BIN ($(python_version "$PYTHON_BIN"))." >&2
   if [[ -n "${missing:-}" ]]; then
     echo "Missing modules: $missing" >&2
   fi

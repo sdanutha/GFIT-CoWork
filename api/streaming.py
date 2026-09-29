@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- SSE streaming engine and agent thread runner.
+GFIT-CoWork -- SSE streaming engine and agent thread runner.
 Includes Sprint 10 cancel support via CANCEL_FLAGS.
 """
 import base64

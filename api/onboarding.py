@@ -1,4 +1,4 @@
-"""Hermes Web UI -- first-run onboarding helpers."""
+"""GFIT-CoWork -- first-run onboarding helpers."""
 
 from __future__ import annotations
 

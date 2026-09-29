@@ -1,4 +1,4 @@
-"""Usage metric helpers for WebUI display payloads.
+"""Usage metric helpers for GFIT-CoWork display payloads.
 
 Prompt-cache hit percentage is cached prompt reads over the full prompt total
 (input + cache reads + cache writes). Keep this calculation in the backend so

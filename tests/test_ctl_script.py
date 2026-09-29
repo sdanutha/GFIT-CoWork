@@ -480,7 +480,7 @@ def test_start_refuses_second_instance_when_launchd_job_owns_the_port(tmp_path):
         )
         assert result.returncode == 2
         combined = result.stdout + result.stderr
-        assert "Refusing to start a second Hermes WebUI" in combined
+        assert "Refusing to start a second GFIT-CoWork" in combined
         assert "launchctl kickstart -k" in combined
         assert not (tmp_path / ".hermes" / "webui.pid").exists()
     finally:
@@ -524,7 +524,7 @@ def test_start_allows_alternate_port_while_launchd_job_runs_on_default(tmp_path)
             },
         )
         combined = result.stdout + result.stderr
-        assert "Refusing to start a second Hermes WebUI" not in combined, combined
+        assert "Refusing to start a second GFIT-CoWork" not in combined, combined
         assert result.returncode == 0, combined
         pid_file = tmp_path / ".hermes" / "webui.pid"
         if pid_file.exists():

@@ -1,4 +1,4 @@
-"""WebUI bridge for Hermes persistent session goals."""
+"""GFIT-CoWork bridge for Hermes persistent session goals."""
 
 from __future__ import annotations
 
