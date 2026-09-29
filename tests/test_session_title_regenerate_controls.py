@@ -10,7 +10,6 @@ SESSIONS_JS = (ROOT / "static" / "sessions.js").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
 ROUTES_PY = (ROOT / "api" / "routes.py").read_text(encoding="utf-8")
 STREAMING_PY = (ROOT / "api" / "streaming.py").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_session_action_menu_exposes_regenerate_title_control():
@@ -36,7 +35,7 @@ def test_writable_imported_sessions_keep_regenerate_action_without_broadening_sh
     assert "session.is_imported" not in guard_window
 
 
-def test_regenerate_title_i18n_and_changelog_entries_exist():
+def test_regenerate_title_i18n_entries_exist():
     for key in [
         "session_title_regenerate",
         "session_title_regenerate_desc",
@@ -45,8 +44,6 @@ def test_regenerate_title_i18n_and_changelog_entries_exist():
         "session_title_regenerate_failed",
     ]:
         assert key in I18N_JS
-    assert "session action menu can regenerate conversation titles" in CHANGELOG
-    assert "#3106" in CHANGELOG
 
 
 def test_regenerate_endpoint_persists_generated_title_without_reordering_sidebar():

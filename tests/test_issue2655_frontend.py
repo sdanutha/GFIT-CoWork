@@ -5,7 +5,6 @@ SESSIONS_JS = Path("static/sessions.js").read_text(encoding="utf-8")
 MESSAGES_JS = Path("static/messages.js").read_text(encoding="utf-8")
 INDEX_HTML = Path("static/index.html").read_text(encoding="utf-8")
 STYLE_CSS = Path("static/style.css").read_text(encoding="utf-8")
-CHANGELOG = Path("CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_workspace_artifacts_tab_collects_session_files_and_previews_them():
@@ -52,8 +51,3 @@ def test_workspace_artifacts_structured_args_are_mutation_gated():
         "on ARTIFACT_MUTATION_TOOLS so read_file/list_dir paths do not appear "
         "as created or edited artifacts"
     )
-
-
-def test_changelog_mentions_workspace_artifacts_tab():
-    unreleased = CHANGELOG.split("## [v0.51.103]", 1)[0]
-    assert "Artifacts tab" in unreleased

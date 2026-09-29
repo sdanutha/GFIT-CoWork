@@ -155,8 +155,8 @@ def _detect_webui_version() -> str:
          Returns the exact tag on tagged commits (e.g. ``v0.50.124``), a
          post-tag descriptor between releases (e.g. ``v0.50.124-1-ge91325d``),
          or a bare SHA when no tags exist (shallow clones, fresh forks).
-      2. ``api/_version.py`` — a fallback written by the Docker / CI release
-         workflow when ``.git`` is not present in the image.  Expected to define
+      2. ``api/_version.py`` — a fallback the Dockerfile writes at build time,
+         since ``.git`` is not present in the image.  Expected to define
          ``__version__ = 'vX.Y.Z'``.
       3. ``api/_scm_version.py`` — setuptools-scm output in an installed wheel.
          Its PEP 440 value is normalized to the channel-neutral ``v...`` form.
@@ -168,7 +168,7 @@ def _detect_webui_version() -> str:
     if out:
         return out
 
-    # Docker / baked-image fallback: api/_version.py written by CI at build time.
+    # Docker / baked-image fallback: api/_version.py written by the Dockerfile.
     # Parse with regex rather than exec() — the file holds exactly one assignment
     # and regex is sufficient; exec() on a build artifact is an unnecessary surface.
     version_file = REPO_ROOT / 'api' / '_version.py'

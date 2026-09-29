@@ -85,12 +85,3 @@ def test_docker_init_preserves_supplemental_device_groups_for_runtime_user():
     assert "Could not create supplemental group for GID $gid" in root_phase
     assert "usermod -a -G \"$group_name\" hermeswebui" in root_phase
     assert "Docker --group-add supplemental groups" in root_phase
-
-
-def test_changelog_mentions_optional_gpu_runtime_path():
-    changelog = _repo_text("CHANGELOG.md")
-    unreleased = changelog[changelog.index("## [Unreleased]"):changelog.index("## [v0.51.293]")]
-
-    assert "Optional GPU runtime image path" in unreleased
-    assert "INSTALL_GPU_LIBS=1" in unreleased
-    assert "supplemental device groups" in unreleased

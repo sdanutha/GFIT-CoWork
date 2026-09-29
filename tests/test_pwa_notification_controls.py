@@ -8,7 +8,6 @@ SW_JS = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 PANELS_JS = (ROOT / "static" / "panels.js").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 DESKTOP_BACKGROUND_NOTIFICATION_NAMES = (
     "_desktopBackgroundedForNotifications",
@@ -509,7 +508,7 @@ def test_granted_permission_branch_is_not_silent():
     assert "return Promise.resolve('granted');" in granted_branch
 
 
-def test_notification_i18n_and_changelog_entries_exist():
+def test_notification_i18n_entries_exist():
     for key in [
         "notifications_enable_btn",
         "notifications_test_btn",
@@ -519,10 +518,3 @@ def test_notification_i18n_and_changelog_entries_exist():
         "notifications_unsupported",
     ]:
         assert key in I18N_JS
-    assert "PWA notifications now use the service worker" in CHANGELOG
-    assert "#3196" in CHANGELOG
-    entry = next(
-        line for line in CHANGELOG.splitlines()
-        if "Notification permission controls now reflect the real browser state" in line
-    )
-    assert entry.count("#4118") == 1

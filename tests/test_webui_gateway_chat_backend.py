@@ -260,13 +260,11 @@ def test_gateway_chat_health_payload_is_documented_as_operator_diagnostic_only()
     # docs/advanced-chat-setup.md during the v0.51.192 README IA pass (it's a
     # niche self-hosted feature). The contract — that gateway_chat is documented
     # as an operator-only diagnostic, not a user-facing banner — now lives there.
-    # CHANGELOG keeps its release-note entry. (Contract test moved with content.)
+    # (Contract test moved with content.)
     advanced = Path("docs/advanced-chat-setup.md").read_text(encoding="utf-8")
-    changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-    for text in (advanced, changelog):
-        assert "gateway_chat" in text
-        assert "operator diagnostic" in text
-        assert "not currently rendered as a user-facing health banner" in text
+    assert "gateway_chat" in advanced
+    assert "operator diagnostic" in advanced
+    assert "not currently rendered as a user-facing health banner" in advanced
 
 
 def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monkeypatch):

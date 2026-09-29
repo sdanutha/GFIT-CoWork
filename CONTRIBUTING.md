@@ -114,7 +114,7 @@ If the change is user-visible, include screenshots or a short video.
 
 If the change is release-note-worthy, include concise release-note wording in
 the PR body. Do not edit `CHANGELOG.md` directly in ordinary contributor PRs;
-the release workflow maintains it through release commits.
+the owner writes it.
 
 For UI or UX changes, before/after images are required. PRs that change the interface or interaction flow without before/after images may not receive meaningful review until that evidence is added.
 
@@ -141,7 +141,7 @@ Common files:
 - [TESTING.md](TESTING.md) for manual and automated verification guidance
 - [CHANGELOG.md](CHANGELOG.md) for release history context. Do not edit it in
   ordinary contributor PRs; include release-note-ready wording in the PR body
-  so maintainers can carry it into the release workflow.
+  so the owner can carry it into the CHANGELOG.
 
 ## Project-Specific Guidelines
 
