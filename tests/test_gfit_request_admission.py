@@ -20,7 +20,7 @@ import pytest
 import server
 from api.access import ADMIN_ONLY_MESSAGE, request_admission
 from api.auth import COOKIE_NAME
-from tests._gfit_server import gfit_server as _gfit_server
+from tests._gfit_server import gfit_server as _gfit_server, needs_hermes_cli
 
 USER = "521740"
 OTHER_USER = "671278"
@@ -110,6 +110,7 @@ def test_the_admins_page_shell_carries_the_admin_role_and_extensions(srv):
 
 # ── One request's caller never reaches the next ──────────────────────────────
 
+@needs_hermes_cli
 def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(srv, conn):
     user, admin = _session(srv, USER), _session(srv, ADMIN)
 
@@ -197,6 +198,7 @@ def test_the_requests_admission_ends_with_the_request(srv, conn, monkeypatch, me
 
 # ── Login turned off ─────────────────────────────────────────────────────────
 
+@needs_hermes_cli
 def test_with_login_off_a_request_is_not_pinned(login_off):
     client = login_off.client()
     client.cookies["hermes_profile"] = USER

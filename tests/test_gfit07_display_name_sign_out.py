@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._gfit_server import gfit_server as _gfit_server
+from tests._gfit_server import gfit_server as _gfit_server, needs_hermes_cli
 
 ADMIN = "521740"
 MEMBER = "600001"
@@ -54,6 +54,7 @@ def test_auth_status_sends_the_members_name_and_employee_id(srv):
     assert body["label"] == f"สมชาย ใจดี ({MEMBER})"
 
 
+@needs_hermes_cli
 def test_login_writes_the_directory_name_into_the_roster(srv):
     srv.logged_in(MEMBER)
     row = _row(srv.logged_in(ADMIN), MEMBER)
@@ -61,6 +62,7 @@ def test_login_writes_the_directory_name_into_the_roster(srv):
     assert row["label"] == f"สมชาย ใจดี ({MEMBER})"
 
 
+@needs_hermes_cli
 def test_the_display_name_updates_from_the_directory_on_every_login(srv):
     srv.logged_in(MEMBER)
     _set_directory_name(srv, MEMBER, "สมชาย ใจดีมาก")

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from api.access import ADMIN_ONLY_MESSAGE
-from tests._gfit_server import gfit_server as _gfit_server
+from tests._gfit_server import gfit_server as _gfit_server, needs_hermes_cli
 
 ADMIN = "521740"
 SECOND_ADMIN = "671278"
@@ -163,6 +163,7 @@ def test_member_is_reported_as_member(member):
     assert body["role"] == "member"
 
 
+@needs_hermes_cli
 def test_admin_sees_every_profile(admin):
     status, body, _ = admin.get("/api/profiles")
     assert status == 200

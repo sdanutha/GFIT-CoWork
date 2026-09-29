@@ -13,13 +13,17 @@ def _make_executable(path):
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def test_github_actions_quotes_pyyaml_version_specifier():
-    """Unquoted `pyyaml>=6.0` is parsed by the shell as stdout redirection."""
-    workflow = ROOT / ".github" / "workflows" / "tests.yml"
-    text = workflow.read_text(encoding="utf-8")
+def test_github_actions_installs_version_specifiers_safely():
+    """Unquoted `pyyaml>=6.0` is parsed by the shell as stdout redirection.
 
-    assert '"pyyaml>=6.0"' in text or "'pyyaml>=6.0'" in text
-    assert "pip install pyyaml>=6.0" not in text
+    The tests job installs from requirements-dev.txt, so no specifier reaches
+    the shell at all.
+    """
+    for name in ("tests.yml", "browser-smoke.yml", "conversation-lifecycle.yml"):
+        text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        assert "pip install pyyaml>=6.0" not in text, name
+    tests = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    assert "pip install -r requirements-dev.txt" in tests
 
 
 def test_pytest_integration_marker_is_registered():
