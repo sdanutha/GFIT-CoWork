@@ -117,7 +117,7 @@ def test_turkish_settings_detail_descriptions_are_translated():
         "settings_desc_sidebar_density: 'Oturum listesinin sol kenar çubuğunda ne kadar meta veri göstereceğini kontrol eder.'",
         "settings_desc_auto_title_refresh: 'Oturum başlıklarını en son konuşmaya göre otomatik olarak yeniden oluşturarak konuşma ilerledikçe başlıkların alakalı kalmasını sağlar. LLM başlık oluşturma modeli yapılandırması gerektirir.'",
         "settings_desc_external_sessions: 'Oturum listesinde CLI, Telegram, Discord, Slack ve diğer kanallardan gelen konuşmaları gösterin. İçe aktarmak ve devam etmek için tıklayın.'",
-        "settings_desc_sync_insights: 'WebUI belirteci kullanımını state.db\\'ye yansıtır, böylece hermes /insights tarayıcı oturum verilerini içerir. Varsayılan olarak kapalıdır.'",
+        "settings_desc_sync_insights: 'GFIT-CoWork belirteci kullanımını state.db\\'ye yansıtır, böylece hermes /insights tarayıcı oturum verilerini içerir. Varsayılan olarak kapalıdır.'",
         "settings_desc_bot_name: 'Yalnızca varsayılan profil için kullanılır. Diğer profiller kendi profil adlarını kullanır.'",
     ]
     for entry in expected:
