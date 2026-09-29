@@ -41,9 +41,6 @@
     $env:HERMES_WEBUI_HOST = '0.0.0.0'
     .\start.ps1
     # Bind to all interfaces (needs a Directory: set HERMES_WEBUI_DIRECTORY first).
-
-.LINK
-    https://github.com/nesquena/hermes-webui/issues/1952
 #>
 
 [CmdletBinding()]
@@ -95,7 +92,7 @@ if (-not $Python) {
 # an explicit override pointing at a missing dir should fail FAST
 # with a clear message, not silently progress into a python3 launch
 # that's about to crash on missing imports. Smoke-test feedback on
-# PR #2783: nesquena/hermes-webui requested this guard.
+# Upstream PR #2783 requested this guard.
 $AgentDir = $env:HERMES_WEBUI_AGENT_DIR
 if ($AgentDir -and -not (Test-Path (Join-Path $AgentDir 'hermes_cli') -PathType Container)) {
     Write-Error "HERMES_WEBUI_AGENT_DIR is set to '$AgentDir' but no hermes_cli/ folder exists there. Unset the variable to fall back to auto-discovery, or fix the path."
