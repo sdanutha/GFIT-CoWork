@@ -131,8 +131,8 @@ Setup Hermes so you can access it natively on every device:
       <br /><sub>Light mode with full profile support</sub>
     </td>
     <td width="50%" align="center">
-      <img alt="Customize your settings, configure a password" src="https://github.com/user-attachments/assets/941f3156-21e3-41fd-bcc8-f975d5000cb8" />
-      <br /><sub>Customize your settings, configure a password</sub>
+      <img alt="Customize your settings" src="https://github.com/user-attachments/assets/941f3156-21e3-41fd-bcc8-f975d5000cb8" />
+      <br /><sub>Customize your settings</sub>
     </td>
   </tr>
 </table>
@@ -387,7 +387,7 @@ If an AI assistant is helping with install, reinstall, bootstrap, provider setup
   `.dark` class, not a `data-theme` custom-theme axis — see [THEMES.md](THEMES.md)
 
 ### Settings and configuration
-- **Hermes Control Center** (sidebar launcher button) -- Conversation tab (export/import/clear), Preferences tab (model, send key, theme, language, all toggles), System tab (version, password)
+- **Hermes Control Center** (sidebar launcher button) -- Conversation tab (export/import/clear), Preferences tab (model, send key, theme, language, all toggles), System tab (version, sign out)
 - Send key: Enter (default) or Ctrl/Cmd+Enter
 - Send-key on touch devices: plain Enter inserts a newline on phones (iPhone/iPod, Android phones) and on tablets / iPadOS / touch-capable Macs that only expose a coarse pointer (no attached hardware keyboard), matching the software keyboard's return key. Devices that report a fine pointer (for example, a tablet with a hardware keyboard) keep the configured physical-keyboard send-key behavior. The configured shortcut and the Send button remain available for sending.
 - Show/hide CLI sessions toggle (enabled by default)

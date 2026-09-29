@@ -11394,7 +11394,7 @@ button:hover{background:rgba(124,185,255,.25)}
   <h1>{{APP_NAME}}</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
-    {{PASSWORD_FORM_HTML}}
+    {{LOGIN_FORM_HTML}}
   </form>
   <div class="err" id="err"></div>
 </div>
@@ -13951,7 +13951,7 @@ def handle_get(handler, parsed) -> bool:
         for _key in ("directory_subtitle", "username_placeholder"):
             _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
         _login_strings["subtitle"] = _login_strings["directory_subtitle"]
-        _password_form_html = (
+        _login_form_html = (
             '<input type="text" id="username" name="username" '
             f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
             'autocomplete="username" '
@@ -13969,7 +13969,7 @@ def handle_get(handler, parsed) -> bool:
             .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
             .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))
             .replace("{{LOGIN_SUBTITLE}}", _html.escape(_login_strings["subtitle"]))
-            .replace("{{PASSWORD_FORM_HTML}}", _password_form_html)
+            .replace("{{LOGIN_FORM_HTML}}", _login_form_html)
             .replace("{{LOGIN_INVALID_PW}}", _html.escape(_login_strings["invalid_pw"]))
             .replace(
                 "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])

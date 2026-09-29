@@ -10147,7 +10147,7 @@ function _extensionSidecarCard(sidecars){
     // enable authentication before wiring up a sidecar (design §9.1).
     const proxyUnprotected=proxy.posture==='local_unprotected';
     const proxyWarning=proxyUnprotected
-      ?`<div class="extension-sidecar-warning">⚠ WebUI authentication is off. This sidecar's proxy consent can be granted by any local process. Set a password in Settings → Password before using sidecar extensions.</div>`
+      ?`<div class="extension-sidecar-warning">⚠ WebUI authentication is off. This sidecar's proxy consent can be granted by any local process. Configure the Directory (HERMES_WEBUI_DIRECTORY) to turn login on before using sidecar extensions.</div>`
       :'';
     const proxyStatus=proxyConsented
       ?'consented'

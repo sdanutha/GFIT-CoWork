@@ -10,7 +10,6 @@ Covers:
   6. HMAC signature length — 32-char hex (128-bit), not 16
   7. Skills path traversal — path outside SKILLS_DIR rejected
   8. Content-Disposition for dangerous MIME types — HTML/SVG force download
-  9. (PBKDF2 password hashing — removed with the Upstream shared password)
   10. Non-loopback startup warning (manual / integration test)
   11. SSRF DNS check logic (unit test on helper function)
   12. ENV_LOCK export — _ENV_LOCK importable from streaming module
