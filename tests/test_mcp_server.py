@@ -407,49 +407,6 @@ class TestDeleteProject:
         result = await _call(self.mod, "delete_project", project_id=pid)
         assert "error" in result
 
-    async def test_delete_no_auth_refuses_unassign(self):
-        """Without HERMES_WEBUI_PASSWORD, delete_project must NOT touch
-        session JSONs. Direct FS writes would bypass _write_session_index()
-        and leave _index.json holding the stale project_id, causing a
-        running WebUI to keep grouping sessions under the deleted project.
-
-        The handler should: delete the project from projects.json, leave
-        every session JSON untouched, leave the index untouched, and
-        surface a `warning` field telling the operator to set the env var.
-        """
-        from api.config import SESSION_DIR, SESSION_INDEX_FILE
-        os.environ.pop("HERMES_WEBUI_PASSWORD", None)
-
-        # Create project + a session JSON that points at it
-        created = await _call(self.mod, "create_project", name="ToDelete")
-        pid = created["project_id"]
-        sid = "test_sess_001"
-        session_path = SESSION_DIR / f"{sid}.json"
-        session_payload = {
-            "session_id": sid,
-            "title": "T",
-            "project_id": pid,
-            "messages": [],
-        }
-        session_path.write_text(json.dumps(session_payload), encoding="utf-8")
-        # Index references the session under the project
-        SESSION_INDEX_FILE.write_text(
-            json.dumps([{"session_id": sid, "project_id": pid, "title": "T"}]),
-            encoding="utf-8")
-        index_before = SESSION_INDEX_FILE.read_text(encoding="utf-8")
-        session_before = session_path.read_text(encoding="utf-8")
-
-        result = await _call(self.mod, "delete_project", project_id=pid)
-
-        assert result["ok"] is True
-        assert result["unassigned_sessions"] == 0
-        assert "warning" in result
-        assert "HERMES_WEBUI_PASSWORD" in result["warning"]
-        # Session JSON untouched
-        assert session_path.read_text(encoding="utf-8") == session_before
-        # Index untouched
-        assert SESSION_INDEX_FILE.read_text(encoding="utf-8") == index_before
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Profile Scoping
@@ -604,40 +561,6 @@ class TestSessionMutations:
                              session_id="any", project_id=pid)
         assert "error" in result
         assert "not found" in result["error"].lower()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Auth helper
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestApiPassword:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.state_dir = _fresh_state_dir()
-        # Ensure env var is unset for the test
-        os.environ.pop("HERMES_WEBUI_PASSWORD", None)
-        self.mod, self.profiles = _reimport_mcp()
-        yield
-        _cleanup_state_dir(self.state_dir)
-
-    async def test_no_env_no_settings_returns_none(self):
-        assert self.mod._api_password() is None
-
-    async def test_password_hash_in_settings_is_ignored(self):
-        """settings.json holds a hash, not a plaintext password — must NOT
-        be returned as if it were a usable password."""
-        from api.config import STATE_DIR as _SD
-        (_SD / "settings.json").write_text(
-            json.dumps({"password_hash": "$2b$12$abcdefghijk"}),
-            encoding="utf-8")
-        assert self.mod._api_password() is None
-
-    async def test_env_var_returned(self):
-        os.environ["HERMES_WEBUI_PASSWORD"] = "secret123"
-        try:
-            assert self.mod._api_password() == "secret123"
-        finally:
-            os.environ.pop("HERMES_WEBUI_PASSWORD", None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -802,6 +725,7 @@ class _RecordingHandler(http.server.BaseHTTPRequestHandler):
     set by the fixture before each test so handlers can cross-reference."""
     captured = None  # populated per-test as a list of (path, body, headers)
     canned_response = None  # populated per-test: dict to be JSON-encoded
+    canned_status = 200  # populated per-test: 401 when the WebUI requires login
 
     def log_message(self, *args, **kwargs):  # noqa: D401 — silence stderr
         pass
@@ -820,7 +744,7 @@ class _RecordingHandler(http.server.BaseHTTPRequestHandler):
             "content_type": self.headers.get("Content-Type"),
         })
         payload = json.dumps(type(self).canned_response or {}).encode("utf-8")
-        self.send_response(200)
+        self.send_response(type(self).canned_status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -844,14 +768,12 @@ class TestApiWireFormat:
         self.port = _free_port()
         _RecordingHandler.captured = []
         _RecordingHandler.canned_response = {}
+        _RecordingHandler.canned_status = 200
         self.httpd = http.server.HTTPServer(("127.0.0.1", self.port),
                                             _RecordingHandler)
         self.thread = threading.Thread(target=self.httpd.serve_forever,
                                        daemon=True)
         self.thread.start()
-
-        # Disable auth so _api_post() does not attempt a real /api/auth/login.
-        os.environ.pop("HERMES_WEBUI_PASSWORD", None)
 
         self.mod, self.profiles = _reimport_mcp()
         # Override AFTER import so the value sticks in the loaded module.
@@ -940,3 +862,60 @@ class TestApiWireFormat:
         assert mod.WEBUI_HOST == "127.0.0.1"
         assert mod.WEBUI_PORT == "8787"
         assert mod.WEBUI_URL == "http://127.0.0.1:8787"
+
+    # login-is-the-directory ticket 07: the MCP server calls the WebUI API
+    # without a login. A leftover HERMES_WEBUI_PASSWORD is sent nowhere, and a
+    # WebUI that requires a Directory login is reported as such.
+
+    def _session_in_project(self, pid):
+        from api.config import SESSION_DIR
+        sid = "test_sess_001"
+        (SESSION_DIR / f"{sid}.json").write_text(json.dumps({
+            "session_id": sid, "title": "T", "project_id": pid, "messages": [],
+        }), encoding="utf-8")
+        return sid
+
+    async def test_leftover_password_is_not_sent(self, monkeypatch):
+        monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "secret123")
+        _RecordingHandler.canned_response = {"session": {"title": "Renamed"}}
+        result = await _call(self.mod, "rename_session",
+                             session_id="abc123", title="Renamed")
+        assert result["ok"] is True
+        assert [r["path"] for r in _RecordingHandler.captured] == ["/api/session/rename"]
+        assert _RecordingHandler.captured[0]["cookie"] is None
+        assert "secret123" not in json.dumps(_RecordingHandler.captured)
+
+    async def test_delete_project_unassigns_sessions_when_login_is_off(self):
+        created = await _call(self.mod, "create_project", name="ToDelete")
+        pid = created["project_id"]
+        sid = self._session_in_project(pid)
+        _RecordingHandler.canned_response = {"ok": True, "session": {"session_id": sid}}
+        result = await _call(self.mod, "delete_project", project_id=pid)
+        assert result["ok"] is True
+        assert result["unassigned_sessions"] == 1
+        assert "warning" not in result
+        assert [(r["path"], r["body"]) for r in _RecordingHandler.captured] == [
+            ("/api/session/move", {"session_id": sid, "project_id": None}),
+        ]
+
+    async def test_login_required_is_reported_without_password_advice(self):
+        created = await _call(self.mod, "create_project", name="Target")
+        pid = created["project_id"]
+        _RecordingHandler.canned_status = 401
+        _RecordingHandler.canned_response = {"error": "Authentication required"}
+
+        rename = await _call(self.mod, "rename_session",
+                             session_id="s1", title="New")
+        move = await _call(self.mod, "move_session",
+                           session_id="s1", project_id=pid)
+        for result in (rename, move):
+            assert "Directory login" in result["error"]
+            assert "HERMES_WEBUI_PASSWORD" not in result["error"]
+
+        sid = self._session_in_project(pid)
+        deleted = await _call(self.mod, "delete_project", project_id=pid)
+        assert deleted["ok"] is True
+        assert deleted["unassigned_sessions"] == 0
+        assert deleted["still_assigned"] == [sid]
+        assert "Directory login" in deleted["warning"]
+        assert "HERMES_WEBUI_PASSWORD" not in deleted["warning"]

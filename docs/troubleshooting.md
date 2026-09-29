@@ -189,9 +189,9 @@ turn in the exhausted session instead of being blocked with recovery guidance.
 
 1. Open the same WebUI URL in a regular browser tab and confirm whether it loads there.
 2. Check reverse-proxy logs for `401` responses on `/sw.js`, `/manifest.json`, or versioned `/static/*` assets during the update.
-3. Temporarily remove proxy basic auth and use WebUI's built-in password. If the blank screen stops after the next update, the proxy auth challenge was the trigger.
+3. Temporarily remove proxy basic auth and rely on WebUI's Directory login. If the blank screen stops after the next update, the proxy auth challenge was the trigger.
 
-**Fix.** Prefer WebUI's own password for installed PWAs. If you keep proxy basic auth, configure it so the same-origin service-worker and shell update fetches can complete. If the installed shell is already blank, clear site data for the Hermes origin, then reopen or reinstall the PWA after that site-scoped cleanup.
+**Fix.** Prefer WebUI's own Directory login for installed PWAs. If you keep proxy basic auth, configure it so the same-origin service-worker and shell update fetches can complete. If the installed shell is already blank, clear site data for the Hermes origin, then reopen or reinstall the PWA after that site-scoped cleanup.
 
 **When to file a bug.** File a WebUI bug if the blank screen still reproduces without proxy basic auth, or after the proxy allows the same-origin service-worker and shell update fetches through.
 

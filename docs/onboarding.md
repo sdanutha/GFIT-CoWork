@@ -79,7 +79,6 @@ The first screen reports the runtime state WebUI can see:
 - Hermes Agent importability: whether WebUI can import and run `AIAgent`.
 - Provider status: whether `config.yaml` and credential state are enough for a
   chat request.
-- Password status: whether WebUI password protection is enabled.
 - Config paths: the active `config.yaml` and `.env` locations for this profile.
 
 If the agent check fails, use [Troubleshooting](troubleshooting.md), especially
@@ -164,15 +163,14 @@ In Docker, the default browsable path is `/workspace`, which maps to the host
 directory mounted by the compose file. If the workspace appears empty, check the
 Docker UID/GID and mount guidance in [Docker setup guide](docker.md).
 
-## Password step
+## Login
 
-Password protection is optional for localhost-only installs. Enable it if you
-expose WebUI outside `127.0.0.1`, behind a reverse proxy, or on a LAN.
+The wizard has no password step. Login is the Directory alone (see the README's
+"Login with an employee ID"): on `127.0.0.1` with no Directory, login is off;
+on any other address the server refuses to start until a Directory is
+configured.
 
-For installed PWAs, prefer WebUI's built-in password over proxy basic auth. Reverse proxies are supported, but HTTP basic-auth challenges in front of the WebUI origin can interrupt the service-worker and shell-asset fetches the installed app relies on during updates. If you keep proxy auth, scope it so same-origin `sw.js`, manifest, and shell update requests can complete.
-
-The password is stored through the normal WebUI settings path and hashed
-server-side. You can change it later from Settings.
+For installed PWAs, prefer the Directory login over proxy basic auth. Reverse proxies are supported, but HTTP basic-auth challenges in front of the WebUI origin can interrupt the service-worker and shell-asset fetches the installed app relies on during updates. If you keep proxy auth, scope it so same-origin `sw.js`, manifest, and shell update requests can complete.
 
 ## What gets written
 

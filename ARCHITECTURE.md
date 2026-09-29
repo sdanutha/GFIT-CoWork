@@ -112,7 +112,7 @@ State directory (runtime data, separate from source):
     sessions/          One JSON file per session: {session_id}.json
     workspaces.json    Registered workspaces list
     last_workspace.txt Last-used workspace path
-    settings.json      User settings (default model, workspace, send key, password hash)
+    settings.json      User settings (default model, workspace, send key)
     projects.json      Session project groups (name, color, id)
 
 Log file:

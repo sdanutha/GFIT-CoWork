@@ -34,7 +34,7 @@ The assistant owns:
   `auth.json` files, or password hashes.
 - Do not modify real cron jobs, real sessions, real profiles, or real memory
   files during an onboarding trial.
-- Do not expose WebUI on a public interface without password protection and
+- Do not expose WebUI on a public interface without a Directory login and
   explicit human approval.
 - Do not proxy or tunnel local service checks such as `localhost`,
   `127.0.0.1`, private LAN addresses, or Docker container loopback paths.
@@ -181,7 +181,8 @@ If a local model server does not probe successfully:
 If password or reverse-proxy behavior is confusing:
 
 - keep the first pass on `127.0.0.1`
-- require password protection before exposing WebUI beyond localhost
+- require a Directory login (`HERMES_WEBUI_DIRECTORY`) before exposing WebUI
+  beyond localhost; without one the server refuses to start there
 - include the reverse proxy shape in the support report without pasting tokens
   or cookies
 

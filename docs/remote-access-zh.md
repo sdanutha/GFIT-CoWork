@@ -4,7 +4,7 @@
 > 重点覆盖 Windows 原生环境。命令与安全约定以官方脚本（`start.sh` / `start.ps1` /
 > `scripts/windows/setup_webui_autostart.ps1`）为准。
 
-> **GFIT-CoWork 注意：** 本文中的 `HERMES_WEBUI_PASSWORD` 密码登录已被移除，设置它不会
+> **GFIT-CoWork 注意：** 上游的 `HERMES_WEBUI_PASSWORD` 密码登录已被移除，设置它不会
 > 开启登录。登录只通过公司目录（Directory，`HERMES_WEBUI_DIRECTORY` 与
 > `HERMES_WEBUI_LDAP_*`）。未配置目录时服务器只能绑定回环地址；绑定其他地址前请先配置
 > 目录，参见 [`README.md`](../README.md) 与 [`deploy/README.md`](../deploy/README.md)。
@@ -53,10 +53,11 @@ Hermes WebUI 自带移动端适配布局（汉堡侧栏、抽屉式顶部标签�
 WebUI 保持绑定回环，只把端口"发布"到你的 tailnet：
 
 1. 在服务器和手机上都安装 [Tailscale](https://tailscale.com/download) 并登录同一账号。
-2. 启用密码认证后启动 WebUI（保持回环绑定）：
+2. 配置目录（Directory）开启登录后启动 WebUI（保持回环绑定，参见 README 的
+   "Login with an employee ID"）：
 
    ```bash
-   HERMES_WEBUI_PASSWORD=你的密码 ./start.sh
+   HERMES_WEBUI_DIRECTORY=ldap ./start.sh   # 另需 HERMES_WEBUI_LDAP_* 设置
    ```
 
    Windows 原生环境见下文"三、Windows 原生部署"。
@@ -89,16 +90,17 @@ WebUI 保持绑定回环，只把端口"发布"到你的 tailnet：
 
 ### 方案 B：直连 Tailscale IP（备选）
 
-Serve 不可用/被禁用时，直接走 tailnet IP。因为这会超出回环绑定，**必须启用密码认证**：
+Serve 不可用/被禁用时，直接走 tailnet IP。因为这会超出回环绑定，**必须配置目录**，
+否则服务器拒绝启动：
 
 ```bash
-HERMES_WEBUI_HOST=0.0.0.0 HERMES_WEBUI_PASSWORD=你的密码 ./start.sh
+HERMES_WEBUI_HOST=0.0.0.0 HERMES_WEBUI_DIRECTORY=ldap ./start.sh   # 另需 HERMES_WEBUI_LDAP_* 设置
 ```
 
 然后在手机浏览器打开 `http://<服务器Tailscale-IP>:8787`（服务器上执行
 `tailscale ip -4` 查看自己的 Tailscale IP）。
 
-流量全程由 WireGuard 端到端加密，密码认证在应用层保护界面。
+流量全程由 WireGuard 端到端加密，目录登录在应用层保护界面。
 可以把它添加到手机主屏，获得近似原生 App 的体验。
 
 ---
@@ -144,10 +146,10 @@ python -m venv venv
 > 会用上你装的依赖——非常容易踩坑。最稳的路径仍然是装到 hermes-agent
 > 的 venv。
 
-### 2. 带密码启动（前台）
+### 2. 启动（前台）
 
 ```powershell
-$env:HERMES_WEBUI_PASSWORD = "你的密码"
+$env:HERMES_WEBUI_DIRECTORY = "ldap"   # 另需 HERMES_WEBUI_LDAP_* 设置
 .\start.ps1
 ```
 
@@ -159,19 +161,19 @@ $env:HERMES_WEBUI_PASSWORD = "你的密码"
 | `-BindHost` | 绑定地址覆盖 | `.\start.ps1 -BindHost 0.0.0.0` |
 | `HERMES_WEBUI_HOST` | 绑定地址（默认 `127.0.0.1`） | `$env:HERMES_WEBUI_HOST = "0.0.0.0"` |
 | `HERMES_WEBUI_PORT` | 端口（默认 `8787`） | `$env:HERMES_WEBUI_PORT = "8787"` |
-| `HERMES_WEBUI_PASSWORD` | 界面密码认证 | 见上 |
+| `HERMES_WEBUI_DIRECTORY` | 目录登录（另需 `HERMES_WEBUI_LDAP_*`） | 见上 |
 | `HERMES_WEBUI_AGENT_DIR` | 显式指定 hermes-agent 目录 | `$env:HERMES_WEBUI_AGENT_DIR = "C:\path\to\hermes-agent"` |
 
-> **绑定 `0.0.0.0` 前先设密码**：一旦绑定所有接口，任何能路由到该端口的设备
-> 都能触达界面，密码认证是唯一防线。参见文末"安全边界"。
+> **绑定 `0.0.0.0` 前先配置目录**：未配置目录时，服务器拒绝在非回环地址启动。
+> 目录登录是界面的唯一防线。参见文末"安全边界"。
 >
-> **改完密码先验证一下**：`start.ps1` 会加载仓库根目录的 `.env`，但
-> **已经设置的环境变量优先**——上面用 `$env:HERMES_WEBUI_PASSWORD`
+> **改完目录设置先验证一下**：`start.ps1` 会加载仓库根目录的 `.env`，但
+> **已经设置的环境变量优先**——上面用 `$env:HERMES_WEBUI_DIRECTORY`
 > 设的值会生效，`.env` 里的同名项被跳过。Linux / WSL 下的 `start.sh`
 > 恰好相反：它会先 `source` 一遍 `.env`，**`.env` 里的值会覆盖**命令行
-> 内联的 `HERMES_WEBUI_PASSWORD=`。无论用哪个启动脚本，改完密码后都用
-> 浏览器打开登录页，确认**真的要求输入密码**且新密码能登录；不对的话，
-> 先检查仓库根目录的 `.env` 里是否还留着旧值。
+> 内联的设置。无论用哪个启动脚本，改完后都用浏览器打开登录页，确认
+> **真的要求用工号和 AD 密码登录**；不对的话，先检查仓库根目录的 `.env`
+> 里是否还留着旧值。
 
 ### 3. Windows 防火墙
 
@@ -254,7 +256,7 @@ $HOME/.hermes/webui/logs/hermes_webui.log
 | 任务计划已建但 WebUI 没起来 | WSL 脚本路径写错/发行版不对 | 用正确的 `-WslScriptPath` 与 `-Distro` 重跑注册脚本 |
 | 打开 WSL 才启动，登录时不启动 | 用的是会话级自启而非计划任务 | 按"四、WSL 用户：Windows 开机自启"装任务计划程序 |
 | 健康检查失败但进程存在 | 端口不一致或仍在启动 | 核对 `HERMES_WEBUI_PORT` 与 `hermes_webui.log` |
-| 提示需要密码但没设过 | 界面要求认证 | 设置 `HERMES_WEBUI_PASSWORD` 后重启 |
+| 服务器启动即退出，提示需要目录 | 非回环地址但未配置目录 | 配置 `HERMES_WEBUI_DIRECTORY` 与 `HERMES_WEBUI_LDAP_*`，或改回回环绑定 |
 
 ---
 
@@ -273,14 +275,15 @@ $HOME/.hermes/webui/logs/hermes_webui.log
      `Any`、或防火墙被关闭，WebUI 立刻对 LAN/公网开放**，因为
      `0.0.0.0` 是所有接口，不是只绑 Tailscale 网卡。
 
-   WireGuard 端到端加密 + 应用层密码认证是双层保险。
+   WireGuard 端到端加密 + 应用层目录登录是双层保险。
 2. **局域网（LAN）**：`HERMES_WEBUI_HOST=0.0.0.0` 且防火墙对私有网段放行。
-   同一 WiFi 下的其他设备都能触达——密码认证是必需品，且不建议用于公共 WiFi。
+   同一 WiFi 下的其他设备都能触达——目录登录是必需品，且不建议用于公共 WiFi。
 3. **公网**：端口对互联网开放。**不推荐**。WebUI 本身只做简单的登录限速（每个 IP
-   每 60 秒最多 5 次失败尝试），但直连时没有传输加密（HTTP 明文）；若确有需要，
-   应放在 HTTPS 反向代理（Caddy/Nginx）之后并启用强密码。
+   每 60 秒最多 5 次失败尝试），但直连时没有传输加密（HTTP 明文），AD 密码会以
+   明文传输；若确有需要，应放在 HTTPS 反向代理（Caddy/Nginx）之后。
 
-**所有超出回环的绑定，第一守则：先设 `HERMES_WEBUI_PASSWORD`，再改绑定地址。**
+**所有超出回环的绑定，第一守则：先配置目录（`HERMES_WEBUI_DIRECTORY`），再改绑定地址。**
+未配置目录时，服务器拒绝在非回环地址启动。
 
 ---
 

@@ -6291,7 +6291,7 @@ def _embedded_terminal_gate_allows(handler) -> bool:
     admits every caller unconditionally, so restrict the terminal to local/private
     origins — the same trust model the onboarding/bootstrap endpoints use, ignoring
     spoofable forwarded headers unless an operator has opted into trusting them.
-    A deliberately-exposed passwordless server (access secured at another layer)
+    A deliberately-exposed server with login off (access secured at another layer)
     opts out with ``HERMES_WEBUI_ONBOARDING_OPEN=1``.
     """
     return _onboarding_gate_allows(handler)
@@ -17147,7 +17147,7 @@ def handle_post(handler, parsed) -> bool:
         # Marking onboarding complete flips the first-run wizard off (persists
         # onboarding_completed=True). Gate it on the same local-network check as
         # the other onboarding mutators so an unauthenticated public client on a
-        # passwordless bind can't hide the first-run wizard. (#3765)
+        # bind with login off can't hide the first-run wizard. (#3765)
         if not _onboarding_gate_allows(handler):
             return bad(handler, "Onboarding is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
         return j(handler, complete_onboarding())
