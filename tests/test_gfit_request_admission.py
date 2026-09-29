@@ -236,7 +236,7 @@ class _Handler:
     command = "GET"
 
     def __init__(self, session_info):
-        self._trusted_auth_session_reconciled = session_info
+        self._request_session = session_info
         self.status = None
         self.wfile = self
 

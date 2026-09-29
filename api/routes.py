@@ -11417,9 +11417,9 @@ def _directory_session_role(handler) -> str | None:
     The role is the request's Admission: a session with none has no role.
     """
     from api.access import request_admission
-    from api.auth import DIRECTORY_AUTH_TYPE, ensure_trusted_auth_session
+    from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
 
-    info = ensure_trusted_auth_session(handler)
+    info = ensure_request_session(handler)
     if not info or info.get("auth_type") != DIRECTORY_AUTH_TYPE:
         return None
     admission = request_admission()
@@ -13976,8 +13976,6 @@ def handle_get(handler, parsed) -> bool:
 
                 if is_auth_enabled():
                     cookie_val = parse_cookie(handler)
-                    if not cookie_val:
-                        cookie_val = getattr(handler, "_trusted_auth_session_cookie_value", None)
                     if cookie_val and verify_session(cookie_val):
                         csrf_token = csrf_token_for_session(cookie_val) or ""
             except Exception:
@@ -14122,12 +14120,11 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/auth/status":
         from api.auth import (
             _passkey_feature_flag_enabled,
-            ensure_trusted_auth_session,
+            ensure_request_session,
             is_auth_enabled,
             is_directory_auth_enabled,
             is_oidc_auth_enabled,
             is_password_auth_enabled,
-            is_trusted_auth_enabled,
             DIRECTORY_AUTH_TYPE,
         )
         from api.passkeys import registered_credentials
@@ -14137,7 +14134,7 @@ def handle_get(handler, parsed) -> bool:
         auth_enabled = is_auth_enabled()
         oidc_enabled = is_oidc_auth_enabled()
         if auth_enabled:
-            session_info = ensure_trusted_auth_session(handler)
+            session_info = ensure_request_session(handler)
             logged_in = bool(session_info)
         passkey_flag = _passkey_feature_flag_enabled()
         passkeys = registered_credentials() if passkey_flag else []
@@ -14153,16 +14150,14 @@ def handle_get(handler, parsed) -> bool:
             "passkey_feature_flag": passkey_flag,
             "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
         }
-        if is_trusted_auth_enabled() or (session_info and session_info.get("auth_type") == "trusted"):
-            payload["trusted_auth_enabled"] = True
         if is_directory_auth_enabled():
             payload["directory_auth_enabled"] = True
-        if session_info and session_info.get("auth_type") in ("trusted", DIRECTORY_AUTH_TYPE):
+        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
+            from api.login import session_identity
+
             payload["auth_type"] = session_info.get("auth_type")
             payload["user"] = session_info.get("username")
             payload["bound_profile"] = session_info.get("bound_profile")
-        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
-            from api.login import session_identity
 
             payload["role"] = _directory_session_role(handler)
             payload.update(session_identity(session_info))
@@ -17310,13 +17305,13 @@ def handle_post(handler, parsed) -> bool:
         if not name:
             return bad(handler, "name is required")
         try:
-            from api.auth import ensure_trusted_auth_session
+            from api.auth import ensure_request_session
             from api.profiles import switch_profile, _validate_profile_name
             from api.helpers import build_profile_cookie
             if name != 'default':
                 _validate_profile_name(name)
-            session_info = ensure_trusted_auth_session(handler)
-            if getattr(handler, '_trusted_auth_session_rejected', False):
+            session_info = ensure_request_session(handler)
+            if getattr(handler, '_request_session_rejected', False):
                 return bad(handler, 'Authentication required', 401)
             bound_profile = str((session_info or {}).get("bound_profile") or "").strip() or None
             if bound_profile and name != bound_profile:
@@ -17335,15 +17330,8 @@ def handle_post(handler, parsed) -> bool:
                 restart_watcher_for_profile(name)
             except Exception as exc:
                 logger.warning("Failed to restart gateway watcher for profile %s: %s", name, exc)
-            session_cookie_value = getattr(handler, '_trusted_auth_session_cookie_value', None)
-            if session_cookie_value:
-                if bound_profile and name == bound_profile:
-                    return j(handler, result)
-                extra_header = build_profile_cookie(name, session_cookie_value=session_cookie_value)
-            else:
-                extra_header = build_profile_cookie(name, handler)
             return j(handler, result, extra_headers={
-                'Set-Cookie': extra_header,
+                'Set-Cookie': build_profile_cookie(name, handler),
             })
         except PermissionError as e:
             return bad(handler, _sanitize_error(e), 403)
@@ -18167,19 +18155,13 @@ def handle_post(handler, parsed) -> bool:
         return j(handler, {"credentials": registered_credentials()})
 
     if parsed.path == "/api/auth/logout":
-        from api.auth import clear_auth_cookie, ensure_trusted_auth_session, get_trusted_auth_logout_url, invalidate_session, parse_cookie
+        from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
         from api.helpers import clear_profile_cookie
 
-        session_info = ensure_trusted_auth_session(handler)
-        cookie_val = getattr(handler, '_trusted_auth_session_cookie_value', None) or parse_cookie(handler)
+        cookie_val = parse_cookie(handler)
         if cookie_val:
             invalidate_session(cookie_val)
-        payload = {"ok": True}
-        if session_info and session_info.get("auth_type") == "trusted":
-            logout_url = get_trusted_auth_logout_url()
-            if logout_url:
-                payload["trusted_logout_url"] = logout_url
-        body = json.dumps(payload).encode()
+        body = json.dumps({"ok": True}).encode()
         handler.send_response(200)
         handler.send_header("Content-Type", "application/json")
         handler.send_header("Content-Length", str(len(body)))

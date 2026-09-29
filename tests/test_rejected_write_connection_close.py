@@ -22,7 +22,7 @@ def _rejected_write(monkeypatch, headers):
         headers=headers,
         close_connection=False,
     )
-    monkeypatch.setattr(server, "reset_trusted_auth_request_state", lambda _handler: None)
+    monkeypatch.setattr(server, "reset_request_auth_state", lambda _handler: None)
     monkeypatch.setattr(server, "get_profile_cookie", lambda _handler: None)
     monkeypatch.setattr(server, "clear_request_profile", lambda: None)
     monkeypatch.setattr(auth, "check_auth", lambda _handler, _parsed: False)

@@ -13079,8 +13079,8 @@ async function saveSettings(andClose){
 
 async function signOut(){
   try{
-    const response=await api('/api/auth/logout',{method:'POST',body:'{}'});
-    window.location.href=response.trusted_logout_url||'login';
+    await api('/api/auth/logout',{method:'POST',body:'{}'});
+    window.location.href='login';
   }catch(e){
     showToast(t('sign_out_failed')+e.message);
   }

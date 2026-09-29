@@ -102,26 +102,6 @@ def _warn_auth_persistence_failure(prefix: str, artifact: Path, exc: Exception, 
 
 
 _SESSIONS_FILE = STATE_DIR / '.sessions.json'
-_TRUSTED_AUTH_HEADER_ENV = 'HERMES_WEBUI_TRUSTED_AUTH_HEADER'
-_TRUSTED_GROUPS_HEADER_ENV = 'HERMES_WEBUI_TRUSTED_GROUPS_HEADER'
-_TRUSTED_GROUP_PROFILE_MAP_ENV = 'HERMES_WEBUI_GROUP_PROFILE_MAP'
-_TRUSTED_AUTH_LOGOUT_URL_ENV = 'HERMES_WEBUI_TRUSTED_AUTH_LOGOUT_URL'
-# Opt-in: also treat '|' as a group separator in the trusted-groups header.
-# Off by default so an existing deployment whose group NAME legitimately
-# contains a literal '|' is never silently re-split into two groups (which
-# could change its profile binding). Set to 1/true/yes/on for identity
-# providers (some Authentik outpost configs) that emit "admins|developpeur".
-_TRUSTED_GROUPS_PIPE_SEPARATOR_ENV = 'HERMES_WEBUI_TRUSTED_GROUPS_PIPE_SEPARATOR'
-_TRUSTED_AUTH_WARNINGS_EMITTED: set[str] = set()
-
-
-def _warn_trusted_auth_once(key: str, message: str, *args) -> None:
-    if key in _TRUSTED_AUTH_WARNINGS_EMITTED:
-        return
-    _TRUSTED_AUTH_WARNINGS_EMITTED.add(key)
-    logger.warning(message, *args)
-
-
 def _session_expiry(record) -> float | None:
     if isinstance(record, dict):
         expiry = record.get('expiry', record.get('expires_at'))
@@ -439,8 +419,8 @@ def get_password_hash() -> str | None:
 
 
 # ── GFIT-CoWork: the Upstream login methods are off (ADR 0004, ticket 09) ────
-# The Directory is the only way in. The single shared password, passkeys, OIDC
-# and the trusted header report "not enabled", so every one of their endpoints
+# The Directory is the only way in. The single shared password, passkeys and
+# OIDC report "not enabled", so every one of their endpoints
 # refuses and the UI hides them. Their configuration still turns the auth gate
 # on (see is_auth_enabled), so a Deployment that set a password but no
 # Directory is locked rather than open. Deleting their code is left to later
@@ -461,18 +441,12 @@ def is_oidc_auth_enabled() -> bool:
     return False
 
 
-def is_trusted_auth_enabled() -> bool:
-    """Always False: trusted-header login is off in GFIT-CoWork."""
-    return False
-
-
 def _legacy_login_configured() -> bool:
     """True if an Upstream login method is configured, though none of them is honoured."""
     return (
         get_password_hash() is not None
         or _passkey_feature_flag_configured()
         or _oidc_configured()
-        or _trusted_auth_header_configured()
     )
 
 
@@ -718,114 +692,6 @@ def verify_session(cookie_value: str) -> bool:
     return True
 
 
-def _trusted_auth_header_name() -> str | None:
-    name = os.getenv(_TRUSTED_AUTH_HEADER_ENV, '').strip()
-    if not name:
-        return None
-    if not _COOKIE_NAME_RE.match(name):
-        _warn_trusted_auth_once(
-            'trusted-auth-header',
-            'Ignoring invalid %s=%r; trusted-header auth rejects every request',
-            _TRUSTED_AUTH_HEADER_ENV,
-            name,
-        )
-        return None
-    return name
-
-
-def _trusted_auth_header_configured() -> bool:
-    return bool(os.getenv(_TRUSTED_AUTH_HEADER_ENV, '').strip())
-
-
-def _trusted_group_profile_map() -> dict[str, str] | None:
-    raw = os.getenv(_TRUSTED_GROUP_PROFILE_MAP_ENV, '').strip()
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _warn_trusted_auth_once(
-            'trusted-group-map',
-            'Ignoring invalid %s JSON; trusted-header auth falls back to default profile binding',
-            _TRUSTED_GROUP_PROFILE_MAP_ENV,
-        )
-        return {}
-    if not isinstance(data, dict):
-        _warn_trusted_auth_once(
-            'trusted-group-map-type',
-            'Ignoring non-dict %s; trusted-header auth falls back to default profile binding',
-            _TRUSTED_GROUP_PROFILE_MAP_ENV,
-        )
-        return {}
-    mapping: dict[str, str] = {}
-    for group, profile in data.items():
-        group_name = str(group or '').strip()
-        profile_name = str(profile or '').strip()
-        if not group_name or not profile_name:
-            _warn_trusted_auth_once(
-                'trusted-group-map-entry',
-                'Ignoring invalid entry in %s; trusted-header auth falls back to default profile binding',
-                _TRUSTED_GROUP_PROFILE_MAP_ENV,
-            )
-            continue
-        mapping[group_name] = profile_name
-    return mapping
-
-
-def _trusted_groups_header_value(handler) -> list[str]:
-    header_name = os.getenv(_TRUSTED_GROUPS_HEADER_ENV, '').strip()
-    if not header_name:
-        return []
-    try:
-        raw = handler.headers.get(header_name, '')
-    except Exception:
-        return []
-    if not raw:
-        return []
-    values = []
-    # Authentik's outpost typically joins multiple group names with a comma or
-    # newline; parse those as separators by default. Some proxy provider /
-    # property-mapping configs instead emit a pipe-separated list (e.g.
-    # "admins|developpeur"), which a comma-only split would treat as one
-    # unmatched group name — silently dropping the session to the unbound
-    # "default" profile despite a legitimate mapped membership. Pipe splitting
-    # is therefore available but OPT-IN (HERMES_WEBUI_TRUSTED_GROUPS_PIPE_SEPARATOR),
-    # because a group NAME can legitimately contain a literal '|' and must not be
-    # re-split by default — doing so unconditionally could change an existing
-    # deployment's profile binding.
-    normalized = str(raw).replace('\n', ',')
-    if str(os.getenv(_TRUSTED_GROUPS_PIPE_SEPARATOR_ENV, '')).strip().lower() in ('1', 'true', 'yes', 'on'):
-        normalized = normalized.replace('|', ',')
-    for part in normalized.split(','):
-        part = part.strip()
-        if part:
-            values.append(part)
-    return values
-
-
-def _trusted_auth_username(handler) -> str | None:
-    header_name = _trusted_auth_header_name()
-    if not header_name:
-        return None
-    try:
-        raw = handler.headers.get(header_name, '')
-    except Exception:
-        return None
-    username = str(raw or '').strip()
-    return username or None
-
-
-def _trusted_auth_bound_profile(handler) -> str | None:
-    mapping = _trusted_group_profile_map()
-    if mapping is None:
-        return None
-    groups = set(_trusted_groups_header_value(handler))
-    for group, profile in mapping.items():
-        if group in groups:
-            return profile
-    return 'default'
-
-
 def _queue_pending_cookie(handler, cookie_header: str) -> None:
     if not cookie_header:
         return
@@ -908,31 +774,20 @@ def session_bound_profile(cookie_value: str) -> str | None:
     return bound_profile or None
 
 
-def get_trusted_auth_logout_url() -> str | None:
-    value = os.getenv(_TRUSTED_AUTH_LOGOUT_URL_ENV, '').strip()
-    return value or None
-
-
-def _remember_trusted_auth_session(handler, info: dict | None, cookie_value: str | None = None) -> dict | None:
-    handler._trusted_auth_session_reconciled = info
-    if info and info.get('auth_type') == 'trusted':
-        handler._trusted_auth_session_info = info
-        handler._trusted_auth_session_cookie_value = cookie_value
+def _remember_request_session(handler, info: dict | None) -> dict | None:
+    handler._request_session = info
     return info
 
 
-def reset_trusted_auth_request_state(handler) -> None:
+def reset_request_auth_state(handler) -> None:
     for name in (
-        '_trusted_auth_session_reconciled',
-        '_trusted_auth_session_rejected',
-        '_trusted_auth_session_info',
-        '_trusted_auth_session_cookie_value',
+        '_request_session',
+        '_request_session_rejected',
         # Clear any auth cookie queued by a prior request but not yet flushed.
         # The handler is reused across HTTP/1.1 keep-alive requests, so a stale
         # queued Set-Cookie would otherwise cross the request boundary and be
-        # emitted by a later response — e.g. after trusted-identity rotation on
-        # logout it could overwrite a subsequent valid login cookie and 401 the
-        # user. Reset it at the per-request boundary (server.py do_GET/do_POST).
+        # emitted by a later response. Reset it at the per-request boundary
+        # (server.py do_GET/do_POST).
         '_pending_set_cookies',
     ):
         try:
@@ -941,7 +796,7 @@ def reset_trusted_auth_request_state(handler) -> None:
             pass
 
 
-def _apply_trusted_session_profile(handler, bound_profile: str | None, cookie_value: str) -> None:
+def _apply_session_profile(handler, bound_profile: str | None, cookie_value: str) -> None:
     if bound_profile is None:
         return
     from api.helpers import get_profile_cookie
@@ -952,49 +807,21 @@ def _apply_trusted_session_profile(handler, bound_profile: str | None, cookie_va
         _queue_pending_cookie(handler, _build_profile_cookie_header(bound_profile, cookie_value))
 
 
-def ensure_trusted_auth_session(handler) -> dict | None:
-    if hasattr(handler, '_trusted_auth_session_reconciled'):
-        return handler._trusted_auth_session_reconciled
+def ensure_request_session(handler) -> dict | None:
+    """This request's session, decided once per request: a Directory session still admitted, else None.
+
+    Only a Directory session is honoured (ADR 0004); any other session is ended.
+    """
+    if hasattr(handler, '_request_session'):
+        return handler._request_session
     cookie_value = parse_cookie(handler)
     info = get_session_info(cookie_value) if cookie_value and verify_session(cookie_value) else None
     if info and info.get('auth_type') == DIRECTORY_AUTH_TYPE:
         return _reconcile_directory_session(handler, info, cookie_value)
-    if not is_trusted_auth_enabled():
-        # GFIT-CoWork: only a Directory session is honoured (ticket 09).
-        if info:
-            invalidate_session(cookie_value)
-            handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    if info and info.get('auth_type') != 'trusted':
-        return _remember_trusted_auth_session(handler, info)
-    from api.routes import _raw_peer_is_trusted_proxy
-
-    if not _raw_peer_is_trusted_proxy(handler):
-        if info:
-            invalidate_session(cookie_value)
-            handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    username = _trusted_auth_username(handler)
-    if not username:
-        if info:
-            invalidate_session(cookie_value)
-            handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    bound_profile = _trusted_auth_bound_profile(handler)
-    if info and info.get('username') == username and info.get('bound_profile') == bound_profile:
-        _apply_trusted_session_profile(handler, bound_profile, cookie_value)
-        return _remember_trusted_auth_session(handler, info, cookie_value)
     if info:
         invalidate_session(cookie_value)
-    cookie_value = create_session(
-        auth_type='trusted',
-        username=username,
-        bound_profile=bound_profile,
-    )
-    _queue_pending_cookie(handler, _auth_cookie_header(cookie_value, handler))
-    _apply_trusted_session_profile(handler, bound_profile, cookie_value)
-    info = get_session_info(cookie_value)
-    return _remember_trusted_auth_session(handler, info, cookie_value)
+        handler._request_session_rejected = True
+    return _remember_request_session(handler, None)
 
 
 def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict | None:
@@ -1016,10 +843,10 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     admission = admit_request(info) if is_directory_auth_enabled() else None
     if admission is None:
         invalidate_session(cookie_value)
-        handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    _apply_trusted_session_profile(handler, admission.profile, cookie_value)
-    return _remember_trusted_auth_session(handler, info)
+        handler._request_session_rejected = True
+        return _remember_request_session(handler, None)
+    _apply_session_profile(handler, admission.profile, cookie_value)
+    return _remember_request_session(handler, info)
 
 
 def _refuse_admin_only_for_user(handler, parsed, session_info: dict) -> bool:
@@ -1055,7 +882,7 @@ def _send_forbidden(handler, parsed, message: str) -> None:
     handler.wfile.write(body)
 
 
-def trusted_session_allows_active_profile(info: dict | None) -> bool:
+def session_allows_active_profile(info: dict | None) -> bool:
     if not info:
         return True
     return _request_profile_matches_bound(str(info.get('bound_profile') or '') or None)
@@ -1247,11 +1074,11 @@ def check_auth(handler, parsed) -> bool:
         handler.end_headers()
         handler.wfile.write(body)
         return False
-    session_info = ensure_trusted_auth_session(handler)
+    session_info = ensure_request_session(handler)
     if session_info:
         if _refuse_admin_only_for_user(handler, parsed, session_info):
             return False
-        if not trusted_session_allows_active_profile(session_info):
+        if not session_allows_active_profile(session_info):
             if parsed.path.startswith('/api/'):
                 body = b'{"error":"Profile access forbidden"}'
                 handler.send_response(403)
