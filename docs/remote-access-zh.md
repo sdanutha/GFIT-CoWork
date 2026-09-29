@@ -201,7 +201,6 @@ New-NetFirewallRule -DisplayName "Hermes WebUI (Tailscale only)" `
 | 症状 | 可能原因 | 处理 |
 |---|---|---|
 | 手机打不开地址 | WebUI 没绑定到可达接口 | 方案 A 检查 Serve 状态（`tailscale serve status`）；方案 B 确认 `HERMES_WEBUI_HOST=0.0.0.0` 且防火墙已放行 Tailscale |
-| 任务计划已建但 WebUI 没起来 | WSL 脚本路径写错/发行版不对 | 用正确的 `-WslScriptPath` 与 `-Distro` 重跑注册脚本 |
 | 健康检查失败但进程存在 | 端口不一致或仍在启动 | 核对 `HERMES_WEBUI_PORT` 与 `hermes_webui.log` |
 | 服务器启动即退出，提示需要目录 | 非回环地址但未配置目录 | 配置 `HERMES_WEBUI_DIRECTORY` 与 `HERMES_WEBUI_LDAP_*`，或改回回环绑定 |
 
