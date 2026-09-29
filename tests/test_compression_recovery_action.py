@@ -10,7 +10,6 @@ from api.compression_recovery import (
 )
 from api.models import Session
 from api.session_recovery import _state_db_row_to_sidecar
-from api.webui_session_db import WebUIJsonSessionDB
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -365,21 +364,19 @@ def test_recovery_metadata_is_persisted_and_exposed_in_compact_session():
     assert compact["compression_recovery"]["recommended_action"] == "start_focused_continuation"
 
 
-def test_recovery_child_markers_round_trip_through_state_db_sidecar_rebuild(tmp_path):
-    db = WebUIJsonSessionDB(tmp_path)
-    db.write_session(
-        {
-            "session_id": "recoverychild1",
-            "title": "Focused continuation",
-            "model": "gpt-4o",
-            "started_at": 1700000000,
-            "messages": [],
-            "parent_session_id": "recoverysrc3",
-            "compression_recovery_source_session_id": "recoverysrc3",
-            "compression_recovery_action": "start_focused_continuation",
-        }
-    )
-    row = db.list_sessions()[0]
+def test_recovery_child_markers_round_trip_through_state_db_sidecar_rebuild(monkeypatch, tmp_path):
+    _isolate_sessions(monkeypatch, tmp_path)
+    Session(
+        session_id="recoverychild1",
+        title="Focused continuation",
+        model="gpt-4o",
+        messages=[],
+        parent_session_id="recoverysrc3",
+        compression_recovery_source_session_id="recoverysrc3",
+        compression_recovery_action="start_focused_continuation",
+    ).save()
+    models.SESSIONS.clear()
+    row = Session.load_metadata_only("recoverychild1").compact()
 
     assert row["compression_recovery_source_session_id"] == "recoverysrc3"
     assert row["compression_recovery_action"] == "start_focused_continuation"
@@ -390,26 +387,24 @@ def test_recovery_child_markers_round_trip_through_state_db_sidecar_rebuild(tmp_
     assert sidecar["compression_recovery_action"] == "start_focused_continuation"
 
 
-def test_recovery_source_metadata_round_trips_through_state_db_sidecar_rebuild(tmp_path):
+def test_recovery_source_metadata_round_trips_through_state_db_sidecar_rebuild(monkeypatch, tmp_path):
+    _isolate_sessions(monkeypatch, tmp_path)
     recovery = {
         "type": "compression_recovery_required",
         "terminal_state": "compression_exhausted",
         "recommended_action": "start_focused_continuation",
         "source_session_id": "recoverysrc4",
     }
-    db = WebUIJsonSessionDB(tmp_path)
-    db.write_session(
-        {
-            "session_id": "recoverysrc4",
-            "title": "Exhausted source",
-            "model": "gpt-4o",
-            "started_at": 1700000000,
-            "messages": [{"role": "user", "content": "long task"}],
-            "compression_recovery": recovery,
-            "recommended_recovery_action": "start_focused_continuation",
-        }
-    )
-    row = db.list_sessions()[0]
+    Session(
+        session_id="recoverysrc4",
+        title="Exhausted source",
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "long task"}],
+        compression_recovery=recovery,
+        recommended_recovery_action="start_focused_continuation",
+    ).save()
+    models.SESSIONS.clear()
+    row = Session.load_metadata_only("recoverysrc4").compact()
 
     sidecar = _state_db_row_to_sidecar({"id": "recoverysrc4", **row, "messages": []})
 

@@ -420,12 +420,6 @@ def _get_config_path() -> Path:
 
 _WEBUI_SESSION_SAVE_MODES = {"deferred", "eager"}
 _DEFAULT_WEBUI_SESSION_SAVE_MODE = "deferred"
-_DEFAULT_EXPERIMENTAL_CONFIG = {
-    # Dormant first slice for the unified SessionDB migration. Runtime WebUI
-    # session call sites must continue using the existing JSON paths unless a
-    # later PR deliberately enables and wires this flag.
-    "unified_session_db": False,
-}
 _DEFAULT_AGENT_PERSONALITIES = {
     # Mirrors the Hermes Agent CLI built-ins so WebUI's config-derived
     # /personality path is not empty for fresh profiles.
@@ -462,13 +456,6 @@ def _apply_config_defaults(config_data: dict) -> None:
         # Keep behavior aligned with CLI loader defaults: if personalities are
         # absent or malformed, replace the section entirely with built-ins.
         agent_cfg["personalities"] = copy.deepcopy(_DEFAULT_AGENT_PERSONALITIES)
-
-    experimental = config_data.get("experimental")
-    if not isinstance(experimental, dict):
-        experimental = {}
-        config_data["experimental"] = experimental
-    for key, value in _DEFAULT_EXPERIMENTAL_CONFIG.items():
-        experimental.setdefault(key, value)
 
  
 def reload_config_if_stale() -> None:
@@ -551,19 +538,6 @@ def get_webui_session_save_mode(config_data: dict | None = None) -> str:
         if normalized in _WEBUI_SESSION_SAVE_MODES:
             return normalized
     return _DEFAULT_WEBUI_SESSION_SAVE_MODE
-
-
-def is_unified_session_db_enabled(config_data: dict | None = None) -> bool:
-    """Return the dormant unified-session-db feature flag.
-
-    The default is intentionally false so adding the JSON adapter cannot change
-    runtime persistence until a later migration PR switches call sites.
-    """
-    active_cfg = config_data if isinstance(config_data, dict) else cfg
-    experimental = active_cfg.get("experimental", {}) if isinstance(active_cfg, dict) else {}
-    if not isinstance(experimental, dict):
-        return False
-    return experimental.get("unified_session_db") is True
 
 
 def _refresh_config_cache(config_path: Path | None = None) -> None:
@@ -11968,9 +11942,7 @@ def _atomic_write_settings_text(path: Path, text: str) -> None:
     truncated/empty, so the next start loses every persisted setting (theme,
     workspace, tab order). Writing to a
     sibling temp file, fsyncing, then ``os.replace`` keeps the old contents
-    intact until the rename commits the new ones in one step.  Mirrors the
-    tempfile+fsync+os.replace pattern already used by
-    ``webui_session_db.WebUIJsonSessionDB._atomic_write``.
+    intact until the rename commits the new ones in one step.
 
     The existing file's mode is carried onto the replacement: ``os.replace``
     swaps in the temp file's inode, and a plain ``open`` respects the umask

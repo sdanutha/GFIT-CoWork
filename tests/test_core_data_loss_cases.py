@@ -12,7 +12,6 @@ Both are regression tests — they should FAIL against the current code
 from __future__ import annotations
 
 import api.models as models
-import api.webui_session_db as webui_db
 
 
 def _msg(role: str, content: str, ts: float) -> dict:
@@ -413,17 +412,6 @@ def test_reconciled_passes_truncation_boundary(monkeypatch, tmp_path):
     assert "kept reply" in contents
     assert "new turn" in contents
     assert "new reply" in contents
-
-
-# ─── webui_session_db _METADATA_FIELDS includes boundary ──────────────────────
-
-
-def test_webui_session_db_metadata_fields_includes_boundary():
-    """webui_session_db._METADATA_FIELDS must include truncation_boundary
-    so it's recognized as a metadata field (not leaked into extra)."""
-    assert "truncation_boundary" in webui_db._METADATA_FIELDS, (
-        "webui_session_db._METADATA_FIELDS missing truncation_boundary"
-    )
 
 
 # ─── Route-level CORE-A: default /api/session full reload must not resurrect ──
