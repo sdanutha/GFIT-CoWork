@@ -10574,7 +10574,7 @@ function _formatUpdateTargetStatus(label,info){
 }
 function _formatManualUpdateInstruction(info){
   if(!(info&&info.no_git&&info.manual_update&&info.behind>0)) return null;
-  return t('settings_update_manual_docker','docker build -t gfit-cowork:latest /opt/gfit-cowork/src');
+  return t('settings_update_manual_docker','git -C /opt/gfit-cowork/src pull && docker build -t gfit-cowork:latest /opt/gfit-cowork/src');
 }
 function _formatUpdateCheckError(label,info){
   if(!info||!info.error) return null;

@@ -28,7 +28,7 @@ def test_manual_update_instruction_uses_translation_helper():
     assert match
     function_source = match.group(0)
     assert "t('settings_update_manual_docker'" in function_source
-    assert "docker build -t gfit-cowork:latest /opt/gfit-cowork/src" in function_source
+    assert "git -C /opt/gfit-cowork/src pull && docker build -t gfit-cowork:latest /opt/gfit-cowork/src" in function_source
     assert "Manual update required" not in function_source
 
 

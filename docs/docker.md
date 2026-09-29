@@ -150,7 +150,7 @@ docker compose exec hermes-agent hermes gateway status
 docker compose logs --tail 200 hermes-agent
 ```
 
-For container-to-container diagnostics, set one of `HERMES_API_URL` or `HERMES_WEBUI_GATEWAY_BASE_URL` in the WebUI environment, then restart GFIT-CoWork.
+For container-to-container diagnostics, set one of `HERMES_API_URL` or `HERMES_WEBUI_GATEWAY_BASE_URL` in the `gfit-cowork` environment, then restart GFIT-CoWork.
 
 If browser chat is routed through that gateway and you expect approval prompts for guarded tools, set the gateway chat backend and opt into the runs API path in the **WebUI service** (`gfit-cowork`):
 
@@ -300,7 +300,7 @@ failed to load .env: open .env: permission denied
 
 **Cause**: GFIT-CoWork's `fix_credential_permissions()` startup hook enforces 0600 by default. This is the right thing for a clean install but conflicts with operator-set modes.
 
-**Fix**: Set one of these env vars for the `gfit-cowork` service:
+**Fix**: Set one of these under `environment:` of the `gfit-cowork` service in the Deployment's `docker-compose.yml` — **not** in `.env`, which both services read (`env_file: .env`):
 - `HERMES_SKIP_CHMOD=1` — bypass the fixer entirely
 - `HERMES_HOME_MODE=0640` — allow group bits, only strip world-readable
 
@@ -310,7 +310,7 @@ Both are documented in `api/startup.py::fix_credential_permissions()`.
 > - **GFIT-CoWork**: credential FILE mode threshold (`0640` allows group bits on `.env`)
 > - **Agent**: `HERMES_HOME` *directory* mode (default `0700`)
 >
-> `0640` on a directory has no owner-execute bit, so the agent can't traverse its own home → bricked. Never copy GFIT-CoWork's value into the `hermes-agent` service; if the agent needs one, use `HERMES_HOME_MODE=0750` (group-traversable) or `0701` (x-only).
+> `0640` on a directory has no owner-execute bit, so the agent can't traverse its own home → bricked. Putting `HERMES_HOME_MODE=0640` in `.env` gives it to `hermes-agent` too. If the agent needs one, set it on the `hermes-agent` service only, as `0750` (group-traversable) or `0701` (x-only).
 
 ### 3. "GFIT-CoWork can't find agent source" (#858)
 
@@ -335,7 +335,7 @@ Both are documented in `api/startup.py::fix_credential_permissions()`.
 
 ### 5. "config.yaml not loaded"
 
-**Symptom**: The WebUI shows "no model configured" or doesn't pick up your custom providers.
+**Symptom**: GFIT-CoWork shows "no model configured" or doesn't pick up your custom providers.
 
 **Cause**: Either the file isn't readable (UID/GID issue, see #1) or it's not in the expected path inside the container.
 

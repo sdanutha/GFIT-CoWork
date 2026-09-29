@@ -33,9 +33,7 @@ For Windows users who want the supported path today, use WSL2.
 | Path | Use it when | Notes |
 |---|---|---|
 | Local bootstrap | You run WebUI directly on Linux, macOS, or WSL2 | Best for a personal server, Mac mini, VPS, or homelab host. |
-| Docker single-container | You want the simplest container setup | Recommended first Docker path. WebUI runs the agent in-process. |
-| Docker two-container | You already run the agent gateway separately | More isolated, but tools launched from WebUI run in the WebUI container. |
-| Docker three-container | You want agent gateway plus dashboard plus WebUI | Same caveats as two-container, plus the dashboard service. |
+| Docker Deployment kit (`deploy/`) | You deploy GFIT-CoWork for a Team on a server | One Deployment per Team behind the HTTPS reverse proxy; see [`deploy/README.md`](../deploy/README.md). Tools launched from GFIT-CoWork run in its container. |
 | Native Windows community path | You are intentionally testing unsupported native Windows | Community-maintained for now, not the official bootstrap path. |
 
 If a Docker install gets confusing, start again with the single-container setup.
