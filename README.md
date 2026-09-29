@@ -167,7 +167,6 @@ This gives you nearly **1:1 parity with Hermes CLI from a convenient web UI** wh
 - [Running tests](#running-tests)
 - [Architecture](#architecture) — backend/frontend layout, state dir
 - [Docs](#docs) — the full documentation index
-- [Contributors](#contributors)
 
 ---
 
@@ -194,7 +193,7 @@ What makes it different from other agentic tools:
   the results back into its own memory
 - **Self-hosted** — your conversations, your memory, your hardware
 
-**vs. the field** *(landscape is actively shifting — see [docs/why-hermes.md](docs/why-hermes.md) for the full breakdown)*:
+**vs. the field** *(landscape is actively shifting)*:
 
 | | OpenClaw | Claude Code | Codex CLI | OpenCode | Hermes |
 |---|---|---|---|---|---|
@@ -215,7 +214,7 @@ with memory, cron, and messaging. The key differences: Hermes writes and saves i
 automatically as a core behavior (OpenClaw's skill system centers on a community marketplace);
 Hermes is more stable across updates (OpenClaw has documented release regressions and ClawHub
 has had security incidents involving malicious skills); and Hermes runs natively in the Python
-ecosystem. See [docs/why-hermes.md](docs/why-hermes.md) for the full side-by-side.
+ecosystem.
 
 ---
 
@@ -493,8 +492,7 @@ prints for you over SSH) or, on a single-operator or access-restricted tailnet,
 use the preferred [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
 flow, which keeps WebUI on loopback behind tailnet-only HTTPS. Direct access to
 `http://<server-tailscale-ip>:8787` with `HERMES_WEBUI_HOST=0.0.0.0` and a
-Directory configured is a fallback when Serve is unavailable. Full setup and
-the community ARM64-Android field report: [`docs/remote-access.md`](docs/remote-access.md).
+Directory configured is a fallback when Serve is unavailable.
 
 ### Manual launch (without start.sh)
 
@@ -643,7 +641,6 @@ The WebUI is still coupled to Hermes Agent internals for runtime execution, prov
 ## Docs
 
 **Start here**
-- [`docs/why-hermes.md`](docs/why-hermes.md) — why Hermes, the mental model, and a detailed comparison to Claude Code / Codex / OpenCode / Cursor
 - [`docs/onboarding.md`](docs/onboarding.md) — first-run wizard, provider setup, local model server Base URLs, and safe re-runs
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — diagnostic flows for common failures (e.g. "AIAgent not available")
 
@@ -653,11 +650,8 @@ The WebUI is still coupled to Hermes Agent internals for runtime execution, prov
 - [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md) — administrator-controlled WebUI extension injection
 
 **Deploying & operating**
-- [`docs/remote-access.md`](docs/remote-access.md) — SSH tunnel, Tailscale, and phone access (incl. a community ARM64-Android field report)
-- [`docs/remote-access-zh.md`](docs/remote-access-zh.md) — 中文远程访问指南：Tailscale、SSH 隧道、Windows 原生部署
 - [`docs/advanced-chat-setup.md`](docs/advanced-chat-setup.md) — optional dynamic recall-prefill and Gateway-backed browser chat for self-hosted deployments
 - [`docs/docker.md`](docs/docker.md) — the GFIT-CoWork image in a Deployment: volumes, UID/GID, gateway, upgrades, common failures
-- [`docs/supervisor.md`](docs/supervisor.md) — launchd, systemd, supervisord, runit, and s6 process-supervisor setup
 - [`docs/onboarding-agent-checklist.md`](docs/onboarding-agent-checklist.md) — safety rules and pass/fail checks for assistant-led install/reinstall support
 
 **Contributing & design**
@@ -672,137 +666,6 @@ The WebUI is still coupled to Hermes Agent internals for runtime execution, prov
 
 **Release history & plan**
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes per version
-- [`ROADMAP.md`](ROADMAP.md) — feature roadmap and sprint history
-- [`SPRINTS.md`](SPRINTS.md) — forward sprint plan with CLI + Claude parity targets
-- [`CONTRIBUTORS.md`](CONTRIBUTORS.md) — the full community credit roll
-
----
-
-## Contributors
-
-Hermes WebUI is built with help from the open-source community. Every PR — whether merged directly, absorbed into a batch release, or salvaged from a larger proposal — shapes the project, and we're grateful to everyone who has taken the time to contribute.
-
-<!-- BEGIN GENERATED CONTRIBUTORS -->
-Over **326 contributors** have shipped code that landed in a release tag. The full, continuously-updated credit roll — including everyone with one or two PRs and the special-thanks roll for design and architectural work — lives in [`CONTRIBUTORS.md`](CONTRIBUTORS.md). A snapshot of the most prolific contributors:
-
-### Top contributors (by PR count, including absorbed/batch-released work)
-
-| # | Contributor | PRs | First → latest release |
-|---|---|---:|---|
-| 1 | [@rodboev](https://github.com/rodboev) | 336 | `v0.51.223` → `v0.51.893` |
-| 2 | [@franksong2702](https://github.com/franksong2702) | 301 | `v0.49.3` → `v0.51.893` |
-| 3 | [@Michaelyklam](https://github.com/Michaelyklam) | 157 | `v0.50.240` → `v0.51.198` |
-| 4 | [@ai-ag2026](https://github.com/ai-ag2026) | 121 | `v0.50.279` → `v0.51.835` |
-| 5 | [@bergeouss](https://github.com/bergeouss) | 80 | `v0.48.0` → `v0.51.703` |
-| 6 | [@AJV20](https://github.com/AJV20) | 57 | `v0.51.93` → `v0.51.346` |
-| 7 | [@dso2ng](https://github.com/dso2ng) | 43 | `v0.50.227` → `v0.51.578` |
-| 8 | [@starship-s](https://github.com/starship-s) | 28 | `v0.50.123` → `v0.51.763` |
-| 9 | [@Sanjays2402](https://github.com/Sanjays2402) | 27 | `v0.50.292` → `v0.51.484` |
-| 10 | [@allenliang2022](https://github.com/allenliang2022) | 24 | `v0.51.185` → `v0.51.869` |
-
-See [`CONTRIBUTORS.md`](CONTRIBUTORS.md) for the full ranked list of all 326 contributors — the 3+ PR tables, the 1–2 PR roll, and the special-thanks notes for design and architectural contributions.
-<!-- END GENERATED CONTRIBUTORS -->
-
-### Notable contributions
-
-**[@franksong2702](https://github.com/franksong2702)** — Most prolific external contributor (180 PRs, `v0.49.3` → `v0.51.384`)
-Across the longest tenure of any external contributor: the session title guard (#301), breadcrumb workspace navigation (#302), embedded workspace terminal (#1099), worktree-backed session creation (#2053), onboarding documentation (#2052), composer footer container queries, streaming-session sidebar exemption (#1327), session sidecar repair, cron output preservation (#1295), profile default workspace persistence, manual `/compress` async start/status endpoints (#2128), worktree status surface (#2109) + guarded remove (#2156) for the lifecycle umbrella #2057, session post-render dedup (#2166), native-WebUI fast path (#2170), tail-window response trim (#2171), stale-stream guard extension (#2158), CSP report collector (#2160), and a long tail of polish across mobile/responsive, the session sidebar, and the workspace state machine.
-
-**[@Michaelyklam](https://github.com/Michaelyklam)** — Most prolific contributor of recent releases (118 PRs, `v0.50.240` → `v0.51.198`)
-Production Docker hardening (#1921, drops sudo-capable staging user), profile-scoped skills endpoints (#1903), gateway PID resolution under profile-scoped HERMES_HOME (#1901), profile-aware AIAgent cache (#1898/#1904), backslash LaTeX delimiters (#1848), Codex quota error surfacing (#1770), shell-route HTML 503 (#1836), stale Kanban client recovery (#1828), context auto-compression toast lifetime (#1988), `/goal` command (#1866), Kanban detail-view scrolling (#1916), CLI session tool metadata preservation (#1778), Traditional Chinese kanban locale backfill (#1979), v0.51.51 mobile Insights bucketing/layout (#2120/#2121), Hermes run adapter RFC (#2105 for #1925), fork-from-here absolute index (#2198 for #2184), opencode-go custom-provider overlap routing (#2204 for #1894).
-
-**[@rodboev](https://github.com/rodboev)** — Windows / cross-platform correctness + test reliability (83 PRs, `v0.51.223` → `v0.51.384`)
-A broad, sustained sweep with a strong focus on making the project work outside Linux: the `ctl.sh` Windows process-tree-kill fix (#3670), the local Windows full-suite signal/orphan-process work, slash-command autocomplete polish, and a long tail of frontend and infrastructure fixes shipped across dozens of release batches.
-
-**[@bergeouss](https://github.com/bergeouss)** — Provider management UI + Docker hardening (70 PRs, `v0.48.0` → `v0.51.385`)
-Provider management UI for adding/editing custom providers from Settings, OAuth provider status detection (#1552), two-container Docker setup, profile isolation hardening (per-profile `.env` secrets), the bulk of what users see when they touch Settings → Providers, Reveal-in-Finder context menu (#1551), gateway status card (#1552), auto-assign session to active project filter (#1550), "What's new?" link in update banner (#1549), OpenRouter free-tier live fetch (#1548), credential pool 401 self-heal (#1553), inline provider chip + group model count in model picker (#1644).
-
-**[@ai-ag2026](https://github.com/ai-ag2026)** — Session recovery + audit infrastructure (75 PRs, `v0.50.279` → `v0.51.367`)
-Autonomous-AI contributor (Hermes Agent-driven) focused on durability: `state.db`-backed sidecar reconciliation (#2041), orphan `.json.bak` recovery on startup (#2035), read-only session recovery audit endpoints (#2036, #2040), active run lifecycle in `/health` (#2039), crash-safe turn-journal RFC at `docs/rfcs/turn-journal.md` (#2042), append-only turn-journal helper (#2059), lifecycle events layer (#2062), `Content-Security-Policy-Report-Only` header (#2084), per-cron toast toggle (#2100), fork-session compression lineage isolation (#2014).
-
-**[@dso2ng](https://github.com/dso2ng)** — Session lineage + diagnostics (30 PRs, `v0.50.227` → `v0.51.327`)
-`/api/session/lineage-report/<sid>` endpoint for bounded session graph diagnostics (#2012), stale Mermaid render error cleanup (#1337), `session_source="fork"` continuation-chain isolation (#2063), lazy lineage-report fetch on sidebar badge expand (#2130), and a long tail of frontend reliability fixes around session loading.
-
-**[@jasonjcwu](https://github.com/jasonjcwu)** — Composer + transcript polish (16 PRs, `v0.50.227` → `v0.51.132`)
-Sidebar collapse via active-rail click (#2054, fuses #1884 + #1924), composer chip lightbox (#1758), title fixes for tool-heavy first turns, silent compress-status during session switch (#2185), concurrent-send loss fix (#2186), in-transcript steer message badges (#2187), and a string of frontend polish fixes.
-
-**[@Jordan-SkyLF](https://github.com/Jordan-SkyLF)** — Live streaming + UX polish (12 PRs, `v0.50.18` → `v0.51.66`)
-Original sprint of workspace fallback resolution, live reasoning cards (#366, #367, #394–#397), then a recent burst: manual "Refresh usage" button on the Provider quota card (#2150), cancelled-turn status classification (#2151), Firefox sidebar scroll stabilization (#2200), early provisional session titles (#2202), target-aware "What's new?" update-banner links (#2207), and MCP tools overflow fix in Settings (#2210).
-
-**[@aronprins](https://github.com/aronprins)** — `v0.50.0` UI overhaul (PR #242, plus 9 follow-ups)
-The biggest single contribution to the project: a complete UI redesign that moved model/profile/workspace controls into the composer footer, replaced the gear-icon settings panel with the Hermes Control Center (tabbed modal), removed the activity bar in favor of inline composer status, redesigned the session list with a `⋯` action dropdown, and added the workspace panel state machine. Plus chat transcript redesign (#587), sidebar declutter (#584), three-column layout refactor (#899), light/dark theme + accent skins (#627), and shared `confirm()`/`prompt()` dialog replacement (PR #251 extracted from #242).
-
-**[@iRonin](https://github.com/iRonin)** — Security hardening sprint (PRs #196–#204)
-Six consecutive, focused security PRs: session memory leak fix (expired token pruning), CSP + Permissions-Policy headers, 30-second slow-client connection timeout, optional HTTPS/TLS support via environment variables, upstream branch tracking fix for self-update, and CLI session support in the file-browser API. The kind of focused, high-quality security work that makes a self-hosted tool trustworthy.
-
-**[@lucasrc](https://github.com/lucasrc)** — Auth-hardening trilogy (PRs #2191, #2192, #2193)
-Three coordinated security PRs that all landed in v0.51.57: thread-safe login rate limiter with PBKDF2 key separation, password-hash cache invalidation on Settings save, and the full 64-char HMAC-SHA256 session signature with a backwards-compatible migration bridge. The kind of cleanly-decomposed security work that's reviewable as three independent pieces.
-
-**[@LumenYoung](https://github.com/LumenYoung)** — Streaming hot-path correctness (8 PRs, `v0.51.47` → `v0.51.99`)
-The original stale-stream writeback guard (#2136 — the bug class the next two releases extended), gateway-state alive-null classification (#2075), compression-banner anchor alignment (#2182), and context-progress ring auto-refresh on compression complete (#2188). Each PR opened a small surgical fix in one of the most fragile subsystems in the codebase.
-
-**[@dobby-d-elf](https://github.com/dobby-d-elf)** — Frontend reliability + motion polish (15 PRs, `v0.51.38` → `v0.51.161`)
-Workspace fallback on deleted directories (#2138), iPhone PWA bottom-scroll fix (#2143), the new "Activity: X tools" composer footer shimmer animation (#2203), and follow-up animation tuning (#2212).
-
-**[@JKJameson](https://github.com/JKJameson)** — Composer + session polish (10 PRs)
-Persistent composer draft per session (#1956), and a long tail of polish across the composer and session sidebar.
-
-**[@gabogabucho](https://github.com/gabogabucho)** — Spanish locale + onboarding wizard
-Full Spanish (`es`) locale covering all UI strings, plus the one-shot bootstrap onboarding wizard that guides new users through provider setup on first launch.
-
-**[@deboste](https://github.com/deboste)** — Reverse-proxy auth + mobile responsive layout (PRs #3, #4, #5)
-Three of the very first community PRs: fixed EventSource/fetch to use URL origin for reverse-proxy setups, corrected model provider routing from config, and added mobile responsive layout with dvh viewport fix. Early foundation work.
-
-**[@indigokarasu](https://github.com/indigokarasu)** — Visual redesign proposal (PR #213)
-A CSS-only redesign of the full UI — proper design tokens, an icon rail sidebar replacing the emoji tab strip, consistent form cards, breadcrumb nav, and 7 built-in themes as custom properties. The PR didn't merge as-is but shaped the design language and theme architecture that shipped in v0.50.0.
-
-**[@zenc-cp](https://github.com/zenc-cp)** — Anti-hallucination guard for the ReAct loop (PR #133)
-A three-layer approach (ephemeral anti-hallucination prompt, live token filtering, session-history cleanup) that the streaming pipeline still uses.
-
-**[@Hinotoi-agent](https://github.com/Hinotoi-agent)** — Profile + session security (PRs #351, #2048)
-Profile `.env` secret isolation fix (PR #351) preventing API key leakage between profiles, and session-import workspace validation (PR #2048) blocking a crafted-JSON file-read against `/`.
-
-**[@Sanjays2402](https://github.com/Sanjays2402)** — Endless-scroll + Start-jump race fix (PR #1949)
-A generation-token + mutex pair fixing the v0.51.30 race between endless-scroll prefetch and Start-jump's `_ensureAllMessagesLoaded`. The naive same-flag-check approach (proposed in #1942 and #1962) was a no-op for the post-await race — Sanjays2402's fix was the correct shape.
-
-**[@fxd-jason](https://github.com/fxd-jason)** — Real-time approval + clarify via SSE (PRs #1350, #1355)
-Replaced 1.5s HTTP polling with SSE long-connections for both approval and clarify, cutting latency from up to 1.5s to near-instant. Got all the correctness details right (atomic subscribe + snapshot, notify-inside-lock, head-of-queue payload, trailing event re-emission).
-
-**[@happy5318](https://github.com/happy5318)** — Custom provider model dedup (PR #1947)
-Fixed the same model from different named custom providers being silently deduplicated in the picker, with Opus catching a race in the original tests that needed augmentation.
-
-**[@NocGeek](https://github.com/NocGeek)** — Streaming scroll + manual cron output persistence (7 PRs)
-Streaming scroll viewport stability when tool/queue cards insert (#1360), manual cron-run output and metadata persistence (#1372, split from held #1352).
-
-**[@DavidSchuchert](https://github.com/DavidSchuchert)** — German translation (PR #190)
-Complete German locale (`de`) covering all UI strings, settings labels, commands, and system messages — and stress-tested the i18n system, exposing several elements that weren't yet translatable and getting them fixed as part of the same PR.
-
-**[@Bobby9228](https://github.com/Bobby9228)** — Mobile Profiles button (PR #265)
-Added the Profiles entry to the mobile navigation flow, making profile switching reachable on phones.
-
-**[@kevin-ho](https://github.com/kevin-ho)** — OLED theme (PR #168)
-The 7th built-in theme: pure black backgrounds with warm accents tuned to reduce burn-in risk.
-
-**[@andrewy-wizard](https://github.com/andrewy-wizard)** — Chinese localization (PR #177)
-Initial Simplified Chinese (`zh`) locale. One of the first non-English locales.
-
-**[@DelightRun](https://github.com/DelightRun)** — `session_search` fix for WebUI sessions (PR #356)
-Tracked down the missing `SessionDB` injection in the streaming path that was silently breaking the tool for every WebUI session.
-
-**[@lawrencel1ng](https://github.com/lawrencel1ng)** — Bandit security fixes (PR #354)
-Systematic bandit-scan fixes: URL scheme validation before `urlopen`, MD5 `usedforsecurity=False`, and 40+ bare `except: pass` blocks replaced with proper logging.
-
-**[@shaoxianbilly](https://github.com/shaoxianbilly)** — Unicode filename downloads (PR #378)
-Proper `Content-Disposition` with RFC 5987 `filename*=UTF-8''...` encoding so non-ASCII filenames download without crashing.
-
-**[@lx3133584](https://github.com/lx3133584)** — CSRF fix for reverse proxy (PR #360)
-A real-world blocker for anyone hosting behind Nginx Proxy Manager or similar on a port other than 80/443.
-
-**[@betamod](https://github.com/betamod)** — Security audit (PR #171)
-A comprehensive CSRF / SSRF / XSS / env-race-condition audit that shipped in v0.39.0.
-
-**[@TaraTheStar](https://github.com/TaraTheStar)** — Bot name + thinking blocks + login refactor (PRs #132, #176, #181)
-Configurable assistant display name, thinking/reasoning block display, and a login page refactor.
 
 ---
 

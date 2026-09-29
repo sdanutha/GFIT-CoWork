@@ -2,8 +2,7 @@
 
 > This document is the canonical reference for anyone (human or agent) working on the
 > Hermes Web UI. It covers the exact current state of the code, every design decision and
-> quirk discovered during development, and a phased architecture improvement roadmap that
-> runs in parallel with the feature roadmap in ROADMAP.md.
+> quirk discovered during development.
 >
 > Keep this document updated as architecture changes are made.
 
@@ -93,12 +92,9 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       ~1,150 test files    ~11,500 tests collected via pytest (run `pytest --collect-only -q` for exact)
       test_regressions.py  Permanent regression gate
     CONTRIBUTING.md        Contributor workflow and PR expectations.
-    ROADMAP.md             Feature and product roadmap document.
-    SPRINTS.md             Forward sprint plan with CLI + Claude parity targets.
     ARCHITECTURE.md        THIS FILE.
     TESTING.md             Manual browser test plan and automated coverage reference.
     CHANGELOG.md           Release notes per version.
-    CONTRIBUTORS.md        Community credit roll (regenerated via the maintainer workspace script).
     requirements.txt       Python dependencies.
     .env.example           Sample environment variable overrides.
 
@@ -828,183 +824,11 @@ Default toolset list (hardcoded fallback):
     image_gen, memory, session_search, skills, terminal, todo, tts, vision, web
 
 The web UI always runs with the full CLI toolset. There is no per-session toolset
-restriction from the UI yet (see ROADMAP.md Wave 4 for the plan).
+restriction from the UI yet.
 
 ---
 
-## 9. Known Bugs and Technical Debt Summary
-
-| ID  | Severity | Description                                          | Status           | Fix              |
-|-----|----------|------------------------------------------------------|------------------|------------------|
-| B1  | Critical | Approval wiring untested; pattern_keys not shown     | FIXED Sprint 1   | Card shows keys; inject_test endpoint added for verification |
-| B2  | High     | File input no accept attribute                       | FIXED Sprint 1   | accept= added with image/*, text/*, pdf, code extensions |
-| B3  | High     | Model chip label hardcodes sonnet substring check    | FIXED Sprint 1   | MODEL_LABELS map; fallback to short model ID |
-| B4  | High     | Reload mid-stream: stream_id lost, no reconnect      | FIXED Sprint 1   | stream/status endpoint; reconnect banner via localStorage |
-| B5  | High     | INFLIGHT in-memory only, lost on reload              | FIXED Sprint 1   | markInflight/clearInflight in localStorage |
-| B6  | Medium   | New sessions always use DEFAULT_WORKSPACE            | FIXED Sprint 3   | newSession() passes S.session.workspace to /api/session/new |
-| B7  | Medium   | Sidebar title overflow: missing min-width:0          | FIXED Sprint 1   | min-width:0 on .session-item |
-| B8  | Medium   | renderMd missing tables, nested lists                | PARTIAL Sprint 4 | Tables Sprint 2; nested lists improved Sprint 4; full fix still Phase E |
-| B9  | Medium   | Empty assistant messages can render                  | FIXED Sprint 1   | loadSession() filters empty-text assistant messages |
-| B10 | Low      | Thinking dots stay during tool-running               | FIXED Sprint 3   | removeThinking() on first tool event; compact 'Running X...' row shown |
-| B11 | Low      | GET /api/session no-ID silently creates session      | FIXED Sprint 1   | Returns 400 with error message |
-| B12 | Low      | Preview panel display:none to flex layout jump       | FIXED Sprint 4   | visibility/opacity transition replaces display:none toggle |
-| B13 | Low      | No CORS headers                                      | Open             | Phase H |
-| B14 | Low      | No keyboard shortcut for new chat                    | FIXED Sprint 3   | Cmd/Ctrl+K triggers newSession() from anywhere |
-| TD1 | Critical | Env vars are process-global (concurrent request bug) | PARTIAL Sprint 5 | Thread-local _set_thread_env() added. Per-session lock from Sprint 4. Process-level env still written as fallback. Full fix needs terminal tool to read thread-local. |
-| TD2 | High     | SESSIONS cache: no eviction, locking missing         | FIXED Sprint 5   | OrderedDict + LRU cap 100 + move_to_end on access. LOCK from Sprint 1. Complete. |
-| TD3 | High     | No test coverage                                     | PARTIAL Sprint 1 | 19 HTTP integration tests added; unit tests pending Phase A split |
-| TD4 | Medium   | All code in one file (HTML/CSS/JS/Python mingled)    | FIXED Sprint 5   | JS extracted to static/app.js in Sprint 5 (Sprint 9: app.js deleted, replaced by 6 modules). Phase A complete. |
-| TD5 | Medium   | No request validation (KeyError -> 500 + traceback)  | FIXED Sprint 4   | All endpoints hardened: /api/list, /api/file, /api/crons/* all return clean 400/404 |
-| TD6 | Low      | all_sessions() full directory scan every call        | FIXED Sprint 5   | Session index file (_index.json) built on every save. all_sessions() reads index O(1). Phase C partial. |
-| TD7 | Low      | No structured logging                                | FIXED Sprint 1   | log_request() override emits JSON per request |
-
----
-
-## 10. Architecture Improvement Roadmap
-
-These phases run in parallel with the feature roadmap. Each phase targets software
-quality: testability, resilience, maintainability, and modularity.
-
-### Phase A: File Separation -- COMPLETE
-
-Split server.py into a proper package. Completed across Sprints 4-10.
-
-Current structure:
-
-    <repo>/
-      server.py               Entry point + HTTP Handler dispatch (~446 lines)
-      api/
-        __init__.py
-        routes.py             All GET + POST route handlers (~9772 lines)
-        config.py             Configuration, constants, global state, model discovery (~4139 lines)
-        helpers.py            HTTP helpers: j(), bad(), require(), resolve_inside() (~302 lines)
-        models.py             Session model + CRUD (~1927 lines)
-        workspace.py          File ops, workspace management (~810 lines)
-        upload.py             Multipart parser, file upload handler (~284 lines)
-        streaming.py          SSE engine, run_agent, cancel support (~4420 lines)
-      static/
-        index.html            HTML document (served from disk)
-        style.css             All CSS (~3767 lines)
-        ui.js, workspace.js, sessions.js, messages.js, panels.js, commands.js, boot.js
-      tests/
-        conftest.py           Isolated test server/state fixtures
-        ~1,150 test files     ~11,500 tests collected
-        test_regressions.py   Permanent regression gate
-
-Route extraction to api/routes.py completed in Sprint 11. server.py remains a
-thin shell relative to the rest of the app: Handler class with headers,
-structured logging, dispatch to routes, TLS wrapping, and main().
-
-### Phase B: Thread-Safe Request Context (Priority: Critical, Effort: Medium)
-
-Replace process-global env vars with thread-local or explicit parameter passing.
-
-Root cause: TERMINAL_CWD, HERMES_EXEC_ASK, HERMES_SESSION_KEY are set via os.environ
-in _run_agent_streaming(). Two concurrent sessions clobber each other.
-
-Fix options (in order of preference):
-
-Option 1 (best): Check if AIAgent constructor accepts a context dict. Pass workspace,
-exec_ask, and session_key directly. Zero env var usage in server code.
-
-Option 2: Use threading.local():
-    _ctx = threading.local()
-    # In _run_agent_streaming:
-    _ctx.workspace = str(workspace)
-    _ctx.session_key = session_id
-    # In tools that read env vars: check _ctx first, fall back to os.environ
-
-Option 3 (interim, safe for single-user): Wrap the env var block in a per-session lock:
-    SESSION_AGENT_LOCKS = {}  # session_id -> Lock
-    # Only one agent run per session at a time
-    with SESSION_AGENT_LOCKS.setdefault(session_id, threading.Lock()):
-        os.environ[...] = ...
-        result = agent.run_conversation(...)
-
-Phase B also includes: review all other os.environ reads/writes in the codebase for
-similar thread-safety issues.
-
-### Phase C: Session Store Improvements -- COMPLETE
-
-All three problems fixed in Sprint 5:
-
-1. SESSIONS cache: OrderedDict with LRU cap of 100, oldest evicted automatically.
-2. LOCK: all SESSIONS dict reads/writes wrapped with LOCK (from Sprint 1).
-3. Session index: `sessions/_index.json` maintained on every save/delete.
-   `all_sessions()` reads the index file (O(1)) instead of scanning all JSONs.
-
-### Phase D: Input Validation and Error Handling -- COMPLETE
-
-Completed in Sprint 4-6:
-
-1. `require()` and `bad()` helpers in `api/helpers.py` for parameter validation.
-2. All endpoints return clean 400/404 responses instead of tracebacks.
-3. Structured JSON request logging via `log_request()` override (Sprint 1).
-
-### Phase E: Frontend Modularization -- COMPLETE
-
-Completed across Sprints 5, 6, and 9:
-
-1. HTML extracted to `static/index.html` (Sprint 6).
-2. CSS extracted to `static/style.css` (Sprint 4).
-3. `app.js` deleted Sprint 9, replaced by 6 focused modules:
-   `ui.js`, `workspace.js`, `sessions.js`, `messages.js`, `panels.js`, `boot.js`.
-   Loaded as standard `<script>` tags (not ES modules) in dependency order.
-4. Prism.js added for syntax highlighting (Sprint 8) via CDN, deferred load.
-
-Remaining: renderMd() is still a hand-rolled regex chain. Tables partially supported.
-Replacing with marked.js + DOMPurify is a future improvement (not blocking).
-
-### Phase F: API Design Cleanup (Priority: Low, Effort: Medium)
-
-1. Version prefix: add /api/v1/ to all new endpoints.
-   Keep /api/* as aliases for backward compatibility.
-
-2. Standard response envelope:
-   Success: {"ok": true, "data": {...}}
-   Error: {"ok": false, "error": "message", "code": "ERROR_CODE"}
-
-3. Session list pagination:
-   GET /api/v1/sessions?limit=30&offset=0
-   Response: {"ok": true, "data": {"sessions": [...], "total": N, "has_more": false}}
-
-4. Consistent naming: use snake_case for all JSON keys.
-
-### Phase G: Observability -- MOSTLY COMPLETE
-
-1. Structured JSON logging: COMPLETE (Sprint 1). Per-request JSON is printed to the active launcher log (`~/.hermes/webui/bootstrap-8787.log` for `start.sh`, `~/.hermes/webui.log` for `ctl.sh`).
-2. Enhanced /health: COMPLETE (Sprint 7). Returns `active_streams`, `uptime_seconds`.
-3. GET /api/debug/stats: NOT YET IMPLEMENTED. Low priority.
-
-### Phase H: Authentication -- REPLACED
-
-Login is the company Directory (ADR 0004); see "GFIT-CoWork access control"
-below. The Upstream shared password, passkeys, OIDC and trusted-header login
-are removed.
-
-### Phase I: Test Infrastructure -- COMPLETE
-
-~11,500 tests across ~1,150 test files + regression gates. The pytest fixture derives
-an isolated port and state directory from the repo path unless
-`HERMES_WEBUI_TEST_PORT` / `HERMES_WEBUI_TEST_STATE_DIR` pin them explicitly.
-Production data never touched.
-
-Fixtures in `conftest.py`: auto-cleanup, profile/config isolation, cron
-isolation, workspace reset, and test-server lifecycle.
-
-### Phase J: Performance (Priority: Low, Effort: High)
-
-For scale beyond single-user casual use.
-
-1. Session index (Phase C prerequisite): O(1) session list loads
-2. Message pagination: /api/session returns last 50 messages, paginate older ones
-3. Frontend virtual scroll: IntersectionObserver for both message list and session list
-4. Stream cleanup background thread: evict STREAMS entries older than 5 minutes
-5. File tree lazy loading: expand-on-click fetches subdirectory contents
-
----
-
-## 11. How To Add a New API Endpoint
+## 9. How To Add a New API Endpoint
 
 Follow this exact pattern. Review existing handlers in do_GET/do_POST for reference.
 
@@ -1072,7 +896,7 @@ The api() helper:
 
 ---
 
-## 12. Common Debugging Commands
+## 10. Common Debugging Commands
 
     # Server health and session count
     curl -s http://127.0.0.1:8787/health | python3 -m json.tool
@@ -1118,7 +942,7 @@ The api() helper:
 
 ---
 
-## 13. Architecture Decision Records
+## 11. Architecture Decision Records
 
 ### ADR-001: Single-File Server
 Decision: All code in server.py
@@ -1166,218 +990,7 @@ Resolution: Phase B replaces with thread-local or explicit parameter passing.
 
 ---
 
-## 14. Version History
-
-    v0.1  Initial MVP: single-file server, sync /api/chat, no streaming
-    v0.2  SSE streaming via /api/chat/start + /api/chat/stream
-    v0.2  INFLIGHT session guard, session delete rules, toast UI
-    v0.2  Binary file upload fixed (replaced cgi.FieldStorage with parse_multipart)
-    v0.2  Approval card UI wired to tools/approval.py
-    v0.2  Approval SSE event (immediate surface on tool invocation)
-    v0.3  Sprint 1 (March 30, 2026):
-            Bug fixes: B1 B2 B3 B4/B5 B7 B9 B11 all resolved
-            Architecture: LOCK on SESSIONS, section headers, structured JSON logging
-            Tests: 19/19 HTTP integration tests passing
-            Features: 10-model dropdown with provider groups, reconnect banner,
-                       GET /api/chat/stream/status, GET /api/approval/inject_test
-    v0.4  Sprint 2 (March 30, 2026):
-            Features: image preview via /api/file/raw, rendered markdown in right panel,
-                       table support in renderMd(), smart file icons, type badge in path bar
-            Tests: 8 new tests, 27/27 total passing
-    v0.5  [Planned] Wave 1 features: cron viewer, skills viewer, memory viewer
-    v0.5  Sprint 3 (March 30, 2026):
-            Features: sidebar nav tabs (Chat/Tasks/Skills/Memory), cron viewer,
-                       skills viewer (search + SKILL.md preview), memory viewer
-            Bug fixes: B6, B10, B14
-            Arch: Phase D partial (require()/bad() validation helpers)
-            New endpoints: /api/crons, /api/crons/output, /api/crons/run, /api/crons/pause,
-                           /api/crons/resume, /api/skills, /api/skills/content, /api/memory
-            Tests: 21 new tests, 48/48 total
-    v0.6  Sprint 4 (March 30, 2026):
-            Relocation: source moved to <repo>/, symlink back
-            Phase A partial: CSS extracted to static/style.css, served from disk
-            Phase B partial: per-session agent lock (SESSION_AGENT_LOCKS)
-            Features: session rename (inline), session search, file delete, file create
-            Bug fixes: B12, B8 improved, TD5 completed
-            New endpoints: /api/session/rename, /api/sessions/search, /api/file/delete, /api/file/create, GET /static/*
-            Tests: 20 new tests, 68/68 total
-    v0.7  Sprint 5 (March 30, 2026):
-            Arch: Phase A complete (JS -> static/app.js), TD2 LRU cache, TD1 thread-local, Phase C index
-            Features: workspace management panel + topbar quick-switch, copy message, inline file editor
-            New endpoints: /api/workspaces, /api/workspaces/add, /api/workspaces/remove, /api/workspaces/rename, /api/file/save
-            New state files: workspaces.json, last_workspace.txt, sessions/_index.json
-            Tests: 18 new tests, 86/86 total
-    v0.8  Sprint 6 (March 31, 2026):
-            Phase E complete: HTML to static/index.html (server.py now 903 lines, pure Python)
-            Phase D complete: all endpoints validated
-            Features: resizable panels (localStorage), cron create from UI, session JSON export
-            Bug fix: Escape from file editor now cancels edits
-            New endpoints: POST /api/crons/create, GET /api/session/export
-            Tests: 16 new, 106/106 total
-    v0.10  Sprint 8 (March 31, 2026):
-            Features: edit+regenerate messages, regenerate last response, clear conversation,
-                       Prism.js syntax highlighting, message queue (MSG_QUEUE + drain on idle),
-                       INFLIGHT-first loadSession (message persists on switch-away/back)
-            Bug fixes: A1 (reconnect banner false positive), A2 (session list scroll clip)
-            New endpoints: POST /api/session/clear, POST /api/session/truncate
-            Tests: 14 new, 139/139 total
-            JS: MSG_QUEUE global, updateQueueBadge(), setBusy drain logic, send() queues when busy,
-                loadSession checks INFLIGHT before server fetch
-    v0.12.2 Concurrency sweeps (March 31, 2026):
-            R10-R15: approval cross-session, activity bar per-session, live card
-            restore on switch-back, settled cards after done, model source,
-            newSession card clear. 190/190 tests.
-    v0.12  Sprint 10 (March 31, 2026):
-            Arch: server.py split into api/ modules (config, helpers, models, workspace, upload, streaming)
-            Features: background task cancel, cron run history, tool card UX polish
-            Post-sprint fixes: SSE cancel event breaks loop, Cancel button always hidden on setBusy(false),
-              S.activeStreamId initialized, tool-card show-more uses data attributes, version label v0.12,
-              Session.__init__ **kwargs forward-compat, test cron isolation via HERMES_HOME,
-              last_workspace reset in conftest between tests, tool cards grouped by assistant turn
-            Tests: 18 new, 167/167 total
-            Regressions fixed: uuid, AIAgent, has_pending, SSE cancel loop, Session.__init__ tool_calls
-            test_regressions.py: 10 tests -- one per introduced bug, permanent regression gate
-            Total after fixes: 177/177
-    v0.11  Sprint 9 (March 31, 2026):
-            Arch: app.js deleted; replaced by ui.js, workspace.js, sessions.js, messages.js, panels.js, boot.js
-            Features: tool call cards (inline collapsible, live + history), attachment persistence,
-                       todo list panel (parses tool results from session history)
-            Tests: 10 new, 149/149 total
-    v0.9  Sprint 7 (March 31, 2026):
-            Features: cron edit+delete, skill create/edit/delete, memory write, session content search
-            Arch: Phase G partial (active_streams+uptime in /health), git init
-            Bug fixes: A1 (activity bar min-height), A2 (model chip sync), A3 (cron output overflow)
-            New endpoints: /api/crons/update, /api/crons/delete, /api/skills/save, /api/skills/delete,
-                           /api/memory/write, /api/sessions/search (extended)
-            Tests: 19 new, 125/125 total
-
-
----
-
-## 15. Sprint Log
-
-This section records what was actually built and changed in each sprint. It is the
-permanent history of the codebase. Update it at the end of every sprint.
-
-### Sprint 1 (March 30, 2026): Bug Fixes, Arch Foundations, First Tests
-
-**Tracks:** Bug fixes (7), Architecture (3), Tests (1)
-**Test result:** 19/19 passing
-**Backup:** server.py.sprint1.bak
-
-#### Bug Fixes Applied
-
-| ID  | Description                          | Change                                                                 |
-|-----|--------------------------------------|------------------------------------------------------------------------|
-| B3  | Model chip label wrong for new models | Replaced substring check with MODEL_LABELS dict; 10 models supported  |
-| B7  | Sidebar title overflow                | Added min-width:0 to .session-item                                     |
-| B11 | /api/session GET creates session silently | Returns 400 with error message when session_id is missing          |
-| B2  | File input no accept attribute        | Added accept= with image/*, text/*, pdf, json, common code extensions  |
-| B9  | Empty assistant messages render       | loadSession() filters out empty-text assistant messages before render  |
-| B1  | Approval card missing pattern context | showApprovalCard() now appends pattern_keys to description text        |
-| B4/B5 | Reload mid-stream loses context     | markInflight/clearInflight in localStorage; checkInflightOnBoot() shows gold reconnect banner; GET /api/chat/stream/status endpoint added |
-
-Model dropdown also expanded from 2 options to 10, grouped by provider in <optgroup>.
-
-#### Architecture Improvements Applied
-
-| Item   | Description                          | Change                                                                    |
-|--------|--------------------------------------|---------------------------------------------------------------------------|
-| Arch-1 | Section headers                      | 8 clear # === SECTION === banners dividing server.py into logical zones   |
-| Arch-2 | LOCK around SESSIONS dict            | get_session, new_session, delete now hold LOCK; eliminates race condition |
-| Arch-3 | Structured request logging           | log_request() override emits JSON per request to /tmp/webui-mvp.log      |
-
-Request log format:
-    {"ts": "2026-03-30T17:30:08Z", "method": "GET", "path": "/health", "status": 200, "ms": 0.1}
-
-#### Test Suite Added
-
-File: webui-mvp/tests/test_sprint1.py (19 tests)
-File: webui-mvp/tests/__init__.py
-
-Test categories:
-    Health check (1)
-    Session CRUD: create, load, update, delete, sort, B11 footgun (6)
-    Multipart parser unit tests: text file, binary/PNG (2)
-    HTTP upload: success, too large, no file, bad session (4)
-    Approval API: pending/none, inject+deny, inject+session-approve (3)
-    Stream status endpoint (1)
-    File browser: list dir, path traversal block (2)
-
-Run tests:
-    cd <agent-dir>
-    venv/bin/python -m pytest webui-mvp/tests/test_sprint1.py -v
-
-#### Section 5.5 Update (B3 resolved)
-
-The model chip label bug is now fixed. The MODEL_LABELS object in syncTopbar():
-
-    const MODEL_LABELS = {
-      'openai/gpt-5.4-mini':             'GPT-5.4 Mini',
-      'openai/gpt-4o':                   'GPT-4o',
-      'openai/o3':                       'o3',
-      'openai/o4-mini':                  'o4-mini',
-      'anthropic/claude-sonnet-4.6':     'Sonnet 4.6',
-      'anthropic/claude-sonnet-4-5':     'Sonnet 4.5',
-      'anthropic/claude-haiku-3-5':      'Haiku 3.5',
-      'google/gemini-2.5-pro':           'Gemini 2.5 Pro',
-      'deepseek/deepseek-chat-v3-0324':  'DeepSeek V3',
-      'meta-llama/llama-4-scout':        'Llama 4 Scout',
-    };
-    getModelLabel(m) => MODEL_LABELS[m] || (m.split('/').pop() || 'Unknown');
-
-Fallback: splits on '/' and uses the last segment, so any unlisted model shows its
-short identifier rather than a wrong hardcoded label.
-
-#### Version History Update
-
-    v0.3  Sprint 1: B3/B7/B11/B2/B9/B1/B4/B5 bug fixes
-    v0.3  Sprint 1: Model dropdown expanded to 10 models in provider groups
-    v0.3  Sprint 1: LOCK added around SESSIONS dict (thread safety)
-    v0.3  Sprint 1: Section headers added throughout server.py
-    v0.3  Sprint 1: Structured JSON request logging via log_request() override
-    v0.3  Sprint 1: GET /api/chat/stream/status endpoint
-    v0.3  Sprint 1: Reconnect banner (markInflight/clearInflight/checkInflightOnBoot)
-    v0.3  Sprint 1: GET /api/approval/inject_test endpoint (test-only)
-    v0.3  Sprint 1: First pytest suite, 19 tests, all passing
-
----
-
-## 16. Architecture Phase Priority Matrix
-
-Quick-reference table for prioritizing architecture work. Phases are from Section 10.
-
-| Phase | Name                        | Priority | Effort | Blocks         | Status     |
-|-------|-----------------------------|----------|--------|----------------|------------|
-| A+E   | File Separation + Frontend  | High     | Medium | F              | COMPLETE Sprint 6+9 (HTML->index.html, JS->6 modules, app.js deleted; server.py pure Python ~1150 lines) |
-| B     | Thread-Safe Request Context | Critical | Medium | nothing        | PARTIAL (Sprint 4: per-session lock added; global env vars still used) |
-| C     | Session Store Improvements  | Medium   | Medium | J              | PARTIAL Sprint 5 (index file + LRU cache; LRU eviction policy and pagination still open) |
-| D     | Input Validation            | Medium   | Low    | nothing        | COMPLETE Sprint 6 (approval/respond + file/raw hardened; all endpoints validated) |
-| E     | Frontend Modularization     | Medium   | High   | requires A     | Pending    |
-| F     | API Design Cleanup          | Low      | Medium | requires A     | Pending    |
-| G     | Observability               | Low      | Low    | nothing        | Partial (Sprint 7: active_streams+uptime added to /health; log rotation still pending) |
-| H     | Authentication              | Low      | Medium | nothing        | Pending    |
-| I     | Test Infrastructure         | High     | High   | requires A,D   | Partial(*) |
-| J     | Performance                 | Low      | High   | requires C     | Pending    |
-
-(*) Phase G is partial: structured request logging done in Sprint 1. Full observability
-    (health detail, debug/stats endpoint, log rotation) remains.
-(*) Phase I is partial: HTTP integration test suite started in Sprint 1. Unit tests for
-    isolated modules require Phase A file split first.
-
-Recommended execution order:
-    1. Phase B (thread safety): critical, low risk, no file changes needed
-    2. Phase D (input validation): low effort, improves error messages immediately
-    3. Phase A (file split): enables E, F, and full Phase I
-    4. Phase G remainder (health detail, debug endpoint): 1-2 hours
-    5. Phase C (session index): needed as session count grows
-    6. Phase E (frontend modules + marked.js): biggest UX improvement
-    7. Phase I (full test suite): after A gives us importable modules
-    8. Phase F, H, J: lower priority, tackle when needed
-
----
-
-## 17. Working Conventions for Agent Contributors
+## 12. Working Conventions for Agent Contributors
 
 This section is specifically for agents (Hermes instances, subagents, Codex, etc.) that
 will be working on this codebase. Read this before touching any file.
@@ -1386,9 +999,9 @@ will be working on this codebase. Read this before touching any file.
 
 1. Read this document (ARCHITECTURE.md) fully. Especially sections 4, 5, and the ADRs.
 2. Inspect the relevant module under `api/` or `static/`; `server.py` is only the routing shell.
-3. Check the Sprint Log (Section 15) to understand what was recently changed.
+3. Check `git log` for the files you are touching to understand what was recently changed.
 4. Run the relevant test slice first to confirm baseline, for example:
-   venv/bin/python -m pytest tests/test_regressions.py -q
+   ./scripts/test.sh tests/test_regressions.py -q
 5. Check server health: curl -s http://127.0.0.1:8787/health
 
 ### Making Changes
@@ -1449,18 +1062,15 @@ See Section 11 for the exact code pattern. Short version:
 ### Updating This Document
 
 Update ARCHITECTURE.md whenever you:
-- Fix a bug listed in Section 9 (update its row, mark resolved)
-- Complete an architecture phase (update Section 16 matrix)
 - Add a new endpoint (add to Section 4.1 routing table)
-- Discover a new pitfall or rule (add to Section 17)
-- Complete a sprint (add a new entry to Section 15)
+- Discover a new pitfall or rule (add to Section 12)
 
 This document is the memory of the codebase. If it is not updated, future agents will
 make the same mistakes again.
 
 ---
 
-## 18. Endpoint Reference (Current)
+## 13. Endpoint Reference (Current)
 
 Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
 
@@ -1526,302 +1136,6 @@ Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
     /api/crons/resume          {job_id} -> {ok, job} or 404.
 
 ---
-
-## Sprint 2 Log Entry (March 30, 2026)
-
-Added to Section 15 Sprint Log.
-
-### Sprint 2: Rich File Preview (March 30, 2026)
-
-**Tracks:** Features (4 sub-features), Tests (8 new)
-**Test result:** 27/27 passing (19 Sprint 1 + 8 Sprint 2)
-**Backup:** server.py.sprint1.bak (Sprint 1 backup; Sprint 2 is incremental)
-
-#### Features Implemented
-
-**Image Preview (GET /api/file/raw)**
-
-New endpoint in do_GET:
-
-    GET /api/file/raw?session_id=X&path=relative/path
-
-- Reads raw bytes from workspace file via resolve_in_workspace() (path traversal protected)
-- Looks up MIME type from MIME_MAP constant keyed by lowercase extension
-- Falls back to 'application/octet-stream' for unknown types
-- Serves bytes directly with correct Content-Type header
-- No MAX_FILE_BYTES size limit (images can be large; the browser handles progressive load)
-- Returns JSON 404 if file not found or not a file
-
-Frontend: openFile() checks IMAGE_EXTS set. If image, sets <img src="/api/file/raw?...">
-and calls showPreview('image'). The browser loads the image natively. onerror handler
-shows a status message if load fails.
-
-**Rendered Markdown Preview**
-
-Frontend only -- uses existing GET /api/file endpoint for text content.
-openFile() checks MD_EXTS set. If markdown, fetches text then calls:
-
-    $('previewMd').innerHTML = renderMd(data.content);
-
-Preview renders in .preview-md container with full typography CSS separate from the
-chat bubble .msg-body CSS (allows different sizing/spacing for the narrower side panel).
-
-**Table Support in renderMd()**
-
-Added a regex pass before paragraph wrapping:
-- Detects blocks of pipe-delimited rows where row[1] is a separator (|---|---|)
-- Converts to <table><thead><tbody> HTML
-- Handles any number of columns
-- This partially resolves B8 (renderMd missing tables)
-
-**Smart File Icons in renderFileTree()**
-
-New fileIcon(name, type) function maps extensions to emoji icons:
-- Directories: folder icon
-- Images: camera icon
-- Markdown: notepad icon
-- Python: snake icon
-- JS/TS/JSX/TSX: circuit icon
-- JSON/YAML/TOML: gear icon
-- Shell scripts: terminal icon
-- Everything else: document icon
-
-**Preview Path Bar with Type Badge**
-
-previewPath bar now has two elements:
-- #previewPathText: the relative file path
-- #previewBadge: colored badge with type label (image/md/extension)
-  Blue for images, gold for markdown, gray for code
-
-#### New Constants Added
-
-    IMAGE_EXTS   set of image extensions: .png .jpg .jpeg .gif .svg .webp .ico .bmp
-    MD_EXTS      set of markdown extensions: .md .markdown .mdown
-    CODE_EXTS    set of code/text extensions for reference
-    MIME_MAP     dict: extension -> MIME type string
-
-#### New HTML Elements
-
-    #previewPathText   span inside preview path bar (was direct textContent on #previewPath)
-    #previewBadge      colored type badge span
-    #previewImgWrap    div centering the preview image
-    #previewImg        <img> element for image preview
-    #previewMd         div for rendered markdown HTML
-
-#### Endpoint Reference Update
-
-Added to Section 18:
-
-    GET /api/file/raw   ?session_id=X&path=P -> raw file bytes with correct MIME type.
-                        Path traversal protected. 404 JSON if not found.
-
-#### B8 Status Update (Section 9)
-
-B8 (renderMd missing tables) is now PARTIAL: table parsing added in Sprint 2.
-Nested lists and complex inline HTML still not handled. Full fix remains Phase E
-(replace renderMd with marked.js).
-
-
-### Sprint 3 (March 30, 2026): Panel Navigation + Feature Viewers
-
-**Tracks:** Bug fixes (3), Features (3 panels + 8 API endpoints), Arch Phase D (partial)
-**Tests:** 48/48 passing
-**Backup:** server.py.sprint2.bak
-
-#### New Sidebar Navigation
-
-Four tabs at the top of the sidebar: Chat (default), Tasks, Skills, Memory.
-Implemented via `.nav-tab` / `.panel-view` CSS classes. `switchPanel(name)` activates
-the correct tab and panel-view, then lazy-loads panel data on first open.
-
-#### Tasks Panel (Cron viewer)
-
-`loadCrons()` fetches GET /api/crons, renders each job as a collapsible `.cron-item`.
-`toggleCron(id)` expands/collapses the body. `loadCronOutput(jobId)` auto-loads the last
-output file from GET /api/crons/output for each job.
-
-Run Now: POST /api/crons/run starts the job in a daemon thread, returns immediately.
-Pause/Resume: POST /api/crons/pause and /api/crons/resume call the cron.jobs functions.
-
-#### Skills Panel
-
-`loadSkills()` fetches GET /api/skills, caches in `_skillsData`. `renderSkills()` groups
-by category, filters by search input. Clicking a skill calls `openSkill(name)` which
-fetches GET /api/skills/content and renders in the right panel using `showPreview('md')`.
-
-#### Memory Panel
-
-`loadMemory()` fetches GET /api/memory (reads MEMORY.md + USER.md from
-~/.hermes/memories/, and SOUL.md from ~/.hermes/), renders both as markdown via renderMd() with timestamps.
-
-#### New API Endpoints (Section 18 update)
-
-    GET  /api/crons              All jobs from cron.jobs.list_jobs(include_disabled=True)
-    GET  /api/crons/output       ?job_id=X&limit=N -> last N output .md files for a job
-    POST /api/crons/run          {job_id} -> triggers run_job() in daemon thread
-    POST /api/crons/pause        {job_id} -> pause_job(job_id)
-    POST /api/crons/resume       {job_id} -> resume_job(job_id)
-    GET  /api/skills             All skills via tools.skills_tool.skills_list()
-    GET  /api/skills/content     ?name=X -> full skill data via skill_view(name)
-    GET  /api/memory             MEMORY.md + USER.md + SOUL.md content and mtimes
-
-#### Phase D Input Validation Applied
-
-    require(body, *fields)   raises ValueError with clean message on missing fields
-    bad(handler, msg, status=400)  returns clean JSON error response
-
-Endpoints hardened: /api/session/update, /api/session/delete, /api/chat/start.
-Unknown session ID on /api/session/update now returns 404 instead of 500.
-
-#### Bug Fix Details
-
-B6: `newSession()` now passes `inheritWs = S.session?.workspace` to /api/session/new.
-    Backend already accepted `workspace` param in session/new but it was never sent.
-
-B10: `es.addEventListener('tool', ...)` now calls `removeThinking()` before updating
-     status and shows a compact `.msg-role + .msg-body` tool-running row. `ensureAssistantRow()`
-     also removes `#toolRunningRow` when first token arrives.
-
-B14: `document.addEventListener('keydown', ...)` at global scope catches Cmd/Ctrl+K
-     and calls `newSession()` if not busy.
-
-
-### Sprint 4 (March 30, 2026): Relocation + Session Power Features + Phase A/B
-
-**Tracks:** Bugs (B12, B8, TD5), Features (rename, search, file ops), Arch (Phase A/B start), Relocation
-**Tests:** 68/68 passing
-**Backup:** server.py.sprint2.bak (last full backup; Sprint 3 and 4 are incremental)
-
-#### Source Relocation
-
-Moved <agent-dir>/webui-mvp/ to <repo>/.
-Symlink: <agent-dir>/webui-mvp -> <repo>
-The symlink means all existing import paths (sys.path.insert for hermes-agent modules)
-continue working unchanged. start.sh updated to reference new canonical path.
-
-Safe from: git pull, git reset --hard, git stash on hermes-agent repo.
-NOT safe from: git clean -fd (would delete symlink but not the target).
-Disk failure: still a single-copy risk. Use git init + push when ready.
-
-#### Phase A: CSS Extracted
-
-<repo>/static/style.css: the 23KB CSS block from the Python raw string.
-server.py no longer contains any CSS. GET /static/* handler serves disk files.
-server.py shrunk by ~200 lines.
-
-#### Phase B: Per-Session Agent Lock
-
-SESSION_AGENT_LOCKS = {} keyed by session_id, each value is a threading.Lock().
-_get_session_agent_lock(sid) returns the lock, creating it if needed.
-_run_agent_streaming() wraps the env var block with: with _agent_lock: ...
-This prevents two concurrent requests for the same session from overwriting env vars
-mid-execution. Two concurrent requests for DIFFERENT sessions are still unsafe (env vars
-are process-global). Full fix requires removing env var usage entirely (Phase B complete).
-
-#### New Endpoints
-
-    GET  /static/*             Serves files from <repo>/static/ with
-                               correct Content-Type. Currently serves style.css.
-    POST /api/session/rename   {session_id, title} -> {session: compact}. Truncates to 80 chars.
-    GET  /api/sessions/search  ?q=X -> sessions whose title contains q (case-insensitive).
-                               Empty q returns all sessions (same as /api/sessions).
-    POST /api/file/delete      {session_id, path} -> {ok: true}. Path traversal protected.
-    POST /api/file/create      {session_id, path, content?} -> {ok, path}. Errors if exists.
-
-
-### Sprint 5 (March 30, 2026): Phase A Complete + Workspace + Edit + Copy
-
-**Tracks:** Arch (Phase A complete, TD1/TD2/TD6/Phase C), Features (3), Tests (18)
-**Tests:** 86/86 passing
-
-#### Phase A Complete: static/app.js
-
-Extracted 902-line JavaScript from server.py HTML string to <repo>/static/app.js.
-server.py now: Python code + thin HTML skeleton (~875 lines, down from 1778).
-Layout: server.py imports nothing from static/; the HTML just has <link> and <script src>.
-Served via GET /static/* handler added in Sprint 4.
-node --check validates app.js on every sprint.
-
-#### TD2: LRU SESSIONS Cache
-
-SESSIONS changed to collections.OrderedDict.
-get_session(): SESSIONS.move_to_end(sid) on hit; on miss: load from disk, add, move_to_end, evict if over SESSIONS_MAX=100.
-new_session(): same eviction logic on insert.
-Result: memory usage capped regardless of session count.
-
-#### TD1: Thread-Local Env Context
-
-_thread_ctx = threading.local() added to Server Globals.
-_set_thread_env(**kwargs) and _clear_thread_env() set/clear _thread_ctx.env.
-_run_agent_streaming() calls _set_thread_env() before env var writes, _clear_thread_env() in outer finally.
-Process-level os.environ writes still exist as fallback (needed until terminal tool reads thread-local).
-
-#### Phase C: Session Index File
-
-SESSION_INDEX_FILE = SESSION_DIR / '_index.json'.
-_write_session_index(): builds compact() list from SESSIONS + disk files, writes JSON.
-Called in Session.save() -- keeps index always current.
-all_sessions(): reads index JSON first (one file read); overlays in-memory SESSIONS; falls back to full glob scan on error.
-Index files starting with '_' are skipped during full scan to avoid recursion.
-
-#### New Workspace Infrastructure
-
-WORKSPACES_FILE = ~/.hermes/webui-mvp/workspaces.json
-LAST_WORKSPACE_FILE = ~/.hermes/webui-mvp/last_workspace.txt
-load_workspaces() / save_workspaces() / get_last_workspace() / set_last_workspace() helpers.
-new_session() now calls get_last_workspace() as default instead of DEFAULT_WORKSPACE.
-set_last_workspace() called in /api/session/update and /api/chat/start.
-
-#### New Endpoints (Sprint 5)
-
-    GET  /api/workspaces           {workspaces: [...], last: path}
-    POST /api/workspaces/add       {path, name?} -- validates exists+dir, no duplicates
-    POST /api/workspaces/remove    {path} -- removes from list, ok even if not present
-    POST /api/workspaces/rename    {path, name} -- updates display name, 404 if not found
-    POST /api/file/save            {session_id, path, content} -- write text to existing file
-
-
-### Sprint 6 (March 31, 2026): Polish + Resize + Cron Create + Phase E
-
-**Tests:** 106/106 passing
-**Backup:** server.py.sprint5.bak
-
-#### Phase E Complete: static/index.html
-
-The HTML = r triple-quoted string (197 lines, 12682 chars) was extracted to
-<repo>/static/index.html and served via disk read on each request.
-server.py is now pure Python: zero HTML/CSS/JS inline. All static content is in static/.
-
-Static file layout (final):
-  static/index.html  (Sprint 6)  -- HTML template
-  static/style.css   (Sprint 4)  -- all CSS
-  static/app.js      (Sprint 5)  -- all JavaScript
-
-server.py line count progression: 1778 (S1) -> 1042 (S5) -> 903 (S6)
-
-#### Phase D Complete
-
-/api/approval/respond: validates session_id present; choice must be one of
-(once, session, always, deny); returns 400 on invalid.
-/api/file/raw: validates session_id present; try/except KeyError returns 404.
-
-#### New Endpoints
-
-    POST /api/crons/create   {prompt, schedule, name?, deliver?, skills?, model?}
-                             -> {ok: true, job: {...}} or 400 on invalid schedule/missing fields.
-                             Uses cron.jobs.create_job() directly.
-    GET  /api/session/export ?session_id=X
-                             -> full session JSON with Content-Disposition: attachment header.
-                             Includes all messages, workspace, model, timestamps.
-
-#### Resizable Panels
-
-_initResizePanels() called from boot IIFE. Creates mousedown listeners on #sidebarResize
-and #rightpanelResize. On mousemove: computes delta and clamps to min/max. On mouseup:
-saves width to localStorage. Widths restored at boot via localStorage.getItem().
-CSS: .resize-handle with position:absolute, width:5px, cursor:col-resize.
-body.resizing added during drag to suppress text selection.
-
 
 ## Workspace path trust levels
 

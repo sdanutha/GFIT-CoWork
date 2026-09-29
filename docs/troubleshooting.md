@@ -336,6 +336,5 @@ This document grows over time. If a recurring failure mode isn't covered here ye
 
 Related references:
 
-- [`docs/supervisor.md`](supervisor.md) — process-supervisor setup (launchd, systemd, supervisord, runit/s6) including the bootstrap supervisor-foreground flag.
 - [`docs/docker.md`](docker.md) — Docker compose setup, common failure modes, bind-mount migration.
 - [`docs/EXTENSIONS.md`](EXTENSIONS.md) — WebUI extension injection, security model, examples.

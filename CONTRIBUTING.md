@@ -137,7 +137,6 @@ If your change alters behavior, architecture, testing, setup, or user-facing wor
 Common files:
 
 - [README.md](README.md) for setup, usage, and contributor-facing commands
-- [ROADMAP.md](ROADMAP.md) for shipped features and sprint history
 - [ARCHITECTURE.md](ARCHITECTURE.md) for implementation details and design constraints
 - [TESTING.md](TESTING.md) for manual and automated verification guidance
 - [CHANGELOG.md](CHANGELOG.md) for release history context. Do not edit it in
@@ -223,7 +222,5 @@ Want the smoothest review?
 - [README.md](README.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [TESTING.md](TESTING.md)
-- [ROADMAP.md](ROADMAP.md)
-- [SPRINTS.md](SPRINTS.md)
 
 Questions are best raised early, before a large change is finished.
