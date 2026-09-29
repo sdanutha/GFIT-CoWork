@@ -517,7 +517,7 @@ def _detect_webui_version() -> str:
             pass
 
     # Installed-wheel fallback: setuptools-scm writes a generated module that
-    # is separate from the Docker/Nix-owned _version.py contract above.
+    # is separate from the Docker-owned _version.py contract above.
     try:
         from api._scm_version import __version__ as scm_version
         scm_version = str(scm_version).strip()
