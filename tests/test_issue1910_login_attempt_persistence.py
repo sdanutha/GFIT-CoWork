@@ -3,15 +3,15 @@ import os
 import stat
 import time
 
-from api import auth
+from api import login
 
 
 def test_login_attempts_persist_failed_attempts(tmp_path, monkeypatch):
     attempts_file = tmp_path / ".login_attempts.json"
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", attempts_file)
-    monkeypatch.setattr(auth, "_login_attempts", {})
+    monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", attempts_file)
+    monkeypatch.setattr(login, "_login_attempts", {})
 
-    auth._record_login_attempt("203.0.113.10")
+    login._record_login_attempt("203.0.113.10")
 
     data = json.loads(attempts_file.read_text(encoding="utf-8"))
     assert "203.0.113.10" in data
@@ -28,15 +28,15 @@ def test_login_attempts_load_prunes_expired_entries(tmp_path, monkeypatch):
         json.dumps(
             {
                 "203.0.113.10": [now],
-                "203.0.113.11": [now - auth._LOGIN_WINDOW - 5],
+                "203.0.113.11": [now - login._LOGIN_WINDOW - 5],
                 "bad": "not-a-list",
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", attempts_file)
+    monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", attempts_file)
 
-    loaded = auth._load_login_attempts()
+    loaded = login._load_login_attempts()
 
     assert list(loaded) == ["203.0.113.10"]
     assert len(loaded["203.0.113.10"]) == 1
@@ -44,12 +44,12 @@ def test_login_attempts_load_prunes_expired_entries(tmp_path, monkeypatch):
 
 def test_login_rate_limit_survives_reload(tmp_path, monkeypatch):
     attempts_file = tmp_path / ".login_attempts.json"
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", attempts_file)
-    monkeypatch.setattr(auth, "_login_attempts", {})
+    monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", attempts_file)
+    monkeypatch.setattr(login, "_login_attempts", {})
 
-    for _ in range(auth._LOGIN_MAX_ATTEMPTS):
-        auth._record_login_attempt("203.0.113.12")
+    for _ in range(login._LOGIN_MAX_ATTEMPTS):
+        login._record_login_attempt("203.0.113.12")
 
-    monkeypatch.setattr(auth, "_login_attempts", auth._load_login_attempts())
+    monkeypatch.setattr(login, "_login_attempts", login._load_login_attempts())
 
-    assert not auth._check_login_rate("203.0.113.12")
+    assert not login._check_login_rate("203.0.113.12")

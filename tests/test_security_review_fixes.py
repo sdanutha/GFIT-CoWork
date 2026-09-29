@@ -206,7 +206,7 @@ def test_onboarding_complete_is_gated_against_public_clients(monkeypatch):
     monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
     monkeypatch.setenv("HERMES_WEBUI_ONBOARDING_OPEN", "")
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
 
     called = {"n": 0}
     def fake_complete():
@@ -232,7 +232,7 @@ def test_onboarding_complete_allowed_when_auth_enabled(monkeypatch):
     from api import routes
 
     monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.setattr(routes, "complete_onboarding", lambda: {"completed": True})
 
     h = _Handler(client_ip="8.8.8.8", body=b"{}", headers={"Content-Length": "2"})

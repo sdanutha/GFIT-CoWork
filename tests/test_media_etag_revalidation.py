@@ -241,7 +241,7 @@ def test_invalid_range_still_416(routes, tmp_path):
 
 
 def _media_get(routes, monkeypatch, target, headers=None):
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     handler = _FakeHandler(headers)
     parsed = SimpleNamespace(path="/api/media", query=f"path={target}")
     routes._handle_media(handler, parsed)

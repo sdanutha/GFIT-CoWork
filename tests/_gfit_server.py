@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import api.auth as auth
+import api.login as login
 import api.profiles as profiles
 import api.roster as roster
 
@@ -139,12 +140,12 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
     # (ticket 09), so nothing else needs switching off.
     monkeypatch.setattr(auth, "STATE_DIR", state)
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
+    monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
     monkeypatch.setattr(roster, "STATE_DIR", state)
     for name, value in (legacy_env or {}).items():
         monkeypatch.setenv(name, value)
     auth._sessions.clear()
-    auth._login_attempts.clear()
+    login._login_attempts.clear()
 
     # Profiles live under an isolated Hermes home.
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
@@ -161,6 +162,6 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
         httpd.shutdown()
         httpd.server_close()
         auth._sessions.clear()
-        auth._login_attempts.clear()
+        login._login_attempts.clear()
         profiles._invalidate_root_profile_cache()
         profiles._invalidate_list_profiles_cache()

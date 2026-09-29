@@ -204,7 +204,7 @@ class TestLeakedDirectoryIsolation:
     os.environ when any test imports bootstrap (import-time
     _load_repo_dotenv() runs OUTSIDE monkeypatch's undo scope). The conftest
     autouse guard strips the leaked var around every test so later tests
-    don't see is_auth_enabled()==True (the #5588 failure shape)."""
+    don't see is_directory_enabled()==True (the #5588 failure shape)."""
 
     def _load_guard(self):
         import importlib.util

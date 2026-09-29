@@ -42,13 +42,9 @@ def _disable_auth_for_profile_switch(monkeypatch):
     state would otherwise make the switch tests here return 409 instead of 200
     under a full-suite run (they pass in isolation). Forcing auth OFF for this
     module makes them order-independent — they exercise watcher restart, not
-    auth. Patch every import site so the value is consistent.
+    auth.
     """
-    for _mod in ("api.auth", "api.helpers", "api.routes"):
-        try:
-            monkeypatch.setattr(f"{_mod}.is_auth_enabled", lambda: False, raising=False)
-        except Exception:
-            pass
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     yield
 
 

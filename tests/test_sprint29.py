@@ -73,9 +73,7 @@ class TestCSRF:
         become order-dependent. Auth-enabled token coverage lives in
         test_issue1909_csrf_token.py.
         """
-        import api.auth as auth
-
-        monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+        monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
 
     @staticmethod
     def _csrf_allowed(headers):
@@ -335,35 +333,33 @@ class TestCSRFHelpers:
 class TestLoginRateLimit:
     def test_rate_limit_triggers_429(self):
         """More than 5 failed login attempts from same IP must yield 429."""
-        from api.auth import _login_attempts, _LOGIN_WINDOW
-
         # Force the rate limiter state: inject 5 stale-now timestamps so next call is fresh
         # Actually easier: just hit the endpoint 6 times with wrong password
         # But we can't set a password in a test without config file.
         # Instead test the helper directly.
         import time
-        from api import auth as _auth
+        from api import login as _login
 
         # Reset state for a fake IP
         fake_ip = "10.255.254.253"
-        _auth._login_attempts[fake_ip] = []
+        _login._login_attempts[fake_ip] = []
 
         # Record 5 attempts — should still be allowed
         for _ in range(5):
-            _auth._record_login_attempt(fake_ip)
-        assert not _auth._check_login_rate(fake_ip), \
+            _login._record_login_attempt(fake_ip)
+        assert not _login._check_login_rate(fake_ip), \
             "After 5 attempts, _check_login_rate should return False (blocked)"
 
     def test_rate_limit_resets_after_window(self):
         """After window expires, rate limit resets."""
         import time
-        from api import auth as _auth
+        from api import login as _login
 
         fake_ip = "10.255.254.252"
         # Inject 5 old timestamps (outside window)
         old_ts = time.time() - 70  # 70s ago, outside 60s window
-        _auth._login_attempts[fake_ip] = [old_ts] * 5
-        assert _auth._check_login_rate(fake_ip), \
+        _login._login_attempts[fake_ip] = [old_ts] * 5
+        assert _login._check_login_rate(fake_ip), \
             "After window expires, IP should be allowed again"
 
     def test_rate_limit_endpoint_returns_429(self, webui_server):
@@ -371,12 +367,12 @@ class TestLoginRateLimit:
         # This test only runs meaningfully when auth is enabled.
         # We can still verify the helper returns 429 from the unit test above.
         # If auth not enabled, endpoint returns 200 OK with 'Auth not enabled'.
-        from api import auth as _auth
+        from api import login as _login
 
         fake_ip = "10.255.254.251"
         # Fill the bucket
-        _auth._login_attempts[fake_ip] = [time.time()] * 5
-        assert not _auth._check_login_rate(fake_ip)
+        _login._login_attempts[fake_ip] = [time.time()] * 5
+        assert not _login._check_login_rate(fake_ip)
 
 
 # ── 3. Session ID Validation ───────────────────────────────────────────────

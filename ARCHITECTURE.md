@@ -59,6 +59,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       agent_compat.py      Resolver for Hermes Agent names moved to sibling modules (compatibility-only)
       auth.py              Session store and cookie, CSRF, signed Profile cookie, per-request gate
       login.py             Directory login, rate limit, startup login check
+      trusted_proxy.py     Client address behind a trusted reverse proxy
       config.py            Discovery, globals, model detection, reloadable config
       helpers.py           HTTP helpers: j(), bad(), require(), resolve_inside(), security headers
       goals.py             Persistent-goal commands and profile-scoped native GoalManager bridge
@@ -1850,6 +1851,8 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
 - `api/directory.py` — the Directory seam (username + password → Identity); `api/ldap_directory.py`
   is the company-AD implementation (LDAPS or StartTLS only).
 - `api/login.py` — the login flow (rate limit → Directory → Admission → session) and the
+  rate limit itself (per person behind a trusted proxy, via `api/trusted_proxy.py`, kept
+  in `STATE_DIR/.login_attempts.json` across restarts), and the
   startup check: login is on exactly when a Directory is configured, and with none the
   server serves only on the loopback address. Leftover Upstream login settings are ignored
   and reported.

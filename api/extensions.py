@@ -1199,8 +1199,8 @@ def _sidecar_proxy_public_status(
         posture = None
         if available:
             try:
-                from api.auth import is_auth_enabled
-                posture = "protected" if is_auth_enabled() else "local_unprotected"
+                from api.directory import is_directory_enabled
+                posture = "protected" if is_directory_enabled() else "local_unprotected"
             except Exception:
                 posture = None
         payload["proxy_auth"] = proxy_auth
@@ -1625,8 +1625,8 @@ def set_extension_sidecar_proxy_consent(extension_id: object, approved: object) 
                 # sufficient: another local UID can still reach the listener
                 # without reading the 0600 token file. Fail closed regardless of
                 # origin. (Frank #6331 blocker 1.)
-                from api.auth import is_auth_enabled
-                if not is_auth_enabled():
+                from api.directory import is_directory_enabled
+                if not is_directory_enabled():
                     raise ExtensionSidecarProxyError(
                         "Sidecar token-v1 proxy requires login; configure the "
                         "Directory before granting consent.",
@@ -1705,7 +1705,7 @@ def resolve_extension_sidecar_proxy_target(
     proxy_auth = sidecar.get("proxy_auth", "legacy")
     inject_token: Optional[str] = None
     if proxy_auth == "token-v1":
-        from api.auth import is_auth_enabled
+        from api.directory import is_directory_enabled
         from api import extension_sidecar_auth as _sc_auth
 
         # token-v1 REQUIRES configured WebUI authentication — fail closed
@@ -1717,7 +1717,7 @@ def resolve_extension_sidecar_proxy_target(
         # ever reading the 0600 token file. (Frank #6331 blocker 1 — this
         # mirrors the consent-time check so a pre-existing consent granted while
         # auth was enabled cannot be exercised after auth is turned off.)
-        if not is_auth_enabled():
+        if not is_directory_enabled():
             raise ExtensionSidecarProxyError(
                 "Sidecar token-v1 proxy requires login; configure the Directory.",
                 status=403,

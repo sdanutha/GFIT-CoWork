@@ -257,12 +257,11 @@ def test_get_settings_exposes_max_tokens_from_the_active_profile(monkeypatch):
 
 
 def test_post_settings_bridges_max_tokens_without_polluting_settings_payload(monkeypatch):
-    import api.auth as auth
     from api.routes import handle_post
 
     captured = {}
 
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     def _fake_save_settings(body):
         captured["body"] = dict(body)
         return {"send_key": body.get("send_key")}
@@ -290,10 +289,9 @@ def test_post_settings_bridges_max_tokens_without_polluting_settings_payload(mon
 
 
 def test_post_settings_keeps_current_max_tokens_on_unrelated_save(monkeypatch):
-    import api.auth as auth
     from api.routes import handle_post
 
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.setattr("api.routes.save_settings", lambda body: {"language": body.get("language")})
     monkeypatch.setattr(
         "api.config.get_max_tokens_status",
@@ -320,12 +318,11 @@ def test_post_settings_keeps_current_max_tokens_on_unrelated_save(monkeypatch):
 
 
 def test_post_settings_does_not_write_max_tokens_when_save_settings_fails(monkeypatch):
-    import api.auth as auth
     from api.routes import handle_post
 
     saw_set_max_tokens = {"called": False}
 
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.setattr(
         "api.routes.save_settings",
         lambda body: (_ for _ in ()).throw(RuntimeError("save_settings failed")),

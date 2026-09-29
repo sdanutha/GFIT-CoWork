@@ -222,7 +222,7 @@ def _strip_leaked_login_env() -> None:
     test imports bootstrap mid-session (e.g. tests/test_bootstrap_foreground.py
     via its import_bootstrap fixture), a local .env configuring the Directory
     leaks into the process environment OUTSIDE monkeypatch's undo scope. Every
-    later test then sees is_auth_enabled() True and no-handler cookie helpers
+    later test then sees is_directory_enabled() True and no-handler cookie helpers
     raise spurious "build_profile_cookie requires a request handler" errors
     (the #5588 failure shape). Tests that legitimately turn login on set the
     var themselves AFTER this strip; an intentionally-empty value ("") is

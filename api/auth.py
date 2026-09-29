@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from api import directory
 from api.config import STATE_DIR, load_settings
 from api.helpers import request_declares_body
 
@@ -198,94 +199,6 @@ def _save_sessions(sessions: dict[str, float | dict]) -> None:
 _sessions = _load_sessions()
 _SESSIONS_LOCK = threading.Lock()
 
-# ── Login rate limiter ──────────────────────────────────────────────────────
-_LOGIN_ATTEMPTS_FILE = STATE_DIR / '.login_attempts.json'
-_LOGIN_MAX_ATTEMPTS = 5
-_LOGIN_WINDOW = 60  # seconds
-
-
-def _load_login_attempts() -> dict[str, list[float]]:
-    """Load persisted login attempts from STATE_DIR, pruning expired entries."""
-    try:
-        if _LOGIN_ATTEMPTS_FILE.exists():
-            data = json.loads(_LOGIN_ATTEMPTS_FILE.read_text(encoding='utf-8'))
-            if not isinstance(data, dict):
-                raise ValueError('malformed login-attempts file — expected dict')
-            now = time.time()
-            attempts: dict[str, list[float]] = {}
-            for ip, raw_times in data.items():
-                if not isinstance(ip, str) or not isinstance(raw_times, list):
-                    continue
-                fresh = [
-                    float(t)
-                    for t in raw_times
-                    if isinstance(t, (int, float)) and now - float(t) < _LOGIN_WINDOW
-                ]
-                if fresh:
-                    attempts[ip] = fresh
-            return attempts
-    except Exception as e:
-        logger.debug("Failed to load login attempts file, starting fresh: %s", e)
-    return {}
-
-
-def _save_login_attempts(attempts: dict[str, list[float]]) -> None:
-    """Atomically persist login attempts to STATE_DIR/.login_attempts.json (0600)."""
-    try:
-        _LOGIN_ATTEMPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=_LOGIN_ATTEMPTS_FILE.parent, suffix='.login_attempts.tmp')
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(attempts, f)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, _LOGIN_ATTEMPTS_FILE)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-    except Exception as e:
-        logger.debug("Failed to persist login attempts: %s", e)
-
-
-_login_attempts = _load_login_attempts()  # ip -> [timestamp, ...]
-_LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-
-def _check_login_rate(ip: str) -> bool:
-    """Return True if the IP is allowed to attempt login (thread-safe)."""
-    with _LOGIN_ATTEMPTS_LOCK:
-        now = time.time()
-        attempts = _login_attempts.get(ip, [])
-        # Prune old attempts
-        attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
-        if attempts:
-            _login_attempts[ip] = attempts
-        else:
-            _login_attempts.pop(ip, None)
-        _save_login_attempts(_login_attempts)
-        return len(attempts) < _LOGIN_MAX_ATTEMPTS
-
-
-def _record_login_attempt(ip: str) -> None:
-    """Record a login attempt for rate limiting (thread-safe)."""
-    with _LOGIN_ATTEMPTS_LOCK:
-        now = time.time()
-        attempts = _login_attempts.get(ip, [])
-        attempts.append(now)
-        _login_attempts[ip] = attempts
-        _save_login_attempts(_login_attempts)
-
-
-def _clear_login_attempts(ip: str) -> None:
-    """Clear failed login attempts after a successful login (thread-safe)."""
-    with _LOGIN_ATTEMPTS_LOCK:
-        if ip in _login_attempts:
-            _login_attempts.pop(ip, None)
-            _save_login_attempts(_login_attempts)
-
-
 def _load_key(filename: str) -> bytes:
     """Load a 32-byte key from STATE_DIR, generating and persisting one if missing."""
     key_file = STATE_DIR / filename
@@ -342,13 +255,6 @@ def _signing_key() -> bytes:
 
 # Session ``auth_type`` for a GFIT-CoWork Directory login.
 DIRECTORY_AUTH_TYPE = 'directory'
-
-
-def is_auth_enabled() -> bool:
-    """True if login is on: a Directory is configured (the only login, ADR 0004)."""
-    from api.directory import is_directory_enabled
-
-    return is_directory_enabled()
 
 
 def create_session(
@@ -566,7 +472,7 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     """
     from api.access import admit_request
 
-    admission = admit_request(info) if is_auth_enabled() else None
+    admission = admit_request(info) if directory.is_directory_enabled() else None
     if admission is None:
         invalidate_session(cookie_value)
         handler._request_session_rejected = True
@@ -774,7 +680,7 @@ def _safe_login_inner_next(query: str | None) -> str:
 def check_auth(handler, parsed) -> bool:
     """Check if request is authorized. Returns True if OK.
     If not authorized, sends 401 (API) or 302 redirect (page) and returns False."""
-    if not is_auth_enabled():
+    if not directory.is_directory_enabled():
         return True
     # Public paths don't require auth
     if (

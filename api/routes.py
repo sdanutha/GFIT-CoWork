@@ -65,6 +65,7 @@ from api.session_events import (
 from api.gateway_restart import restart_active_profile_gateway
 from api.session_ownership import UNCONFINED as _UNCONFINED_OWNERSHIP, request_session_ownership
 from api.shares import create_or_refresh_share, load_share, revoke_share
+from api.trusted_proxy import forwarded_client_address, peer_address, peer_is_trusted_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -5900,9 +5901,10 @@ def _check_csrf(handler) -> bool:
     if not _is_browser_unsafe_request(handler):
         return True  # non-browser clients (curl, MCP, agent) have no Origin/Referer
 
-    from api.auth import CSRF_HEADER_NAME, is_auth_enabled, parse_cookie, verify_csrf_token
+    from api.auth import CSRF_HEADER_NAME, parse_cookie, verify_csrf_token
+    from api.directory import is_directory_enabled
 
-    if not is_auth_enabled():
+    if not is_directory_enabled():
         return True
     cookie_val = parse_cookie(handler)
     submitted = handler.headers.get(CSRF_HEADER_NAME) or handler.headers.get("X-CSRF-Token")
@@ -6179,16 +6181,6 @@ def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _request_client_ip(handler) -> str:
-    try:
-        address = getattr(handler, "client_address", None)
-        if address:
-            return str(address[0] or "")
-    except Exception:
-        pass
-    return ""
-
-
 def _ip_is_loopback_or_private(raw: str):
     """Parse an IP string; return (parsed_ok, is_loopback_or_private).
 
@@ -6204,138 +6196,6 @@ def _ip_is_loopback_or_private(raw: str):
     except ValueError:
         return (False, False)
     return (True, bool(addr.is_loopback or addr.is_private))
-
-
-def _trusted_proxy_networks():
-    """Networks whose socket peer is allowed to assert a forwarded client IP.
-
-    Loopback is ALWAYS trusted implicitly (the common same-host reverse-proxy
-    deployment). Operators fronting the WebUI with a LAN/remote proxy add its
-    address(es) via HERMES_WEBUI_TRUSTED_PROXY_CIDRS (comma-separated CIDRs or
-    bare IPs). Malformed entries are skipped, never widening trust.
-    """
-    import ipaddress
-
-    nets = [
-        ipaddress.ip_network("127.0.0.0/8"),
-        ipaddress.ip_network("::1/128"),
-        ipaddress.ip_network("::ffff:127.0.0.0/104"),
-    ]
-    raw = os.getenv("HERMES_WEBUI_TRUSTED_PROXY_CIDRS", "") or ""
-    for token in raw.replace(";", ",").split(","):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            nets.append(ipaddress.ip_network(token, strict=False))
-        except ValueError:
-            # Invalid CIDR/IP → skip (fail closed: never widens trust).
-            continue
-    return nets
-
-
-def _ip_in_networks(addr, networks) -> bool:
-    """Family-aware membership test.
-
-    Checks the parsed address against each network, and — for an IPv4-mapped
-    IPv6 address (e.g. ``::ffff:10.9.9.9``) — ALSO checks its embedded IPv4 form
-    against IPv4 networks. Without this, a mapped-IPv6 proxy peer would never
-    match an IPv4 CIDR allowlist: the trusted proxy would be treated as
-    untrusted (locking out legitimate clients behind it) and, inside an XFF
-    chain, a mapped trusted hop would be mis-returned as the client (admitting a
-    public client that preceded it). See #5764.
-    """
-    candidates = [addr]
-    mapped = getattr(addr, "ipv4_mapped", None)
-    if mapped is not None:
-        candidates.append(mapped)
-    for cand in candidates:
-        for net in networks:
-            try:
-                if cand in net:
-                    return True
-            except TypeError:
-                # IPv4/IPv6 family mismatch between candidate and net → skip.
-                continue
-    return False
-
-
-def _raw_peer_is_trusted_proxy(handler) -> bool:
-    """True when the immediate socket peer is loopback or an allowlisted proxy.
-
-    Only such a peer is allowed to assert a forwarded client IP. Judged on the
-    RAW socket address (never a header), so it cannot be spoofed.
-    """
-    import ipaddress
-
-    raw = _request_client_ip(handler)
-    if not raw:
-        return False
-    try:
-        addr = ipaddress.ip_address(raw)
-    except ValueError:
-        return False
-    return _ip_in_networks(addr, _trusted_proxy_networks())
-
-
-def _forwarded_client_ip_from_trusted_proxy(handler):
-    """Resolve the real client IP from a chain fronted by a trusted proxy.
-
-    Precondition: the caller has verified the raw socket peer is a trusted proxy.
-    Consumes ALL X-Forwarded-For values (across repeated headers), preserves wire
-    order, walks RIGHT-TO-LEFT skipping hops that are themselves trusted-proxy
-    addresses, and returns the first non-trusted (i.e. real-client) hop. Falls
-    back to X-Real-IP, then the raw socket peer. Returns None when the chain is
-    present-but-empty / malformed so the caller fails closed.
-    """
-    import ipaddress
-
-    try:
-        xff_values = handler.headers.get_all("X-Forwarded-For") or []
-    except AttributeError:
-        single = handler.headers.get("X-Forwarded-For", "")
-        xff_values = [single] if single else []
-
-    hops: list[str] = []
-    for header_value in xff_values:
-        for token in str(header_value or "").split(","):
-            hops.append(token.strip())
-
-    if xff_values:
-        # A present-but-empty / all-blank XFF is malformed → fail closed.
-        if not any(hops):
-            return None
-        trusted_nets = _trusted_proxy_networks()
-
-        def _is_trusted_hop(ip_str: str) -> bool:
-            try:
-                addr = ipaddress.ip_address(ip_str)
-            except ValueError:
-                return False
-            return _ip_in_networks(addr, trusted_nets)
-
-        for hop in reversed(hops):
-            if not hop:
-                # An empty hop inside the chain is malformed → fail closed
-                # rather than skip past it (an attacker could inject blanks).
-                return None
-            try:
-                ipaddress.ip_address(hop)
-            except ValueError:
-                # Non-IP token in the chain → malformed → fail closed.
-                return None
-            if _is_trusted_hop(hop):
-                continue
-            return hop
-        # Every hop was a trusted proxy → no distinct client; treat as the proxy
-        # tier itself (loopback/private), i.e. resolve to the raw peer below.
-        return _request_client_ip(handler)
-
-    real_ip = handler.headers.get("X-Real-IP", "").strip()
-    if real_ip:
-        return real_ip
-    # No forwarded header at all → the trusted proxy is speaking for itself.
-    return _request_client_ip(handler)
 
 
 def _onboarding_request_is_local(handler) -> bool:
@@ -6357,10 +6217,10 @@ def _onboarding_request_is_local(handler) -> bool:
       way the classification fails closed on malformed/empty chains.
     """
     trust_forwarded = _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR")
-    peer_is_trusted_proxy = _raw_peer_is_trusted_proxy(handler)
+    peer_trusted = peer_is_trusted_proxy(handler)
 
-    if trust_forwarded and peer_is_trusted_proxy:
-        client_ip = _forwarded_client_ip_from_trusted_proxy(handler)
+    if trust_forwarded and peer_trusted:
+        client_ip = forwarded_client_address(handler)
         if client_ip is None:
             # Malformed/empty forwarded chain from a trusted proxy → fail closed.
             return False
@@ -6371,7 +6231,7 @@ def _onboarding_request_is_local(handler) -> bool:
     # peer is not a trusted proxy). Classify by the raw socket peer — it cannot
     # be spoofed by a header. A public peer sending X-Forwarded-For: 127.0.0.1 is
     # therefore correctly rejected (its raw peer is public).
-    raw = _request_client_ip(handler)
+    raw = peer_address(handler)
     parsed_ok, is_local = _ip_is_loopback_or_private(raw)
     if not parsed_ok:
         return False
@@ -6403,9 +6263,9 @@ def _onboarding_request_is_local(handler) -> bool:
 
 
 def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
-    from api.auth import is_auth_enabled
+    from api.directory import is_directory_enabled
 
-    auth_enabled = is_auth_enabled() if auth_enabled is None else auth_enabled
+    auth_enabled = is_directory_enabled() if auth_enabled is None else auth_enabled
     if auth_enabled or _truthy_env("HERMES_WEBUI_ONBOARDING_OPEN"):
         return True
     return _onboarding_request_is_local(handler)
@@ -11418,27 +11278,12 @@ def _directory_session_role(handler) -> str | None:
     return admission.role if admission is not None else None
 
 
-def _login_client_ip(handler) -> str:
-    """The address the login rate limit counts attempts against.
-
-    Behind a reverse proxy every request arrives from the proxy, so one person's
-    wrong passwords would lock out the whole Team. With
-    ``HERMES_WEBUI_TRUST_FORWARDED_FOR=1`` and a trusted proxy as the socket
-    peer, the forwarded client address is used instead; otherwise (or on a
-    malformed chain) the socket peer.
-    """
-    raw = _request_client_ip(handler)
-    if _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR") and _raw_peer_is_trusted_proxy(handler):
-        return _forwarded_client_ip_from_trusted_proxy(handler) or raw
-    return raw
-
-
-def _handle_directory_login(handler, body, client_ip: str) -> bool:
+def _handle_directory_login(handler, body) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
-    from api.login import attempt_login
+    from api.login import attempt_login, rate_limit_key
 
-    outcome = attempt_login(body.get("username"), body.get("password"), client_ip)
+    outcome = attempt_login(body.get("username"), body.get("password"), rate_limit_key(handler))
     if outcome.status != 200:
         return j(handler, {"error": outcome.error}, status=outcome.status)
     return _send_login_success(
@@ -13895,9 +13740,10 @@ def handle_get(handler, parsed) -> bool:
 
             csrf_token = ""
             try:
-                from api.auth import csrf_token_for_session, is_auth_enabled, parse_cookie, verify_session
+                from api.auth import csrf_token_for_session, parse_cookie, verify_session
+                from api.directory import is_directory_enabled
 
-                if is_auth_enabled():
+                if is_directory_enabled():
                     cookie_val = parse_cookie(handler)
                     if cookie_val and verify_session(cookie_val):
                         csrf_token = csrf_token_for_session(cookie_val) or ""
@@ -13978,10 +13824,11 @@ def handle_get(handler, parsed) -> bool:
         return t(handler, _page, content_type="text/html; charset=utf-8")
 
     if parsed.path == "/api/auth/status":
-        from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session, is_auth_enabled
+        from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
+        from api.directory import is_directory_enabled
         logged_in = False
         session_info = None
-        auth_enabled = is_auth_enabled()
+        auth_enabled = is_directory_enabled()
         if auth_enabled:
             session_info = ensure_request_session(handler)
             logged_in = bool(session_info)
@@ -14283,8 +14130,8 @@ def handle_get(handler, parsed) -> bool:
             settings["max_tokens_effective"] = None
             settings["max_tokens_fallback"] = None
         # Auth-state field for the frontend's unauthenticated warning
-        from api.auth import is_auth_enabled
-        settings["auth_enabled"] = is_auth_enabled()
+        from api.directory import is_directory_enabled
+        settings["auth_enabled"] = is_directory_enabled()
         # Inject the running version so the UI badge stays in sync with git tags
         # without any manual release step.
         try:
@@ -17203,7 +17050,7 @@ def handle_post(handler, parsed) -> bool:
 
     # ── Settings (POST) ──
     if parsed.path == "/api/settings":
-        from api.auth import is_auth_enabled
+        from api.directory import is_directory_enabled
 
         if "bot_name" in body:
             body["bot_name"] = (str(body["bot_name"]) or "").strip() or "Hermes"
@@ -17214,9 +17061,9 @@ def handle_post(handler, parsed) -> bool:
 
         # Handle auth_disabled_acknowledged setting
         ack = body.pop("_auth_disabled_acknowledged", None)
-        if ack is not None and not is_auth_enabled():
+        if ack is not None and not is_directory_enabled():
             body["auth_disabled_acknowledged"] = bool(ack)
-        elif is_auth_enabled():
+        elif is_directory_enabled():
             body["auth_disabled_acknowledged"] = False
 
         from api.config import get_max_tokens_status, set_max_tokens
@@ -17260,7 +17107,7 @@ def handle_post(handler, parsed) -> bool:
             except Exception:
                 pass
 
-        saved["auth_enabled"] = is_auth_enabled()
+        saved["auth_enabled"] = is_directory_enabled()
         return j(handler, saved)
 
     if parsed.path == "/api/onboarding/oauth/start":
@@ -17732,12 +17579,12 @@ def handle_post(handler, parsed) -> bool:
 
     # ── Auth endpoints (POST) ──
     if parsed.path == "/api/auth/login":
-        from api.auth import is_auth_enabled
+        from api.directory import is_directory_enabled
 
-        if not is_auth_enabled():
+        if not is_directory_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
         # GFIT-CoWork: the Directory is the only way in (ADR 0004).
-        return _handle_directory_login(handler, body, _login_client_ip(handler))
+        return _handle_directory_login(handler, body)
 
     if parsed.path == "/api/auth/logout":
         from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
@@ -20129,9 +19976,10 @@ def _handle_tts(handler, parsed):
         from api.helpers import bad as _bad
         return _bad(handler, "text too long (max 5000 characters)", 400)
 
-    from api.auth import is_auth_enabled, parse_cookie, verify_session
+    from api.auth import parse_cookie, verify_session
+    from api.directory import is_directory_enabled
     cv = None
-    if is_auth_enabled():
+    if is_directory_enabled():
         cv = parse_cookie(handler)
         if not (cv and verify_session(cv)):
             from api.helpers import bad as _bad
@@ -20766,12 +20614,13 @@ def _handle_media(handler, parsed):
       (os.pathsep-separated list of absolute paths; ":" on POSIX, ";" on Windows)
     """
     import os as _os
-    from api.auth import is_auth_enabled, parse_cookie, verify_session
+    from api.auth import parse_cookie, verify_session
+    from api.directory import is_directory_enabled
     _HOME = Path(_os.path.expanduser("~"))
     _HERMES_HOME = Path(_os.getenv("HERMES_HOME", str(_HOME / ".hermes"))).expanduser()
 
     # Auth check
-    if is_auth_enabled():
+    if is_directory_enabled():
         cv = parse_cookie(handler)
         if not (cv and verify_session(cv)):
             body = b'{"error":"Authentication required"}'

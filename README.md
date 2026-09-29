@@ -721,6 +721,7 @@ server.py         HTTP routing shell + auth middleware
 api/
   auth.py         Session store and cookie, CSRF, signed Profile cookie, per-request gate
   login.py        Directory login, rate limit, startup login check
+  trusted_proxy.py  Client address behind a trusted reverse proxy
   config.py       Discovery, globals, model detection, reloadable config
   helpers.py      HTTP helpers, security headers
   models.py       Session model + CRUD + CLI/state.db bridge

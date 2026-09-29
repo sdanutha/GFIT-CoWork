@@ -58,11 +58,9 @@ class _AudioResponse:
 
 @pytest.fixture(autouse=True)
 def _isolated_tts(monkeypatch):
-    import api.auth as auth
     import api.config as config
 
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(routes, "is_auth_enabled", lambda: False, raising=False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
     monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-elevenlabs")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")

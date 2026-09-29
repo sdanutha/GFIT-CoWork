@@ -75,17 +75,18 @@ def test_bespoke_telemetry_body_readers_close_connection_on_oversize():
 
 def test_auth_sessions_have_lock_and_success_can_clear_login_attempts(monkeypatch, tmp_path):
     import api.auth as auth
+    import api.login as login
 
     assert hasattr(auth, "_SESSIONS_LOCK"), "auth session dict mutations must be lock-protected"
-    assert hasattr(auth, "_clear_login_attempts"), "successful login needs to clear failed attempt bucket"
+    assert hasattr(login, "_clear_login_attempts"), "successful login needs to clear failed attempt bucket"
 
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", tmp_path / ".login_attempts.json")
-    auth._login_attempts.clear()
-    auth._login_attempts["127.0.0.1"] = [1.0, 2.0, 3.0, 4.0]
+    monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", tmp_path / ".login_attempts.json")
+    login._login_attempts.clear()
+    login._login_attempts["127.0.0.1"] = [1.0, 2.0, 3.0, 4.0]
 
-    auth._clear_login_attempts("127.0.0.1")
+    login._clear_login_attempts("127.0.0.1")
 
-    assert "127.0.0.1" not in auth._login_attempts
+    assert "127.0.0.1" not in login._login_attempts
 
 
 def _english_i18n_keys():
