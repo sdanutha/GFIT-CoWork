@@ -91,6 +91,15 @@ def test_readme_introduces_gfit_cowork_as_fork_of_hermes_webui():
     assert "hermes-webui" in head and "MIT" in head
 
 
+def test_readme_names_upstream_only_as_the_fork_credit():
+    """upstream-gone ticket 07: the README describes GFIT-CoWork, and names Upstream once."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.count("github.com/nesquena/hermes-webui") == 1
+    for gone in ("About Hermes Web UI", "## Why Hermes", "get-hermes.ai", "user-attachments",
+                 "## Contributors", "Tailscale", "Gallery", "/pet", "Update Now"):
+        assert gone not in readme, gone
+
+
 def test_license_keeps_original_copyright():
     lic = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert "MIT License" in lic
