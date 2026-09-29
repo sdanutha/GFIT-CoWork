@@ -155,3 +155,12 @@ def test_the_slash_menu_offers_no_pet_command():
     agent = [{"name": "pet", "description": "Desktop Companion command", "cli_only": True}]
     assert "pet" not in _slash_matches("pe", agent)
     assert "pet" not in _slash_matches("pe", [])
+
+
+def test_the_cron_gateway_notice_does_not_link_to_upstream():
+    from pathlib import Path
+
+    panels = (Path(__file__).resolve().parents[1] / "static" / "panels.js").read_text(encoding="utf-8")
+    start = panels.index("function _cronGatewayNoticeHtml")
+    notice = panels[start:panels.index("async function loadCronGatewayNotice", start)]
+    assert "github.com" not in notice

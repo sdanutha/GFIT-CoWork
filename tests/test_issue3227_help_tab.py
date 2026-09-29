@@ -15,15 +15,24 @@ def test_help_nav_button_present():
     assert 'data-i18n="settings_tab_help"' in INDEX_HTML
 
 
+def _help_pane() -> str:
+    start = INDEX_HTML.index('id="settingsPaneHelp"')
+    return INDEX_HTML[start:INDEX_HTML.index('</main>', start)]
+
+
 def test_help_pane_present():
     assert 'id="settingsPaneHelp"' in INDEX_HTML
-    assert 'href="https://get-hermes.ai/"' in INDEX_HTML
-    assert 'href="https://github.com/nesquena/hermes-webui/issues"' in INDEX_HTML
 
 
-def test_help_pane_links_are_outbound():
-    assert 'target="_blank"' in INDEX_HTML
-    assert 'rel="noopener noreferrer"' in INDEX_HTML
+def test_help_pane_sends_no_one_to_upstream():
+    """GFIT-CoWork: problems go to the Deployment's Admin, not to Upstream's GitHub or site."""
+    pane = _help_pane()
+    assert "<a " not in pane
+    assert "get-hermes.ai" not in pane
+    assert "github.com" not in pane
+    assert 'data-i18n="settings_help_issue_label"' in pane
+    assert 'data-i18n="settings_help_issue_desc"' in pane
+    assert "Admin" in pane
 
 
 def test_panels_js_allowlist_includes_help():
@@ -43,31 +52,9 @@ def test_panels_js_foreach_includes_help():
 
 def test_i18n_help_keys_present_in_all_locales():
     assert I18N_JS.count("settings_tab_help") == LOCALE_COUNT
-    assert I18N_JS.count("settings_help_docs_label") == LOCALE_COUNT
     assert I18N_JS.count("settings_help_issue_label") == LOCALE_COUNT
-    assert I18N_JS.count("settings_help_docs_link") == LOCALE_COUNT
-    assert I18N_JS.count("settings_help_issue_link") == LOCALE_COUNT
-
-
-def test_help_card_link_hover_is_contrast_safe():
-    """The hover fill is var(--accent); the text color must NOT be var(--accent-text).
-
-    In most themes --accent-text equals (or nearly equals) --accent — it is an
-    accent-on-background link color, not a contrasting color for text sitting ON
-    an accent fill. Using it on the accent-filled hover state produced same-color
-    text on the fill (invisible) across nearly every theme (slate/gold/ares/mono/
-    sisyphus/catppuccin dark all had accent == accent-text). The fix uses
-    var(--bg) — the page background — which --accent is designed to contrast
-    against, so the text stays readable in every theme.
-    """
-    import re
-    m = re.search(r"\.help-card-link:hover\s*\{([^}]*)\}", STYLE_CSS)
-    assert m, "expected a .help-card-link:hover rule in style.css"
-    rule = m.group(1)
-    assert "background:var(--accent)" in rule.replace(" ", "")
-    # The bug: accent-text on accent fill. Must not reappear.
-    assert "--accent-text" not in rule, (
-        "hover text uses var(--accent-text) on an accent fill — invisible in most "
-        "themes; use var(--bg) for theme-agnostic contrast"
-    )
-    assert "color:var(--bg)" in rule.replace(" ", "")
+    assert I18N_JS.count("settings_help_issue_desc") == LOCALE_COUNT
+    for gone in ("settings_help_docs_label", "settings_help_docs_desc",
+                 "settings_help_docs_link", "settings_help_issue_link"):
+        assert gone not in I18N_JS, gone
+    assert "open a new one on GitHub" not in I18N_JS
