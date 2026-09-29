@@ -136,3 +136,68 @@ def test_the_login_status_and_page_name_no_oidc(server):
         status, body, _ = srv.logged_in(MEMBER).get("/api/auth/status")
         assert body["logged_in"] is True
         assert "oidc_enabled" not in body
+
+
+# ── passkey login (ticket 04) ───────────────────────────────────────────────
+
+PASSKEY_ENV = {"HERMES_WEBUI_PASSKEY": "1"}
+PASSKEY_ROUTES = [
+    "/api/auth/passkey/options",
+    "/api/auth/passkey/login",
+    "/api/auth/passkey/register/options",
+    "/api/auth/passkey/register",
+    "/api/auth/passkey/delete",
+    "/api/auth/passkeys",
+]
+PASSKEY_FIELDS = ("passkeys_enabled", "passkeys_count", "passkey_feature_flag", "passwordless_enabled")
+
+
+@pytest.mark.parametrize("directory", ["memory", ""], ids=["directory", "no-directory"])
+@pytest.mark.parametrize("path", PASSKEY_ROUTES)
+def test_the_passkey_routes_are_gone(server, directory, path):
+    with server(directory=directory, legacy_env=PASSKEY_ENV) as srv:
+        assert_answers_like_a_missing_route(srv, "POST", path, {})
+
+
+def test_a_leftover_passkey_setting_does_not_turn_login_on(server):
+    with server(directory="", legacy_env=PASSKEY_ENV) as srv:
+        client = srv.client()
+        status, body, _ = client.get("/api/auth/status")
+        assert body["auth_enabled"] is False, body
+        assert client.get("/api/sessions")[0] == 200
+
+
+def test_the_login_status_page_and_settings_name_no_passkey(server):
+    with server(legacy_env=PASSKEY_ENV) as srv:
+        status, body, _ = srv.client().get("/api/auth/status")
+        assert not set(PASSKEY_FIELDS) & set(body), body
+        status, html, _ = srv.client().get("/login")
+        assert status == 200
+        assert "passkey" not in html.lower()
+        admin = srv.logged_in(ADMIN)
+        status, body, _ = admin.get("/api/auth/status")
+        assert body["logged_in"] is True
+        assert not set(PASSKEY_FIELDS) & set(body), body
+        status, settings, _ = admin.get("/api/settings")
+        assert status == 200
+        assert not set(PASSKEY_FIELDS) & set(settings), settings
+        status, shell, _ = admin.get("/")
+        assert status == 200
+        assert "passkey" not in shell.lower()
+
+
+def test_the_terminal_refusal_names_the_directory(server, monkeypatch):
+    # With login off, a request from a non-local client (through the trusted
+    # loopback proxy) may not open the embedded terminal.
+    monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", "1")
+    monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
+    with server(directory="") as srv:
+        status, body, _ = srv.client().post(
+            "/api/terminal/start", {}, headers={"X-Forwarded-For": "8.8.8.8"},
+        )
+        assert status == 403, body
+        message = body["error"]
+        assert "Directory" in message
+        assert "HERMES_WEBUI_DIRECTORY" in message
+        assert "passkey" not in message.lower()
+        assert "password" not in message.lower()

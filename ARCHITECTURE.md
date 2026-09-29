@@ -57,7 +57,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
     api/
       __init__.py          Package marker
       agent_compat.py      Resolver for Hermes Agent names moved to sibling modules (compatibility-only)
-      auth.py              Optional password authentication, signed cookies, passkeys/WebAuthn
+      auth.py              Optional password authentication, signed cookies
       config.py            Discovery, globals, model detection, reloadable config
       helpers.py           HTTP helpers: j(), bad(), require(), resolve_inside(), security headers
       goals.py             Persistent-goal commands and profile-scoped native GoalManager bridge

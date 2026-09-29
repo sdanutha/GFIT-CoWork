@@ -1,7 +1,7 @@
 """GFIT-CoWork ticket 09: the Upstream login methods are off (ADR 0004).
 
-The Directory login is the only way in. A single shared password and passkeys
-refuse, even when configured. Their
+The Directory login is the only way in. A single shared password refuses, even
+when configured. Their
 configuration still turns the auth gate on, so a Deployment that set a password
 but no Directory is locked rather than open (fail closed).
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
@@ -18,7 +18,6 @@ LEGACY_PASSWORD = "the-old-shared-password"
 
 LEGACY_ENV = {
     "HERMES_WEBUI_PASSWORD": LEGACY_PASSWORD,
-    "HERMES_WEBUI_PASSKEY": "1",
     "HERMES_WEBUI_TRUSTED_AUTH_HEADER": "X-Remote-User",
 }
 
@@ -57,19 +56,6 @@ def test_the_shared_password_does_not_open_a_way_in(srv, body):
     assert _locked(client)
 
 
-@pytest.mark.parametrize("path", [
-    "/api/auth/passkey/options",
-    "/api/auth/passkey/login",
-    "/api/auth/passkey/register/options",
-    "/api/auth/passkey/register",
-])
-def test_passkey_endpoints_refuse(srv, path):
-    client = srv.client()
-    status, payload, _ = client.post(path, {})
-    assert status in (401, 403, 404), payload
-    assert _locked(client)
-
-
 def test_a_trusted_header_creates_no_session(srv):
     client = srv.client()
     status, _, set_cookies = client.get("/api/sessions", headers={"X-Remote-User": MEMBER})
@@ -87,13 +73,11 @@ def test_login_page_offers_only_the_directory_form(srv):
     status, html, _ = srv.client().get("/login")
     assert status == 200
     assert 'id="username"' in html
-    assert 'id="passkey-login"' not in html
 
 
 def test_auth_status_reports_the_legacy_methods_off(srv):
     status, body, _ = srv.client().get("/api/auth/status")
     assert body.get("password_auth_enabled") is False
-    assert body.get("passkeys_enabled", False) is False
     assert not body.get("trusted_auth_enabled")
 
 

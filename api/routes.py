@@ -5852,8 +5852,6 @@ def _csrf_exempt_path(path: str) -> bool:
     """Paths that cannot or must not carry a session CSRF token."""
     return path in {
         "/api/auth/login",
-        "/api/auth/passkey/options",
-        "/api/auth/passkey/login",
         "/api/csp-report",
     }
 
@@ -6353,7 +6351,7 @@ def _onboarding_request_is_local(handler) -> bool:
     * When the peer is NOT a trusted proxy, forwarded headers are ignored and the
       request is classified by the raw socket peer directly. A direct loopback or
       private/LAN client (no proxy) is therefore still correctly local — so
-      onboarding, first-password/passkey setup, and passwordless embedded-terminal
+      onboarding, first-password setup, and passwordless embedded-terminal
       access keep working on the common direct-LAN deployment.
     * HERMES_WEBUI_TRUST_FORWARDED_FOR=1 is the opt-in that makes us CONSULT the
       forwarded chain at all; without it the raw peer is authoritative. Either
@@ -6395,7 +6393,7 @@ def _onboarding_request_is_local(handler) -> bool:
     # opt in via HERMES_WEBUI_TRUST_FORWARDED_FOR (+ HERMES_WEBUI_TRUSTED_PROXY_CIDRS
     # for a non-loopback proxy). With NO forwarded header, a direct private/LAN
     # client (the common direct-LAN deployment) stays local so onboarding,
-    # first-password/passkey setup, and passwordless terminal keep working.
+    # first-password setup, and passwordless terminal keep working.
     forwarded_present = bool(
         (handler.headers.get("X-Forwarded-For", "") or "").strip()
         or (handler.headers.get("X-Real-IP", "") or "").strip()
@@ -6416,8 +6414,9 @@ def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
 
 # Operator-facing copy reused by every embedded-terminal endpoint refusal.
 _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE = (
-    "Embedded terminal is only available from local networks when authentication "
-    "is not configured. Configure a password/passkey, or set "
+    "Embedded terminal is only available from local networks when login is off. "
+    "Configure the Directory (HERMES_WEBUI_DIRECTORY=ldap and the "
+    "HERMES_WEBUI_LDAP_* settings) to turn login on, or set "
     "HERMES_WEBUI_ONBOARDING_OPEN=1 to allow it on a deliberately-exposed server."
 )
 
@@ -11389,7 +11388,6 @@ button{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(12
   border:1px solid rgba(124,185,255,.3);color:#7cb9ff;font-size:14px;font-weight:600;cursor:pointer;
   transition:all .15s}
 button:hover{background:rgba(124,185,255,.25)}
-.passkey-login{margin-top:10px;background:rgba(255,255,255,.04);border-color:rgba(232,160,48,.35);color:#e8a030}
 .err{color:#e94560;font-size:12px;margin-top:10px;display:none}
 </style></head><body>
 <div class="card">
@@ -13982,32 +13980,22 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path == "/api/auth/status":
         from api.auth import (
-            _passkey_feature_flag_enabled,
             ensure_request_session,
             is_auth_enabled,
             is_directory_auth_enabled,
             is_password_auth_enabled,
             DIRECTORY_AUTH_TYPE,
         )
-        from api.passkeys import registered_credentials
-
         logged_in = False
         session_info = None
         auth_enabled = is_auth_enabled()
         if auth_enabled:
             session_info = ensure_request_session(handler)
             logged_in = bool(session_info)
-        passkey_flag = _passkey_feature_flag_enabled()
-        passkeys = registered_credentials() if passkey_flag else []
-        password_auth_enabled = is_password_auth_enabled()
         payload = {
             "auth_enabled": auth_enabled,
             "logged_in": logged_in,
-            "password_auth_enabled": password_auth_enabled,
-            "passwordless_enabled": bool(passkeys) and not password_auth_enabled,
-            "passkeys_enabled": bool(passkeys),
-            "passkeys_count": len(passkeys),
-            "passkey_feature_flag": passkey_flag,
+            "password_auth_enabled": is_password_auth_enabled(),
             "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
         }
         if is_directory_auth_enabled():
@@ -14312,17 +14300,6 @@ def handle_get(handler, parsed) -> bool:
         from api.auth import is_auth_enabled, is_password_auth_enabled
         settings["auth_enabled"] = is_auth_enabled()
         settings["password_auth_enabled"] = is_password_auth_enabled()
-        try:
-            from api.auth import _passkey_feature_flag_enabled as _pffe
-            from api.passkeys import registered_credentials as _rc
-            if _pffe():
-                settings["passkeys_enabled"] = bool(_rc())
-                settings["passwordless_enabled"] = bool(_rc()) and not settings["password_auth_enabled"]
-            else:
-                settings["passkeys_enabled"] = False
-                settings["passwordless_enabled"] = False
-        except Exception:
-            pass
         # Inject the running version so the UI badge stays in sync with git tags
         # without any manual release step.
         try:
@@ -15262,26 +15239,6 @@ def handle_get(handler, parsed) -> bool:
 
 
 # ── POST auth helpers
-
-def _require_passkey_registration_auth(handler) -> tuple[bool, str, int]:
-    """Require auth, or the existing local-only first-run bootstrap gate.
-
-    Registering additional passkeys is an auth-factor enrollment action and
-    requires a valid WebUI session.  The first passkey can still bootstrap a
-    passkey-only instance, but only through the same local/private-network
-    onboarding gate used for first password setup.
-    """
-    from api.auth import is_auth_enabled, parse_cookie, verify_session
-
-    auth_enabled = is_auth_enabled()
-    if not auth_enabled:
-        if _onboarding_gate_allows(handler, auth_enabled):
-            return True, "", 200
-        return False, "Authentication required", 401
-    cookie_val = parse_cookie(handler)
-    if not cookie_val or not verify_session(cookie_val):
-        return False, "Authentication required", 401
-    return True, "", 200
 
 def _validate_session_toolsets_shape(toolsets):
     """Validate per-session toolset override shape without catalog lookup."""
@@ -17283,10 +17240,7 @@ def handle_post(handler, parsed) -> bool:
             isinstance(body.get("_set_password"), str)
             and body.get("_set_password", "").strip()
         )
-        requested_passwordless = bool(body.pop("_passwordless", False))
-        requested_clear_password = bool(body.get("_clear_password") or requested_passwordless)
-        if requested_passwordless:
-            body["_clear_password"] = True
+        requested_clear_password = bool(body.get("_clear_password"))
 
         current_password = body.pop("_current_password", None)
 
@@ -17323,7 +17277,7 @@ def handle_post(handler, parsed) -> bool:
                 )
 
         # Auth-disable safety: when password auth is currently enabled, require
-        # the current password to change, clear, or switch to passwordless.
+        # the current password to change or clear it.
         if auth_enabled_before and password_auth_enabled_before and (requested_password or requested_clear_password):
             if not isinstance(current_password, str) or not current_password:
                 return bad(
@@ -17337,19 +17291,6 @@ def handle_post(handler, parsed) -> bool:
                     "Current password is incorrect.",
                     403,
                 )
-
-        if requested_passwordless:
-            from api.auth import _passkey_feature_flag_enabled
-            from api.passkeys import registered_credentials
-
-            if not _passkey_feature_flag_enabled():
-                return bad(handler, "Passkey support is disabled. Enable HERMES_WEBUI_PASSKEY before going passwordless.", 409)
-            if not registered_credentials():
-                return bad(handler, "Register a passkey before going passwordless.", 409)
-        elif requested_clear_password:
-            from api.passkeys import clear_credentials
-
-            clear_credentials()
 
         # Handle auth_disabled_acknowledged setting
         ack = body.pop("_auth_disabled_acknowledged", None)
@@ -17412,17 +17353,6 @@ def handle_post(handler, parsed) -> bool:
         saved["password_auth_enabled"] = is_password_auth_enabled()
         saved["logged_in"] = logged_in_after
         saved["auth_just_enabled"] = auth_just_enabled
-        try:
-            from api.auth import _passkey_feature_flag_enabled as _pffe
-            from api.passkeys import registered_credentials as _rc
-            if _pffe():
-                saved["passkeys_enabled"] = bool(_rc())
-                saved["passwordless_enabled"] = bool(_rc()) and not saved["password_auth_enabled"]
-            else:
-                saved["passkeys_enabled"] = False
-                saved["passwordless_enabled"] = False
-        except Exception:
-            pass
 
         if not new_cookie:
             return j(handler, saved)
@@ -17914,105 +17844,6 @@ def handle_post(handler, parsed) -> bool:
         # GFIT-CoWork: the Directory is the only way in (ADR 0004). With a
         # legacy method configured but no Directory, every login is refused.
         return _handle_directory_login(handler, body, _login_client_ip(handler))
-
-    if parsed.path == "/api/auth/passkey/options":
-        from api.auth import _passkey_feature_flag_enabled, is_auth_enabled
-        from api.passkeys import PasskeyError, PasskeyRateLimitError, authentication_options
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled. Set HERMES_WEBUI_PASSKEY=1 or webui_passkey_enabled: true to enable."}, status=404)
-        if not is_auth_enabled():
-            return j(handler, {"error": "Auth not enabled"}, status=400)
-        try:
-            return j(handler, {"ok": True, "publicKey": authentication_options(handler)})
-        except PasskeyRateLimitError as e:
-            return bad(handler, str(e), status=429)
-        except PasskeyError as e:
-            return bad(handler, str(e), status=400)
-
-    if parsed.path == "/api/auth/passkey/login":
-        from api.auth import _passkey_feature_flag_enabled, create_session, is_auth_enabled, set_auth_cookie
-        from api.auth import _check_login_rate, _record_login_attempt
-        from api.passkeys import PasskeyError, finish_login
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        if not is_auth_enabled():
-            return j(handler, {"error": "Auth not enabled"}, status=400)
-        client_ip = handler.client_address[0]
-        if not _check_login_rate(client_ip):
-            return j(handler, {"error": "Too many attempts. Try again in a minute."}, status=429)
-        try:
-            finish_login(body, handler)
-        except PasskeyError as e:
-            _record_login_attempt(client_ip)
-            return bad(handler, str(e), status=401)
-        cookie_val = create_session()
-        body = json.dumps({"ok": True}).encode()
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(body)))
-        handler.send_header("Cache-Control", "no-store")
-        _security_headers(handler)
-        set_auth_cookie(handler, cookie_val)
-        handler.end_headers()
-        handler.wfile.write(body)
-        return True
-
-    if parsed.path == "/api/auth/passkey/register/options":
-        from api.auth import _passkey_feature_flag_enabled
-        from api.passkeys import PasskeyError, PasskeyRateLimitError, registration_options
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        ok, error, status = _require_passkey_registration_auth(handler)
-        if not ok:
-            return j(handler, {"error": error}, status=status)
-        try:
-            return j(handler, {"ok": True, "publicKey": registration_options(handler)})
-        except PasskeyRateLimitError as e:
-            return bad(handler, str(e), status=429)
-        except PasskeyError as e:
-            return bad(handler, str(e), status=400)
-
-    if parsed.path == "/api/auth/passkey/register":
-        from api.auth import _passkey_feature_flag_enabled
-        from api.passkeys import PasskeyError, finish_registration, registered_credentials
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        ok, error, status = _require_passkey_registration_auth(handler)
-        if not ok:
-            return j(handler, {"error": error}, status=status)
-        try:
-            result = finish_registration(body, handler)
-            result["credentials"] = registered_credentials()
-            return j(handler, result)
-        except PasskeyError as e:
-            return bad(handler, str(e), status=400)
-
-    if parsed.path == "/api/auth/passkey/delete":
-        from api.auth import _passkey_feature_flag_enabled, get_password_hash
-        from api.passkeys import PasskeyError, delete_credential, registered_credentials
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        try:
-            credential_id = str(body.get("id") or "")
-            creds = registered_credentials()
-            if get_password_hash() is None and len(creds) <= 1 and any(c.get("id") == credential_id for c in creds):
-                return bad(handler, "Set a password or disable auth before removing the last passkey.", 409)
-            return j(handler, delete_credential(credential_id))
-        except PasskeyError as e:
-            return bad(handler, str(e), status=404)
-
-    if parsed.path == "/api/auth/passkeys":
-        from api.auth import _passkey_feature_flag_enabled
-        from api.passkeys import registered_credentials
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"credentials": [], "disabled": True})
-        return j(handler, {"credentials": registered_credentials()})
 
     if parsed.path == "/api/auth/logout":
         from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
@@ -21014,8 +20845,9 @@ def _media_deny_reason(target: Path) -> str | None:
         _under_hermes_root = any(_within_ci(target, _root) for _root in _hermes_roots)
         _name_cf = target.name.casefold()
         # Exact secret/state basenames, plus atomic-write temp files for those
-        # (api/auth.py and api/passkeys.py write via a `tmp*.<name>.tmp` / `tmp*.tmp`
-        # sidecar then rename) — deny those suffixes too so a momentary temp file
+        # (api/auth.py, and before it was removed the Upstream passkey store, write
+        # via a `tmp*.<name>.tmp` / `tmp*.tmp` sidecar then rename) — deny those
+        # suffixes too so a momentary temp file
         # cannot be fetched. (Codex review #3234.)
         _deny_tmp_suffixes = (".sessions.tmp", ".login_attempts.tmp",
                               ".passkeys.tmp", ".passkey_challenges.tmp")

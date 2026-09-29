@@ -47,7 +47,7 @@ class _Handler:
 
 
 def _no_auth(monkeypatch):
-    """Default out-of-the-box state: no password, no passkey, no opt-outs."""
+    """Default out-of-the-box state: login off, no opt-outs."""
     monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
     monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)

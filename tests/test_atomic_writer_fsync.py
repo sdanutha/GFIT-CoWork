@@ -1,12 +1,11 @@
 """Regression tests — atomic JSON writers fsync and use collision-safe temps.
 
-Three writers wrote to a temp file and os.replace'd it into place but never
+These writers wrote to a temp file and os.replace'd it into place but never
 fsynced, so a power loss between the write and the physical flush could leave a
 zero-length/garbage file where durable JSON should be:
   - session_discoverability._atomic_write_json (also used a pid-only temp name,
     which collides between two request threads of the same ThreadingHTTPServer
     process writing the same _index.json),
-  - passkeys._atomic_write_json (credentials),
   - oauth._write_auth_json (access/refresh tokens).
 
 Each now fsyncs before the rename; session_discoverability additionally puts the
@@ -79,18 +78,6 @@ def test_session_discoverability_failed_write_leaves_no_debris(tmp_path, monkeyp
 
     assert original.read_text(encoding="utf-8") == '["keep"]'  # original intact
     assert [p.name for p in tmp_path.iterdir()] == ["_index.json"]  # temp cleaned up
-
-
-def test_passkeys_writer_fsyncs_and_keeps_0600(tmp_path, monkeypatch):
-    import api.passkeys as passkeys
-
-    calls = _spy_fsync(monkeypatch, passkeys)
-    path = tmp_path / "passkeys.json"
-    passkeys._atomic_write_json(path, [{"id": "cred-1"}])
-
-    assert calls, "passkeys write did not fsync"
-    assert json.loads(path.read_text(encoding="utf-8")) == [{"id": "cred-1"}]
-    assert (os.stat(path).st_mode & 0o777) == 0o600  # owner-only preserved
 
 
 def test_oauth_writer_fsyncs_and_keeps_0600(tmp_path, monkeypatch):

@@ -7350,8 +7350,8 @@ html[data-gfit-role="member"] [data-gfit-admin-only] {
 }
 
 /* GFIT-CoWork: the Directory is the only way in (ADR 0004), so Settings has no
-   shared-password field. The passkey block and Disable Auth stay hidden because
-   the server reports those methods off. */
+   shared-password field. Disable Auth stays hidden because the server reports
+   the password off. */
 .settings-field:has(> #settingsPasswordForm) {
   display: none !important;
 }

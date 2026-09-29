@@ -52,7 +52,6 @@ def _resolve_session_ttl() -> int:
 PUBLIC_PATHS = frozenset({
     '/login', '/health', '/favicon.ico', '/sw.js',
     '/api/auth/login', '/api/auth/status',
-    '/api/auth/passkey/options', '/api/auth/passkey/login',
     '/share',
     '/manifest.json', '/manifest.webmanifest',
     '/session/manifest.json', '/session/manifest.webmanifest',
@@ -417,75 +416,20 @@ def get_password_hash() -> str | None:
         return result
 
 
-# ── GFIT-CoWork: the Upstream login methods are off (ADR 0004, ticket 09) ────
-# The Directory is the only way in. The single shared password and passkeys
-# report "not enabled", so every one of their endpoints
-# refuses and the UI hides them. Their configuration still turns the auth gate
-# on (see is_auth_enabled), so a Deployment that set a password but no
-# Directory is locked rather than open. Deleting their code is left to later
-# cleanup.
+# ── GFIT-CoWork: the shared password is off (ADR 0004, ticket 09) ──────────
+# The Directory is the only way in. The single shared password reports "not
+# enabled", so login never checks it and the UI hides it. A configured password
+# still turns the auth gate on (see is_auth_enabled), so a Deployment that set a
+# password but no Directory is locked rather than open.
 
 def is_password_auth_enabled() -> bool:
     """Always False: the single shared password is off in GFIT-CoWork."""
     return False
 
 
-def _passkey_feature_flag_enabled() -> bool:
-    """Always False: passkeys are off in GFIT-CoWork."""
-    return False
-
-
 def _legacy_login_configured() -> bool:
-    """True if an Upstream login method is configured, though none of them is honoured."""
-    return (
-        get_password_hash() is not None
-        or _passkey_feature_flag_configured()
-    )
-
-
-def _passkey_feature_flag_configured() -> bool:
-    """Return True if the passkey/WebAuthn surface is enabled for this deployment.
-
-    Passkey support is opt-in default-off behind a feature flag so deployments
-    that don't want the WebAuthn surface (or whose RP-ID setup isn't ready for
-    non-localhost hosts) can disable it entirely with no UI surface, no
-    endpoints, no credential storage. To enable:
-
-      - Set ``HERMES_WEBUI_PASSKEY=1`` in the environment, OR
-      - Set ``webui_passkey_enabled: true`` in the per-profile config.yaml
-
-    With the flag off, ``are_passkeys_enabled()`` always returns False even if
-    credentials were registered in the past, and ``/login`` shows password-only.
-    """
-    env_value = os.getenv("HERMES_WEBUI_PASSKEY", "")
-    if env_value:
-        return env_value.strip().lower() in {"1", "true", "yes", "on"}
-    try:
-        from api.config import get_config
-
-        cfg = get_config()
-        if isinstance(cfg, dict):
-            raw = cfg.get("webui_passkey_enabled")
-            if isinstance(raw, bool):
-                return raw
-            if isinstance(raw, str):
-                return raw.strip().lower() in {"1", "true", "yes", "on"}
-    except Exception:
-        pass
-    return False
-
-
-def are_passkeys_enabled() -> bool:
-    """True if the passkey feature flag is on AND at least one local passkey credential is registered."""
-    if not _passkey_feature_flag_enabled():
-        return False
-    try:
-        from api.passkeys import passkeys_available
-
-        return passkeys_available()
-    except Exception as exc:
-        logger.debug("Failed to inspect passkey availability: %s", exc)
-        return False
+    """True if the Upstream shared password is configured, though it is not honoured."""
+    return get_password_hash() is not None
 
 
 # Session ``auth_type`` for a GFIT-CoWork Directory login.

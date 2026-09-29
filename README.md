@@ -41,10 +41,10 @@ be reached, login says the directory is unavailable rather than that the
 password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
 stand-in (see its README).
 
-The Directory is the only way in. The upstream login methods (the shared
-`HERMES_WEBUI_PASSWORD` or Settings password, and passkeys) are switched
-off; configuring one of them keeps the login gate on but never lets anyone in,
-and startup reports it as ignored. Trusted-header and OIDC login are removed:
+The Directory is the only way in. The upstream shared password
+(`HERMES_WEBUI_PASSWORD` or the Settings password) is switched off;
+configuring it keeps the login gate on but never lets anyone in, and startup
+reports it as ignored. Trusted-header, OIDC and passkey login are removed:
 their settings are ignored and reported at startup. The trusted proxy settings
 (`HERMES_WEBUI_TRUST_FORWARDED_FOR`, `HERMES_WEBUI_TRUSTED_PROXY_CIDRS`) stay
 for the rate limit.
@@ -371,8 +371,6 @@ If an AI assistant is helping with install, reinstall, bootstrap, provider setup
 - Optional password auth -- off by default, zero friction for localhost
 - Enable via `HERMES_WEBUI_PASSWORD` env var or Settings panel
 - Installed PWAs work best with WebUI's own password. Reverse proxies are supported, but proxy basic auth can block the service-worker update fetches an installed app needs and leave it on a blank screen after an update; see `docs/troubleshooting.md` for recovery steps.
-- Optional passkeys/WebAuthn -- register from Settings -> System after signing in with a password; the login page only shows passkey sign-in after at least one passkey exists
-- After registering at least one passkey, Settings -> System can remove the password and keep passkey-only sign-in enabled. Password auth remains the bootstrap/recovery path until you choose to go passwordless; passkeys are same-origin and stored locally in the WebUI state directory
 - Signed HMAC HTTP-only cookie with 24h TTL
 - Minimal dark-themed login page at `/login`
 - Security headers on all responses (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
@@ -724,7 +722,7 @@ and vanilla JS. The backend lives in `api/`, the frontend in `static/`.
 ```
 server.py         HTTP routing shell + auth middleware
 api/
-  auth.py         Optional password authentication, signed cookies, passkeys
+  auth.py         Optional password authentication, signed cookies
   config.py       Discovery, globals, model detection, reloadable config
   helpers.py      HTTP helpers, security headers
   models.py       Session model + CRUD + CLI/state.db bridge
