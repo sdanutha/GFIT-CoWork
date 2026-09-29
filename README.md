@@ -163,7 +163,7 @@ This gives you nearly **1:1 parity with Hermes CLI from a convenient web UI** wh
 - [Quick start](#quick-start) — clone + `bootstrap.py` / `start.sh` / `ctl.sh`
 - [Features](#features) — chat, sessions, workspace, voice, profiles, security, themes, panels, mobile
 - [Configuration & access](#configuration--access) — auto-discovery, overrides, remote/Tailscale/phone, manual launch
-- [Docker](#docker) — single- and multi-container deploys
+- [Docker](#docker) — the `deploy/` kit, one Deployment per Team
 - [Running tests](#running-tests)
 - [Architecture](#architecture) — backend/frontend layout, state dir
 - [Docs](#docs) — the full documentation index
@@ -517,96 +517,18 @@ curl http://127.0.0.1:8787/health
 
 ## Docker
 
-**Pre-built images** (amd64 + arm64) are published to GHCR on every release.
-
-For a comprehensive setup guide covering all 3 compose files, common failure modes, and bind-mount migration, see [`docs/docker.md`](docs/docker.md). The README covers the 5-minute happy path.
-
-### 5-minute quickstart (single container)
-
-The simplest setup: one WebUI container that runs the agent in-process.
+GFIT-CoWork runs in Docker one way: the Deployment kit in [`deploy/`](deploy/),
+one Deployment per Team (Hermes Agent + GFIT-CoWork) behind an HTTPS reverse
+proxy ([ADR 0005](docs/adr/0005-supported-ways-to-run.md)). Build the image once
+per server, then add each Team:
 
 ```bash
-git clone https://github.com/nesquena/hermes-webui
-cd hermes-webui
-cp .env.docker.example .env
-# Edit .env if your host UID isn't 1000 (e.g. macOS where UIDs start at 501)
-docker compose up -d
-# Open http://localhost:8787
+docker build -t gfit-cowork:latest /opt/gfit-cowork/src
 ```
 
-Run Compose as the user who owns your Hermes home. `sudo docker compose up -d` can make `${HOME}` expand to the root user's home, so Docker mounts the wrong `.hermes` directory instead of your real `~/.hermes` and the WebUI starts with `config.yaml (not found, using defaults)`. Prefer adding your user to the Docker group and running `docker compose up -d`; if you must use sudo, set absolute paths first, for example `HERMES_HOME=/home/you/.hermes HERMES_WORKSPACE=/home/you/workspace sudo -E docker compose up -d`, then verify with `docker compose config`.
-
-The container auto-detects your UID/GID from the mounted `~/.hermes` volume so files written by the agent stay readable by you on the host.
-
-The container binds to a network address, so the server does not start
-without a Directory. Configure `HERMES_WEBUI_DIRECTORY` and the
-`HERMES_WEBUI_LDAP_*` settings (see "Login" above); the GFIT-CoWork Deployment
-kit in `deploy/` does this for a Team (see `deploy/README.md`).
-
-### Manual `docker run` (no compose)
-
-```bash
-docker pull ghcr.io/nesquena/hermes-webui:latest
-docker run -d \
-  -e WANTED_UID=$(id -u) -e WANTED_GID=$(id -g) \
-  -v ~/.hermes:/home/hermeswebui/.hermes \
-  -e HERMES_WEBUI_STATE_DIR=/home/hermeswebui/.hermes/webui \
-  -v ~/workspace:/workspace \
-  -p 127.0.0.1:8787:8787 \
-  ghcr.io/nesquena/hermes-webui:latest
-```
-
-### Build locally
-
-```bash
-docker build -t hermes-webui .
-docker run -d \
-  -e WANTED_UID=$(id -u) -e WANTED_GID=$(id -g) \
-  -v ~/.hermes:/home/hermeswebui/.hermes \
-  -e HERMES_WEBUI_STATE_DIR=/home/hermeswebui/.hermes/webui \
-  -v ~/workspace:/workspace \
-  -p 127.0.0.1:8787:8787 \
-  hermes-webui
-```
-
-### Multi-container setups
-
-If you want the agent and WebUI in separate containers (for isolation, or because you're already running an agent gateway elsewhere):
-
-```bash
-# Agent + WebUI
-docker compose -f docker-compose.two-container.yml up -d
-
-# Agent + Dashboard + WebUI
-docker compose -f docker-compose.three-container.yml up -d
-```
-
-Both compose files use **named Docker volumes** by default, which solves the UID/GID problem by construction. If you need bind mounts to share an existing host directory, see [`docs/docker.md`](docs/docker.md) for the full migration recipe.
-
-> **Known limitation (#681)**: in the two-container setup, tools triggered from the WebUI run in the **WebUI container**, not the agent container. If you need git/node/etc. on the WebUI's filesystem, either use the single-container setup, extend the WebUI Dockerfile, or use the community [all-in-one image](https://github.com/sunnysktsang/hermes-suite).
->
-> **Source boundary note (#2453)**: the multi-container setup mounts `hermes-agent-src` read-only into the WebUI by default. This prevents WebUI-side source rewrites but is still an implementation-coupling bridge, not a stable Agent API boundary. See [`docs/rfcs/agent-source-boundary.md`](docs/rfcs/agent-source-boundary.md) for the current source/API decoupling inventory.
-
-### Common failure modes
-
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `PermissionError` at startup | UID mismatch on bind mount | Set `UID=$(id -u)` in `.env` |
-| `.env: permission denied` (#1389) | `fix_credential_permissions()` enforced 0600 | Set `HERMES_SKIP_CHMOD=1` in `.env` |
-| Workspace appears empty | UID mismatch on `/workspace` mount | Set `UID=$(id -u)` in `.env` |
-| `git: command not found` in chat | Two-container architectural limit (#681) | Use single-container or extend Dockerfile |
-| WebUI can't find agent source | `hermes-agent-src` volume misconfigured | Use the named volumes from compose files as-is |
-| Podman shared `.hermes` fails | Podman 3.4 `keep-id` limitation | Use Podman 4+ or single-container |
-| Host API at `localhost` fails from WebUI | Container `localhost` means the container, not your host (#3012) | Use `http://host.docker.internal:<port>` on Docker Desktop, or `http://host.containers.internal:<port>` on Podman |
-| WebUI can't see `~/.hermes` after `sudo docker compose` | `${HOME}` expanded to the root user's home (#3006) | Run Compose as your user, or pass absolute `HERMES_HOME`/`HERMES_WORKSPACE` with `sudo -E` |
-
-For the deep dive on each of these, see [`docs/docker.md`](docs/docker.md).
-
-> **Note:** Inside the container the server binds to `0.0.0.0`, a network
-> address, so it needs a Directory (`HERMES_WEBUI_DIRECTORY`): without one it
-> refuses to start. The published port is `127.0.0.1` (localhost only) by
-> default; to expose it on a network, change it to `"8787:8787"` in
-> `docker-compose.yml`. The Deployment kit in `deploy/` configures the Directory.
+The step-by-step guide is [`deploy/README.md`](deploy/README.md). For the image
+itself (volumes, UID/GID, the read-only agent source, the gateway, upgrades and
+common failure modes), see [`docs/docker.md`](docs/docker.md).
 
 ---
 
@@ -691,7 +613,7 @@ boot.js           Mobile nav, voice input, theme/skin boot, bfcache handler
 tests/            Pytest suite (~11,500 tests; isolated server/state fixtures)
 pyproject.toml    Standard build metadata plus the Ruff lint gate; checkout launch surface still centers on bootstrap.py / start.sh / ctl.sh
 Dockerfile        python:3.12-slim container image
-docker-compose.yml  Compose with named volume and optional auth
+deploy/           The Deployment kit: Compose file, Team config example, Caddy proxy
 .github/workflows/  CI: ruff + sharded pytest, browser smoke, Docker smoke,
                     multi-arch Docker build + GitHub Release on tag
 ```
@@ -714,7 +636,7 @@ The WebUI is still coupled to Hermes Agent internals for runtime execution, prov
 - Running pinned older/newer combinations is **untested and unsupported** until the stable API boundary work in [#1925](https://github.com/nesquena/hermes-webui/issues/1925) / [#2491](https://github.com/nesquena/hermes-webui/issues/2491) is in place.
 - Record the full `hermes-agent` + `hermes-webui` versions in issue reports when upgrade mismatches are suspected.
 
-**Docker users**: pin both image tags (or corresponding pinned source revisions) rather than using `latest` on one side and a fixed tag on the other. When upgrading the multi-container setup, follow the agent-image upgrade procedure in [`docs/docker.md`](docs/docker.md) (which requires dropping the `hermes-agent-src` volume before recreating). The current source-boundary status is tracked in [`docs/rfcs/agent-source-boundary.md`](docs/rfcs/agent-source-boundary.md).
+**Docker users**: pin both image tags (or corresponding pinned source revisions) rather than using `latest` on one side and a fixed tag on the other. When upgrading a Deployment, follow the agent-image upgrade procedure in [`docs/docker.md`](docs/docker.md) (which requires dropping the `hermes-agent-src` volume before recreating). The current source-boundary status is tracked in [`docs/rfcs/agent-source-boundary.md`](docs/rfcs/agent-source-boundary.md).
 
 ---
 

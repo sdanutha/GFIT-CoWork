@@ -103,8 +103,8 @@ take longer when dependencies compile from source, Android browser tabs may
 reload when switching apps, and disabling battery optimization for the terminal
 or VM host may be needed for longer-running sessions.
 
-> **Tip:** If using Docker, set `HERMES_WEBUI_HOST=0.0.0.0` in your
-> `docker-compose.yml` environment (already the default) and configure a
-> Directory (`HERMES_WEBUI_DIRECTORY`); without one the server refuses to start.
+> **Tip:** In Docker, the Deployment kit (`deploy/`) already sets
+> `HERMES_WEBUI_HOST=0.0.0.0` and configures a Directory
+> (`HERMES_WEBUI_DIRECTORY`); without one the server refuses to start.
 
 ---

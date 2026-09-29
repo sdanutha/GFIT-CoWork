@@ -466,8 +466,8 @@ else
       echo "!! agent source volume/bind mount to read-only. See docs/rfcs/agent-source-boundary.md."
       echo ""
     fi
-    # The agent source can be mounted read-only (see docker-compose.two-container.yml
-    # / docker-compose.three-container.yml — the WebUI only reads this volume to
+    # The agent source can be mounted read-only (deploy/docker-compose.yml mounts
+    # it `:ro` — the WebUI only reads this volume to
     # install the agent's Python dependencies and never writes to it). setuptools'
     # `egg_info` build step, however, touches `hermes_agent.egg-info/` inside the
     # source tree even under PEP 517 build isolation, which `EROFS`-fails on a
@@ -522,8 +522,8 @@ else
     echo "!! no personality routing, no CLI session imports)."
     echo "!! To fix: mount the agent source volume into the container:"
     echo "!!   -v /path/to/hermes-agent:/home/hermeswebui/.hermes/hermes-agent"
-    echo "!! Or see the two-container compose example:"
-    echo "!!   https://github.com/nesquena/hermes-webui/blob/master/docker-compose.two-container.yml"
+    echo "!! Or see the hermes-agent-src volume in the Deployment kit:"
+    echo "!!   deploy/docker-compose.yml"
     echo ""
   fi
   touch /app/venv/.deps_installed

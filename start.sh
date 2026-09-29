@@ -30,7 +30,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -f "${REPO_ROOT}/.env" ]]; then
   # Filter out shell-readonly vars (UID, GID, EUID, EGID, PPID) before
-  # `source`ing.  docker-compose.yml's macOS instructions document
+  # `source`ing.  Docker setups commonly document
   # `echo "UID=$(id -u)" >> .env` to set host UID/GID, which then crashes
   # `start.sh` with "UID: readonly variable" when bash tries to assign to
   # those names.  Filtering them out lets the .env file carry those entries

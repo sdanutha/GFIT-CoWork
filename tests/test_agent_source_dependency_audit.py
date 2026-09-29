@@ -94,8 +94,7 @@ def test_audit_reports_compose_source_volume_anchors():
     anchors = _anchors(classes["docker_agent_source_volume"])
     texts = _texts(classes["docker_agent_source_volume"])
 
-    assert ("docker-compose.two-container.yml", "hermes-agent-src") in anchors
-    assert ("docker-compose.three-container.yml", "hermes-agent-src") in anchors
+    assert ("deploy/docker-compose.yml", "hermes-agent-src") in anchors
     assert any("hermes-agent-src:/opt/hermes" in text for text in texts)
     assert any(
         "hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent:ro" in text

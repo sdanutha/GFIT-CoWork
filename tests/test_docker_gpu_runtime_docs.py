@@ -42,7 +42,7 @@ def test_docker_docs_show_gpu_build_command():
 
     assert "Optional GPU runtime image" in docker_docs
     assert "--build-arg INSTALL_GPU_LIBS=1" in docker_docs
-    assert "default Hermes WebUI Docker image stays CPU-only" in docker_docs
+    assert "default GFIT-CoWork Docker image stays CPU-only" in docker_docs
 
 
 def test_docker_docs_cover_intel_amd_dri_mapping():

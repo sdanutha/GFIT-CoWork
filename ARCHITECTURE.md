@@ -52,7 +52,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
     ctl.sh                 Daemon lifecycle wrapper (start/stop/restart/status/logs) for homelab installs.
     pyproject.toml         Standard build metadata plus the Ruff lint gate; source-checkout launch surface still centers on bootstrap.py / start.sh / ctl.sh.
     Dockerfile             python:3.12-slim container image
-    docker-compose.yml     Compose config with named volume
+    deploy/                Deployment kit: one Team's Compose file, config example, Caddy proxy
     .dockerignore          Excludes .git, tests/, .env* from Docker builds
     api/
       __init__.py          Package marker

@@ -220,8 +220,7 @@ def build_report(root: Path) -> dict[str, object]:
     docker_findings = _iter_text_matches(
         root,
         (
-            "docker-compose.two-container.yml",
-            "docker-compose.three-container.yml",
+            "deploy/docker-compose.yml",
             "docker_init.bash",
             "docs/docker.md",
             "docs/rfcs/agent-source-boundary.md",
@@ -256,7 +255,7 @@ def build_report(root: Path) -> dict[str, object]:
             class_id="docker_agent_source_volume",
             title="Docker/compose source-tree sharing",
             current_dependency=(
-                "Multi-container compose files expose the agent image source via "
+                "The Deployment kit's compose file exposes the agent image source via "
                 "the hermes-agent-src volume and /opt/hermes."
             ),
             replacement_surface=(
