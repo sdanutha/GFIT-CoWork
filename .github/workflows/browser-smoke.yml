@@ -9,8 +9,8 @@ name: Browser smoke
 # No secrets, no credentials: the server boots agent-free and the smoke script
 # strips every *_API_KEY from the environment before launch.
 #
-# Docs-only fast path: `browser-smoke` is a REQUIRED status check in the branch
-# ruleset, and a skipped required check reports as pending forever (auto-merge
+# Docs-only fast path: if `browser-smoke` is made a required status check, a
+# skipped required check reports as pending forever (auto-merge
 # would hang). So on a docs/CHANGELOG/README-only change we keep the job running
 # and reporting green but short-circuit the expensive browser install + smoke.
 # Detection FAILS SAFE: any uncertainty or any non-doc path -> full smoke runs.

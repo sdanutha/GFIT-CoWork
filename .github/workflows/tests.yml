@@ -8,7 +8,7 @@ on:
 
 # Docs-only fast path: a CHANGELOG/README/docs-only PR does not need the full pytest
 # matrix or the JS/lint runtime guards — nothing executable changed. But the `test (…)`
-# shards and `lint` are REQUIRED status checks in the branch ruleset, and a *skipped*
+# shards and `lint` may be made required status checks, and a *skipped*
 # required check reports as pending forever (auto-merge would hang). So we keep the jobs
 # running and reporting green, but SHORT-CIRCUIT their expensive work when every changed
 # path is documentation. Detection FAILS SAFE: if anything is uncertain (no base to diff,

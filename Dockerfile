@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL maintainer="nesquena"
+LABEL maintainer="GFIT-CoWork"
 LABEL description="GFIT-CoWork — browser interface for Hermes Agent"
 
 # Install system packages

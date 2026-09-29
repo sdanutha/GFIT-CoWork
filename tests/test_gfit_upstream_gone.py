@@ -40,6 +40,7 @@ EXTENSION_ROUTES_KEPT = [
     ("GET", "/api/extensions/status", None),
     ("POST", "/api/extensions/toggle", {"id": "no-such-extension", "enabled": False}),
     ("POST", "/api/extensions/sidecar-proxy-consent", {"id": "no-such-extension", "approved": False}),
+    ("GET", "/api/extensions/no-such-extension/sidecar/health", None),
 ]
 
 
@@ -52,22 +53,14 @@ def srv(monkeypatch, tmp_path):
         yield s
 
 
+@pytest.mark.parametrize("who,expected", [(ADMIN, 404), (USER, 403)])
 @pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED)
-def test_removed_route_answers_the_admin_like_an_unknown_route(srv, method, path, body):
-    admin = srv.logged_in(ADMIN)
-    unknown_status, unknown_payload, _ = admin.request(method, UNKNOWN, body)
-    status, payload, _ = admin.request(method, path, body)
-    assert status == unknown_status == 404, (method, path, payload)
-    assert payload == unknown_payload, (method, path, payload)
-
-
-@pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED)
-def test_removed_route_answers_a_user_like_an_unknown_route(srv, method, path, body):
-    user = srv.logged_in(USER)
-    unknown_status, unknown_payload, _ = user.request(method, UNKNOWN, body)
-    status, payload, _ = user.request(method, path, body)
-    assert status == unknown_status == 403, (method, path, payload)
-    assert payload == unknown_payload, (method, path, payload)
+def test_removed_route_answers_like_an_unknown_route(srv, who, expected, method, path, body):
+    client = srv.logged_in(who)
+    unknown_status, unknown_payload, _ = client.request(method, UNKNOWN, body)
+    status, payload, _ = client.request(method, path, body)
+    assert status == unknown_status == expected, (who, method, path, payload)
+    assert payload == unknown_payload, (who, method, path, payload)
 
 
 @pytest.mark.parametrize("method,path,body", EXTENSION_ROUTES_KEPT)
