@@ -145,8 +145,7 @@ def test_get_session_for_file_ops_webui_passthrough(models_module, monkeypatch):
     monkeypatch.setattr(profiles_module, "get_active_profile_name", lambda: "default")
     result = models_module.get_session_for_file_ops("webui-sid")
     assert result is sentinel
-    # Once when session ownership places it, once for the session itself.
-    assert called == {"get_session": 2, "profile_match": 1, "state_db": 0}
+    assert called == {"get_session": 1, "profile_match": 1, "state_db": 0}
 
 
 def test_get_session_for_file_ops_recovers_missing_implicit_workspace(

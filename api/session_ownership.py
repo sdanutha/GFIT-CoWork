@@ -21,7 +21,8 @@ and may not switch Profile (:meth:`may_switch_profile`).
 
 Callers ask: is this session id mine (:meth:`refuse_session`; for a session
 the route has already found, a record or a listed row,
-:meth:`refuse_found_session`), is this stream
+:meth:`refuse_found_session`; for one the detail load knows only from its
+listed row, :meth:`refuse_listed_session`), is this stream
 id mine (:meth:`refuse_stream`), may this session-list event go to me
 (:meth:`may_receive_event`) and may this listed row go to me
 (:meth:`may_list_row`). A refusal (:class:`Refusal`) writes its own answer:
@@ -32,7 +33,9 @@ that does not exist get exactly the same answer.
 The User's adapter looks in the WebUI session record, then in the Profile's own
 agent state (``state.db``: CLI, messaging, cron and gateway sessions). It never
 looks in another Profile's state or in the server account's home. Only the
-unconfined adapter lets a Profile-less row (Claude Code, Codex) through.
+unconfined adapter lets a Profile-less row (Claude Code, Codex) through, and
+only on the detail load. Only the unconfined adapter keeps Upstream's own route
+rules on top (:meth:`keeps_upstream_rules`).
 """
 from __future__ import annotations
 
@@ -122,6 +125,12 @@ def _field(found, name):
     if isinstance(found, dict):
         return found.get(name)
     return getattr(found, name, None)
+
+
+def _profile_of(found) -> str | None:
+    """The Profile a found session names, or None (missing, legacy, or not a name)."""
+    profile = _field(found, "profile") if found is not None else None
+    return profile if isinstance(profile, str) and profile else None
 
 
 def _is_profile_less_row(row) -> bool:
@@ -218,16 +227,22 @@ class UserSessionOwnership:
         profile = row.get("profile")
         return isinstance(profile, str) and bool(profile) and _profiles_match(profile, self.profile)
 
+    def keeps_upstream_rules(self) -> bool:
+        """No: a User's request is answered by this adapter alone, never by a route's own rules."""
+        return False
+
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found (a record, or a listed row): the User's own, else 404."""
         from api.profiles import _profiles_match
 
-        if found is None or _is_profile_less_row(found):
-            return NOT_FOUND
-        profile = _field(found, "profile")
-        if isinstance(profile, str) and profile and _profiles_match(profile, self.profile):
+        profile = _profile_of(found)
+        if profile and _profiles_match(profile, self.profile):
             return None
         return NOT_FOUND
+
+    def refuse_listed_session(self, session_id, row) -> Refusal | None:
+        """A session known only from its listed row: as any found session (never a Profile-less one)."""
+        return self.refuse_found_session(session_id, row)
 
 
 class _UnconfinedSessionOwnership:
@@ -243,6 +258,11 @@ class _UnconfinedSessionOwnership:
         """Claude Code and Codex rows, under the setting that shows them."""
         return True
 
+    def keeps_upstream_rules(self) -> bool:
+        """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
+        chat start's placeholder retag) on top of this adapter's answers."""
+        return True
+
     def refuse_session(self, session_id) -> Refusal | None:
         """Another known Profile's session names its owner; an id it cannot find passes."""
         from api.models import get_session, is_safe_session_id
@@ -254,13 +274,7 @@ class _UnconfinedSessionOwnership:
             session = get_session(session_id, metadata_only=True)
         except KeyError:
             return None
-        # A legacy session with no Profile keeps the plain 404, so the client's
-        # self-heal for a missing session still fires.
-        profile = getattr(session, "profile", None)
-        profile = profile if isinstance(profile, str) and profile else None
-        if _profiles_match(profile, get_active_profile_name()):
-            return None
-        return Refusal(owner=profile, session_id=session_id)
+        return self.refuse_found_session(session_id, session)
 
     def refuse_stream(self, stream_id) -> Refusal | None:
         owner = stream_owner(stream_id)
@@ -284,19 +298,25 @@ class _UnconfinedSessionOwnership:
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found: a session record, or a listed row.
 
-        A Profile-less row (Claude Code, Codex) belongs to no Profile and opens
-        under any. Another known Profile's session names its owner; a missing
-        or legacy one with no Profile is 404, so the client's self-heal fires.
+        Another known Profile's session names its owner; a missing or legacy
+        one with no Profile is 404, so the client's self-heal fires.
         """
         from api.profiles import _profiles_match, get_active_profile_name
 
-        if found is not None and _is_profile_less_row(found):
-            return None
-        profile = _field(found, "profile") if found is not None else None
-        profile = profile if isinstance(profile, str) and profile else None
+        profile = _profile_of(found)
         if _profiles_match(profile, get_active_profile_name()):
             return None
         return Refusal(owner=profile, session_id=session_id)
+
+    def refuse_listed_session(self, session_id, row) -> Refusal | None:
+        """A session known only from its listed row, opened by the detail load.
+
+        A Profile-less row (Claude Code, Codex) belongs to no Profile and opens
+        under any; otherwise as any found session.
+        """
+        if _is_profile_less_row(row):
+            return None
+        return self.refuse_found_session(session_id, row)
 
 
 class _RefusingSessionOwnership:
@@ -323,7 +343,13 @@ class _RefusingSessionOwnership:
     def may_list_row(self, row, **_kwargs) -> bool:
         return False
 
+    def keeps_upstream_rules(self) -> bool:
+        return False
+
     def refuse_found_session(self, session_id, found) -> Refusal:
+        return NOT_FOUND
+
+    def refuse_listed_session(self, session_id, row) -> Refusal:
         return NOT_FOUND
 
 

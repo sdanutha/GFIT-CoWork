@@ -215,12 +215,17 @@ def test_is_this_found_session_mine(world, row, user, unconfined):
     assert _outcome(REFUSING.refuse_found_session(sid, row)) == NOT_FOUND
 
 
-def test_a_profile_less_row_opens_under_a_named_profile_for_the_admin(world, monkeypatch):
+def test_a_profile_less_row_opens_under_a_named_profile_only_from_the_listing(world, monkeypatch):
+    # The Admin in Bob's Profile: the detail load opens a Claude Code row it
+    # knows from the listing; any other route that found it refuses it.
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: BOB)
     row = {"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}
-    assert UNCONFINED.refuse_found_session("claude_code_x", row) is None
+    assert UNCONFINED.refuse_listed_session("claude_code_x", row) is None
+    assert _outcome(UNCONFINED.refuse_found_session("claude_code_x", row)) == NOT_FOUND
     legacy = {"session_id": "legacy", "profile": None, "source_tag": "cli"}
-    assert _outcome(UNCONFINED.refuse_found_session("legacy", legacy)) == NOT_FOUND
+    assert _outcome(UNCONFINED.refuse_listed_session("legacy", legacy)) == NOT_FOUND
+    assert _outcome(UserSessionOwnership(ALICE).refuse_listed_session("claude_code_x", row)) == NOT_FOUND
+    assert _outcome(REFUSING.refuse_listed_session("claude_code_x", row)) == NOT_FOUND
 
 
 class _Handler:
@@ -247,6 +252,9 @@ def test_bound_names_only_its_own_profile(world):
     assert [user.may_name_profile(name) for name in (BOB, "default", "", None, 42)] == [False] * 5
     assert user.may_switch_profile() is False
     assert user.sees_profile_less_sessions() is False
+    assert user.keeps_upstream_rules() is False
+    assert UNCONFINED.keeps_upstream_rules() is True
+    assert REFUSING.keeps_upstream_rules() is False
     assert UNCONFINED.may_name_profile(BOB) and UNCONFINED.may_switch_profile()
     assert UNCONFINED.sees_profile_less_sessions() is True
     assert not REFUSING.may_name_profile(ALICE) and not REFUSING.may_switch_profile()

@@ -244,12 +244,14 @@ def test_keep_latest_messaging_runs_after_profile_filter():
     repo_root = Path(__file__).parent.parent
     src = (repo_root / 'api' / 'routes.py').read_text(encoding='utf-8')
 
-    handler_idx = src.find('parsed.path == "/api/sessions":')
-    assert handler_idx > 0
-    next_handler = src.find('parsed.path == "/api/projects":', handler_idx)
-    block = src[handler_idx:next_handler]
+    # The /api/sessions handler builds its rows in the cached list builder.
+    builder_idx = src.find('def _build_session_list_cache_payload(')
+    assert builder_idx > 0
+    next_def = src.find('\ndef ', builder_idx + 1)
+    block = src[builder_idx:next_def]
 
-    filter_idx = block.find('_profiles_match(s.get("profile"), active_profile)')
+    # The view's Profile filter is session ownership's (unconfined) row rule.
+    filter_idx = block.find('may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)')
     # The dedupe call can be either single-line `(scoped)` or multi-line
     # `(\n    scoped,\n    show_previous_messaging_sessions=…,\n)`; match the
     # function name + the first arg position rather than coupling to the call

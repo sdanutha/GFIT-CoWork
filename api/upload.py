@@ -242,15 +242,15 @@ def _session_attachment_dir(session_id: str, *, root: Path | None = None) -> Pat
     return dest_dir
 
 
-def _refuse_unowned_session(handler, session_id) -> bool:
-    """Answer 404 and return True unless the request owns *session_id*.
+def _refuse_unowned_session(handler, session_id, session) -> bool:
+    """Answer 404 and return True unless the request owns *session*, already loaded.
 
     Session ownership decides (:mod:`api.session_ownership`). An upload's
     answer never names another Profile, so every refusal is "Session not found".
     """
     from api.session_ownership import request_session_ownership
 
-    refusal = request_session_ownership().refuse_session(session_id)
+    refusal = request_session_ownership().refuse_found_session(session_id, session)
     if refusal is None:
         return False
     refusal.answer_not_found(handler)
@@ -309,12 +309,12 @@ def handle_upload(handler):
         filename, file_bytes = files['file']
         if not filename:
             return j(handler, {'error': 'No filename in upload'}, status=400)
-        if _refuse_unowned_session(handler, session_id):
-            return True
         try:
             s = get_session(session_id)
         except KeyError:
             return j(handler, {'error': 'Session not found'}, status=404)
+        if _refuse_unowned_session(handler, session_id, s):
+            return True
         safe_name = _sanitize_upload_name(filename)
         dest_dir = _session_attachment_dir(session_id)
         dest = _upload_destination(session_id, safe_name, dest_dir)
@@ -503,12 +503,12 @@ def handle_upload_extract(handler):
         filename, file_bytes = files['file']
         if not filename:
             return j(handler, {'error': 'No filename in upload'}, status=400)
-        if _refuse_unowned_session(handler, session_id):
-            return True
         try:
             s = get_session(session_id)
         except KeyError:
             return j(handler, {'error': 'Session not found'}, status=404)
+        if _refuse_unowned_session(handler, session_id, s):
+            return True
         session_dir = _session_attachment_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
         result = extract_archive(file_bytes, filename, session_dir, resolve=resolve_inside)
@@ -721,12 +721,12 @@ def handle_workspace_upload(handler):
             return j(handler, {'error': 'No file field in request'}, status=400)
 
         # Validate session
-        if _refuse_unowned_session(handler, session_id):
-            return True
         try:
             session = get_session(session_id)
         except KeyError:
             return j(handler, {'error': 'Session not found'}, status=404)
+        if _refuse_unowned_session(handler, session_id, session):
+            return True
 
         # Resolve workspace root using the session profile, not the ambient request profile.
         try:

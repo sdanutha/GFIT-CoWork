@@ -6,7 +6,9 @@ guard reads the application source and fails when code outside that module
 decides session visibility on its own:
 
 - compares a session's Profile with the active or bound Profile
-  (``_profiles_match(<a session's profile>, <the active or bound Profile>)``);
+  (``_profiles_match(...)``, ``==`` or ``!=``);
+- places a session in a Profile's own state itself
+  (``state_db_has_session(..., profile=...)``);
 - names a removed ownership helper (calls it, or defines it again).
 
 A session's Profile is spelled ``getattr(<session>, "profile", ...)``,
@@ -42,6 +44,7 @@ REMOVED_HELPERS = frozenset({
 
 SESSION_NAMES = frozenset({
     "s", "session", "sess", "source", "existing", "stored_session", "row", "snapshot_session",
+    "cli_meta", "meta", "found", "target_session",
 })
 SESSION_PROFILE_NAMES = frozenset({
     "session_profile", "_session_profile", "existing_profile", "effective_profile",
@@ -51,6 +54,7 @@ ACTIVE_OR_BOUND_CALLS = frozenset({"get_active_profile_name", "_get_active_profi
 ACTIVE_OR_BOUND_NAMES = frozenset({"active_profile", "active", "bound", "bound_profile"})
 
 COMPARES = "compares a session's Profile with the active or bound Profile"
+PLACES = "places a session in a Profile's state"
 REMOVED = "names a removed ownership helper"
 
 # (file, function, what): callers not yet moved to session ownership (none left).
@@ -96,16 +100,30 @@ def _is_active_or_bound(node) -> bool:
     return isinstance(node, ast.Call) and _called_name(node) in ACTIVE_OR_BOUND_CALLS
 
 
+def _session_against_active_or_bound(a, b) -> bool:
+    return (_is_session_profile(a) and _is_active_or_bound(b)) or (
+        _is_session_profile(b) and _is_active_or_bound(a)
+    )
+
+
 def _decisions(tree) -> list[tuple[int, str]]:
     """(line, what) for each ownership decision in *tree*."""
     found = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _called_name(node) == "_profiles_match" and len(node.args) >= 2:
-            a, b = node.args[:2]
-            if (_is_session_profile(a) and _is_active_or_bound(b)) or (
-                _is_session_profile(b) and _is_active_or_bound(a)
-            ):
+            if _session_against_active_or_bound(*node.args[:2]):
                 found.append((node.lineno, COMPARES))
+        if isinstance(node, ast.Compare) and len(node.comparators) == 1 and isinstance(
+            node.ops[0], (ast.Eq, ast.NotEq)
+        ):
+            if _session_against_active_or_bound(node.left, node.comparators[0]):
+                found.append((node.lineno, COMPARES))
+        if (
+            isinstance(node, ast.Call)
+            and _called_name(node) == "state_db_has_session"
+            and any(k.arg == "profile" for k in node.keywords)
+        ):
+            found.append((node.lineno, PLACES))
         name = None
         if isinstance(node, ast.Name):
             name = node.id
@@ -172,6 +190,10 @@ CAUGHT = [
     "_profiles_match(existing['profile'], _get_active_profile_name())",
     "_profiles_match(active, session_profile)",
     "_profiles_match(effective_profile, caller_bound_profile())",
+    "_profiles_match(cli_meta.get('profile'), active_profile)",
+    "session.profile == get_active_profile_name()",
+    "if getattr(s, 'profile', None) != bound: pass",
+    "state_db_has_session(sid, profile=bound)",
     "routes._session_visible_to_active_profile(p, h)",
     "_session_profile_mismatch(h, sid, p)",
     "def _reject_invisible_session(handler, session): pass",
@@ -184,6 +206,8 @@ NOT_CAUGHT = [
     "_profiles_match(child_profile, snapshot_profile)",  # lineage
     "_profiles_match(name, active_profile)",  # a Profile name
     "request_session_ownership().refuse_session(sid)",
+    "state_db_has_session(sid)",  # the request's own state, as the file manager asks
+    "session.profile == requested_profile",
 ]
 
 

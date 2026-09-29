@@ -6388,23 +6388,24 @@ def persist_recovered_workspace_binding(
 def get_session_for_file_ops(sid: str):
     """Return the session-like object file-manager handlers work on.
 
-    Session ownership decides first (:mod:`api.session_ownership`): a session
-    the request does not own raises ``KeyError``, so callers return their
-    existing 404. Then ``get_session`` (WebUI sessions, whose missing
-    Workspace is recovered), or, for a session found only in state.db, an
-    ``_ExternalSessionView`` whose ``workspace`` is the active WebUI
-    workspace. If neither has the session, re-raises ``KeyError``.
+    ``get_session`` first (WebUI sessions, whose missing Workspace is
+    recovered), and session ownership decides about the session found
+    (:mod:`api.session_ownership`): one the request does not own raises
+    ``KeyError``, so callers return their existing 404. For a session found
+    only in the request's own state.db, an ``_ExternalSessionView`` whose
+    ``workspace`` is the active WebUI workspace. If neither has the session,
+    re-raises ``KeyError``.
     """
     from api.session_ownership import request_session_ownership
 
-    if request_session_ownership().refuse_session(sid) is not None:
-        raise KeyError(sid)
     try:
         session = get_session(sid, metadata_only=True)
     except KeyError:
         if state_db_has_session(sid):
             return _ExternalSessionView(str(sid), str(get_last_workspace()))
         raise
+    if request_session_ownership().refuse_found_session(sid, session) is not None:
+        raise KeyError(sid)
 
     session_profile = getattr(session, 'profile', None)
     try:

@@ -1442,6 +1442,7 @@ def test_deferred_session_model_resolution_uses_profile_provider(monkeypatch, tm
         lambda *_args, **_kwargs: 0,
     )
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "anthropic")
+    monkeypatch.setattr("api.profiles.get_active_profile_name", lambda: "anthropic")
 
     session_path = tmp_path / "sessions" / f"{sid}.json"
     before = session_path.read_text(encoding="utf-8")

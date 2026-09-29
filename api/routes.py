@@ -528,7 +528,7 @@ def _request_session_visibility_exempt(method: str, path: str | None, ownership)
     if method == "POST" and path == "/api/session/import":
         # Creates a new session with a new id; an id in the body names nothing.
         return True
-    if ownership is not _UNCONFINED_OWNERSHIP:
+    if not ownership.keeps_upstream_rules():
         # A User names only their own Profile's sessions, so the detail-load
         # 409, and the import and placeholder-retag rules below, never apply
         # to them: the generic guard answers first.
@@ -2464,10 +2464,13 @@ def _build_session_list_cache_payload(
     # source. Filter first so the dedupe operates only within the active
     # profile's rows.
     diag_stage("profile_scope")
-    ownership = request_session_ownership()
+    # The cached payload is keyed by the view (active Profile, all_profiles),
+    # not by the caller, and may be rebuilt on a thread with no Admission, so
+    # the view is scoped with the unconfined rule here. The caller's own
+    # adapter filters the rows after the cache (_rows_for_caller).
     scoped = [
         s for s in merged
-        if ownership.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+        if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
     ]
     other_profile_count = (
         0 if all_profiles or _is_isolated_profile_mode() else len(merged) - len(scoped)
@@ -2593,6 +2596,27 @@ def _build_session_list_cache_payload(
             "show_webhook_sessions": show_webhook_sessions,
             "show_kanban_sessions": show_kanban_sessions,
         },
+    }
+
+
+def _session_list_rows_for_caller(payload: dict, active_profile, all_profiles: bool) -> dict:
+    """The cached session list with only the rows session ownership lets this caller see.
+
+    The cache is keyed by the view, not the caller; this is the caller's own
+    answer. The cached payload is never changed.
+    """
+    ownership = request_session_ownership()
+
+    def keep(rows):
+        return [
+            row for row in rows or []
+            if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
+        ]
+
+    return {
+        **payload,
+        "sessions": keep(payload.get("sessions")),
+        "sidebar_reference_sessions": keep(payload.get("sidebar_reference_sessions")),
     }
 
 
@@ -13395,7 +13419,7 @@ def _handle_session_get(handler, parsed) -> bool:
         # Session ownership answers: a KNOWN other profile's session is the
         # Admin's 409 so the client can offer to switch to it (#5419); a
         # legacy None-profile sidecar keeps the 404 self-heal.
-        _refusal = request_session_ownership().refuse_session(sid)
+        _refusal = request_session_ownership().refuse_found_session(sid, s)
         if _refusal is not None:
             if _diag: _diag.finish()
             return _refusal.answer(handler, sid)
@@ -13858,7 +13882,7 @@ def _handle_session_get(handler, parsed) -> bool:
         # profile's CLI/foreign session is the Admin's 409 (#5419); a missing
         # session keeps the 404 self-heal; a Profile-less Claude Code row opens
         # under any profile for the Admin, and never for a User.
-        _refusal = request_session_ownership().refuse_found_session(sid, cli_meta or {})
+        _refusal = request_session_ownership().refuse_listed_session(sid, cli_meta or {})
         if _refusal is not None:
             return _refusal.answer(handler, sid)
         synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta or {})
@@ -14625,9 +14649,8 @@ def handle_get(handler, parsed) -> bool:
                 archived_offset=archived_offset,
             )
             # Keep the visible /api/sessions contract unchanged even though the
-            # heavy lifting now lives in the cache builder: profile scoping via
-            # `_profiles_match(s.get("profile"), active_profile)` still happens
-            # before `_keep_latest_messaging_session_per_source(`.
+            # heavy lifting now lives in the cache builder: the view's profile
+            # scoping still happens before `_keep_latest_messaging_session_per_source(`.
             payload = _get_cached_session_list_payload(
                 key=key,
                 builder=lambda: _build_session_list_cache_payload(
@@ -14650,6 +14673,7 @@ def handle_get(handler, parsed) -> bool:
                 ),
                 diag=diag,
             )
+            payload = _session_list_rows_for_caller(payload, active_profile, all_profiles)
             diag.stage("response_write")
             return j(handler, _session_list_payload_to_response(payload), pretty=False)
         finally:
@@ -21636,8 +21660,6 @@ def _read_anchored_file_bytes(ws_root: Path, target: Path) -> bytes:
 
 def _handle_approval_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _session_id_visible_to_request_profile(handler, sid):
-        return True
     with _lock:
         _head, _total, _changed = reconcile_gateway_pending_mirror_locked(sid)
         queue = _pending.get(sid)
@@ -21673,8 +21695,6 @@ def _handle_approval_sse_stream(handler, parsed):
     back to HTTP polling if the connection fails.
     """
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _session_id_visible_to_request_profile(handler, sid):
-        return True
     if not sid:
         return bad(handler, "session_id is required")
 
@@ -21751,8 +21771,6 @@ def _handle_approval_inject(handler, parsed):
 
 def _handle_clarify_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _session_id_visible_to_request_profile(handler, sid):
-        return True
     pending = get_clarify_pending(sid)
     if pending:
         return j(handler, {"pending": pending})
@@ -21770,8 +21788,6 @@ def _handle_clarify_sse_stream(handler, parsed):
         return bad(handler, "clarify SSE not available")
 
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not _session_id_visible_to_request_profile(handler, sid):
-        return True
     if not sid:
         return bad(handler, "session_id is required")
 
@@ -24979,7 +24995,7 @@ def _handle_chat_start(handler, body, diag=None):
         _refusal = ownership.refuse_found_session(body.get("session_id", ""), s)
         if _refusal is not None:
             if (
-                ownership is _UNCONFINED_OWNERSHIP
+                ownership.keeps_upstream_rules()
                 and requested_profile
                 and _profiles_match(requested_profile, active_profile)
                 and not has_persisted_turns
@@ -27342,8 +27358,6 @@ def _session_has_pending_approval(sid: str) -> bool:
 
 def _handle_approval_respond(handler, body):
     sid = body.get("session_id", "")
-    if not _session_id_visible_to_request_profile(handler, sid):
-        return True
     if not sid:
         return bad(handler, "session_id is required")
     choice = body.get("choice", "deny")
@@ -27653,8 +27667,6 @@ def _resolve_clarify_legacy(sid: str, clarify_id: str, response: str) -> bool:
 
 def _handle_clarify_respond(handler, body):
     sid = body.get("session_id", "")
-    if not _session_id_visible_to_request_profile(handler, sid):
-        return True
     if not sid:
         return bad(handler, "session_id is required")
     response = body.get("response")

@@ -143,9 +143,11 @@ def test_session_url_builder_strips_legacy_session_query_alias():
 
 def test_cross_profile_session_deep_links_switch_profile_instead_of_self_healing():
     routes = (ROOT / "api" / "routes.py").read_text(encoding="utf-8")
+    # The 409 is written by session ownership's refusal.
+    ownership = (ROOT / "api" / "session_ownership.py").read_text(encoding="utf-8")
     sessions = (ROOT / "static" / "sessions.js").read_text(encoding="utf-8")
 
-    assert '"code": "session_profile_mismatch"' in routes
+    assert '"code": "session_profile_mismatch"' in ownership
     assert 'if method == "GET" and path == "/api/session":' in routes
     assert "function _sessionProfileMismatchFromError" in sessions
     assert "_switchProfileForSessionLoad(profileMismatch.profile)" in sessions
