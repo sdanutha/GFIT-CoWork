@@ -556,6 +556,15 @@ def main() -> None:
 
     print_startup_config()
 
+    # Login is the Directory: a network address with no Directory would serve
+    # with login off, so refuse before touching any state.
+    from api.login import startup_check
+    serve, login_lines = startup_check(HOST)
+    for line in login_lines:
+        print(line, flush=True)
+    if not serve:
+        sys.exit(1)
+
     fd_limit = _raise_fd_soft_limit()
     if fd_limit.get("status") == "raised":
         print(
@@ -591,24 +600,6 @@ def main() -> None:
 
     if within_container:
         print('[ok] Running within container.', flush=True)
-
-    # Security: warn if binding non-loopback without authentication
-    from api.auth import get_oidc_startup_warning, is_auth_enabled
-    if HOST not in ('127.0.0.1', '::1', 'localhost') and not is_auth_enabled():
-        print(f'[!!] WARNING: Binding to {HOST} with NO PASSWORD SET.', flush=True)
-        print(f'     Anyone on the network can access your filesystem and agent.', flush=True)
-        print(f'     Set a password via Settings or HERMES_WEBUI_PASSWORD env var.', flush=True)
-        print(f'     To suppress: bind to 127.0.0.1 or set a password.', flush=True)
-        if within_container:
-            print(f'     Note: You are running within a container, must bind to 0.0.0.0 (IPv4) or :: (IPv6) to publish the port.', flush=True)
-    elif not is_auth_enabled():
-        print(f'  [tip] No password set. Any process on this machine can read sessions', flush=True)
-        print(f'        and memory via the local API. Set HERMES_WEBUI_PASSWORD to', flush=True)
-        print(f'        enable authentication.', flush=True)
-
-    oidc_startup_warning = get_oidc_startup_warning()
-    if oidc_startup_warning:
-        print(f'[!!] WARNING: {oidc_startup_warning}', flush=True)
 
     ok, missing, errors = verify_hermes_imports()
     if not ok and _HERMES_FOUND:

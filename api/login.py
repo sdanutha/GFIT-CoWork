@@ -14,12 +14,14 @@ password nor anything derived from it is logged or stored.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+import os
 from typing import NamedTuple
 
 from api import auth
 from api.access import REFUSED_NO_PROFILE, REFUSED_PROFILE_NOT_ACTIVE
-from api.directory import DirectoryUnavailable, get_directory
+from api.directory import DIRECTORY_ENV, DirectoryUnavailable, get_directory, is_directory_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +111,91 @@ def session_identity(session_info: dict) -> dict:
         "display_name": display_name,
         "label": f"{display_name} ({employee_id})" if display_name else employee_id,
     }
+
+
+# ── Startup: what is true about login ──────────────────────────────────────
+
+_DIRECTORY_HINT = (
+    f"set {DIRECTORY_ENV}=ldap and the HERMES_WEBUI_LDAP_* settings (see deploy/README.md)"
+)
+
+# Upstream login settings the Directory replaced (ADR 0004). None of them lets
+# anyone log in; startup names each one it finds so an old configuration is
+# not mistaken for a way in.
+_LEFTOVER_ENV = (
+    "HERMES_WEBUI_PASSWORD",
+    "HERMES_WEBUI_PASSKEY",
+    "HERMES_WEBUI_OIDC_ISSUER",
+    "HERMES_WEBUI_OIDC_CLIENT_ID",
+    "HERMES_WEBUI_OIDC_CLIENT_SECRET",
+    "HERMES_WEBUI_OIDC_REDIRECT_URI",
+    "HERMES_WEBUI_OIDC_SCOPES",
+    "HERMES_WEBUI_OIDC_ALLOW_CLAIM",
+    "HERMES_WEBUI_OIDC_ALLOW_VALUES",
+    "HERMES_WEBUI_TRUSTED_AUTH_HEADER",
+    "HERMES_WEBUI_TRUSTED_GROUPS_HEADER",
+    "HERMES_WEBUI_GROUP_PROFILE_MAP",
+    "HERMES_WEBUI_TRUSTED_AUTH_LOGOUT_URL",
+)
+_LEFTOVER_CONFIG_KEYS = ("webui_passkey_enabled", "webui_oidc")
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.strip().lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip().strip("[]")).is_loopback
+    except ValueError:
+        # Any other hostname may resolve to a network address: treat it as one.
+        return False
+
+
+def _leftover_login_settings() -> list[str]:
+    found = [f"{name} (environment)" for name in _LEFTOVER_ENV if os.getenv(name, "").strip()]
+    from api.config import get_config, load_settings
+
+    try:
+        if load_settings().get("password_hash"):
+            found.append("the password stored in Settings")
+    except Exception:
+        logger.debug("Could not read Settings for leftover login settings", exc_info=True)
+    try:
+        cfg = get_config()
+        if isinstance(cfg, dict):
+            found.extend(f"{key} (config.yaml)" for key in _LEFTOVER_CONFIG_KEYS if key in cfg)
+    except Exception:
+        logger.debug("Could not read config.yaml for leftover login settings", exc_info=True)
+    return found
+
+
+def startup_check(host: str) -> tuple[bool, list[str]]:
+    """Decide from the bind address and the Directory whether the server may serve.
+
+    Returns ``(serve, lines)``: the lines are what startup prints. A network
+    address with no Directory would serve with login off, so the server must
+    not start. The loopback address with no Directory serves with login off,
+    for local development and the test suite.
+    """
+    lines = [
+        f"[!!] Ignoring {setting}: Upstream login is gone; the Directory replaces it."
+        for setting in _leftover_login_settings()
+    ]
+    if is_directory_enabled():
+        return True, lines
+    if not _is_loopback_host(host):
+        lines += [
+            f"[!!] Refusing to start: no Directory is configured, so binding to {host} would serve with login off.",
+            "     Anyone who reaches the port could use every Profile, the terminal and the agent.",
+            f"     To serve on a network address, {_DIRECTORY_HINT}.",
+            "     For local development without login, bind to 127.0.0.1.",
+        ]
+        return False, lines
+    if auth.is_auth_enabled():
+        lines.append(f"[!!] No Directory is configured, so nobody can log in. To turn login on, {_DIRECTORY_HINT}.")
+    else:
+        lines += [
+            "  [tip] Login is off: no Directory is configured. Any process on this machine",
+            "        can use every Profile through the local API.",
+            f"        To turn login on, {_DIRECTORY_HINT}.",
+        ]
+    return True, lines

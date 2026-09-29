@@ -693,20 +693,6 @@ class TestPasswordHashing:
                 save_settings({"_clear_password": True})
 
 
-# ── 10. Non-loopback Startup Warning ─────────────────────────────────────
-
-
-class TestStartupWarning:
-    def test_warning_code_present_in_server(self):
-        """server.py must contain non-loopback warning code."""
-        src = pathlib.Path(__file__).parent.parent / "server.py"
-        text = src.read_text()
-        assert "0.0.0.0" in text or "non-loopback" in text.lower() or "WARNING" in text, \
-            "server.py must contain non-loopback warning logic"
-        assert "is_auth_enabled" in text, \
-            "server.py must check is_auth_enabled() before warning"
-
-
 # ── 11. SSRF DNS Check ─────────────────────────────────────────────────────
 
 

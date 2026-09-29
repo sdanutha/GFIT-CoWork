@@ -44,7 +44,13 @@ stand-in (see its README).
 The Directory is the only way in. The upstream login methods (the shared
 `HERMES_WEBUI_PASSWORD` or Settings password, passkeys, OIDC and the trusted
 header) are switched off; configuring one of them keeps the login gate on but
-never lets anyone in.
+never lets anyone in, and startup reports it as ignored.
+
+On a network address (anything but loopback, e.g. `0.0.0.0` in a container) the
+server does not start without a Directory: it exits and names the Directory
+settings, so a Deployment is never served with login off. On the loopback
+address with no Directory, the server starts with login off, for local
+development, and says so at startup.
 
 ### Users and the Admin
 
@@ -534,7 +540,7 @@ Then add the module and configure it in `nixosModules`:
 }
 ```
 
-The module defaults to `127.0.0.1`. Set `host = "0.0.0.0"` and `openFirewall = true` only when you want direct network access, and pair that with auth, for example `HERMES_WEBUI_PASSWORD` via `environmentFiles`.
+The module defaults to `127.0.0.1`. Set `host = "0.0.0.0"` and `openFirewall = true` only when you want direct network access, and configure a Directory (`HERMES_WEBUI_DIRECTORY`) via `environmentFiles`: without one the server refuses to start on a network address.
 
 The published Hermes Agent package exposes `passthru.hermesVenv`, so the module derives `HERMES_WEBUI_PYTHON` from its interpreter. Bootstrap then locates the installed `run_agent.py` through that interpreter without importing Agent code and exports its parent as `HERMES_WEBUI_AGENT_DIR`. Packages may expose `passthru.hermesAgentDir` as a direct path instead. Use `agent.dir` and `agent.python` as explicit overrides for custom package layouts.
 
@@ -552,8 +558,8 @@ use an SSH tunnel (`ssh -N -L 8787:127.0.0.1:8787 user@host`, which `start.sh`
 prints for you over SSH) or, on a single-operator or access-restricted tailnet,
 use the preferred [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve)
 flow, which keeps WebUI on loopback behind tailnet-only HTTPS. Direct access to
-`http://<server-tailscale-ip>:8787` with `HERMES_WEBUI_HOST=0.0.0.0` and
-`HERMES_WEBUI_PASSWORD` is a fallback when Serve is unavailable. Full setup and
+`http://<server-tailscale-ip>:8787` with `HERMES_WEBUI_HOST=0.0.0.0` and a
+Directory configured is a fallback when Serve is unavailable. Full setup and
 the community ARM64-Android field report: [`docs/remote-access.md`](docs/remote-access.md).
 
 ### Manual launch (without start.sh)
@@ -666,7 +672,8 @@ For the deep dive on each of these, see [`docs/docker.md`](docs/docker.md).
 
 > **Note:** By default, Docker Compose binds to `127.0.0.1` (localhost only).
 > To expose on a network, change the port to `"8787:8787"` in `docker-compose.yml`
-> and set `HERMES_WEBUI_PASSWORD` to enable authentication.
+> and configure a Directory (`HERMES_WEBUI_DIRECTORY`); without one the server
+> refuses to start on a network address.
 
 ---
 
