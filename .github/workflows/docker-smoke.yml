@@ -1,48 +1,41 @@
 name: Docker smoke
 
-# Runtime smoke gate for Docker init logic.
+# Runtime smoke gate for a Team's Deployment: the deploy/ kit, built from this
+# change's own Dockerfile and docker_init.bash.
 #
 # Background: v0.51.84 (PR #2470) shipped a startup-killing :ro mount + chown
-# interaction (EROFS under `set -e`) that 9 source-level pytest invariants +
-# 5800+ existing tests all passed. The independent reviewer caught it by eye.
-# This workflow closes that class of gap by actually `docker compose up`-ing
-# each variant against a real Docker daemon on the GHA runner.
+# interaction (EROFS under `set -e`) that every source-level pytest invariant
+# passed. Only `docker compose up` against a real Docker daemon catches that
+# class of bug, so this workflow brings up the same kit every Deployment runs.
 #
-# Scope (intentionally small for v1):
-#   - 3 compose variants (single, two-container, three-container)
-#   - For multi-container variants, rebuild the local Dockerfile and re-tag
-#     it as ghcr.io/nesquena/hermes-webui:latest BEFORE `up` so the PR's
-#     changes to docker_init.bash / Dockerfile actually execute. Without this
-#     the multi-container variants would pull the previous release from GHCR
-#     and silently miss every PR-level regression.
-#   - Pre-flight `docker compose config` job to catch schema/interpolation drift.
-#   - Reaper before each smoke run + trap on EXIT for orphan defence.
+# Scope:
+#   - `docker compose config` on deploy/docker-compose.yml with a generated
+#     test .env (the example values, a random API key, a non-routable LDAP URL).
+#   - Build the Dockerfile under the image name the kit expects
+#     (gfit-cowork:latest) so the change's Dockerfile and init script execute.
+#   - `up` the kit, probe /health on the published loopback port, and check
+#     GFIT-CoWork answers only there and Hermes Agent's gateway is not published.
+#   - Reaper before the run + trap on EXIT for orphan defence.
 #
-# Out of scope for v1 (per design review):
-#   - HERMES_WEBUI_SMOKE_TEST env flag in docker_init.bash (production-code footgun)
-#   - --user 60000:60000 (skips the chown branch we're protecting against)
-#   - Hadolint / yamllint (separate lint workflow, follow-up PR)
-#   - Local-runnable scripts/docker-smoke-test.sh (ship CI first, then iterate)
-#   - Podman runtime smoke (defer until a podman-specific bug ships)
+# The run never reaches a real AD: with the Directory configured the server
+# starts and serves /health without contacting LDAP.
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main, dev]
     paths:
       - 'Dockerfile'
       - 'docker_init.bash'
-      - 'docker-compose*.yml'
       - '.dockerignore'
-      - '.env.docker.example'
+      - 'deploy/**'
       - '.github/workflows/docker-smoke.yml'
   push:
-    branches: [master]
+    branches: [main, dev]
     paths:
       - 'Dockerfile'
       - 'docker_init.bash'
-      - 'docker-compose*.yml'
       - '.dockerignore'
-      - '.env.docker.example'
+      - 'deploy/**'
       - '.github/workflows/docker-smoke.yml'
   workflow_dispatch:
 
@@ -57,18 +50,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate every compose file parses
+      - name: Validate the deploy kit with a generated test .env
         run: |
           set -euo pipefail
-          for f in docker-compose.yml docker-compose.two-container.yml docker-compose.three-container.yml; do
-            echo "::group::compose config: $f"
-            docker compose -f "$f" config > /dev/null
-            echo "::endgroup::"
-          done
+          DEPLOYMENT="$(mktemp -d -t gfit-smoke-config-XXXXXX)"
+          cp deploy/docker-compose.yml "$DEPLOYMENT/"
+          # The example values, a random API key and a non-routable (TEST-NET-1)
+          # LDAP URL, exactly as an Admin would fill in team.env.example.
+          sed \
+            -e "s|^API_SERVER_KEY=.*|API_SERVER_KEY=$(openssl rand -hex 24)|" \
+            -e "s|^HERMES_WEBUI_LDAP_URL=.*|HERMES_WEBUI_LDAP_URL=ldaps://192.0.2.1|" \
+            deploy/team.env.example > "$DEPLOYMENT/.env"
+          docker compose --project-directory "$DEPLOYMENT" config > /dev/null
 
   # Build the Docker image once and cache layers via GHA cache.
-  # The smoke matrix jobs then pull from this cache instead of rebuilding
-  # from scratch, saving ~1-3 minutes per variant.
+  # The smoke jobs then pull from this cache instead of rebuilding from scratch.
   build-image:
     name: Build Docker image (cache layers)
     runs-on: ubuntu-latest
@@ -83,14 +79,14 @@ jobs:
         with:
           context: .
           load: true
-          tags: ghcr.io/nesquena/hermes-webui:latest
+          tags: gfit-cowork:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # Startup-health gate for UID/GID auto-detection (#7027).
   #
-  # The compose variants above all mount a hermes-home volume, so they never
-  # exercise the plain single-container shape from the issue: a state directory
+  # The deploy kit mounts a named hermes-home volume, so it never exercises
+  # the plain single-container shape from the issue: a state directory
   # bind-mounted from a host directory owned by a non-1024 user, /workspace left
   # as the image's own build-time 1024, and no explicit WANTED_UID/WANTED_GID.
   # Before the fix the auto-detector read /workspace, remapped to 1024, failed
@@ -111,7 +107,7 @@ jobs:
         with:
           context: .
           load: true
-          tags: ghcr.io/nesquena/hermes-webui:latest
+          tags: gfit-cowork:latest
           cache-from: type=gha
 
       - name: Boot on a host-owned state mount with no explicit IDs
@@ -142,7 +138,7 @@ jobs:
             -p 127.0.0.1:8788:8787 \
             -e HERMES_WEBUI_STATE_DIR=/app/data \
             -v "$STATE_DIR":/app/data \
-            ghcr.io/nesquena/hermes-webui:latest
+            gfit-cowork:latest
           echo "::endgroup::"
 
           # ----- The product gate: the container must reach /health -----
@@ -233,7 +229,7 @@ jobs:
             -e WANTED_GID=1024 \
             -v "$STATE_DIR":/app/data \
             -v "$HERMES_DIR":/home/hermeswebui/.hermes \
-            ghcr.io/nesquena/hermes-webui:latest
+            gfit-cowork:latest
 
           attempts=0
           max_attempts=60
@@ -258,138 +254,134 @@ jobs:
           echo "✅ explicit WANTED_UID=1024 preserved (sentinel no longer shadows the valid value)"
 
   smoke:
-    name: Smoke ${{ matrix.variant }}
+    name: Smoke deploy kit
     runs-on: ubuntu-latest
     needs: [compose-config, build-image]
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - single
-          - two-container
-          - three-container
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
       # Restore the cached Docker image from the build-image job.
-      # Read-only: the build-image job already populated the GHA cache, so the
-      # smoke variants only need cache-from (no redundant cache-to re-export).
+      # Read-only: the build-image job already populated the GHA cache.
       - name: Restore Docker image from cache
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: ghcr.io/nesquena/hermes-webui:latest
+          tags: gfit-cowork:latest
           cache-from: type=gha
 
-      - name: Resolve compose file + project name
-        id: vars
-        run: |
-          set -euo pipefail
-          case "${{ matrix.variant }}" in
-            single)
-              echo "compose_file=docker-compose.yml" >> "$GITHUB_OUTPUT"
-              ;;
-            two-container)
-              echo "compose_file=docker-compose.two-container.yml" >> "$GITHUB_OUTPUT"
-              ;;
-            three-container)
-              echo "compose_file=docker-compose.three-container.yml" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
-          # Per-run project name so concurrent jobs / reruns can't clobber each other.
-          echo "project=hermes-smoke-${{ matrix.variant }}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-
-      - name: Reap any prior hermes-smoke resources on this runner
+      - name: Reap any prior gfit-smoke resources on this runner
         run: |
           set -euo pipefail
           # Hosted GHA runners are fresh, so this is mostly defence-in-depth for
-          # self-hosted runner re-use. We rely primarily on the unique per-run
-          # project name + `compose down -v --remove-orphans` in the EXIT trap
-          # to clean up the resources THIS run creates; this step only sweeps
-          # leftovers from prior runs that crashed before their trap fired.
-          # Match by project-name prefix instead of labels (the compose files
-          # don't carry hermes-smoke labels on their resources).
-          for c in $(docker ps -aq --filter "name=hermes-smoke-"); do
+          # self-hosted runner re-use. The unique per-run Team name + `compose
+          # down -v --remove-orphans` in the EXIT trap clean up what THIS run
+          # creates; this step only sweeps leftovers from prior runs that
+          # crashed before their trap fired. The kit names every container,
+          # volume and network gfit-<TEAM>, so match by that prefix.
+          for c in $(docker ps -aq --filter "name=gfit-smoke-"); do
             docker rm -f "$c" || true
           done
-          for v in $(docker volume ls -q | grep "^hermes-smoke-" || true); do
+          for v in $(docker volume ls -q | grep "^gfit-smoke-" || true); do
             docker volume rm -f "$v" || true
           done
-          for n in $(docker network ls --format '{{.Name}}' | grep "^hermes-smoke-" || true); do
+          for n in $(docker network ls --format '{{.Name}}' | grep "^gfit-smoke-" || true); do
             docker network rm "$n" || true
           done
 
-      - name: Prepare ephemeral host paths
-        id: paths
+      - name: Prepare the Deployment folder
+        id: deployment
         run: |
           set -euo pipefail
-          STATE_DIR="$(mktemp -d -t hermes-smoke-state-XXXXXX)"
-          WORK_DIR="$(mktemp -d -t hermes-smoke-work-XXXXXX)"
-          echo "state_dir=$STATE_DIR" >> "$GITHUB_OUTPUT"
-          echo "work_dir=$WORK_DIR" >> "$GITHUB_OUTPUT"
-          echo "Allocated:"
-          echo "  HERMES_HOME      = $STATE_DIR"
-          echo "  HERMES_WORKSPACE = $WORK_DIR"
+          # Laid out as deploy/README.md tells an Admin to: the Compose file,
+          # a filled-in .env next to it, and a certs folder.
+          DEPLOYMENT="$(mktemp -d -t gfit-smoke-deployment-XXXXXX)"
+          mkdir "$DEPLOYMENT/certs"
+          cp deploy/docker-compose.yml "$DEPLOYMENT/"
+          # Per-run Team name so concurrent jobs / reruns can't clobber each other.
+          TEAM="smoke-${{ github.run_id }}-${{ github.run_attempt }}"
+          sed \
+            -e "s|^TEAM=.*|TEAM=${TEAM}|" \
+            -e "s|^API_SERVER_KEY=.*|API_SERVER_KEY=$(openssl rand -hex 24)|" \
+            -e "s|^HERMES_WEBUI_LDAP_URL=.*|HERMES_WEBUI_LDAP_URL=ldaps://192.0.2.1|" \
+            deploy/team.env.example > "$DEPLOYMENT/.env"
+          GFIT_PORT="$(sed -n 's/^GFIT_PORT=//p' "$DEPLOYMENT/.env")"
+          echo "dir=$DEPLOYMENT" >> "$GITHUB_OUTPUT"
+          echo "port=$GFIT_PORT" >> "$GITHUB_OUTPUT"
+          echo "Deployment gfit-${TEAM} in $DEPLOYMENT, published on 127.0.0.1:${GFIT_PORT}"
 
-      - name: Smoke (up + health + log scan + down)
+      - name: Smoke (up + health + loopback-only + log scan + down)
         env:
-          COMPOSE_FILE: ${{ steps.vars.outputs.compose_file }}
-          PROJECT: ${{ steps.vars.outputs.project }}
-          HERMES_HOME: ${{ steps.paths.outputs.state_dir }}
-          HERMES_WORKSPACE: ${{ steps.paths.outputs.work_dir }}
+          DEPLOYMENT: ${{ steps.deployment.outputs.dir }}
+          GFIT_PORT: ${{ steps.deployment.outputs.port }}
         run: |
           set -euo pipefail
+          compose() { docker compose --project-directory "$DEPLOYMENT" "$@"; }
 
           # ----- Trap-guaranteed cleanup, regardless of exit reason -----
           cleanup() {
             local rc=$?
             echo "::group::Cleanup (rc=$rc)"
-            docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --no-color --tail=200 || true
-            docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans || true
-            rm -rf "$HERMES_HOME" "$HERMES_WORKSPACE" || true
+            compose logs --no-color --tail=200 || true
+            compose down -v --remove-orphans || true
+            rm -rf "$DEPLOYMENT" || true
             echo "::endgroup::"
             return $rc
           }
           trap cleanup EXIT
 
           echo "::group::docker compose up"
-          # --wait blocks until all services report healthy OR --wait-timeout fires.
-          # Compose v2 returns nonzero on either failure mode.
-          docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --wait --wait-timeout 120
+          # --wait blocks until all services report running/healthy OR
+          # --wait-timeout fires. Compose v2 returns nonzero on either failure.
+          compose up -d --wait --wait-timeout 180
           echo "::endgroup::"
 
           echo "::group::container roster"
-          docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps
+          compose ps
           echo "::endgroup::"
 
-          # ----- WebUI /health probe -----
-          # Single-container: WebUI is on the host on 127.0.0.1:8787.
-          # Two/three-container: same — both compose files publish 127.0.0.1:8787.
+          # ----- GFIT-CoWork /health on the published loopback port -----
           echo "::group::Probe /health"
           attempts=0
           max_attempts=30
-          until curl --fail --silent --max-time 5 http://127.0.0.1:8787/health > /dev/null; do
+          until curl --fail --silent --max-time 5 "http://127.0.0.1:${GFIT_PORT}/health" > /dev/null; do
             attempts=$((attempts + 1))
             if [ "$attempts" -ge "$max_attempts" ]; then
-              echo "❌ WebUI /health never returned 200 after $max_attempts attempts (~60s)"
+              echo "❌ GFIT-CoWork /health never returned 200 after $max_attempts attempts (~60s)"
               exit 1
             fi
             sleep 2
           done
-          echo "✅ /health = 200 after $attempts attempts"
+          echo "✅ /health = 200 on 127.0.0.1:${GFIT_PORT} after $attempts attempts"
+          echo "::endgroup::"
+
+          # ----- Reachable only through the reverse proxy -----
+          echo "::group::Loopback-only publishing"
+          PUBLISHED="$(compose port gfit-cowork 8787)"
+          if [ "$PUBLISHED" != "127.0.0.1:${GFIT_PORT}" ]; then
+            echo "❌ GFIT-CoWork is published on '$PUBLISHED', expected 127.0.0.1:${GFIT_PORT}"
+            exit 1
+          fi
+          HOST_IP="$(hostname -I | awk '{print $1}')"
+          if curl --silent --max-time 5 "http://${HOST_IP}:${GFIT_PORT}/health" > /dev/null; then
+            echo "❌ GFIT-CoWork answers on the runner's address ${HOST_IP}:${GFIT_PORT}"
+            exit 1
+          fi
+          AGENT_BINDINGS="$(docker inspect -f '{{json .HostConfig.PortBindings}}' "$(compose ps -q hermes-agent)")"
+          if [ "$AGENT_BINDINGS" != "{}" ] && [ "$AGENT_BINDINGS" != "null" ]; then
+            echo "❌ Hermes Agent publishes ports on the host: $AGENT_BINDINGS"
+            exit 1
+          fi
+          echo "✅ GFIT-CoWork answers only on 127.0.0.1:${GFIT_PORT}; Hermes Agent publishes nothing"
           echo "::endgroup::"
 
           # ----- Startup log scan: must not contain any known-bad signatures -----
           # These are the exact patterns that would have flagged #2470 in real time.
-          # The grep -i is anchored to actual error tokens; benign log lines that
-          # contain the substring 'error' in a stack-friendly context (e.g.
-          # "errorless", URL paths) are improbable for these specific tokens.
           echo "::group::Startup log scan"
-          LOGS="$(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --no-color)"
+          LOGS="$(compose logs --no-color gfit-cowork)"
           # `!! ERROR` + `!! Exiting script` are the actual strings emitted by
           # docker_init.bash's error_exit() helper — the function name itself
           # never appears in output. The literal token `error_exit` is kept as
