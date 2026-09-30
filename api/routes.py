@@ -21877,16 +21877,47 @@ def _handle_cron_output(handler, parsed):
     return j(handler, {"job_id": job_id, "outputs": outputs})
 
 
+def _cron_status_readable_job_ids():
+    """The cron job ids this request may see running, or None for every job.
+
+    The record of running jobs is the server's, shared by every Profile. A
+    request that may not read every Profile sees only the jobs in the active
+    Profile's cron store (the caller runs inside ``cron_profile_context``).
+    """
+    from api.profiles import get_active_profile_name
+
+    active = get_active_profile_name()
+    reach = request_session_ownership().profile_reach(active, all_profiles=True)
+    if reach.every_profile:
+        return None
+    if not reach.includes(active):
+        return set()
+    _ensure_agent_cron_import_path()
+    try:
+        from cron.jobs import list_jobs
+    except ModuleNotFoundError as exc:
+        if exc.name in ("cron", "cron.jobs"):
+            return set()  # no cron here: nothing of the caller's can be running
+        raise
+    return {str(job.get("id")) for job in list_jobs(include_disabled=True) if isinstance(job, dict)}
+
+
 def _handle_cron_status(handler, parsed):
-    """Return running status for one or all cron jobs."""
+    """Return running status for one or all cron jobs this request may see."""
     qs = parse_qs(parsed.query)
     job_id = qs.get("job_id", [""])[0]
+    readable = _cron_status_readable_job_ids()
     if job_id:
         running, elapsed = _is_cron_running(job_id)
+        if readable is not None and job_id not in readable:
+            # Another Profile's job answers like an unknown id.
+            running, elapsed = False, 0.0
         return j(handler, {"job_id": job_id, "running": running, "elapsed": round(elapsed, 1)})
-    # Return status for all running jobs
+    # Return status for all running jobs; filter after the lock is released.
     with _RUNNING_CRON_LOCK:
         all_running = {jid: round(time.time() - t, 1) for jid, t in _RUNNING_CRON_JOBS.items()}
+    if readable is not None:
+        all_running = {jid: elapsed for jid, elapsed in all_running.items() if jid in readable}
     return j(handler, {"running": all_running})
 
 

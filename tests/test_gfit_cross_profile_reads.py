@@ -3,6 +3,7 @@
 - A User's insights count only the sessions they own (ticket 01).
 - A User's cron job works only in a folder the Workspace policy lets them use
   (ticket 03).
+- A User's cron status shows only their own running jobs (ticket 04).
 
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
 Admin keeps today's behaviour in each case.
@@ -358,3 +359,46 @@ def test_the_admin_sets_any_cron_working_folder(srv, fake_cron, workspaces):
     assert status == 200, body
     stored = json.loads((admin_home / "cron" / "jobs.json").read_text())[0]
     assert stored["workdir"] == str(workspaces["outside"])
+
+
+# ── Ticket 04: cron status ───────────────────────────────────────────────────
+
+@pytest.fixture
+def running_jobs(srv, fake_cron):
+    """Alice's and Bob's jobs, both running, marked through the record a real run uses."""
+    ids = {ALICE: "alice-running", BOB: "bob-running"}
+    for uid, job_id in ids.items():
+        _cron_job(srv, uid, job_id)
+        routes._mark_cron_running(job_id)
+    yield ids
+    for job_id in ids.values():
+        routes._mark_cron_done(job_id)
+
+
+def _status(client, query="") -> dict:
+    status, body, _ = client.get(f"/api/crons/status{query}")
+    assert status == 200, body
+    return body
+
+
+def test_a_users_cron_status_shows_only_their_own_running_jobs(srv, running_jobs):
+    alice = srv.logged_in(ALICE)
+
+    running = _status(alice)["running"]
+    assert running_jobs[ALICE] in running
+    assert running_jobs[BOB] not in running
+
+    own = _status(alice, f"?job_id={running_jobs[ALICE]}")
+    assert own["running"] is True
+    bobs = _status(alice, f"?job_id={running_jobs[BOB]}")
+    unknown = _status(alice, "?job_id=no-such-job")
+    assert bobs == {**unknown, "job_id": running_jobs[BOB]}
+    assert bobs["running"] is False
+
+
+def test_the_admins_cron_status_shows_every_running_job(srv, running_jobs):
+    admin = srv.logged_in(ADMIN)
+
+    running = _status(admin)["running"]
+    assert {running_jobs[ALICE], running_jobs[BOB]} <= set(running)
+    assert _status(admin, f"?job_id={running_jobs[BOB]}")["running"] is True
