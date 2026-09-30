@@ -501,6 +501,13 @@ def _all_profiles_enabled(parsed_url) -> bool:
     return _all_profiles_query_flag(parsed_url) and not _is_isolated_profile_mode()
 
 
+def _request_profile_reach(parsed_url, active_profile):
+    """Which Profiles this request may read, asked of session ownership with its all_profiles flag."""
+    return request_session_ownership().profile_reach(
+        active_profile, all_profiles=_all_profiles_query_flag(parsed_url),
+    )
+
+
 def _query_flag(parsed_url, name: str) -> bool:
     """Return True for a truthy query flag value."""
     qs = parse_qs(parsed_url.query)
@@ -2473,9 +2480,8 @@ def _build_session_list_cache_payload(
         s for s in merged
         if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
     ]
-    other_profile_count = (
-        0 if all_profiles or _is_isolated_profile_mode() else len(merged) - len(scoped)
-    )
+    # Whether this count may be shown is the caller's answer, after the cache.
+    other_profile_count = 0 if all_profiles else len(merged) - len(scoped)
     diag_stage("messaging_dedupe")
     archived_scoped = _keep_latest_messaging_session_per_source(
         list(scoped),
@@ -2600,13 +2606,15 @@ def _build_session_list_cache_payload(
     }
 
 
-def _session_list_rows_for_caller(payload: dict, active_profile, all_profiles: bool) -> dict:
+def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     """The cached session list with only the rows session ownership lets this caller see.
 
     The cache is keyed by the view, not the caller; this is the caller's own
-    answer. The cached payload is never changed.
+    answer, including whether the other Profiles' count may be shown (*reach*).
+    The cached payload is never changed.
     """
     ownership = request_session_ownership()
+    all_profiles = reach.every_profile
 
     def keep(rows):
         return [
@@ -2618,6 +2626,7 @@ def _session_list_rows_for_caller(payload: dict, active_profile, all_profiles: b
         **payload,
         "sessions": keep(payload.get("sessions")),
         "sidebar_reference_sessions": keep(payload.get("sidebar_reference_sessions")),
+        "other_profile_count": payload.get("other_profile_count", 0) if reach.counts_other_profiles else 0,
     }
 
 
@@ -14276,7 +14285,8 @@ def handle_get(handler, parsed) -> bool:
             show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
             agent_session_source_filter = settings.get("agent_session_source_filter")
             active_profile = profiles_api.get_active_profile_name()
-            all_profiles = _all_profiles_enabled(parsed)
+            reach = _request_profile_reach(parsed, active_profile)
+            all_profiles = reach.every_profile
             include_archived = _query_flag(parsed, "include_archived")
             exclude_hidden = _query_flag(parsed, "exclude_hidden")
             archived_limit = _query_positive_int(parsed, "archived_limit", default=None, maximum=2000)
@@ -14328,7 +14338,7 @@ def handle_get(handler, parsed) -> bool:
                 ),
                 diag=diag,
             )
-            payload = _session_list_rows_for_caller(payload, active_profile, all_profiles)
+            payload = _session_list_rows_for_caller(payload, active_profile, reach)
             diag.stage("response_write")
             return j(handler, _session_list_payload_to_response(payload), pretty=False)
         finally:
@@ -17693,7 +17703,7 @@ def _handle_sessions_search(handler, parsed):
     content_search = qs.get("content", ["1"])[0] == "1"
     from api.profiles import get_active_profile_name
     active_profile = get_active_profile_name()
-    all_profiles = _all_profiles_enabled(parsed)
+    all_profiles = _request_profile_reach(parsed, active_profile).every_profile
     ownership = request_session_ownership()
     sessions = [
         s for s in all_sessions()

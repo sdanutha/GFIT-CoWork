@@ -110,3 +110,80 @@ def test_the_admins_insights_count_every_profile(srv, usage_index):
     assert body["total_messages"] == 46
     assert sorted(m["model"] for m in body["models"]) == ["alice-model", "bob-model"]
     assert _activity(body) == (3, 3, 3)
+
+
+# ── Step (b), ticket 06: the session list and search ask the question ────────
+
+def _session_with_a_message(client, text) -> str:
+    """Create a session and seed one exchange (empty sessions are not listed)."""
+    from api.models import get_session
+
+    status, body, _ = client.post("/api/session/new", {})
+    assert status == 200, body
+    sid = body["session"]["session_id"]
+    session = get_session(sid)
+    session.messages = [{"role": "user", "content": text}, {"role": "assistant", "content": "ok"}]
+    session.title = f"chat {text}"
+    session.save()
+    return sid
+
+
+@pytest.fixture
+def three_sessions(srv):
+    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB, ADMIN)}
+    sids = {uid: _session_with_a_message(c, f"zebra-{uid}") for uid, c in clients.items()}
+    return clients, sids
+
+
+def _only_own(ids, sids, uid) -> bool:
+    """*uid*'s session is listed and nobody else's from this test is.
+
+    The WebUI session store is shared across tests, so a Profile's sessions
+    from earlier tests may be listed too; they are that Profile's own.
+    """
+    others = {sid for owner, sid in sids.items() if owner != uid}
+    return sids[uid] in ids and not ids & others
+
+
+def _listed(client, path) -> tuple[set, dict]:
+    status, body, _ = client.get(path)
+    assert status == 200, body
+    return {s["session_id"] for s in body["sessions"]}, body
+
+
+def test_the_admin_counts_and_lists_other_profiles_sessions(three_sessions):
+    clients, sids = three_sessions
+
+    ids, body = _listed(clients[ADMIN], "/api/sessions")
+    assert _only_own(ids, sids, ADMIN)
+    assert body["all_profiles"] is False
+    assert body["other_profile_count"] >= 2
+
+    ids, body = _listed(clients[ADMIN], "/api/sessions?all_profiles=1")
+    assert set(sids.values()) <= ids
+    assert body["all_profiles"] is True
+    assert body["other_profile_count"] == 0
+
+
+def test_a_users_list_counts_no_other_profile_after_the_admin_filled_the_cache(three_sessions):
+    clients, sids = three_sessions
+    _listed(clients[ADMIN], "/api/sessions")
+
+    for path in ("/api/sessions", "/api/sessions?all_profiles=1"):
+        ids, body = _listed(clients[ALICE], path)
+        assert _only_own(ids, sids, ALICE)
+        assert body["all_profiles"] is False
+        assert body["other_profile_count"] == 0
+
+
+def test_session_search_reads_only_the_profiles_a_request_may_read(three_sessions):
+    clients, sids = three_sessions
+
+    for path in ("/api/sessions/search?q=zebra", "/api/sessions/search?q=zebra&all_profiles=1"):
+        ids, _ = _listed(clients[ALICE], path)
+        assert _only_own(ids, sids, ALICE)
+
+    ids, _ = _listed(clients[ADMIN], "/api/sessions/search?q=zebra")
+    assert _only_own(ids, sids, ADMIN)
+    ids, _ = _listed(clients[ADMIN], "/api/sessions/search?q=zebra&all_profiles=1")
+    assert set(sids.values()) <= ids
