@@ -27,6 +27,7 @@ for Users, which is cosmetic only.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 from typing import NamedTuple
@@ -280,6 +281,22 @@ def clear_request_admission() -> None:
     """Forget this request's Admission and Directory session. Safe to call when none was recorded."""
     _request.admission = None
     _request.directory_session = False
+
+
+@contextlib.contextmanager
+def view_build_without_admission():
+    """Build a cached view with no caller: the unconfined rule, as on a worker thread.
+
+    For caches keyed by the view, not the caller (the session list): what is
+    built must not depend on who built it. The caller's own answer is applied
+    after the cache. The request's Admission is restored on the way out.
+    """
+    saved = (getattr(_request, "admission", None), getattr(_request, "directory_session", False))
+    clear_request_admission()
+    try:
+        yield
+    finally:
+        _request.admission, _request.directory_session = saved
 
 
 def _segments_match(pattern: str, path: str) -> bool:

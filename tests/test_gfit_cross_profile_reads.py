@@ -568,3 +568,27 @@ def test_the_admins_dashboard_follows_any_board_folder(srv, boards):
 
     assert "BOB-SECRET" in json.dumps(_dashboard(admin, "bobs-board"))
     assert "SERVER-SECRET" in json.dumps(_dashboard(admin, "outside-board"))
+
+
+# ── Step (b), ticket 09: per-Profile views stay on the User's own Profile ────
+
+def test_a_users_saved_prompts_are_their_own(srv):
+    for uid in (ALICE, BOB):
+        webui = srv.profile_home(uid) / "webui"
+        webui.mkdir(parents=True, exist_ok=True)
+        (webui / "saved_prompts.json").write_text(json.dumps([{"name": f"prompt of {uid}", "text": uid}]))
+
+    status, body, _ = srv.logged_in(ALICE).get("/api/prompts")
+
+    assert status == 200, body
+    assert [p["name"] for p in body["prompts"]] == [f"prompt of {ALICE}"]
+
+
+@pytest.mark.parametrize("path", [
+    "/api/notes/sources", "/api/wiki/status", "/api/health/agent", "/api/gateway/status",
+])
+def test_a_users_per_profile_views_answer_from_their_own_profile(srv, path):
+    status, body, _ = srv.logged_in(ALICE).get(path)
+
+    assert status != 500, body
+    assert BOB not in json.dumps(body)

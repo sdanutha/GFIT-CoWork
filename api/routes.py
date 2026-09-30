@@ -2605,6 +2605,19 @@ def _build_session_list_cache_payload(
     }
 
 
+def _build_session_list_view(**kwargs) -> dict:
+    """Build the session list cache payload for a view, with no caller's Admission.
+
+    The payload is keyed by the view and may be served to any caller of that
+    view, so it is built with the unconfined rule wherever it is built; each
+    caller's answer is applied after the cache (_session_list_rows_for_caller).
+    """
+    from api.access import view_build_without_admission
+
+    with view_build_without_admission():
+        return _build_session_list_cache_payload(**kwargs)
+
+
 def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     """The cached session list with only the rows session ownership lets this caller see.
 
@@ -14333,7 +14346,7 @@ def handle_get(handler, parsed) -> bool:
             # scoping still happens before `_keep_latest_messaging_session_per_source(`.
             payload = _get_cached_session_list_payload(
                 key=key,
-                builder=lambda: _build_session_list_cache_payload(
+                builder=lambda: _build_session_list_view(
                     active_profile=active_profile,
                     all_profiles=all_profiles,
                     show_cli_sessions=show_cli_sessions,

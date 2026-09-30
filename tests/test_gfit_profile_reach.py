@@ -105,3 +105,69 @@ def test_the_admins_own_view_reads_only_the_active_profile(world):
     assert reach.includes(BOB)
     assert not reach.includes(ALICE)
     assert not reach.includes("default")
+
+
+# ── A Profile-home lookup refuses what the request may not read ─────────────
+
+import api.access as access  # noqa: E402
+
+REFUSED = "refused"
+
+
+def _in_request(monkeypatch, admission, *, directory_session=True):
+    monkeypatch.setattr(access._request, "admission", admission, raising=False)
+    monkeypatch.setattr(access._request, "directory_session", directory_session, raising=False)
+    if admission is not None:
+        monkeypatch.setattr(profiles._tls, "profile", admission.profile, raising=False)
+
+
+def _lookup(name):
+    try:
+        return profiles.get_hermes_home_for_profile(name)
+    except ValueError:
+        return REFUSED
+
+
+@pytest.mark.parametrize("name,expected", [
+    (ALICE, "alice"),
+    (None, "alice"),  # no name: the request's own Profile
+    ("", "alice"),
+    (BOB, REFUSED),
+    ("default", REFUSED),
+    ("no-such-profile", REFUSED),
+    ("../../etc", REFUSED),
+])
+def test_a_users_profile_home_lookup_resolves_only_their_own(world, monkeypatch, name, expected):
+    _in_request(monkeypatch, Admitted(ROLE_MEMBER, ALICE))
+    homes = {"alice": world / "profiles" / ALICE}
+
+    assert _lookup(name) == homes.get(expected, expected)
+
+
+@pytest.mark.parametrize("name,expected", [
+    (ALICE, "alice"),
+    (BOB, "bob"),
+    ("default", "root"),
+    (None, "root"),
+])
+def test_the_admins_profile_home_lookup_resolves_any_profile(world, monkeypatch, name, expected):
+    _in_request(monkeypatch, Admitted(ROLE_ADMIN, "default"))
+    homes = {"alice": world / "profiles" / ALICE, "bob": world / "profiles" / BOB, "root": world}
+
+    assert _lookup(name) == homes[expected]
+
+
+def test_upstream_isolated_mode_keeps_its_quiet_clamp(world, monkeypatch):
+    _isolated_mode(monkeypatch, world, BOB)
+    _in_request(monkeypatch, None, directory_session=False)
+
+    assert _lookup(ALICE) == world / "profiles" / BOB
+    assert _lookup(BOB) == world / "profiles" / BOB
+
+
+def test_isolated_mode_is_the_process_posture_not_the_caller(world, monkeypatch):
+    _in_request(monkeypatch, Admitted(ROLE_MEMBER, ALICE))
+
+    assert profiles._is_isolated_profile_mode() is False
+    assert profiles.get_active_profile_name() == ALICE
+    assert profiles.get_active_hermes_home() == world / "profiles" / ALICE
