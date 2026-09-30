@@ -496,11 +496,6 @@ def _all_profiles_query_flag(parsed_url) -> bool:
     return raw in ('1', 'true', 'yes', 'on')
 
 
-def _all_profiles_enabled(parsed_url) -> bool:
-    """Enable aggregate profile reads only when the request asks and mode allows it."""
-    return _all_profiles_query_flag(parsed_url) and not _is_isolated_profile_mode()
-
-
 def _request_profile_reach(parsed_url, active_profile):
     """Which Profiles this request may read, asked of session ownership with its all_profiles flag."""
     return request_session_ownership().profile_reach(
@@ -1543,12 +1538,14 @@ def _cron_jobs_cross_profile(active_profile: str) -> tuple[list[dict], list[dict
         seen_names.add(folded)
         names.append(name)
 
+    # Only the Profiles this request may read are scanned at all.
+    readable = request_session_ownership().profile_reach(active_profile, all_profiles=True)
     _add_name(active_profile)
     for row in list_profiles_api():
         if not isinstance(row, dict):
             continue
         name = str(row.get("name") or "").strip()
-        if not name:
+        if not name or not readable.includes(name):
             continue
         if row.get("visible") is False and not _profiles_match(name, active_profile):
             continue
@@ -1583,15 +1580,17 @@ def _cron_jobs_cross_profile(active_profile: str) -> tuple[list[dict], list[dict
 
 
 def _available_cron_profile_names() -> set[str]:
-    from api.profiles import list_profiles_api
+    """The Profiles a cron job may be set to run in: the ones this request may read."""
+    from api.profiles import get_active_profile_name, list_profiles_api
 
-    names = {"default"}
+    reach = request_session_ownership().profile_reach(get_active_profile_name(), all_profiles=True)
+    names = {"default"} if reach.includes("default") else set()
     for profile in list_profiles_api():
         try:
             name = str(profile.get("name") or "").strip()
         except AttributeError:
             continue
-        if name:
+        if name and reach.includes(name):
             names.add(name)
     return names
 
@@ -14352,15 +14351,10 @@ def handle_get(handler, parsed) -> bool:
 
         active_profile = profiles_api.get_active_profile_name()
         all_projects = load_projects()
-        isolated_profile_mode = _is_isolated_profile_mode()
-        all_profiles = _all_profiles_enabled(parsed)
-        if all_profiles:
-            scoped = all_projects
-            other_profile_count = 0
-        else:
-            scoped = [p for p in all_projects
-                      if _profiles_match(p.get("profile"), active_profile)]
-            other_profile_count = 0 if isolated_profile_mode else len(all_projects) - len(scoped)
+        reach = _request_profile_reach(parsed, active_profile)
+        all_profiles = reach.every_profile
+        scoped = [p for p in all_projects if reach.includes(p.get("profile"))]
+        other_profile_count = len(all_projects) - len(scoped) if reach.counts_other_profiles else 0
         return j(handler, {
             "projects": scoped,
             "all_profiles": all_profiles,
@@ -14669,9 +14663,10 @@ def handle_get(handler, parsed) -> bool:
             if exc.name in ("cron", "cron.jobs"):
                 return j(handler, {"jobs": [], "cron_unavailable": True})
             raise
-        all_profiles = _all_profiles_enabled(parsed)
+        reach = _request_profile_reach(parsed, active_profile)
+        all_profiles = reach.every_profile
         jobs = active_jobs + other_jobs if all_profiles else active_jobs
-        hidden_other_count = 0 if all_profiles else len(other_jobs)
+        hidden_other_count = len(other_jobs) if reach.counts_other_profiles else 0
         return j(handler, {
             "jobs": jobs,
             "all_profiles": all_profiles,
@@ -17255,8 +17250,7 @@ def handle_post(handler, parsed) -> bool:
         if not proj:
             return bad(handler, "Project not found", 404)
         # #1614: a project can only be renamed by the profile that owns it.
-        active_profile = get_active_profile_name()
-        if not _profiles_match(proj.get("profile"), active_profile):
+        if not request_session_ownership().profile_reach(get_active_profile_name()).includes(proj.get("profile")):
             return bad(handler, "Project not found", 404)
         proj["name"] = body["name"].strip()[:128]
         if "color" in body:
@@ -17279,8 +17273,7 @@ def handle_post(handler, parsed) -> bool:
         if not proj:
             return bad(handler, "Project not found", 404)
         # #1614: a project can only be deleted by the profile that owns it.
-        active_profile = get_active_profile_name()
-        if not _profiles_match(proj.get("profile"), active_profile):
+        if not request_session_ownership().profile_reach(get_active_profile_name()).includes(proj.get("profile")):
             return bad(handler, "Project not found", 404)
         projects = [p for p in projects if p["project_id"] != body["project_id"]]
         save_projects(projects)

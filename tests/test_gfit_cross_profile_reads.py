@@ -402,3 +402,89 @@ def test_the_admins_cron_status_shows_every_running_job(srv, running_jobs):
     running = _status(admin)["running"]
     assert {running_jobs[ALICE], running_jobs[BOB]} <= set(running)
     assert _status(admin, f"?job_id={running_jobs[BOB]}")["running"] is True
+
+
+# ── Step (b), ticket 07: projects and cron ask the question ──────────────────
+
+def _project(client, name) -> dict:
+    status, body, _ = client.post("/api/projects/create", {"name": name})
+    assert status == 200, body
+    return body["project"]
+
+
+def _project_ids(client, path) -> tuple[set, dict]:
+    status, body, _ = client.get(path)
+    assert status == 200, body
+    return {p["project_id"] for p in body["projects"]}, body
+
+
+def test_a_users_project_list_shows_only_their_own_projects(srv):
+    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB, ADMIN)}
+    projects = {uid: _project(c, f"project of {uid}")["project_id"] for uid, c in clients.items()}
+    others = {projects[BOB], projects[ADMIN]}
+
+    for path in ("/api/projects", "/api/projects?all_profiles=1"):
+        ids, body = _project_ids(clients[ALICE], path)
+        assert projects[ALICE] in ids and not ids & others
+        assert body["all_profiles"] is False
+        assert body["other_profile_count"] == 0
+
+    ids, body = _project_ids(clients[ADMIN], "/api/projects")
+    assert projects[ADMIN] in ids and not ids & {projects[ALICE], projects[BOB]}
+    assert body["other_profile_count"] >= 2
+    ids, body = _project_ids(clients[ADMIN], "/api/projects?all_profiles=1")
+    assert set(projects.values()) <= ids
+    assert body["all_profiles"] is True
+
+
+def test_another_profiles_project_is_not_found(srv):
+    from api.models import load_projects
+
+    alice, bob = srv.logged_in(ALICE), srv.logged_in(BOB)
+    bobs = _project(bob, "Bob's plan")
+    missing = alice.post("/api/projects/rename", {"project_id": "no-such-project", "name": "x"})[:2]
+
+    assert alice.post("/api/projects/rename", {"project_id": bobs["project_id"], "name": "pwned"})[:2] == missing
+    assert alice.post("/api/projects/delete", {"project_id": bobs["project_id"]})[:2] == (
+        alice.post("/api/projects/delete", {"project_id": "no-such-project"})[:2]
+    )
+    stored = next(p for p in load_projects() if p["project_id"] == bobs["project_id"])
+    assert stored["name"] == "Bob's plan"
+
+
+@pytest.mark.parametrize("profile", ["default", BOB])
+def test_a_user_cannot_point_a_cron_job_at_another_profile(srv, fake_cron, profile):
+    before = _cron_job(srv, ALICE, "alice-job")
+
+    status, body, _ = srv.logged_in(ALICE).post("/api/crons/update", {"job_id": "alice-job", "profile": profile})
+
+    # The Bound guard refuses a body naming another Profile before the route
+    # runs (403); the cron Profile picker would refuse it too (400).
+    assert status in (400, 403), body
+    assert _stored_job(srv, ALICE, "alice-job") == before
+
+
+def test_the_admin_points_a_cron_job_at_any_profile(srv, fake_cron):
+    (srv.hermes_home / "cron").mkdir(parents=True, exist_ok=True)
+    (srv.hermes_home / "cron" / "jobs.json").write_text(json.dumps([{"id": "admin-job", "name": "a"}]))
+    admin = srv.logged_in(ADMIN)
+
+    for profile in (BOB, "default"):
+        status, body, _ = admin.post("/api/crons/update", {"job_id": "admin-job", "profile": profile})
+        assert status == 200, body
+
+
+@pytest.mark.parametrize("profile", ["default", BOB])
+def test_a_users_job_set_to_another_profile_runs_in_their_own(srv, fake_cron, monkeypatch, profile):
+    """Jobs stored before the picker was scoped keep running in the User's own Profile."""
+    runs = []
+    monkeypatch.setattr(routes, "_run_cron_tracked", lambda *args: runs.append(args))
+    monkeypatch.setattr(sys.modules["cron.jobs"], "get_job", lambda job_id: _stored_job(srv, ALICE, job_id), raising=False)
+    _cron_job(srv, ALICE, f"alice-{profile}-job", profile=profile)
+
+    status, body, _ = srv.logged_in(ALICE).post("/api/crons/run", {"job_id": f"alice-{profile}-job"})
+    routes._mark_cron_done(f"alice-{profile}-job")
+
+    assert status == 200, body
+    (_job, _home, execution_home, _event_profile), = runs
+    assert Path(execution_home).resolve() == srv.profile_home(ALICE).resolve()

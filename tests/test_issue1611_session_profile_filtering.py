@@ -108,18 +108,22 @@ def test_all_profiles_query_flag_false_values():
 
 def test_all_profiles_enabled_in_normal_mode(monkeypatch):
     """The aggregate toggle still works outside isolated-profile mode."""
+    import api.profiles as profiles
     import api.routes as routes
 
-    monkeypatch.setattr(routes, "_is_isolated_profile_mode", lambda: False)
-    assert routes._all_profiles_enabled(urlparse('/api/sessions?all_profiles=1')) is True
+    monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: False)
+    reach = routes._request_profile_reach(urlparse('/api/sessions?all_profiles=1'), "default")
+    assert reach.every_profile is True
 
 
 def test_all_profiles_disabled_in_isolated_mode(monkeypatch):
     """An isolated deployment must ignore all_profiles=1 aggregate requests."""
+    import api.profiles as profiles
     import api.routes as routes
 
-    monkeypatch.setattr(routes, "_is_isolated_profile_mode", lambda: True)
-    assert routes._all_profiles_enabled(urlparse('/api/sessions?all_profiles=1')) is False
+    monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: True)
+    reach = routes._request_profile_reach(urlparse('/api/sessions?all_profiles=1'), "default")
+    assert reach.every_profile is False
 
 
 # ── No client-side CLI bypass ──────────────────────────────────────────────
