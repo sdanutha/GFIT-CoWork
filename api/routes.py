@@ -24902,6 +24902,16 @@ def _handle_cron_update(handler, body):
         return bad(handler, str(e))
     from cron.jobs import update_job
 
+    # A cron job's working folder is a Workspace the scheduled run works in:
+    # the request's Workspace policy decides, before anything is changed.
+    workdir = body.get("workdir")
+    if workdir not in (None, "", False):
+        from api.workspace_policy import request_workspace_policy
+
+        try:
+            request_workspace_policy().confine(Path(str(workdir)))
+        except ValueError as e:
+            return bad(handler, str(e))
     try:
         updates = {}
         for k, v in body.items():

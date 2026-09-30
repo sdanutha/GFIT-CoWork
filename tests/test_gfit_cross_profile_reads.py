@@ -1,6 +1,8 @@
 """GFIT-CoWork cross-Profile reads, step (a): the gaps, closed on today's code.
 
 - A User's insights count only the sessions they own (ticket 01).
+- A User's cron job works only in a folder the Workspace policy lets them use
+  (ticket 03).
 
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
 Admin keeps today's behaviour in each case.
@@ -8,7 +10,11 @@ Admin keeps today's behaviour in each case.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
+import types
+from pathlib import Path
 
 import pytest
 
@@ -250,3 +256,105 @@ def test_all_profiles_cli_import_finds_nothing_in_another_users_profile(srv):
     )
     assert status == 200, payload
     assert payload["session"]["profile"] == BOB
+
+
+# ── Ticket 03: a cron job's working folder ──────────────────────────────────
+
+@pytest.fixture
+def fake_cron(monkeypatch):
+    """Stand in for the Agent's ``cron.jobs``: jobs live in $HERMES_HOME/cron/jobs.json.
+
+    ``update_job`` merges the updates into the stored job, as the Agent does.
+    """
+    cron_pkg = types.ModuleType("cron")
+    cron_pkg.__path__ = []
+    cron_jobs = types.ModuleType("cron.jobs")
+
+    def _path():
+        return Path(os.environ["HERMES_HOME"]) / "cron" / "jobs.json"
+
+    def list_jobs(include_disabled=True):
+        return json.loads(_path().read_text()) if _path().exists() else []
+
+    def update_job(job_id, updates):
+        jobs = list_jobs()
+        for job in jobs:
+            if job["id"] == job_id:
+                job.update(updates)
+                _path().write_text(json.dumps(jobs))
+                return job
+        return None
+
+    cron_jobs.list_jobs = list_jobs
+    cron_jobs.update_job = update_job
+    monkeypatch.setitem(sys.modules, "cron", cron_pkg)
+    monkeypatch.setitem(sys.modules, "cron.jobs", cron_jobs)
+    monkeypatch.setattr(routes, "_ensure_agent_cron_import_path", lambda: None)
+
+
+def _cron_job(srv, uid, job_id, **fields) -> dict:
+    cron = srv.profile_home(uid) / "cron"
+    cron.mkdir(parents=True, exist_ok=True)
+    jobs_file = cron / "jobs.json"
+    jobs = json.loads(jobs_file.read_text()) if jobs_file.exists() else []
+    job = {"id": job_id, "name": f"job of {uid}", "prompt": "report", "schedule": "every 1h", **fields}
+    jobs.append(job)
+    jobs_file.write_text(json.dumps(jobs))
+    return job
+
+
+def _stored_job(srv, uid, job_id) -> dict:
+    jobs = json.loads((srv.profile_home(uid) / "cron" / "jobs.json").read_text())
+    return next(job for job in jobs if job["id"] == job_id)
+
+
+@pytest.fixture
+def workspaces(srv, tmp_path):
+    folders = {
+        "alice": srv.profile_home(ALICE) / "workspace" / "project",
+        "bob": srv.profile_home(BOB) / "workspace" / "project",
+        "outside": tmp_path / "outside-every-profile",
+    }
+    for folder in folders.values():
+        folder.mkdir(parents=True)
+    return folders
+
+
+@pytest.mark.parametrize("where", ["bob", "outside"])
+def test_a_user_cannot_set_a_cron_working_folder_outside_their_workspace(srv, fake_cron, workspaces, where):
+    before = _cron_job(srv, ALICE, "alice-job", workdir=str(workspaces["alice"]))
+    alice = srv.logged_in(ALICE)
+
+    status, body, _ = alice.post("/api/crons/update", {
+        "job_id": "alice-job", "workdir": str(workspaces[where]), "name": "renamed",
+    })
+
+    assert status == 400, body
+    assert body["error"] == "That path is outside your Workspace."
+    assert _stored_job(srv, ALICE, "alice-job") == before
+
+
+def test_a_user_sets_and_clears_a_cron_working_folder_inside_their_workspace(srv, fake_cron, workspaces):
+    _cron_job(srv, ALICE, "alice-job")
+    alice = srv.logged_in(ALICE)
+
+    status, body, _ = alice.post("/api/crons/update", {"job_id": "alice-job", "workdir": str(workspaces["alice"])})
+    assert status == 200, body
+    assert _stored_job(srv, ALICE, "alice-job")["workdir"] == str(workspaces["alice"])
+
+    status, body, _ = alice.post("/api/crons/update", {"job_id": "alice-job", "workdir": ""})
+    assert status == 200, body
+
+
+def test_the_admin_sets_any_cron_working_folder(srv, fake_cron, workspaces):
+    admin_home = srv.hermes_home  # the Admin's request runs in the root Profile
+    (admin_home / "cron").mkdir(parents=True, exist_ok=True)
+    (admin_home / "cron" / "jobs.json").write_text(json.dumps([{"id": "admin-job", "name": "a"}]))
+
+    status, body, _ = srv.logged_in(ADMIN).post(
+        "/api/crons/update", {"job_id": "admin-job", "workdir": str(workspaces["outside"])},
+    )
+
+    assert status == 200, body
+    stored = json.loads((admin_home / "cron" / "jobs.json").read_text())[0]
+    assert stored["workdir"] == str(workspaces["outside"])
