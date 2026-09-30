@@ -1581,11 +1581,11 @@ def _cron_jobs_cross_profile(active_profile: str) -> tuple[list[dict], list[dict
 
 def _available_cron_profile_names() -> set[str]:
     """The Profiles a cron job may be set to run in: the ones this request may read."""
-    from api.profiles import get_active_profile_name, list_profiles_api
+    from api import profiles as profiles_api
 
-    reach = request_session_ownership().profile_reach(get_active_profile_name(), all_profiles=True)
+    reach = request_session_ownership().profile_reach(profiles_api.get_active_profile_name(), all_profiles=True)
     names = {"default"} if reach.includes("default") else set()
-    for profile in list_profiles_api():
+    for profile in profiles_api.list_profiles_api():
         try:
             name = str(profile.get("name") or "").strip()
         except AttributeError:
