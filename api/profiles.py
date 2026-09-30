@@ -2082,6 +2082,22 @@ def _invalidate_list_profiles_cache() -> None:
         _LIST_PROFILES_CACHE = None
 
 
+def _read_config_model_without_hermes_cli(home: Path) -> tuple:
+    """(model, provider) from a Profile's ``config.yaml`` when hermes_cli is unavailable."""
+    try:
+        cfg = yaml.safe_load((Path(home) / 'config.yaml').read_text(encoding='utf-8'))
+    except Exception:
+        return None, None
+    model_cfg = cfg.get('model') if isinstance(cfg, dict) else None
+    if isinstance(model_cfg, str):
+        return model_cfg or None, None
+    if isinstance(model_cfg, dict):
+        model = model_cfg.get('default') or model_cfg.get('model')
+        provider = model_cfg.get('provider')
+        return (str(model) if model else None), (str(provider) if provider else None)
+    return None, None
+
+
 def _build_profile_rows_fast() -> list | None:
     """Build the profile list WITHOUT the upstream alias scan.
 
@@ -2097,21 +2113,35 @@ def _build_profile_rows_fast() -> list | None:
     ``list_profiles()`` — the same per-profile metadata, the same hardcoded
     ``"default"`` name for the base home — and simply skip the alias scan.
 
-    Returns ``None`` if the upstream cheap helpers can't be imported, so the
-    caller can fall back to the original (slow but correct) path. Forward-
-    compatible: if upstream fixes ``find_alias_for_profile`` this stays fast and
-    correct with nothing to revert.
+    Returns ``None`` if hermes_cli imports but lacks the cheap helpers, so the
+    caller falls back to upstream's (slow but correct) ``list_profiles()``.
+    When ``hermes_cli`` cannot be imported at all, the same rows are built from this
+    module's own Profile paths and name rule, with the model read straight
+    from each Profile's ``config.yaml`` and no gateway probe, so the Admin still
+    sees every named Profile. Forward-compatible: if upstream fixes
+    ``find_alias_for_profile`` this stays fast and correct with nothing to revert.
     """
     try:
-        from hermes_cli.profiles import (
-            _get_default_hermes_home,
-            _get_profiles_root,
-            _read_config_model,
-            _check_gateway_running,
-            _PROFILE_ID_RE as _UPSTREAM_PROFILE_ID_RE,
-        )
-    except Exception:
-        return None
+        import hermes_cli.profiles as _upstream_profiles
+    except ImportError:
+        _upstream_profiles = None
+    if _upstream_profiles is None:
+        _get_default_hermes_home = lambda: _DEFAULT_HERMES_HOME  # noqa: E731
+        _get_profiles_root = _profiles_root
+        _read_config_model = _read_config_model_without_hermes_cli
+        _check_gateway_running = lambda _home: False  # noqa: E731
+        _UPSTREAM_PROFILE_ID_RE = _PROFILE_ID_RE
+    else:
+        try:
+            from hermes_cli.profiles import (
+                _get_default_hermes_home,
+                _get_profiles_root,
+                _read_config_model,
+                _check_gateway_running,
+                _PROFILE_ID_RE as _UPSTREAM_PROFILE_ID_RE,
+            )
+        except Exception:
+            return None
 
     def _row(home: Path, name: str, is_default: bool) -> dict:
         try:

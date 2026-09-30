@@ -15,31 +15,11 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
 import api.auth as auth
 import api.login as login
 import api.profiles as profiles
 import api.roster as roster
 
-
-def _hermes_cli_importable() -> bool:
-    try:
-        import hermes_cli.profiles  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-# The server lists named Profiles through Hermes Agent's hermes_cli; without it the
-# list holds only `default`. CI has no Hermes Agent, so tests that read the Profile
-# list are known-failing there. Strict, so the run turns red once they pass without it.
-needs_hermes_cli = pytest.mark.xfail(
-    not _hermes_cli_importable(),
-    strict=True,
-    reason="the Profile list needs Hermes Agent's hermes_cli, which CI does not install "
-    "(follow-up: .scratch/upstream-gone/issues/12-ci-lists-profiles-without-hermes-agent.md)",
-)
 
 PASSWORD = "Tr0ub4dor&3-correct-horse"
 WRONG_PASSWORD = "not-the-password"

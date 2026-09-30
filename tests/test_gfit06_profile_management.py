@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests._gfit_server import gfit_server as _gfit_server, needs_hermes_cli
+from tests._gfit_server import gfit_server as _gfit_server
 
 ADMIN = "521740"
 MEMBER = "600001"
@@ -38,7 +38,6 @@ def _row(client, name):
 
 # ── create ──────────────────────────────────────────────────────────────────
 
-@needs_hermes_cli
 def test_admin_creates_a_profile_with_a_display_name(srv, admin):
     status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
     assert status == 200, body
@@ -54,7 +53,6 @@ def test_admin_creates_a_profile_with_a_display_name(srv, admin):
     srv.logged_in(NEWCOMER)
 
 
-@needs_hermes_cli
 def test_a_profile_without_a_display_name_is_shown_by_its_id(admin):
     status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
     assert status == 200, body
@@ -91,7 +89,6 @@ def test_creating_an_existing_profile_is_refused(admin):
     assert status == 400, body
 
 
-@needs_hermes_cli
 @pytest.mark.parametrize("clone_from", ["Bad Name!", "../etc", "-leading-dash", "x" * 65, ""])
 def test_a_clone_from_name_that_breaks_the_profile_name_rule_is_refused(srv, admin, clone_from):
     status, body, _ = admin.post(
@@ -105,7 +102,6 @@ def test_a_clone_from_name_that_breaks_the_profile_name_rule_is_refused(srv, adm
     assert _row(admin, NEWCOMER)["label"] == NEWCOMER
 
 
-@needs_hermes_cli
 def test_a_profile_cannot_be_created_for_an_admin_id(srv, admin):
     # An Admin logs in to `default`, so nobody could ever log in to this Profile.
     status, body, _ = admin.post("/api/profile/create", {"name": ADMIN, "display_name": "Admin One"})
@@ -147,7 +143,6 @@ def test_an_unreadable_roster_refuses_create(srv, admin):
     assert (srv.state / "gfit_roster.json").read_text() == "{not json"
 
 
-@needs_hermes_cli
 def test_a_failed_hermes_create_leaves_no_roster_record(srv, admin, monkeypatch):
     import api.profiles as profiles
 
@@ -167,7 +162,6 @@ def test_a_failed_hermes_create_leaves_no_roster_record(srv, admin, monkeypatch)
     assert _row(admin, NEWCOMER)["label"] == NEWCOMER
 
 
-@needs_hermes_cli
 def test_a_create_that_fails_part_way_leaves_the_profile_disabled(srv, admin, monkeypatch):
     # The Hermes Profile directory is made, then a later step fails: shut, not open.
     import api.profiles as profiles
@@ -181,7 +175,6 @@ def test_a_create_that_fails_part_way_leaves_the_profile_disabled(srv, admin, mo
     assert _cannot_log_in(srv, NEWCOMER)
 
 
-@needs_hermes_cli
 def test_a_failed_activation_leaves_the_new_profile_disabled(srv, admin, monkeypatch):
     # The record is written disabled, then made active once the Hermes Profile exists.
     import api.roster as roster
@@ -205,7 +198,6 @@ def test_a_failed_activation_leaves_the_new_profile_disabled(srv, admin, monkeyp
     assert _cannot_log_in(srv, NEWCOMER)
 
 
-@needs_hermes_cli
 def test_creating_an_existing_disabled_profile_leaves_it_disabled(admin):
     admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
     admin.post("/api/profile/disable", {"name": NEWCOMER})
@@ -216,7 +208,6 @@ def test_creating_an_existing_disabled_profile_leaves_it_disabled(admin):
     assert row["label"] == f"Somsri J. ({NEWCOMER})"
 
 
-@needs_hermes_cli
 def test_member_list_is_labelled_with_the_roster(srv, admin):
     member = srv.logged_in(MEMBER)
     row = _row(admin, MEMBER)
@@ -230,7 +221,6 @@ def test_member_list_is_labelled_with_the_roster(srv, admin):
 
 # ── disable / enable ────────────────────────────────────────────────────────
 
-@needs_hermes_cli
 def test_disabling_ends_sessions_and_refuses_login_but_keeps_data(srv, admin):
     member = srv.logged_in(MEMBER)
     assert member.get("/api/sessions")[0] == 200
@@ -250,7 +240,6 @@ def test_disabling_ends_sessions_and_refuses_login_but_keeps_data(srv, admin):
     assert _row(admin, MEMBER)["status"] == "disabled"
 
 
-@needs_hermes_cli
 def test_re_enabling_lets_the_person_log_in_again(srv, admin):
     admin.post("/api/profile/disable", {"name": MEMBER})
     status, body, _ = admin.post("/api/profile/enable", {"name": MEMBER})
@@ -260,7 +249,6 @@ def test_re_enabling_lets_the_person_log_in_again(srv, admin):
     assert _row(admin, MEMBER)["status"] == "active"
 
 
-@needs_hermes_cli
 def test_disabling_keeps_the_display_name(admin):
     admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
     admin.post("/api/profile/disable", {"name": NEWCOMER})
@@ -289,7 +277,6 @@ def test_an_admin_id_cannot_be_disabled(srv, admin):
     assert "Admin" in body["error"]
 
 
-@needs_hermes_cli
 def test_an_unreadable_roster_fails_closed(srv, admin):
     member = srv.logged_in(MEMBER)
     (srv.state / "gfit_roster.json").write_text("{not json")
@@ -313,7 +300,6 @@ def test_an_unreadable_roster_leaves_the_profile_unchanged(srv, admin, action):
     assert (srv.state / "gfit_roster.json").read_text() == "{not json"
 
 
-@needs_hermes_cli
 def test_a_failed_roster_write_leaves_the_profile_unchanged(srv, admin, monkeypatch):
     member = srv.logged_in(MEMBER)
     import api.roster as roster
@@ -338,7 +324,6 @@ def test_delete_without_confirmation_is_refused(srv, admin):
     assert srv.profile_home(MEMBER).is_dir()
 
 
-@needs_hermes_cli
 def test_delete_removes_the_profile_and_its_roster_record(srv, admin):
     admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
     admin.post("/api/profile/disable", {"name": NEWCOMER})
@@ -364,7 +349,6 @@ def test_deleting_a_profile_ends_its_sessions(srv, admin):
     assert status == 403
 
 
-@needs_hermes_cli
 def test_a_deletion_that_cannot_finish_leaves_the_profile_disabled(srv, admin, monkeypatch):
     import api.profiles as profiles
 
