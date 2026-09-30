@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- Filesystem checkpoint (rollback) API.
+GFIT-CoWork -- Filesystem checkpoint (rollback) API.
 
 Provides endpoints to list, diff, and restore filesystem checkpoints
 created by the Hermes agent's CheckpointManager.  Checkpoints live at
@@ -71,14 +71,14 @@ def _resolve_workspace(workspace: str) -> str:
     """Validate and return the canonical workspace path.
 
     Security: workspace must match a known configured workspace
-    (from workspaces.json or session-attached workspaces).
+    (from workspaces.json or session-attached workspaces), as cleaned by the
+    request's Workspace policy (a User's list holds only their Workspaces).
+    Membership is checked before existence, so a path outside the caller's
+    Workspaces gets the same refusal whether or not it exists on the server.
     """
     if not workspace or not isinstance(workspace, str):
         raise ValueError("workspace is required")
-    # Basic path validation
     resolved = os.path.realpath(workspace)
-    if not os.path.isdir(resolved):
-        raise ValueError(f"Workspace does not exist: {workspace}")
     # Security: confirm workspace is in the known list
     try:
         from api.workspace import load_workspaces
@@ -91,6 +91,8 @@ def _resolve_workspace(workspace: str) -> str:
             raise ValueError(f"Workspace not in configured list: {workspace}")
     except ImportError:
         logger.warning("Could not load workspace list for rollback validation")
+    if not os.path.isdir(resolved):
+        raise ValueError(f"Workspace does not exist: {workspace}")
     return resolved
 
 
@@ -167,10 +169,10 @@ def _read_workspace_text(workspace_root: Path, rel_path: str) -> str | None:
     make the rollback diff falsely report it as *deleted*). Treat missing /
     invalid / escape / non-regular paths as absent (None).
     """
-    from api.workspace import open_anchored_fd, safe_resolve_ws
+    from api.workspace import open_anchored_fd, resolve_in_workspace
 
     try:
-        target = safe_resolve_ws(workspace_root, rel_path)
+        target = resolve_in_workspace(workspace_root, rel_path)
     except (ValueError, OSError):
         return None
     # Pre-check the leaf type WITHOUT opening it: open_anchored_fd opens with
@@ -364,9 +366,9 @@ def get_checkpoint_diff(workspace: str, checkpoint: str) -> dict[str, Any]:
 
 def _restore_checkpoint_file(workspace_root: Path, rel_path: str, content: bytes, mode: int) -> None:
     """Restore one checkpoint blob without following checkpoint or workspace symlinks."""
-    from api.workspace import open_anchored_create_fd, open_anchored_write_fd, safe_resolve_ws
+    from api.workspace import open_anchored_create_fd, open_anchored_write_fd, resolve_in_workspace
 
-    target = safe_resolve_ws(workspace_root, rel_path)
+    target = resolve_in_workspace(workspace_root, rel_path)
     if target.exists():
         fd = open_anchored_write_fd(workspace_root, target)
     else:

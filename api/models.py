@@ -1,4 +1,4 @@
-"""Hermes Web UI -- Session model and in-memory session store."""
+"""GFIT-CoWork -- Session model and in-memory session store."""
 import collections
 import contextvars
 import copy
@@ -6233,8 +6233,12 @@ def _refresh_index_rows_from_sidecar_metadata(
     return out
 
 
-def state_db_has_session(sid: str) -> bool:
+def state_db_has_session(sid: str, *, profile: str | None = None) -> bool:
     """Return True when ``sid`` exists in the active state.db sessions table.
+
+    With *profile*, look only in that named Profile's own state.db: no
+    fallback to the active or default home, so an unresolvable Profile finds
+    nothing.
 
     Used by file-manager handlers to fall back to a state.db lookup when
     ``get_session`` raises ``KeyError`` because the session was created by
@@ -6249,7 +6253,15 @@ def state_db_has_session(sid: str) -> bool:
         import sqlite3
     except ImportError:
         return False
-    db_path = _active_state_db_path()
+    if profile is None:
+        db_path = _active_state_db_path()
+    else:
+        from api.profiles import get_hermes_home_for_profile
+
+        home = Path(get_hermes_home_for_profile(profile))
+        if home.name != profile:
+            return False
+        db_path = home / 'state.db'
     if not db_path.exists():
         return False
     try:
@@ -6374,35 +6386,28 @@ def persist_recovered_workspace_binding(
 
 
 def get_session_for_file_ops(sid: str):
-    """Return a profile-authorized session-like object for file-manager handlers.
+    """Return the session-like object file-manager handlers work on.
 
-    Tries ``get_session`` first (preserves all existing behavior for WebUI
-    sessions) and only returns that session when its stored profile belongs to
-    the active request profile.  If that lookup fails, checks state.db; when the
-    session exists there, returns an ``_ExternalSessionView`` whose ``workspace``
-    is the active WebUI workspace. If neither has the session, re-raises
-    ``KeyError`` so callers continue to return their existing 404.
+    ``get_session`` first (WebUI sessions, whose missing Workspace is
+    recovered), and session ownership decides about the session found
+    (:mod:`api.session_ownership`): one the request does not own raises
+    ``KeyError``, so callers return their existing 404. For a session found
+    only in the request's own state.db, an ``_ExternalSessionView`` whose
+    ``workspace`` is the active WebUI workspace. If neither has the session,
+    re-raises ``KeyError``.
     """
+    from api.session_ownership import request_session_ownership
+
     try:
         session = get_session(sid, metadata_only=True)
     except KeyError:
         if state_db_has_session(sid):
             return _ExternalSessionView(str(sid), str(get_last_workspace()))
         raise
-
-    from api.profiles import _profiles_match, get_active_profile_name
+    if request_session_ownership().refuse_found_session(sid, session) is not None:
+        raise KeyError(sid)
 
     session_profile = getattr(session, 'profile', None)
-    active_profile = get_active_profile_name()
-    if not _profiles_match(session_profile, active_profile):
-        logger.debug(
-            "Rejected file-manager session for foreign profile: "
-            "session_id=%s session_profile=%r active_profile=%r",
-            sid,
-            session_profile,
-            active_profile,
-        )
-        raise KeyError(sid)
     try:
         from api.workspace import resolve_implicit_workspace_with_recovery
 
@@ -7818,10 +7823,20 @@ def get_claude_code_sessions(projects_dir: Path | str | None = None, *, max_file
     return sessions
 
 
+def _request_sees_profile_less_sessions() -> bool:
+    """Session ownership: may this request see sessions that belong to no Profile?"""
+    from api.session_ownership import request_session_ownership
+
+    return request_session_ownership().sees_profile_less_sessions()
+
+
 def get_claude_code_session_messages(sid, projects_dir: Path | str | None = None) -> list:
-    """Return messages for one read-only Claude Code JSONL session."""
+    """Return messages for one read-only Claude Code JSONL session.
+
+    None for a User's request: the transcripts belong to no Profile.
+    """
     sid = str(sid or '')
-    if not sid.startswith(f'{CLAUDE_CODE_SOURCE}_'):
+    if not sid.startswith(f'{CLAUDE_CODE_SOURCE}_') or not _request_sees_profile_less_sessions():
         return []
     for path in _iter_claude_code_jsonl_files(projects_dir) or []:
         if _claude_code_session_id(path) != sid:
@@ -9394,6 +9409,10 @@ def get_cli_sessions(
     bridge is purely additive and never crashes the WebUI.
     """
     source_filter = _normalize_cli_session_source_filter(source_filter)
+    if not _request_sees_profile_less_sessions():
+        # Claude Code rows come from the server account's home and belong to
+        # no Profile; a User's request may reach only their own Profile.
+        include_claude_code = False
     if all_profiles:
         contexts, context_cache_key = _all_profiles_cli_contexts()
         db_path = "all profiles"

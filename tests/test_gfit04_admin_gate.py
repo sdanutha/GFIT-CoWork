@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from api.access import ADMIN_ONLY_MESSAGE
 from tests._gfit_server import gfit_server as _gfit_server
 
 ADMIN = "521740"
@@ -30,14 +31,9 @@ ADMIN_ONLY = [
     ("POST", "/api/git/discard", {}),
     # extensions
     ("GET", "/api/extensions/status", None),
-    ("POST", "/api/extensions/install", {}),
     ("POST", "/api/extensions/toggle", {}),
     ("GET", "/api/extensions/some-ext/sidecar/x", None),
     ("GET", "/extensions/some-ext/app.js", None),
-    # self-update
-    ("GET", "/api/updates/check", None),
-    ("POST", "/api/updates/apply", {}),
-    ("POST", "/api/updates/force", {}),
     # shutdown / reload
     ("POST", "/api/shutdown", {}),
     ("POST", "/api/health/restart", {}),
@@ -87,6 +83,15 @@ ADMIN_ONLY = [
     ("POST", "/api/kanban/tasks", {}),
 ]
 
+# Routes that act on the session store every Profile shares, or on the server machine.
+REACH_EVERY_PROFILE_OR_THE_SERVER = [
+    ("POST", "/api/sessions/cleanup", {}),
+    ("POST", "/api/sessions/cleanup_zero_message", {}),
+    ("GET", "/api/session/recovery/audit", None),
+    ("POST", "/api/session/recovery/repair-safe", {}),
+    ("POST", "/api/file/reveal", {"session_id": "x", "path": "."}),
+]
+
 # Safe for the Admin to call in a test (no shutdown, update, or install).
 ADMIN_SAFE = [
     ("GET", "/api/logs", None),
@@ -96,6 +101,9 @@ ADMIN_SAFE = [
     ("GET", "/api/mcp/servers", None),
     ("GET", "/api/escape/list", None),
     ("POST", "/api/settings", {"send_key": "enter"}),
+    ("GET", "/api/session/recovery/audit", None),
+    ("POST", "/api/sessions/cleanup_zero_message", {}),  # the test teardown calls it too
+    ("POST", "/api/file/reveal", {"session_id": "no-such-session", "path": "."}),  # never opens anything
 ]
 
 MEMBER_ALLOWED = [
@@ -201,3 +209,36 @@ def test_session_ends_when_admin_is_removed_from_the_list(srv, admin, monkeypatc
     monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", SECOND_ADMIN)
     status, _, _ = admin.get("/api/profile/active")
     assert status == 401
+
+
+def test_member_session_ends_when_they_are_added_to_the_admin_list(srv, member, monkeypatch):
+    assert member.get("/api/sessions")[0] == 200
+    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", f"{ADMIN},{MEMBER}")
+
+    status, _, _ = member.get("/api/sessions")
+    assert status == 401
+
+    again = srv.logged_in(MEMBER)
+    status, body, _ = again.get("/api/auth/status")
+    assert body["role"] == "admin"
+    assert body["bound_profile"] == "default"
+
+
+def test_admin_with_a_profile_of_their_own_is_signed_out_when_removed_from_the_list(srv, admin, monkeypatch):
+    srv.profile_home(ADMIN).mkdir()
+    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", SECOND_ADMIN)
+
+    status, _, _ = admin.get("/api/profile/active")
+    assert status == 401
+
+    again = srv.logged_in(ADMIN)
+    status, body, _ = again.get("/api/auth/status")
+    assert body["role"] == "member"
+    assert body["bound_profile"] == ADMIN
+
+
+@pytest.mark.parametrize("method,path,body", REACH_EVERY_PROFILE_OR_THE_SERVER)
+def test_member_is_refused_routes_that_reach_every_profile(member, method, path, body):
+    status, payload, _ = member.request(method, path, body)
+    assert status == 403, (method, path, payload)
+    assert payload["error"] == ADMIN_ONLY_MESSAGE

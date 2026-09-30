@@ -1,1 +1,1 @@
-"""Hermes Web UI -- API modules."""
+"""GFIT-CoWork -- API modules."""

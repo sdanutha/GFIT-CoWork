@@ -73,7 +73,7 @@ def snap_dir(tmp_path, monkeypatch):
 
 
 def _media_get(routes, monkeypatch, target, headers=None, query_extra=""):
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     handler = _FakeHandler(headers)
     parsed = SimpleNamespace(path="/api/media", query=f"path={target}{query_extra}")
     routes._handle_media(handler, parsed)

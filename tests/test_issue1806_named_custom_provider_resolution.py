@@ -1653,12 +1653,12 @@ def _four_route_messages():
 # Each driver composes the harness the way its consumer needs it and returns the
 # FINAL constructor kwargs. Sharing them keeps the two contracts below --
 # "the endpoint and credential are one record's" and "the record's side fields
-# reach the constructor too" -- asserted over the SAME five consumers, so a new
+# reach the constructor too" -- asserted over the SAME four consumers, so a new
 # consumer cannot be added to one list and forgotten in the other.
 
 
 def _drive_sync_chat_route(monkeypatch, cfg_dict=None, runtime_dict=None):
-    """Consumer 1/5: POST /api/chat."""
+    """Consumer 1/4: POST /api/chat."""
     import api.routes as routes
 
     captured, fake_session = _setup_route_consumer_runtime(
@@ -1692,7 +1692,7 @@ def _drive_sync_chat_route(monkeypatch, cfg_dict=None, runtime_dict=None):
 
 
 def _drive_manual_compression_route(monkeypatch, cfg_dict=None, runtime_dict=None):
-    """Consumer 2/5: POST /api/session/{sid}/compress."""
+    """Consumer 2/4: POST /api/session/{sid}/compress."""
     import api.config as _config
     import api.routes as routes
 
@@ -1735,7 +1735,7 @@ def _decline_auxiliary_client(monkeypatch, recorded_main_runtime=None):
 def _drive_commit_message_route(
     monkeypatch, cfg_dict=None, runtime_dict=None, recorded_main_runtime=None
 ):
-    """Consumer 3/5: LLM git commit-message generation."""
+    """Consumer 3/4: LLM git commit-message generation."""
     import api.routes as routes
 
     captured, fake_session = _setup_route_consumer_runtime(
@@ -1749,7 +1749,7 @@ def _drive_commit_message_route(
 
 
 def _drive_handoff_summary_route(monkeypatch, cfg_dict=None, runtime_dict=None):
-    """Consumer 4/5: on-demand handoff summary."""
+    """Consumer 4/4: on-demand handoff summary."""
     import api.models as models
     import api.routes as routes
 
@@ -1775,37 +1775,11 @@ def _drive_handoff_summary_route(monkeypatch, cfg_dict=None, runtime_dict=None):
     return captured["init_kwargs"]
 
 
-def _drive_update_summary_route(
-    monkeypatch, cfg_dict=None, runtime_dict=None, recorded_main_runtime=None
-):
-    """Consumer 5/5: update summary (``_llm_update_summary``).
-
-    This one resolves ``get_effective_default_model()`` rather than the session's
-    model, so the default has to name the slug under test.
-    """
-    import api.routes as routes
-
-    cfg_dict = copy.deepcopy(_KEYED_VS_LIST_CFG if cfg_dict is None else cfg_dict)
-    cfg_dict["model"] = {
-        "default": "@custom:omni:antigravity/gemini-3.7-flash-tiered",
-        "provider": "custom:omni",
-    }
-    captured, _fake_session = _setup_route_consumer_runtime(
-        monkeypatch, cfg_dict=cfg_dict, runtime_dict=runtime_dict
-    )
-    _decline_auxiliary_client(monkeypatch, recorded_main_runtime)
-
-    with pytest.raises(_RouteAgentCaptured):
-        routes._llm_update_summary("sys", "user", active_profile=None)
-    return captured["init_kwargs"]
-
-
 _ROUTE_CONSUMER_DRIVERS = [
     (_drive_sync_chat_route, "sync chat (/api/chat)"),
     (_drive_manual_compression_route, "manual compression (/compress)"),
     (_drive_commit_message_route, "git commit message"),
     (_drive_handoff_summary_route, "handoff summary"),
-    (_drive_update_summary_route, "update summary"),
 ]
 
 
@@ -1817,12 +1791,11 @@ def test_route_consumers_apply_exact_list_row_atomically(monkeypatch, driver, la
     _assert_list_row_not_keyed(driver(monkeypatch), label)
 
 
-# The two consumers whose auxiliary-client shortcut can answer the request
+# The consumer whose auxiliary-client shortcut can answer the request
 # outright -- for them ``main_runtime`` is the only carrier of the resolved
 # authority, because AIAgent is never built.
 _AUXILIARY_ROUTE_DRIVERS = [
     (_drive_commit_message_route, "git commit message"),
-    (_drive_update_summary_route, "update summary"),
 ]
 
 
@@ -3508,7 +3481,7 @@ def test_agent_connection_bundle_raises_on_terminal_route(
     """The non-streaming chokepoint refuses instead of returning a holed bundle.
 
     Returning ``{"base_url": None, ...}`` here would look terminal to the caller
-    and be the opposite at the constructor, so all five consumers that share
+    and be the opposite at the constructor, so all four consumers that share
     this helper would each have had to remember to check. Raising makes the
     refusal structural — and the exception subclasses ``ValueError``, which is
     what the existing handlers at those call sites already catch.
@@ -3533,7 +3506,7 @@ def test_agent_connection_bundle_raises_on_terminal_route(
 
     err = excinfo.value
     assert isinstance(err, ValueError), (
-        "the existing except-ValueError handlers at the five call sites must keep catching it"
+        "the existing except-ValueError handlers at the four call sites must keep catching it"
     )
     assert err.reason == expected_reason
     assert err.provider == slug
@@ -5124,7 +5097,7 @@ def test_credential_only_record_refuses_the_production_composed_retry(
     assert config.KEYLESS_CUSTOM_API_KEY not in blob
 
 
-# The two consumers whose auxiliary client can answer outright. There AIAgent is
+# The consumer whose auxiliary client can answer outright. There AIAgent is
 # never built, so ``main_runtime`` is the ONLY carrier of the resolved authority
 # — and the only place a borrowed pair could still reach the wire after every
 # constructor assertion above passes.
@@ -5132,10 +5105,6 @@ _CREDENTIAL_ONLY_AUX_DRIVERS = [
     (
         "git commit message",
         lambda routes, session: routes._llm_git_commit_message("sys", "user", session=session),
-    ),
-    (
-        "update summary",
-        lambda routes, _session: routes._llm_update_summary("sys", "user", active_profile=None),
     ),
 ]
 

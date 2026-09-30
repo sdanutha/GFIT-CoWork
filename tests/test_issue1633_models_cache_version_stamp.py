@@ -25,7 +25,7 @@ import pytest
 
 @pytest.fixture
 def isolated_cache(tmp_path, monkeypatch):
-    """Redirect the disk cache to a tmp file and reset api.updates between tests."""
+    """Redirect the disk cache to a tmp file and reset api.version between tests."""
     from api import config
 
     cache_path = tmp_path / "models_cache.json"
@@ -36,8 +36,8 @@ def isolated_cache(tmp_path, monkeypatch):
 @pytest.fixture
 def with_runtime_version():
     """Return a setter that forces a particular runtime WEBUI_VERSION."""
-    # api.updates must be loaded for the lazy resolver to find it
-    import api.updates as upd
+    # api.version must be loaded for the lazy resolver to find it
+    import api.version as upd
     original = upd.WEBUI_VERSION
 
     def _set(version: str):
@@ -61,19 +61,19 @@ def _shape_cache():
 
 
 def test_current_webui_version_returns_runtime_version(with_runtime_version):
-    """When api.updates is loaded, the lazy resolver returns its WEBUI_VERSION."""
+    """When api.version is loaded, the lazy resolver returns its WEBUI_VERSION."""
     from api.config import _current_webui_version
     with_runtime_version("v0.50.999-test")
     assert _current_webui_version() == "v0.50.999-test"
 
 
 def test_current_webui_version_returns_none_when_module_missing(monkeypatch):
-    """Early-init path: if api.updates isn't in sys.modules, return None.
+    """Early-init path: if api.version isn't in sys.modules, return None.
 
     Required so cache reads/writes during very early server boot don't wedge
     the startup sequence on AttributeError.
     """
-    monkeypatch.delitem(sys.modules, "api.updates", raising=False)
+    monkeypatch.delitem(sys.modules, "api.version", raising=False)
     from api.config import _current_webui_version
     assert _current_webui_version() is None
 
@@ -94,16 +94,16 @@ def test_save_stamps_webui_version_on_disk(isolated_cache, with_runtime_version)
 
 
 def test_save_omits_webui_version_when_runtime_unknown(isolated_cache, monkeypatch):
-    """If api.updates isn't loaded (very early boot), save still works but
+    """If api.version isn't loaded (very early boot), save still works but
     skips the version stamp. The next load with a known runtime version will
     treat the file as invalid (fail-safe rebuild on first real call)."""
-    monkeypatch.delitem(sys.modules, "api.updates", raising=False)
+    monkeypatch.delitem(sys.modules, "api.version", raising=False)
     from api import config
 
     config._save_models_cache_to_disk(_shape_cache())
     on_disk = json.load(open(isolated_cache))
     assert "_webui_version" not in on_disk
-    # Schema version is always written — it doesn't depend on api.updates
+    # Schema version is always written — it doesn't depend on api.version
     assert on_disk["_schema_version"] == config._MODELS_CACHE_SCHEMA_VERSION
 
 
@@ -202,12 +202,12 @@ def test_load_rejects_mismatched_schema_version(isolated_cache, with_runtime_ver
 
 
 def test_load_skips_version_check_when_runtime_unknown(isolated_cache, monkeypatch):
-    """Early-init: if api.updates isn't loaded, _current_webui_version returns
+    """Early-init: if api.version isn't loaded, _current_webui_version returns
     None. The version check should NOT run (because we have nothing to compare
     against), but other validity checks still apply.
 
     This is the fail-safe path that prevents a boot-time wedge if the very
-    first /api/models call fires before api.updates is imported.
+    first /api/models call fires before api.version is imported.
     """
     from api import config
 
@@ -220,9 +220,9 @@ def test_load_skips_version_check_when_runtime_unknown(isolated_cache, monkeypat
     }
     json.dump(cache, open(isolated_cache, "w"))
 
-    monkeypatch.delitem(sys.modules, "api.updates", raising=False)
+    monkeypatch.delitem(sys.modules, "api.version", raising=False)
     loaded = config._load_models_cache_from_disk()
-    # Loadable because runtime version was unknown — once api.updates loads,
+    # Loadable because runtime version was unknown — once api.version loads,
     # the next call would re-validate.
     assert loaded is not None
 

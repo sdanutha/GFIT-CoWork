@@ -135,8 +135,8 @@ def test_extensions_do_not_add_generic_backend_settings_write_route():
 def test_extensions_diagnostics_tab_refreshes_runtime_status():
     tab_block = _function_block("switchExtensionsTab", extra=900)
 
-    assert "if(tab==='diagnostics') loadExtensionsPanel({preserveExisting:true});" in tab_block
-    assert "if(tab==='gallery'&&!_extensionsGalleryLoaded) loadExtensionsGallery();" in tab_block
+    assert "if(tab==='diagnostics'||tab==='installed') loadExtensionsPanel({preserveExisting:true});" in tab_block
+    assert "gallery" not in tab_block.lower()
 
 
 def test_extensions_panel_renders_sanitized_status_payload():
@@ -272,8 +272,8 @@ def test_extensions_installed_settings_route_through_shared_accessor():
     installed_block = _between("function _extensionInstalledList", "function _extensionSidecarHealthBadge")
     settings_block = _between("function _configureExtensionSettingsFromStatus", "function _extensionInstalledList")
     bind_block = _between("function _bindExtensionSettingsButtons", "async function loadExtensionsPanel")
-    gallery_block = _between("function _renderExtensionsGallery", "function _bindExtensionGalleryButtons")
-    installed_surface_block = _between("function _renderInstalledExtensionsSurface", "async function loadExtensionsGallery")
+    render_block = _between("function _renderExtensionsPanel", "async function loadExtensionsPanel")
+    installed_surface_block = _between("function _renderInstalledExtensionsSurface", "async function copyExtensionsDiagnostics")
 
     assert "entry&&entry.storage_owned" in settings_block
     assert "window.HermesExtensionSettings.settingsForExtension(id)" in settings_block
@@ -291,7 +291,7 @@ def test_extensions_installed_settings_route_through_shared_accessor():
     assert "api('/api/extensions/status')" not in bind_block
     assert "api('/api/settings'" not in bind_block
     assert "localStorage" not in bind_block
-    assert "_renderInstalledExtensionsSurface(statusData)" in gallery_block
+    assert "_renderInstalledExtensionsSurface(data)" in render_block
     assert "_bindExtensionSettingsButtons(installedEl)" in installed_surface_block
 
 
@@ -300,7 +300,7 @@ def test_extension_configure_hook_is_scoped_to_installed_rows_and_current_status
     configure_block = _between("function _extensionConfigureButton", "function _extensionInstalledList")
     bind_block = _between("function _bindExtensionConfigureButtons", "async function handleExtensionToggle")
     diagnostics_block = _between("function _renderExtensionsPanel", "function _bindExtensionToggleButtons")
-    gallery_block = _between("function _renderInstalledExtensionsSurface", "function _bindExtensionGalleryButtons")
+    installed_surface_block = _between("function _renderInstalledExtensionsSurface", "async function copyExtensionsDiagnostics")
 
     assert "surface!=='installed'" in configure_block
     assert "entry&&entry.effective_enabled" in configure_block
@@ -310,9 +310,9 @@ def test_extension_configure_hook_is_scoped_to_installed_rows_and_current_status
     assert "aria-busy" in configure_block
     assert "_extensionConfigureButton(entry,surface)" in installed_block
     assert "_extensionInstalledList(extensions,!!(data&&data.extension_dir_configured),'diagnostics')" in diagnostics_block
-    assert "statusData&&statusData.extensions" in gallery_block
-    assert "'installed'" in gallery_block
-    assert "_bindExtensionConfigureButtons(installedEl)" in gallery_block
+    assert "statusData&&statusData.extensions" in installed_surface_block
+    assert "'installed'" in installed_surface_block
+    assert "_bindExtensionConfigureButtons(installedEl)" in installed_surface_block
     assert "_invokeConfigure(id,{" in bind_block
     assert "opener:btn" in bind_block
     assert "Extension configuration failed." in bind_block
@@ -357,7 +357,7 @@ def test_extension_configure_rendered_surface_runtime():
 
 
 def test_extension_configure_late_registration_rerenders_only_installed_surface():
-    listener_block = _between("function _handleExtensionConfigureChange", "function _extensionSafeHttpUrl")
+    listener_block = _between("function _handleExtensionConfigureChange", "function _renderInstalledExtensionsSurface")
     diagnostics_block = _between("function _renderExtensionsPanel", "function _bindExtensionToggleButtons")
 
     assert "_onConfigureChange(_handleExtensionConfigureChange)" in listener_block
@@ -365,68 +365,7 @@ def test_extension_configure_late_registration_rerenders_only_installed_surface(
     assert "_syncExtensionConfigureButtonState(change.id)" in listener_block
     assert "_renderInstalledExtensionsSurface" in listener_block
     assert "extensionsDiagnostics" not in listener_block
-    assert "_extensionsGalleryData.statusData=data||null" in diagnostics_block
-
-
-def test_extensions_gallery_renders_post_install_guidance():
-    url_block = _between("function _extensionSafeHttpUrl", "function _extensionPostInstallNote")
-    gallery_block = _between("function _extensionPostInstallNote", "async function loadExtensionsGallery")
-    render_block = _between("function _renderExtensionsGallery", "function _bindExtensionGalleryButtons")
-    install_block = _between("async function handleExtensionInstall", "async function handleExtensionUninstall")
-
-    assert "/^https?:\\/\\//i.test(raw)" in url_block
-    assert "url.username||url.password" in url_block
-    assert "entry.post_install" in gallery_block
-    assert "post&&post.docs_url" in gallery_block
-    assert "sidecar_start_required" in gallery_block
-    assert "native_host_start_required" in gallery_block
-    assert "requires_local_app" in gallery_block
-    assert "local_app_label" in gallery_block
-    assert "t('ext_gallery_local_component_required')" in gallery_block
-    assert "t('ext_gallery_local_app_label')" in gallery_block
-    assert "t('ext_gallery_required_suffix',localAppLabel)" in gallery_block
-    assert "t('ext_gallery_sidecar_required')" in gallery_block
-    assert "t('ext_gallery_native_host_required')" in gallery_block
-    assert "t('ext_gallery_open_setup_guide')" in gallery_block
-    assert "t(isInstalled?'ext_gallery_next_step':'ext_gallery_after_install')" in gallery_block
-    assert "target=\"_blank\"" in gallery_block
-    assert "rel=\"noopener noreferrer\"" in gallery_block
-    assert "extension-gallery-next-step" in gallery_block
-    assert "esc(summary)" in gallery_block
-    assert "esc(docsUrl)" in gallery_block
-    assert "esc(item)" in gallery_block
-    assert "_extensionPostInstallNote(entry,isInstalled)" in render_block
-    assert "t('ext_gallery_install_restart_required')" in install_block
-    assert "t('ext_gallery_install_followup')" in install_block
-    assert "t('ext_gallery_install_ok')" in install_block
-    assert "webui_restart_required" in install_block
-
-
-def test_extensions_gallery_links_sources_and_humanizes_permissions():
-    helper_block = _between("function _extensionRegistrySourceUrl", "function _extensionPostInstallNote")
-    render_block = _between("function _renderExtensionsGallery", "function _bindExtensionGalleryButtons")
-
-    assert "entry.homepage" in helper_block
-    assert "entry.repository_url" in helper_block
-    assert "entry.entry_path||entry.runtime_manifest_path" in helper_block
-    assert "hermes-webui/hermes-webui-extensions/tree/main" in helper_block
-    assert "encodeURIComponent" in helper_block
-    assert "extension-gallery-source-link" in helper_block
-    assert "target=\"_blank\"" in helper_block
-    assert "rel=\"noopener noreferrer\"" in helper_block
-    assert "t('ext_gallery_permissions_empty')" in helper_block
-    assert "webui_api" in helper_block
-    assert "sidecar_commands" in helper_block
-    assert "dom.mutates_core_views" in helper_block
-    assert "storage.shared_webui_keys" in helper_block
-    assert "loopback_sidecar" in helper_block
-    assert "native_host" in helper_block
-    assert "network_external" in helper_block
-    assert "extension-gallery-permission-row" in helper_block
-    assert "_extensionSourceLink(entry)" in render_block
-    assert "_extensionPermissionSummary(perms)" in render_block
-    assert "JSON.stringify(perms" not in render_block
-    assert "<pre>" not in render_block
+    assert "_renderInstalledExtensionsSurface(data)" in diagnostics_block
 
 
 def test_copy_extensions_diagnostics_copies_current_sanitized_payload():
@@ -454,11 +393,6 @@ def test_extensions_styles_are_scoped_to_extensions_panel():
     assert ".extension-sidecar-list" in STYLE_CSS
     assert ".extension-sidecar-runtime" in STYLE_CSS
     assert ".extension-sidecar-status-badge" in STYLE_CSS
-    assert ".extension-gallery-source-link" in STYLE_CSS
-    assert ".extension-gallery-next-step" in STYLE_CSS
-    assert ".extension-gallery-next-link" in STYLE_CSS
-    assert ".extension-gallery-permission-list" in STYLE_CSS
-    assert ".extension-gallery-permission-row" in STYLE_CSS
 
 
 def test_extensions_i18n_keys_exist_for_all_locales():
@@ -467,17 +401,9 @@ def test_extensions_i18n_keys_exist_for_all_locales():
     assert len(blocks) == _locale_count()
     required_keys = [
         "settings_tab_extensions",
-        "ext_gallery_next_step",
-        "ext_gallery_after_install",
-        "ext_gallery_permissions_empty",
-        "ext_gallery_local_component_required",
-        "ext_gallery_local_app_label",
-        "ext_gallery_required_suffix",
-        "ext_gallery_sidecar_required",
-        "ext_gallery_native_host_required",
-        "ext_gallery_open_setup_guide",
-        "ext_gallery_install_restart_required",
-        "ext_gallery_install_followup",
+        "settings_extensions_meta",
+        "settings_extensions_installed_tab",
+        "settings_extensions_diagnostics_tab",
     ]
     missing = {
         name: [key for key in required_keys if key not in block]
@@ -485,40 +411,6 @@ def test_extensions_i18n_keys_exist_for_all_locales():
     }
     missing = {name: keys for name, keys in missing.items() if keys}
     assert not missing, f"Locale(s) missing extension i18n key(s): {missing}"
-
-
-def test_extensions_post_install_i18n_is_localized_outside_english():
-    blocks = _locale_blocks()
-    english = blocks["en"]
-    post_install_keys = [
-        "ext_gallery_next_step",
-        "ext_gallery_after_install",
-        "ext_gallery_local_component_required",
-        "ext_gallery_local_app_label",
-        "ext_gallery_required_suffix",
-        "ext_gallery_sidecar_required",
-        "ext_gallery_native_host_required",
-        "ext_gallery_open_setup_guide",
-        "ext_gallery_install_restart_required",
-        "ext_gallery_install_followup",
-    ]
-    english_values = {key: _locale_string(english, key) for key in post_install_keys}
-    untranslated = {
-        name: [
-            key
-            for key in post_install_keys
-            if _locale_string(block, key) == english_values[key]
-        ]
-        for name, block in blocks.items()
-        if name != "en"
-    }
-    untranslated = {name: keys for name, keys in untranslated.items() if keys}
-
-    assert not untranslated, f"Locale(s) keep English post-install guidance: {untranslated}"
-    for name, block in blocks.items():
-        assert "{0}" in _locale_string(block, "ext_gallery_required_suffix"), (
-            f"{name} must preserve the local-app label placeholder"
-        )
 
 
 def test_extensions_i18n_does_not_include_replacement_characters():

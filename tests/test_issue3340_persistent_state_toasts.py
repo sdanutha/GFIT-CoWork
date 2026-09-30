@@ -4,7 +4,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MESSAGES_JS = (ROOT / "static" / "messages.js").read_text(encoding="utf-8")
 STREAMING_PY = (ROOT / "api" / "streaming.py").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def _tool_complete_listener_block() -> str:
@@ -66,9 +65,3 @@ def test_frontend_handles_state_saved_sse_and_reuses_dedupe():
     assert "String(d.action||'').toLowerCase()==='created'" in block
     assert "if((d.session_id||activeSid)!==activeSid) return;" in block
     assert "'state_saved'" in MESSAGES_JS
-
-
-def test_issue_3340_changelog_entry_present():
-    assert "#3340" in CHANGELOG
-    assert "saved memory" in CHANGELOG
-    assert "created/updated a skill" in CHANGELOG

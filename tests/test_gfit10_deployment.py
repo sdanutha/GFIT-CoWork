@@ -113,9 +113,9 @@ def test_the_reverse_proxy_serves_each_deployment_on_its_own_hostname():
     assert not re.search(r"^http://", text, re.M)
 
 
-def test_the_guide_covers_a_new_team_a_new_member_and_the_pilot():
+def test_the_guide_covers_a_new_team_a_new_user_and_the_pilot():
     text = GUIDE.read_text(encoding="utf-8").lower()
-    for heading in ("add a new team", "add a member", "pilot"):
+    for heading in ("add a new team", "add a user", "pilot"):
         assert heading in text, heading
     assert "team.env.example" in text
     assert "caddyfile" in text
@@ -198,6 +198,9 @@ def _start_deployment(root: Path, team: str, users_file: Path, profiles=()):
         "HERMES_WEBUI_ADMIN_USERS": ADMIN,
         "HERMES_WEBUI_TEST_NETWORK_BLOCK": "1",
         "AWS_EC2_METADATA_DISABLED": "true",
+        # Keeps the agent's import-time launch preparation from rewriting the
+        # real agent launchers (see tests/conftest.py).
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
     }
     if HERMES_AGENT:
         env["HERMES_WEBUI_AGENT_DIR"] = str(HERMES_AGENT)

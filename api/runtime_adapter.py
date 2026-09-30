@@ -1,4 +1,4 @@
-"""RuntimeAdapter seam for WebUI-owned run execution.
+"""RuntimeAdapter seam for GFIT-CoWork-owned run execution.
 
 This is the #1925 RuntimeAdapter seam.  The default WebUI chat path remains the
 legacy direct route; enabling ``HERMES_WEBUI_RUNTIME_ADAPTER=legacy-journal``

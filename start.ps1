@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Native Windows launcher for Hermes WebUI - PowerShell equivalent
+    Native Windows launcher for GFIT-CoWork - PowerShell equivalent
     of start.sh, bypassing bootstrap.py's platform refusal.
 
 .DESCRIPTION
@@ -10,7 +10,7 @@
     because it currently raises on platform.system() == 'Windows';
     server.py itself runs cleanly on native Windows.
 
-    Assumes Python + hermes-agent + the WebUI Python deps are already
+    Assumes Python + hermes-agent + the GFIT-CoWork Python deps are already
     installed natively on Windows - same assumption start.sh makes
     when invoked outside a fresh bootstrap. For first-time setup, the
     native Windows path is to install Python 3.11+, then create a
@@ -40,10 +40,7 @@
 .EXAMPLE
     $env:HERMES_WEBUI_HOST = '0.0.0.0'
     .\start.ps1
-    # Bind to all interfaces (set a password first via env or Settings).
-
-.LINK
-    https://github.com/nesquena/hermes-webui/issues/1952
+    # Bind to all interfaces (needs a Directory: set HERMES_WEBUI_DIRECTORY first).
 #>
 
 [CmdletBinding()]
@@ -95,7 +92,7 @@ if (-not $Python) {
 # an explicit override pointing at a missing dir should fail FAST
 # with a clear message, not silently progress into a python3 launch
 # that's about to crash on missing imports. Smoke-test feedback on
-# PR #2783: nesquena/hermes-webui requested this guard.
+# Upstream PR #2783 requested this guard.
 $AgentDir = $env:HERMES_WEBUI_AGENT_DIR
 if ($AgentDir -and -not (Test-Path (Join-Path $AgentDir 'hermes_cli') -PathType Container)) {
     Write-Error "HERMES_WEBUI_AGENT_DIR is set to '$AgentDir' but no hermes_cli/ folder exists there. Unset the variable to fall back to auto-discovery, or fix the path."
@@ -175,7 +172,7 @@ New-Item -ItemType Directory -Force -Path $env:HERMES_HOME | Out-Null
 New-Item -ItemType Directory -Force -Path $env:HERMES_WEBUI_STATE_DIR | Out-Null
 
 # === Launch (foreground, matches start.sh) =============================
-Write-Host "[start.ps1] Hermes WebUI native Windows launcher" -ForegroundColor Cyan
+Write-Host "[start.ps1] GFIT-CoWork native Windows launcher" -ForegroundColor Cyan
 Write-Host "[start.ps1] Python:     $Python"
 Write-Host "[start.ps1] Agent dir:  $AgentDir"
 Write-Host "[start.ps1] State dir:  $env:HERMES_WEBUI_STATE_DIR"
@@ -184,7 +181,7 @@ Write-Host ""
 
 $serverPath = Join-Path $RepoRoot 'server.py'
 if (-not (Test-Path $serverPath)) {
-    Write-Error "server.py not found at $serverPath - is this the hermes-webui repo root?"
+    Write-Error "server.py not found at $serverPath - is this the GFIT-CoWork repo root?"
     exit 1
 }
 

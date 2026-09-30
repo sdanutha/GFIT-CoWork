@@ -169,6 +169,21 @@ def test_reading_outside_the_profile_is_refused(alice, session, endpoint, path):
     assert SECRET not in str(body)
 
 
+@pytest.mark.parametrize("path", ["bob.txt", ".", ""])
+@pytest.mark.parametrize("endpoint", ["/api/list", "/api/file"])
+def test_another_users_session_is_the_same_as_a_missing_one(srv, alice, session, endpoint, path):
+    # Session ownership, not Workspace confinement, answers first: another
+    # User's session must not be told apart from one that does not exist.
+    bob_sid = _new_session(srv.logged_in(BOB))
+    answers = []
+    for sid in (bob_sid, "no-such-session"):
+        status, body, _ = alice.get(f"{endpoint}?session_id={sid}&path={path}")
+        answers.append((status, str(body).replace(sid, "<sid>")))
+    assert answers[0] == answers[1]
+    assert answers[0][0] == 404
+    assert SECRET not in answers[0][1]
+
+
 def test_media_outside_the_profile_is_refused(srv, alice, session, outside, tmp_path, monkeypatch):
     # Make the whole test area a media root, so only Profile confinement can refuse.
     monkeypatch.setenv("MEDIA_ALLOWED_ROOTS", str(tmp_path.resolve()))

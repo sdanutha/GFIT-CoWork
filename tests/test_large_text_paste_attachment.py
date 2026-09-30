@@ -10,7 +10,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 BOOT_JS = (ROOT / "static" / "boot.js").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
@@ -146,10 +145,6 @@ def test_oversize_large_text_paste_falls_back_to_native_paste_instead_of_being_d
     prevent_idx = block.index("e.preventDefault();")
     attach_idx = block.index("_attachLargePastedText(pastedTextFile);")
     assert fit_idx < prevent_idx < attach_idx
-
-
-def test_changelog_mentions_large_text_paste_attachment():
-    assert "Large plain-text pastes in the composer now become `.md` attachments" in CHANGELOG
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")

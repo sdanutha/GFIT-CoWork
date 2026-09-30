@@ -46,7 +46,7 @@ def test_onboarding_uses_i18n_helpers():
     assert "t('onboarding_step_setup_title')" in js
     assert "t('onboarding_complete')" in js
     assert "onboarding_title: 'Welcome to GFIT-CoWork'" in i18n
-    assert "onboarding_title: 'Bienvenido a Hermes Web UI'" in i18n
+    assert "onboarding_title: 'Bienvenido a GFIT-CoWork'" in i18n
 
 
 def test_onboarding_provider_notice_uses_i18n_key():

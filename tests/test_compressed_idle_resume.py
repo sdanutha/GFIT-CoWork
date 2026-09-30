@@ -53,7 +53,6 @@ def _assert_stale_post_rotation(session, monkeypatch, expected_continuation):
     monkeypatch.setattr(routes, "_agent_runtime_barrier_response", lambda **kw: None)
     monkeypatch.setattr(routes, "_get_or_materialize_session", lambda *a, **kw: session)
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
-    monkeypatch.setattr(routes, "_session_visible_to_active_profile", lambda *a: True)
     monkeypatch.setattr(routes, "_resolve_chat_workspace_with_recovery", lambda *a: pytest.fail("stale turn must not reach workspace mutation"))
     h = Handler()
     routes._handle_chat_start(h, {"session_id": session.session_id, "message": "conclusion?"})

@@ -38,17 +38,13 @@ def _disable_auth_for_profile_switch(monkeypatch):
     The /api/profile/switch handler signs the active-profile cookie when auth is
     enabled (helpers.build_profile_cookie -> auth.sign_profile_cookie_value),
     which raises -> RuntimeError -> HTTP 409 if there's no active session. A
-    sibling test that enables password/passkey auth in the shared in-process
+    sibling test that enables auth in the shared in-process
     state would otherwise make the switch tests here return 409 instead of 200
     under a full-suite run (they pass in isolation). Forcing auth OFF for this
     module makes them order-independent — they exercise watcher restart, not
-    auth. Patch every import site so the value is consistent.
+    auth.
     """
-    for _mod in ("api.auth", "api.helpers", "api.routes"):
-        try:
-            monkeypatch.setattr(f"{_mod}.is_auth_enabled", lambda: False, raising=False)
-        except Exception:
-            pass
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     yield
 
 

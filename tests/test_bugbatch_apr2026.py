@@ -5,7 +5,7 @@ Covers:
 - #594: .app-dialog and .file-rename-input have light theme overrides in style.css
 - #576: workspace panel localStorage restore is gated on session.workspace presence (boot.js)
 - #585: get_available_models() calls reload_config() before reading config cache
-- #567: docker-compose.yml comment mentions macOS UID mismatch
+- #567: the Deployment's config example tells the Admin how to find the UID
 - #590: _transcribeBlob already calls setComposerStatus('Transcribing…') — confirmed present
 """
 import pathlib
@@ -14,7 +14,7 @@ import re
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 STYLE_CSS = (REPO_ROOT / "static" / "style.css").read_text(encoding="utf-8")
 BOOT_JS   = (REPO_ROOT / "static" / "boot.js").read_text(encoding="utf-8")
-COMPOSE   = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+TEAM_ENV  = (REPO_ROOT / "deploy" / "team.env.example").read_text(encoding="utf-8")
 
 
 # ── #594: light theme dialog overrides ───────────────────────────────────────
@@ -145,15 +145,13 @@ def test_585_get_available_models_calls_reload_config():
     )
 
 
-# ── #567: docker-compose UID note ─────────────────────────────────────────────
+# ── #567: UID note in the Deployment's config ───────────────────────────────
 
-def test_567_compose_mentions_macos_uid():
-    """docker-compose.yml must mention macOS UID / id -u to help macOS users."""
-    assert "macOS" in COMPOSE or "macos" in COMPOSE.lower(), (
-        "docker-compose.yml should mention macOS UID issue (#567)"
-    )
-    assert "id -u" in COMPOSE, (
-        "docker-compose.yml should tell users to run 'id -u' to find their UID (#567)"
+def test_567_team_env_tells_admin_how_to_find_uid():
+    """deploy/team.env.example must tell the Admin to run 'id -u' / 'id -g' for
+    the UID/GID the volumes are owned by (#567)."""
+    assert "id -u" in TEAM_ENV and "id -g" in TEAM_ENV, (
+        "team.env.example should tell the Admin to run 'id -u' / 'id -g' to find the UID/GID (#567)"
     )
 
 

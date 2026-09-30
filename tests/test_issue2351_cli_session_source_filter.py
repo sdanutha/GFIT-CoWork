@@ -22,7 +22,7 @@ def test_session_source_labels_are_locale_keys_with_number_placeholder():
     i18n = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
     assert "sessions_source_webui: 'GFIT-CoWork sessions ({0})'" in i18n  # en bundle
     assert "sessions_source_cli: 'CLI sessions ({0})'" in i18n  # en bundle
-    assert "sessions_source_webui: 'Сеансы WebUI ({0})'" in i18n  # ru bundle
+    assert "sessions_source_webui: 'Сеансы GFIT-CoWork ({0})'" in i18n  # ru bundle
     assert "sessions_source_cli: 'Сеансы CLI ({0})'" in i18n  # ru bundle
     sessions_src = SESSIONS_JS.read_text(encoding="utf-8")
     assert "t('sessions_source_cli', n)" in sessions_src

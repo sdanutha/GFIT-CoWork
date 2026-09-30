@@ -179,7 +179,7 @@ def test_node_missing_server_version_no_banner():
 
 def test_node_unknown_server_version_no_banner():
     """A server that reports webui_version='unknown' (git-describe failure in a
-    Docker/CI image, api/updates.py) must NOT falsely fire the stale-client
+    Docker/CI image, api/version.py) must NOT falsely fire the stale-client
     banner against a real client version. (Codex #5480 gate)"""
     helpers = _extract_skew_helpers(PANELS_JS.read_text(encoding="utf-8"))
     for server_val in ("unknown", "UNKNOWN", "Unknown"):

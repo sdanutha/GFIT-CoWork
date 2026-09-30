@@ -41,6 +41,9 @@ def _capture(monkeypatch):
 
     monkeypatch.setattr("api.routes.j", _j)
     monkeypatch.setattr("api.routes.bad", _bad)
+    # Session ownership writes its own refusals.
+    monkeypatch.setattr("api.session_ownership.j", _j)
+    monkeypatch.setattr("api.session_ownership.bad", _bad)
     return cap
 
 
@@ -487,12 +490,12 @@ def test_session_route_blocks_hidden_sessions_before_replay_or_live_attach(monke
     import api.routes as routes
 
     cap = _capture(monkeypatch)
-    monkeypatch.setattr(
-        routes,
-        "get_session",
-        lambda sid, metadata_only=False: SimpleNamespace(session_id=sid, profile="other"),
-    )
+    hidden = lambda sid, metadata_only=False: SimpleNamespace(session_id=sid, profile="other")  # noqa: E731
+    # The route and session ownership look the session up, in the active Profile.
+    monkeypatch.setattr(routes, "get_session", hidden)
+    monkeypatch.setattr("api.models.get_session", hidden)
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
+    monkeypatch.setattr("api.profiles.get_active_profile_name", lambda: "default")
     monkeypatch.setattr(
         routes,
         "read_session_run_events",

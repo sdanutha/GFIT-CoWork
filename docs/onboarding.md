@@ -9,7 +9,8 @@ setup, or first-run support, read
 running commands or inspecting logs.
 
 The short version: run the bootstrap, open the WebUI, choose a provider, choose
-a workspace, optionally set a password, then start a chat. If you are using a
+a workspace, then start a chat. Login is the company Directory, configured by
+the operator (see the README), not in onboarding. If you are using a
 local model server from Docker, pay special attention to the Base URL section
 below.
 
@@ -25,17 +26,14 @@ by the bootstrap yet. A community native Windows setup is being tracked in
 - [Native Windows guide](https://github.com/markwang2658/hermes-windows-native-guide)
 - [Native Windows setup scripts](https://github.com/markwang2658/hermes-windows-native)
 
-For Windows users who want the supported path today, use WSL2 and see
-[Windows / WSL auto-start](wsl-autostart.md).
+For Windows users who want the supported path today, use WSL2.
 
 ## Install path choices
 
 | Path | Use it when | Notes |
 |---|---|---|
 | Local bootstrap | You run WebUI directly on Linux, macOS, or WSL2 | Best for a personal server, Mac mini, VPS, or homelab host. |
-| Docker single-container | You want the simplest container setup | Recommended first Docker path. WebUI runs the agent in-process. |
-| Docker two-container | You already run the agent gateway separately | More isolated, but tools launched from WebUI run in the WebUI container. |
-| Docker three-container | You want agent gateway plus dashboard plus WebUI | Same caveats as two-container, plus the dashboard service. |
+| Docker Deployment kit (`deploy/`) | You deploy GFIT-CoWork for a Team on a server | One Deployment per Team behind the HTTPS reverse proxy; see [`deploy/README.md`](../deploy/README.md). Tools launched from GFIT-CoWork run in its container. |
 | Native Windows community path | You are intentionally testing unsupported native Windows | Community-maintained for now, not the official bootstrap path. |
 
 If a Docker install gets confusing, start again with the single-container setup.
@@ -78,7 +76,6 @@ The first screen reports the runtime state WebUI can see:
 - Hermes Agent importability: whether WebUI can import and run `AIAgent`.
 - Provider status: whether `config.yaml` and credential state are enough for a
   chat request.
-- Password status: whether WebUI password protection is enabled.
 - Config paths: the active `config.yaml` and `.env` locations for this profile.
 
 If the agent check fails, use [Troubleshooting](troubleshooting.md), especially
@@ -163,15 +160,14 @@ In Docker, the default browsable path is `/workspace`, which maps to the host
 directory mounted by the compose file. If the workspace appears empty, check the
 Docker UID/GID and mount guidance in [Docker setup guide](docker.md).
 
-## Password step
+## Login
 
-Password protection is optional for localhost-only installs. Enable it if you
-expose WebUI outside `127.0.0.1`, behind a reverse proxy, or on a LAN.
+The wizard has no password step. Login is the Directory alone (see the README's
+"Login with an employee ID"): on `127.0.0.1` with no Directory, login is off;
+on any other address the server refuses to start until a Directory is
+configured.
 
-For installed PWAs, prefer WebUI's built-in password over proxy basic auth. Reverse proxies are supported, but HTTP basic-auth challenges in front of the WebUI origin can interrupt the service-worker and shell-asset fetches the installed app relies on during updates. If you keep proxy auth, scope it so same-origin `sw.js`, manifest, and shell update requests can complete.
-
-The password is stored through the normal WebUI settings path and hashed
-server-side. You can change it later from Settings.
+For installed PWAs, prefer the Directory login over proxy basic auth. Reverse proxies are supported, but HTTP basic-auth challenges in front of the WebUI origin can interrupt the service-worker and shell-asset fetches the installed app relies on during updates. If you keep proxy auth, scope it so same-origin `sw.js`, manifest, and shell update requests can complete.
 
 ## What gets written
 

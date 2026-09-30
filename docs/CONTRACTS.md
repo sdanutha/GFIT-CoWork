@@ -17,8 +17,8 @@ contributor guidance; it does not change runtime behavior or CI gates.
   PR description expectations, UI evidence, and project-specific constraints.
 - [`README.md`](../README.md): product overview, quick start, architecture map,
   feature inventory, and docs index.
-- [`CHANGELOG.md`](../CHANGELOG.md): release history maintained by the release
-  workflow. Read it for context, but do not edit it in ordinary contributor PRs;
+- [`CHANGELOG.md`](../CHANGELOG.md): GFIT-CoWork's release history, written by
+  the owner. Read it for context, but do not edit it in ordinary contributor PRs;
   put release-note-ready wording in the PR body instead.
 
 ## Runtime, durability, and state contracts

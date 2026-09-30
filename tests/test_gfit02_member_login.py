@@ -11,6 +11,7 @@ import logging
 import pytest
 
 import api.auth as auth
+import api.login as login
 from tests._gfit_server import PASSWORD, WRONG_PASSWORD, Client, gfit_server as _gfit_server
 
 MEMBER = "521740"
@@ -116,7 +117,7 @@ def test_correct_password_but_no_profile_is_refused_with_contact_admin(client):
 
 
 def test_wrong_password_attempts_are_rate_limited_per_ip(client):
-    for _ in range(auth._LOGIN_MAX_ATTEMPTS):
+    for _ in range(login._LOGIN_MAX_ATTEMPTS):
         status, _, _ = client.login(MEMBER, WRONG_PASSWORD)
         assert status == 401
     status, body, _ = client.login(MEMBER, PASSWORD)
@@ -125,11 +126,11 @@ def test_wrong_password_attempts_are_rate_limited_per_ip(client):
 
 
 def test_successful_login_clears_failed_attempts(client):
-    for _ in range(auth._LOGIN_MAX_ATTEMPTS - 1):
+    for _ in range(login._LOGIN_MAX_ATTEMPTS - 1):
         client.login(MEMBER, WRONG_PASSWORD)
     status, _, _ = client.login(MEMBER, PASSWORD)
     assert status == 200
-    for _ in range(auth._LOGIN_MAX_ATTEMPTS - 1):
+    for _ in range(login._LOGIN_MAX_ATTEMPTS - 1):
         status, _, _ = client.login(MEMBER, WRONG_PASSWORD)
         assert status == 401
 

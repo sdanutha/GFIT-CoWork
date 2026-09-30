@@ -189,9 +189,9 @@ turn in the exhausted session instead of being blocked with recovery guidance.
 
 1. Open the same WebUI URL in a regular browser tab and confirm whether it loads there.
 2. Check reverse-proxy logs for `401` responses on `/sw.js`, `/manifest.json`, or versioned `/static/*` assets during the update.
-3. Temporarily remove proxy basic auth and use WebUI's built-in password. If the blank screen stops after the next update, the proxy auth challenge was the trigger.
+3. Temporarily remove proxy basic auth and rely on WebUI's Directory login. If the blank screen stops after the next update, the proxy auth challenge was the trigger.
 
-**Fix.** Prefer WebUI's own password for installed PWAs. If you keep proxy basic auth, configure it so the same-origin service-worker and shell update fetches can complete. If the installed shell is already blank, clear site data for the Hermes origin, then reopen or reinstall the PWA after that site-scoped cleanup.
+**Fix.** Prefer WebUI's own Directory login for installed PWAs. If you keep proxy basic auth, configure it so the same-origin service-worker and shell update fetches can complete. If the installed shell is already blank, clear site data for the Hermes origin, then reopen or reinstall the PWA after that site-scoped cleanup.
 
 **When to file a bug.** File a WebUI bug if the blank screen still reproduces without proxy basic auth, or after the proxy allows the same-origin service-worker and shell update fetches through.
 
@@ -261,9 +261,9 @@ python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confir
 
 ---
 
-## 404 after login when password auth is enabled
+## 404 after login when login is on
 
-**Symptom.** After enabling password authentication (`HERMES_WEBUI_PASSWORD`), logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
+**Symptom.** With login on (a Directory configured), logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
 
 **Why.** The server-side redirect after login targets `/sessions` (plural), but that path was missing from the explicit SPA-shell allowlist in `handle_get()`. Without auth the bug is invisible because the SPA handles `/sessions` client-side and the server route is never hit — only the server-side post-login redirect exposes it.
 
@@ -336,7 +336,5 @@ This document grows over time. If a recurring failure mode isn't covered here ye
 
 Related references:
 
-- [`docs/supervisor.md`](supervisor.md) — process-supervisor setup (launchd, systemd, supervisord, runit/s6) including the bootstrap supervisor-foreground flag.
 - [`docs/docker.md`](docker.md) — Docker compose setup, common failure modes, bind-mount migration.
-- [`docs/wsl-autostart.md`](wsl-autostart.md) — WSL2 auto-start at login on Windows.
 - [`docs/EXTENSIONS.md`](EXTENSIONS.md) — WebUI extension injection, security model, examples.

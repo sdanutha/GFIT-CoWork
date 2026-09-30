@@ -1960,12 +1960,6 @@
   /* ── Update banner ── */
   .update-banner{display:none;background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin:10px auto;max-width:780px;width:calc(100% - 24px);box-sizing:border-box;font-size:13px;color:var(--accent-text);align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;overflow-wrap:anywhere;}
   .update-banner.visible{display:flex;}
-  #updateMsg,#updateWhatsNewLinks,#updateSummaryPanel,#updateSummaryScroll,#updateSummaryDiffLinks{max-width:100%;overflow-wrap:anywhere;word-break:break-word;}
-  #updateSummaryScroll{max-height:min(34vh,260px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--accent) transparent;}
-  #updateSummaryPanel.update-summary-expanded #updateSummaryScroll{max-height:min(75vh,560px);}
-  @media (max-width:600px){#updateSummaryPanel.update-summary-expanded #updateSummaryScroll{max-height:min(82vh,640px);}}
-  .update-summary-toggle{font-size:11px;color:var(--accent);text-decoration:underline;background:none;border:0;padding:0;cursor:pointer;}
-  #updateWhatsNewLinks{white-space:normal!important;margin-left:0!important;}
   .update-banner>div:last-child{margin-left:auto;}
   @media (max-width:600px){.update-banner{width:calc(100% - 16px);padding:10px 12px;gap:10px;}.update-banner>div:last-child{width:100%;justify-content:flex-end;}}
   .update-btn{padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;background:var(--accent-bg);border:1px solid var(--accent-bg-strong);color:var(--accent-text);cursor:pointer;transition:background .15s;}
@@ -2250,15 +2244,6 @@
   .help-card-body{min-width:0;flex:1;}
   .help-card-title{font-size:13.5px;font-weight:650;color:var(--text);margin-bottom:3px;}
   .help-card-desc{font-size:12px;color:var(--muted);line-height:1.45;margin-bottom:11px;}
-  .help-card-link{display:inline-flex;align-items:center;gap:6px;text-decoration:none;padding:7px 13px;border-radius:7px;font-size:12px;font-weight:600;background:var(--input-bg);border:1px solid var(--border);color:var(--text);transition:all .15s;}
-  /* On hover the button fills with --accent; text must contrast against that fill.
-     --accent-text is an accent-on-background link color (often == --accent), so using
-     it here produces same-color text on the accent fill (invisible — e.g. slate/gold/
-     ares/mono dark). --bg is the page background, which --accent is designed to contrast
-     against, so background-colored text on an accent fill stays readable in every theme. */
-  .help-card-link:hover{background:var(--accent);border-color:var(--accent);color:var(--bg);}
-  .help-card-link:hover svg{opacity:1;}
-  .help-card-link svg{flex:0 0 auto;opacity:.8;}
   .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;background:var(--main-bg);}
   .topbar{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--topbar-bg);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:relative;z-index:10;}
   .topbar-title{font-size:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -4986,12 +4971,7 @@ main.main > #mainPlugin{display:none;}
 .settings-section-title{font-size:18px;font-weight:600;letter-spacing:-.01em;color:var(--text);line-height:1.3;margin-bottom:4px;}
 .settings-section-meta{font-size:13px;color:var(--muted);line-height:1.55;}
 .settings-version-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:var(--surface);color:var(--muted);font-size:11px;font-weight:600;font-family:var(--font-mono);flex-shrink:0;align-self:flex-start;letter-spacing:.02em;}
-#checkUpdatesBlock{display:inline-flex;align-items:center;gap:0.5em;font-size:12px;flex-shrink:0;align-self:flex-start;flex-wrap:wrap;}
-#checkUpdatesBlock .btn-tiny{padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:11px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:5px;transition:border-color .15s,color .15s;}
-#checkUpdatesBlock .btn-tiny:hover{border-color:var(--accent);color:var(--accent);}
-#checkUpdatesBlock .btn-tiny:disabled{opacity:.5;cursor:default;}
-#checkUpdatesBlock .btn-tiny .spinner-xs{width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin .6s linear infinite;display:none;}
-#checkUpdatesStatus{font-size:11px;font-weight:500;white-space:nowrap;flex-basis:100%;margin-top:0.25em;}
+#settingsVersionBlock{display:inline-flex;align-items:center;gap:0.5em;font-size:12px;flex-shrink:0;align-self:flex-start;flex-wrap:wrap;}
 
 /* Each logical form row is a card surface. Stack with comfortable gap. */
 #mainSettings .settings-field{margin-bottom:12px;padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--sidebar);}
@@ -5167,13 +5147,11 @@ main.main > #mainPlugin{display:none;}
   background:var(--accent-hover);
 }
 
-/* Secondary sm-btn fallback (Sign out / Disable auth) — neutral outline. */
+/* Secondary sm-btn fallback (Sign out) — neutral outline. */
 #mainSettings .sm-btn{border-radius:8px;padding:9px 16px;font-weight:600;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);cursor:pointer;transition:background .15s,border-color .15s;}
 #mainSettings .sm-btn:hover{background:var(--accent-bg);border-color:var(--accent-bg-strong);}
 /* Neutralise legacy inline accent tints so secondary buttons stay theme-safe */
-#mainSettings #btnDisableAuth[style],
 #mainSettings #btnSignOut[style]{color:var(--text)!important;border-color:var(--border)!important;}
-#mainSettings #btnDisableAuth:hover,
 #mainSettings #btnSignOut:hover{color:var(--accent-text)!important;border-color:var(--accent-bg-strong)!important;}
 
 /* MCP Server Management */
@@ -5237,7 +5215,7 @@ main.main > #mainPlugin{display:none;}
   .settings-main{padding:16px 12px;}
   .settings-section-head{flex-direction:column;align-items:flex-start;gap:8px;}
   .settings-section-title{font-size:16px;}
-  #checkUpdatesBlock{flex-wrap:wrap;row-gap:6px;width:100%;}
+  #settingsVersionBlock{flex-wrap:wrap;row-gap:6px;width:100%;}
   .settings-version-badge{white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:block;}
   .hermes-action-grid{grid-template-columns:1fr;}
   #mainSettings .settings-field{padding:14px;}
@@ -5530,39 +5508,6 @@ main.main > #mainPlugin{display:none;}
 .extensions-tab-btn:hover{color:var(--text);}
 .extensions-tab-active{color:var(--text);border-bottom-color:var(--accent,#7c3aed);font-weight:600;}
 .extensions-gallery{display:flex;flex-direction:column;gap:10px;margin-top:4px;}
-.extension-gallery-card{background:var(--card-bg,var(--sidebar-bg));border:1px solid var(--border);border-radius:8px;padding:12px 14px;}
-.extension-gallery-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
-.extension-gallery-info{flex:1;min-width:0;}
-.extension-gallery-name{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
-.extension-gallery-meta{font-size:11px;color:var(--muted);margin-top:2px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
-.extension-gallery-source-link{display:inline-flex;align-items:center;color:var(--accent);font-weight:600;text-decoration:none;}
-.extension-gallery-source-link:hover{text-decoration:underline;}
-.extension-gallery-desc{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;}
-.extension-gallery-badge-row{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;}
-.extension-gallery-badge{display:inline-flex;align-items:center;background:var(--code-bg);color:var(--muted);border-radius:999px;padding:2px 8px;font-size:10.5px;font-weight:600;font-family:var(--font-mono);}
-.extension-gallery-next-step{margin-top:10px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--subtle-bg,rgba(127,127,127,.06));}
-.extension-gallery-next-label{font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0;}
-.extension-gallery-next-summary{font-size:12px;color:var(--muted);line-height:1.45;margin-top:4px;}
-.extension-gallery-next-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;}
-.extension-gallery-next-chips span{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;color:var(--muted);font-size:10.5px;font-weight:600;padding:2px 7px;background:var(--card-bg,var(--sidebar-bg));}
-.extension-gallery-next-link{display:inline-flex;margin-top:7px;font-size:12px;font-weight:600;color:var(--accent);text-decoration:none;}
-.extension-gallery-next-link:hover{text-decoration:underline;}
-.extension-gallery-perms{margin-top:8px;font-size:12px;}
-.extension-gallery-perms summary{cursor:pointer;color:var(--muted);user-select:none;}
-.extension-gallery-permission-list{display:flex;flex-direction:column;gap:6px;margin-top:7px;padding:8px 9px;border:1px solid var(--border);border-radius:8px;background:var(--subtle-bg,rgba(127,127,127,.06));}
-.extension-gallery-permission-row{display:grid;grid-template-columns:minmax(110px,.45fr) 1fr;gap:8px;align-items:start;min-width:0;}
-.extension-gallery-permission-label{font-size:10.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0;}
-.extension-gallery-permission-value{font-size:12px;color:var(--text);line-height:1.35;overflow-wrap:anywhere;}
-.extension-gallery-permission-empty{margin-top:7px;color:var(--muted);font-size:12px;}
-.extension-gallery-actions{display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap;}
-.extension-gallery-install-btn,.extension-gallery-uninstall-btn{padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid transparent;transition:background .15s,color .15s;}
-.extension-gallery-install-btn{background:var(--accent-bg);color:var(--accent-text);border-color:var(--accent);}
-.extension-gallery-install-btn:hover:not(:disabled){background:var(--accent-bg-strong);color:var(--accent-text);}
-.extension-gallery-uninstall-btn{background:var(--card-bg,var(--sidebar-bg));color:var(--error,#ef4444);border-color:var(--error,#ef4444);}
-.extension-gallery-uninstall-btn:hover:not(:disabled){background:rgba(239,68,68,.08);}
-.extension-gallery-install-btn:disabled,.extension-gallery-uninstall-btn:disabled{opacity:.5;cursor:not-allowed;}
-.extension-gallery-installed-badge{display:inline-flex;align-items:center;background:rgba(34,197,94,.14);color:#22c55e;border-radius:999px;padding:2px 8px;font-size:10.5px;font-weight:700;font-family:var(--font-mono);}
-.extension-gallery-restart-note{font-size:11px;color:var(--muted);font-style:italic;}
 .extensions-empty{padding:24px 0;text-align:center;color:var(--muted);font-size:13px;}
 @media (max-width: 768px){
   .extensions-copy-diagnostics-btn{width:100%;}
@@ -5573,7 +5518,6 @@ main.main > #mainPlugin{display:none;}
   .extension-sidecar-row-head{align-items:flex-start;flex-direction:column;}
   .extension-sidecar-fields>div{flex-direction:column;gap:2px;}
   .extension-sidecar-fields span{flex:0 0 auto;}
-  .extension-gallery-permission-row{grid-template-columns:1fr;gap:2px;}
 }
 
 /* ── Provider model tags ── */
@@ -7325,7 +7269,7 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .settings-field-highlight { animation: settings-field-pulse 1.6s ease-out; }
 @keyframes settings-field-pulse { 0% { box-shadow: 0 0 0 0 var(--focus-ring); } 35% { box-shadow: 0 0 0 4px var(--focus-ring); } 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); } }
 
-/* GFIT-CoWork: a Member does not see Admin-only menus. The server stamps
+/* GFIT-CoWork: a User does not see Admin-only menus. The server stamps
    data-gfit-role on <html> and refuses these features anyway (api/access.py);
    hiding them is cosmetic. Settings are Deployment-wide, so the whole panel is
    the Admin's. */
@@ -7335,7 +7279,6 @@ html[data-gfit-role="member"] [data-panel="profiles"],
 html[data-gfit-role="member"] [data-panel="settings"],
 html[data-gfit-role="member"] #dashboardRailBtn,
 html[data-gfit-role="member"] #dashboardMobileBtn,
-html[data-gfit-role="member"] #updateBanner,
 html[data-gfit-role="member"] #btnRestartGateway,
 html[data-gfit-role="member"] #btnTerminalToggle,
 html[data-gfit-role="member"] #composerTerminalPanel,
@@ -7344,13 +7287,7 @@ html[data-gfit-role="member"] #yoloPill,
 html[data-gfit-role="member"] #approvalSkipAll,
 html[data-gfit-role="member"] #providerQuotaChip,
 html[data-gfit-role="member"] #composerMobileQuotaAction,
-html[data-gfit-role="member"] #btnShareSession {
-  display: none !important;
-}
-
-/* GFIT-CoWork: the Directory is the only way in (ADR 0004), so Settings has no
-   shared-password field. The passkey block and Disable Auth stay hidden because
-   the server reports those methods off. */
-.settings-field:has(> #settingsPasswordForm) {
+html[data-gfit-role="member"] #btnShareSession,
+html[data-gfit-role="member"] [data-gfit-admin-only] {
   display: none !important;
 }

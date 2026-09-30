@@ -1,10 +1,10 @@
 """Regression tests for start.sh's .env parsing handling readonly bash variables.
 
-Background: docker-compose.yml's macOS instructions document
+Background: Docker setups commonly document
 ``echo "UID=$(id -u)" >> .env`` to set host UID/GID for bind-mount permission
 fixing.  The repo-level .env file is then read by both:
 
-  1. ``docker-compose.yml`` itself (for ${UID}/${GID} variable substitution)
+  1. Docker Compose itself (for ${UID}/${GID} variable substitution)
   2. ``start.sh`` (which `source`s the .env to load HERMES_WEBUI_* settings)
   3. ``bootstrap.py`` (via ``_load_repo_dotenv()``)
 

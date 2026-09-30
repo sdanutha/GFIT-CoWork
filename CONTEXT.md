@@ -17,7 +17,7 @@ A person who logs in to GFIT-CoWork with their company AD account. Each User own
 _Avoid_: account, member
 
 **Admin**:
-An AD user named in the Deployment's config; a Deployment may have several. The Admin logs in directly to the `default` Profile and has no personal Profile. Only the Admin can create, disable and delete Profiles, and use server-level features (terminal, updates, extensions, logs).
+An AD user named in the Deployment's config; a Deployment may have several. The Admin logs in directly to the `default` Profile and has no personal Profile. Only the Admin can create, disable and delete Profiles, and use server-level features (terminal, extensions, logs).
 _Avoid_: root, superuser, owner
 
 **Profile**:
@@ -27,6 +27,14 @@ _Avoid_: bot, persona
 **Profile roster**:
 GFIT-CoWork's own record of each Profile: the User's display name, whether the Profile is active or disabled, and the last login. It is kept apart from the Hermes Profile config. A disabled Profile keeps its data, but its User cannot log in.
 _Avoid_: user list, member table
+
+**Admission**:
+The decision, from an AD username the company AD has confirmed, of whether that person may use the Deployment and with which role and Profile: an Admin goes to `default`; anyone else needs their own Profile, and it must be active. It is made at login and again on every request, so a change to the Admin list or the Profile roster takes effect at once.
+_Avoid_: authorization, access check
+
+**Bound**:
+Said of a User's request: it runs in that User's Profile and may name no other, because the request's Admission says so. The Admin's requests are not bound.
+_Avoid_: pinned, locked
 
 **Workspace**:
 A folder the agent works in for a session. Every Workspace lives inside its owner's Profile.

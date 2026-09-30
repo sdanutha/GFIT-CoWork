@@ -1,4 +1,4 @@
-"""Hermes Web UI server entry point."""
+"""GFIT-CoWork server entry point."""
 import logging
 import os
 import re
@@ -100,7 +100,7 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 from api.request_logging import emit_request_log
-from api.auth import check_auth_or_close, reset_trusted_auth_request_state
+from api.auth import check_auth_or_close, reset_request_auth_state
 from api.config import HOST, PORT, STATE_DIR, SESSION_DIR, DEFAULT_WORKSPACE
 from api.helpers import (
     j,
@@ -112,7 +112,7 @@ from api.helpers import (
 from api.profiles import set_request_profile, clear_request_profile
 from api.routes import handle_delete, handle_get, handle_patch, handle_post, handle_put, apply_cors_preflight_headers
 from api.startup import auto_install_agent_deps, fix_credential_permissions
-from api.updates import WEBUI_VERSION
+from api.version import WEBUI_VERSION
 from api.crash_visibility import install_crash_visibility
 
 
@@ -372,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
         self._safe_webui_print(f'[webui] {record}')
 
     def do_GET(self) -> None:
-        self._req_t0 = time.time(); reset_trusted_auth_request_state(self)
+        self._req_t0 = time.time(); reset_request_auth_state(self)
         cookie_profile = get_profile_cookie(self)
         if cookie_profile:
             set_request_profile(cookie_profile)
@@ -398,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             clear_request_profile()
 
     def _handle_write(self, route_func) -> None:
-        self._req_t0 = time.time(); reset_trusted_auth_request_state(self)
+        self._req_t0 = time.time(); reset_request_auth_state(self)
         cookie_profile = get_profile_cookie(self)
         if cookie_profile:
             set_request_profile(cookie_profile)
@@ -556,6 +556,15 @@ def main() -> None:
 
     print_startup_config()
 
+    # Login is the Directory: a network address with no Directory would serve
+    # with login off, so refuse before touching any state.
+    from api.login import startup_check
+    login_check = startup_check(HOST)
+    for line in login_check.lines:
+        print(line, flush=True)
+    if not login_check.serve:
+        sys.exit(1)
+
     fd_limit = _raise_fd_soft_limit()
     if fd_limit.get("status") == "raised":
         print(
@@ -591,24 +600,6 @@ def main() -> None:
 
     if within_container:
         print('[ok] Running within container.', flush=True)
-
-    # Security: warn if binding non-loopback without authentication
-    from api.auth import get_oidc_startup_warning, is_auth_enabled
-    if HOST not in ('127.0.0.1', '::1', 'localhost') and not is_auth_enabled():
-        print(f'[!!] WARNING: Binding to {HOST} with NO PASSWORD SET.', flush=True)
-        print(f'     Anyone on the network can access your filesystem and agent.', flush=True)
-        print(f'     Set a password via Settings or HERMES_WEBUI_PASSWORD env var.', flush=True)
-        print(f'     To suppress: bind to 127.0.0.1 or set a password.', flush=True)
-        if within_container:
-            print(f'     Note: You are running within a container, must bind to 0.0.0.0 (IPv4) or :: (IPv6) to publish the port.', flush=True)
-    elif not is_auth_enabled():
-        print(f'  [tip] No password set. Any process on this machine can read sessions', flush=True)
-        print(f'        and memory via the local API. Set HERMES_WEBUI_PASSWORD to', flush=True)
-        print(f'        enable authentication.', flush=True)
-
-    oidc_startup_warning = get_oidc_startup_warning()
-    if oidc_startup_warning:
-        print(f'[!!] WARNING: {oidc_startup_warning}', flush=True)
 
     ok, missing, errors = verify_hermes_imports()
     if not ok and _HERMES_FOUND:
@@ -685,7 +676,7 @@ def main() -> None:
             print(f'[!!] WARNING: TLS setup failed ({e}), falling back to HTTP', flush=True)
             scheme = 'http'
 
-    print(f'  Hermes Web UI listening on {scheme}://{HOST}:{PORT}', flush=True)
+    print(f'  GFIT-CoWork listening on {scheme}://{HOST}:{PORT}', flush=True)
     if HOST in ('127.0.0.1', '::1') or within_container:
         print(f'  Remote access: ssh -N -L {PORT}:127.0.0.1:{PORT} <user>@<your-server>', flush=True)
     print(f'  Then open:     {scheme}://localhost:{PORT}', flush=True)

@@ -15,7 +15,7 @@ def test_readme_has_compatibility_section():
         '("Upgrade both together")'
     )
 
-    assert "pin both image tags" in readme, (
+    assert "pin both image tags" in readme.replace("\n  ", " "), (
         "README.md Compatibility section must include Docker pin guidance "
         '("pin both image tags")'
     )
@@ -29,6 +29,4 @@ def test_readme_has_compatibility_section():
         "docs/rfcs/agent-source-boundary.md"
     )
 
-    assert "#2491" in readme, (
-        "README.md Compatibility section must reference issue #2491"
-    )
+    assert "deploy/README.md" in readme

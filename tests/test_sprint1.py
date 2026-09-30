@@ -503,7 +503,7 @@ def test_list_dir_path_traversal(cleanup_test_sessions):
     try:
         listing = get(f"/api/list?session_id={sid}&path=../../etc")
         # If server returns entries outside workspace root, that is a bug
-        # (safe_resolve should raise ValueError)
+        # (resolve_in_workspace should raise ValueError)
         assert False, f"Expected error for path traversal, got: {listing}"
     except urllib.error.HTTPError as e:
         assert e.code in (400, 404, 500), f"Expected 400/404/500 for traversal, got {e.code}"

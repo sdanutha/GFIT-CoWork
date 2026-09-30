@@ -16,7 +16,6 @@ REPO = Path(__file__).parent.parent
 CSS = (REPO / "static" / "style.css").read_text(encoding="utf-8")
 TERMINAL_JS = (REPO / "static" / "terminal.js").read_text(encoding="utf-8")
 PANEL_JS = (REPO / "static" / "panels.js").read_text(encoding="utf-8")
-UI_JS = (REPO / "static" / "ui.js").read_text(encoding="utf-8")
 BOOT_JS = (REPO / "static" / "boot.js").read_text(encoding="utf-8")
 INDEX_HTML = (REPO / "static" / "index.html").read_text(encoding="utf-8")
 NODE = shutil.which("node")
@@ -881,7 +880,6 @@ def test_first_party_technical_js_uses_font_mono_contract():
     assert 'function _terminalMonoFont()' in TERMINAL_JS
     assert "'ui-monospace,\"SFMono-Regular\",\"SF Mono\",Menlo,Consolas,\"Liberation Mono\",monospace'" in TERMINAL_JS
     assert 'font-family:var(--font-mono)' in PANEL_JS
-    assert "fontFamily='var(--font-mono)'" in UI_JS
     assert "font-family:var(--font-ui)" in BOOT_JS
 
 

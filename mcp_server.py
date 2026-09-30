@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hermes WebUI MCP Server — exposes project and session management
+GFIT-CoWork MCP Server — exposes project and session management
 as MCP tools for any MCP-compatible agent.
 
 Option A rewrite (2026-05-08): imports api.models and api.profiles
@@ -12,14 +12,17 @@ locking, profile scoping, index consistency, and validation.
 
 MCP config for Hermes Agent (add to config.yaml):
     mcp_servers:
-      hermes-webui:
+      gfit-cowork:
         command: /path/to/venv/bin/python3
-        args: [/path/to/hermes-webui/mcp_server.py]
-        env:
-          HERMES_WEBUI_PASSWORD: your_password
+        args: [/path/to/gfit-cowork/mcp_server.py]
+
+The session tools call the GFIT-CoWork API without a login, so they work only
+while GFIT-CoWork runs on the loopback address with login turned off. When
+GFIT-CoWork has a Directory configured it requires a Directory login, which
+the MCP server cannot perform, and those tools say so.
 
 Profile override (optional):
-        args: [/path/to/hermes-webui/mcp_server.py, --profile, myprofile]
+        args: [/path/to/gfit-cowork/mcp_server.py, --profile, myprofile]
 
 AI-authoring disclosure: this file was rewritten by MILO (Hermes Agent)
 under human direction, per maintainer guidelines for #1616.
@@ -63,17 +66,20 @@ if _profile_arg is not None:
     import api.profiles as _profiles
     _profiles._active_profile = _profile_arg
 
-# ── API auth state ─────────────────────────────────────────────────────────
+# ── WebUI API address ──────────────────────────────────────────────────────
 # Mirror the env-var contract used by api/config.py:32-33 so a non-default
 # WebUI port/host (e.g. when 8787 is held by another service on the host)
 # Just Works without configuration drift between the WebUI process and MCP.
 WEBUI_HOST = os.environ.get("HERMES_WEBUI_HOST", "127.0.0.1")
 WEBUI_PORT = os.environ.get("HERMES_WEBUI_PORT", "8787")
 WEBUI_URL = f"http://{WEBUI_HOST}:{WEBUI_PORT}"
-_auth_cookie: str | None = None
-_auth_expires: float = 0  # unix timestamp after which we re-auth
+LOGIN_REQUIRED_MESSAGE = (
+    "GFIT-CoWork requires a Directory login, which the MCP server cannot "
+    "perform. Session changes through the MCP server work only while "
+    "GFIT-CoWork runs on the loopback address with no Directory configured."
+)
 
-server = Server("hermes-webui")
+server = Server("gfit-cowork")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -121,72 +127,27 @@ def _session_compact(row: dict) -> dict:
 #  Helpers — HTTP API (for mutations that need cache sync)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _api_password() -> str | None:
-    """Return the plaintext webui password from HERMES_WEBUI_PASSWORD, or None.
-
-    settings.json stores only the bcrypt hash, which the login endpoint cannot
-    accept — it calls verify_password(plaintext) against the stored hash. So
-    there's no usable fallback when the env var is unset; the MCP simply runs
-    in unauthenticated mode and any auth-protected mutation will fail clearly
-    with the server's 401 instead of silently sending an unusable hash.
-    """
-    pw = os.environ.get("HERMES_WEBUI_PASSWORD", "").strip()
-    return pw or None
-
-
-def _api_auth() -> str | None:
-    """Authenticate and return cookie value, or None if auth disabled/fails."""
-    global _auth_cookie, _auth_expires
-
-    pw = _api_password()
-    if not pw:
-        return None  # auth not enabled — API calls will fail anyway
-
-    # Reuse cookie if still valid (25 days — server issues 30-day cookies)
-    if _auth_cookie and time.time() < _auth_expires:
-        return _auth_cookie
-
-    import urllib.request
-
-    try:
-        req = urllib.request.Request(
-            f"{WEBUI_URL}/api/auth/login",
-            data=json.dumps({"password": pw}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        resp = urllib.request.urlopen(req, timeout=5)
-        cookie = resp.headers.get("Set-Cookie", "")
-        if cookie:
-            _auth_cookie = cookie.split(";")[0]  # "hermes_session=VALUE; ..."
-            _auth_expires = time.time() + 25 * 86400  # 25 days
-            return _auth_cookie
-    except Exception:
-        _auth_cookie = None
-    return None
-
-
 def _api_post(endpoint: str, body: dict) -> dict:
-    """POST to webui API with auth cookie. Returns parsed JSON response."""
+    """POST to the webui API without a login. Returns parsed JSON response."""
     import urllib.request
     import urllib.error
-
-    cookie = _api_auth()
-    headers = {"Content-Type": "application/json"}
-    if cookie:
-        headers["Cookie"] = cookie
 
     try:
         req = urllib.request.Request(
             f"{WEBUI_URL}{endpoint}",
             data=json.dumps(body).encode(),
-            headers=headers,
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         resp = urllib.request.urlopen(req, timeout=5)
         return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        err_body = json.loads(e.read())
+        if e.code == 401:
+            return {"error": LOGIN_REQUIRED_MESSAGE}
+        try:
+            err_body = json.loads(e.read())
+        except Exception:
+            err_body = {}
         return {"error": f"API {e.code}: {err_body.get('error', 'unknown')}"}
     except Exception as e:
         return {"error": f"API unreachable: {e}"}
@@ -340,57 +301,52 @@ async def handle_delete_project(arguments: dict) -> list[TextContent]:
     projects = [p for p in projects if p["project_id"] != project_id]
     save_projects(projects)
 
-    # Unassign sessions only when we can do it cache-safely via the HTTP API.
-    # The previous filesystem fallback wrote session_data directly with
-    # os.replace(), which bypassed _write_session_index() in api/models.py
-    # and left _index.json holding the stale project_id — a running WebUI
-    # would still group those sessions under the deleted project until a
-    # subsequent re-compact. Even calling Session.save() in-process would
-    # not help because the WebUI's SESSIONS dict cache (a separate process)
-    # still has the old project_id and overwrites our update on its next
-    # save. The HTTP API is the only cache-safe path; without auth we
-    # refuse and surface the limitation so the operator can act.
-    has_auth = bool(_api_password())
-    if not has_auth:
-        return [TextContent(type="text", text=json.dumps({
-            "ok": True,
-            "deleted": proj["name"],
-            "unassigned_sessions": 0,
-            "warning": "Set HERMES_WEBUI_PASSWORD to unassign sessions; "
-                       "without auth the session index cannot be safely "
-                       "updated and direct filesystem writes would cause "
-                       "index drift in a running WebUI.",
-        }, ensure_ascii=False))]
-
+    # Unassign sessions only through the HTTP API, which is cache-safe.
+    # Writing session JSON directly would bypass _write_session_index() in
+    # api/models.py and leave _index.json holding the stale project_id, and
+    # the running WebUI's SESSIONS cache (a separate process) would overwrite
+    # the change on its next save. A session the API refuses is left as it
+    # is and reported with the API's reason (e.g. the WebUI requires a
+    # Directory login).
     unassigned = 0
+    still_assigned = []
+    reason = None
     if SESSION_DIR.exists():
         for p in SESSION_DIR.glob("*.json"):
             if p.name.startswith("_"):
                 continue
             try:
                 session_data = json.loads(p.read_text(encoding="utf-8"))
-                if session_data.get("project_id") == project_id:
-                    sid = p.stem
-                    result = _api_post("/api/session/move",
-                                       {"session_id": sid, "project_id": None})
-                    if "ok" in result or "session" in result:
-                        unassigned += 1
             except Exception:
-                pass
+                continue
+            if session_data.get("project_id") != project_id:
+                continue
+            sid = p.stem
+            result = _api_post("/api/session/move",
+                               {"session_id": sid, "project_id": None})
+            if "error" in result:
+                still_assigned.append(sid)
+                reason = reason or result["error"]
+            else:
+                unassigned += 1
 
-    return [TextContent(type="text", text=json.dumps({
+    payload = {
         "ok": True,
         "deleted": proj["name"],
         "unassigned_sessions": unassigned,
-    }, ensure_ascii=False))]
+    }
+    if still_assigned:
+        payload["still_assigned"] = still_assigned
+        payload["warning"] = f"These sessions still name the deleted project: {reason}"
+    return [TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Tool handlers — mutations (HTTP API with auth, cache-safe)
+#  Tool handlers — mutations (HTTP API, cache-safe)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def handle_rename_session(arguments: dict) -> list[TextContent]:
-    """Rename a session via the authenticated webui API (cache-safe)."""
+    """Rename a session via the webui API (cache-safe)."""
     session_id = arguments.get("session_id")
     title = arguments.get("title", "").strip()[:80]
     if not session_id or not title:
@@ -412,7 +368,7 @@ async def handle_rename_session(arguments: dict) -> list[TextContent]:
 
 
 async def handle_move_session(arguments: dict) -> list[TextContent]:
-    """Assign a session to a project via the authenticated webui API (cache-safe)."""
+    """Assign a session to a project via the webui API (cache-safe)."""
     session_id = arguments.get("session_id")
     project_id = arguments.get("project_id")  # None/null = unassign
     if not session_id:

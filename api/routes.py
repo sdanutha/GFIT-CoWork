@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- Route handlers for GET and POST endpoints.
+GFIT-CoWork -- Route handlers for GET and POST endpoints.
 Extracted from server.py (Sprint 11) so server.py is a thin shell.
 """
 
@@ -32,7 +32,7 @@ import socket as _socket
 from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from contextlib import closing
-from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 from api.agent_runtime import (
@@ -63,7 +63,9 @@ from api.session_events import (
     unsubscribe_session_events,
 )
 from api.gateway_restart import restart_active_profile_gateway
+from api.session_ownership import UNCONFINED as _UNCONFINED_OWNERSHIP, request_session_ownership
 from api.shares import create_or_refresh_share, load_share, revoke_share
+from api.trusted_proxy import forwarded_client_address, peer_address, peer_is_trusted_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -521,60 +523,16 @@ def _query_positive_int(parsed_url, name: str, *, default=None, maximum: int | N
     return value
 
 
-def _session_visible_to_active_profile(session_profile, handler=None) -> bool:
-    """Return whether a detail-load session belongs to the active profile.
-
-    Real request handlers must enforce the same profile boundary as
-    /api/sessions, even when the request has no hermes_profile cookie and the
-    process-level active profile is the default/root profile. Direct unit-callers
-    without a request handler keep the historical metadata-load behavior.
-    """
-    if handler is None:
-        return True
-    active_profile = _get_active_profile_name()
-    if not isinstance(session_profile, str):
-        session_profile = None
-    return _profiles_match(session_profile, active_profile)
-
-
-def _is_profile_agnostic_foreign_session(cli_meta) -> bool:
-    """Return whether a foreign-session row lives outside the Hermes profile tree.
-
-    Claude Code transcripts are scanned straight out of ``~/.claude/projects``
-    by ``get_claude_code_sessions()``, which stamps ``profile: None`` on every
-    row because the JSONL files belong to no Hermes profile at all. The sidebar
-    lists them under whichever profile is active, but ``_profiles_match``
-    coerces ``None`` to ``'default'``, so the detail-load profile gate 404s
-    every one of them as soon as the active profile is a named (non-root) one —
-    the session shows in the list and then renders "Session not available in
-    web UI." when clicked.
-
-    Exempt these profile-less external-agent rows from the gate so opening one
-    behaves identically on the root profile and on named profiles. Rows that
-    DO carry a profile (every state.db-backed CLI/messaging/cron session) stay
-    fully scoped.
-    """
-    if not isinstance(cli_meta, dict):
-        return False
-    if cli_meta.get("profile"):
-        return False
-    sources = {
-        str(cli_meta.get("source_tag") or "").strip().lower(),
-        str(cli_meta.get("raw_source") or "").strip().lower(),
-    }
-    # Profile-less external-agent rows that live outside the Hermes profile tree.
-    # Claude Code: scanned from ~/.claude/projects; Codex: scanned from ~/.codex/
-    profile_agnostic_sources = {CLAUDE_CODE_SOURCE}
-    try:
-        from api.codex_sessions import CODEX_SOURCE
-        profile_agnostic_sources.add(CODEX_SOURCE)
-    except ImportError:
-        pass
-    return bool(sources & profile_agnostic_sources)
-
-
-def _request_session_visibility_exempt(method: str, path: str | None) -> bool:
+def _request_session_visibility_exempt(method: str, path: str | None, ownership) -> bool:
     if not path:
+        return False
+    if method == "POST" and path == "/api/session/import":
+        # Creates a new session with a new id; an id in the body names nothing.
+        return True
+    if not ownership.keeps_upstream_rules():
+        # A User names only their own Profile's sessions, so the detail-load
+        # 409, and the import and placeholder-retag rules below, never apply
+        # to them: the generic guard answers first.
         return False
     if method == "GET" and path == "/api/session":
         # Detail-load owns profile mismatch handling so the frontend can switch
@@ -587,96 +545,25 @@ def _request_session_visibility_exempt(method: str, path: str | None) -> bool:
     # chat/start has inline placeholder-retag rules that must run before the
     # generic request-session guard.
     return path in {
-        "/api/session/import",
         "/api/session/import_cli",
         "/api/chat/start",
     }
 
 
 def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = True) -> bool:
-    """Return whether ``sid`` belongs to the active profile.
+    """Return whether this request owns ``sid``, asking session ownership.
 
-    On a profile mismatch, the helper mirrors the detail-load endpoint's
-    contract (#13043, #13493): return ``409 session_profile_mismatch`` for
-    a session owned by a KNOWN other profile, and keep ``404 Session
-    not found`` only for the unknown/legacy None-profile case so the
-    frontend's self-heal (clear stale URL + localStorage) keeps firing
-    for actually-missing sids. ``#7710``.
+    When it does not, and *emit_error* is set, the refusal writes its own
+    answer: 409 ``session_profile_mismatch`` naming a known owning Profile
+    (the Admin's, #7710), else 404 "Session not found". A request that names
+    no session passes.
     """
-    if not isinstance(sid, str) or not sid:
+    refusal = request_session_ownership().refuse_session(sid)
+    if refusal is None:
         return True
-    if not is_safe_session_id(sid):
-        return True
-    try:
-        session = get_session(sid, metadata_only=True)
-    except KeyError:
-        return True
-    session_profile = getattr(session, "profile", None) or None
-    if not _session_visible_to_active_profile(session_profile, handler):
-        if emit_error:
-            if session_profile:
-                _session_profile_mismatch(handler, sid, session_profile)
-            else:
-                # Unknown/legacy None-profile sidecar: keep the 404 so the
-                # frontend's self-heal still fires. _profiles_match coerces
-                # None->'default', so a truly missing/legacy session under a
-                # non-default active profile would otherwise emit a useless
-                # 409 with profile=null.
-                bad(handler, "Session not found", 404)
-        return False
-    return True
-
-
-def _session_profile_mismatch(handler, sid, session_profile):
-    """Answer a request for a session owned by another, known profile.
-
-    409 ``session_profile_mismatch`` names the owning profile so the client can
-    offer to switch to it. A request pinned to one Profile (a GFIT-CoWork
-    Member) can never switch, and must not learn who owns the session, so it
-    gets the plain 404.
-    """
-    from api.profiles import pinned_request_profile
-
-    if pinned_request_profile():
-        return bad(handler, "Session not found", 404)
-    return j(handler, {
-        "error": "Session belongs to a different profile",
-        "code": "session_profile_mismatch",
-        "session_id": sid,
-        "profile": session_profile,
-    }, status=409)
-
-
-def _stream_id_owner_session_id(stream_id: str | None) -> str | None:
-    """Resolve stream owner session_id via active-run registry first, fallback to journal."""
-    stream_id = str(stream_id or "").strip()
-    if not stream_id:
-        return None
-    try:
-        with ACTIVE_RUNS_LOCK:
-            raw = (ACTIVE_RUNS or {}).get(stream_id)
-        if isinstance(raw, dict):
-            owner = str(raw.get("session_id") or "").strip()
-            if owner:
-                return owner
-    except Exception:
-        logger.debug("Failed reading ACTIVE_RUNS owner for stream %s", stream_id, exc_info=True)
-    try:
-        owner = stream_owner_session_id(stream_id)
-        if owner:
-            return owner
-    except Exception:
-        logger.debug("Failed reading registered owner for stream %s", stream_id, exc_info=True)
-    if not is_safe_session_id(stream_id):
-        return None
-    try:
-        summary = find_run_summary(stream_id)
-        if isinstance(summary, dict):
-            owner = str(summary.get("session_id") or "").strip()
-            return owner or None
-    except Exception:
-        logger.debug("Failed reading run summary for stream %s", stream_id, exc_info=True)
-    return None
+    if emit_error:
+        refusal.answer(handler, sid)
+    return False
 
 
 def _stream_id_visible_to_request_profile(
@@ -685,31 +572,36 @@ def _stream_id_visible_to_request_profile(
     *,
     emit_error: bool = True,
 ) -> bool:
-    """Return whether the stream owner is visible to the request's profile."""
-    owner_session_id = _stream_id_owner_session_id(stream_id)
-    if not owner_session_id:
+    """Return whether this request owns the session that owns *stream_id*.
+
+    Session ownership answers. A User is refused a stream whose owner cannot
+    be found, with the same 404 as another Profile's stream; for the Admin a
+    known other Profile's stream is the 409 naming its owner.
+    """
+    refusal = request_session_ownership().refuse_stream(stream_id)
+    if refusal is None:
         return True
-    return _session_id_visible_to_request_profile(handler, owner_session_id, emit_error=emit_error)
+    if emit_error:
+        refusal.answer(handler)
+    return False
 
 
-def _guard_pinned_profile_request(handler, parsed, body=None) -> bool:
-    """A request pinned to one Profile (a GFIT-CoWork Member) may name only that Profile.
+def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
+    """A Bound request (a GFIT-CoWork User's) may name only its own Profile.
 
+    Session ownership answers (``may_switch_profile``, ``may_name_profile``).
     Refuses with 403 a profile switch, and a ``profile`` in the query string or
     body that names another Profile. The request itself already runs in the
-    pinned Profile; refusing makes a forged request fail loudly instead of
+    bound Profile; refusing makes a forged request fail loudly instead of
     being quietly retargeted.
     """
-    from api.profiles import pinned_request_profile
-
-    pinned = pinned_request_profile()
-    if not pinned:
-        return True
+    ownership = request_session_ownership()
     named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
     if isinstance(body, dict) and body.get("profile") not in (None, ""):
         named.append(body.get("profile"))
-    if getattr(parsed, "path", "") == "/api/profile/switch" or any(
-        not isinstance(value, str) or not _profiles_match(value, pinned) for value in named
+    switching = getattr(parsed, "path", "") == "/api/profile/switch"
+    if (switching and not ownership.may_switch_profile()) or any(
+        not ownership.may_name_profile(value) for value in named
     ):
         bad(handler, "Profile access forbidden", 403)
         return False
@@ -717,16 +609,21 @@ def _guard_pinned_profile_request(handler, parsed, body=None) -> bool:
 
 
 def _guard_request_session_visibility(handler, parsed, body=None, method="GET") -> bool:
-    """Apply request session-profile visibility check to request-supplied IDs.
+    """Ask session ownership about the session ids a request names.
 
-    Covers top-level `session_id` in the query/body. Routes that accept session
-    IDs under other keys must enforce their own visibility checks.
+    Covers the top-level `session_id` in the query and body, and the id in a
+    `/api/sessions/<id>/events` path. Routes that accept session ids under
+    other keys ask session ownership themselves.
     """
-    if not _guard_pinned_profile_request(handler, parsed, body):
+    if not _guard_bound_profile_request(handler, parsed, body):
         return False
     method = str(method).upper()
-    if _request_session_visibility_exempt(method, getattr(parsed, "path", "")):
+    path = getattr(parsed, "path", "")
+    if _request_session_visibility_exempt(method, path, request_session_ownership()):
         return True
+    path_sid = _session_events_path_session_id(path)
+    if path_sid is not None and not _session_id_visible_to_request_profile(handler, path_sid):
+        return False
     sid = parse_qs(getattr(parsed, "query", "") or "").get("session_id", [None])[0]
     if not _session_id_visible_to_request_profile(handler, sid):
         return False
@@ -2568,12 +2465,17 @@ def _build_session_list_cache_payload(
     # source. Filter first so the dedupe operates only within the active
     # profile's rows.
     diag_stage("profile_scope")
-    if all_profiles:
-        scoped = merged
-        other_profile_count = 0
-    else:
-        scoped = [s for s in merged if _profiles_match(s.get("profile"), active_profile)]
-        other_profile_count = 0 if _is_isolated_profile_mode() else len(merged) - len(scoped)
+    # The cached payload is keyed by the view (active Profile, all_profiles),
+    # not by the caller, and may be rebuilt on a thread with no Admission, so
+    # the view is scoped with the unconfined rule here. The caller's own
+    # adapter filters the rows after the cache (_rows_for_caller).
+    scoped = [
+        s for s in merged
+        if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+    ]
+    other_profile_count = (
+        0 if all_profiles or _is_isolated_profile_mode() else len(merged) - len(scoped)
+    )
     diag_stage("messaging_dedupe")
     archived_scoped = _keep_latest_messaging_session_per_source(
         list(scoped),
@@ -2695,6 +2597,27 @@ def _build_session_list_cache_payload(
             "show_webhook_sessions": show_webhook_sessions,
             "show_kanban_sessions": show_kanban_sessions,
         },
+    }
+
+
+def _session_list_rows_for_caller(payload: dict, active_profile, all_profiles: bool) -> dict:
+    """The cached session list with only the rows session ownership lets this caller see.
+
+    The cache is keyed by the view, not the caller; this is the caller's own
+    answer. The cached payload is never changed.
+    """
+    ownership = request_session_ownership()
+
+    def keep(rows):
+        return [
+            row for row in rows or []
+            if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
+        ]
+
+    return {
+        **payload,
+        "sessions": keep(payload.get("sessions")),
+        "sidebar_reference_sessions": keep(payload.get("sidebar_reference_sessions")),
     }
 
 
@@ -3017,7 +2940,6 @@ from api.helpers import (
     require,
     bad,
     resolve_inside,
-    safe_resolve,
     arm_connection_close_if_body_pending,
     j,
     t,
@@ -5456,11 +5378,9 @@ def _handle_session_anchor_scene(handler, body):
     # contract at #13043 / #13493). 404 is preserved for the
     # None-profile (unknown/legacy) case so the frontend self-heal
     # path still fires for actually-missing sids.
-    _anchor_session_profile = getattr(s, "profile", None) or None
-    if not _session_visible_to_active_profile(_anchor_session_profile, handler):
-        if _anchor_session_profile:
-            return _session_profile_mismatch(handler, sid, _anchor_session_profile)
-        return bad(handler, "Session not found", 404)
+    _refusal = request_session_ownership().refuse_found_session(sid, s)
+    if _refusal is not None:
+        return _refusal.answer(handler, sid)
     with _get_session_agent_lock(sid):
         idx, message = _find_anchor_scene_message(
             getattr(s, "messages", None) or [],
@@ -5735,7 +5655,7 @@ def _resolve_share_session_pair(sid: str, handler):
             or getattr(stored_session, "profile", None)
             or None
         )
-        if not _session_visible_to_active_profile(effective_profile, handler):
+        if request_session_ownership().refuse_found_session(sid, {"profile": effective_profile}) is not None:
             raise KeyError(sid)
         stored_session = _ensure_full_session_before_mutation(sid, stored_session)
         snapshot_session = copy.copy(stored_session)
@@ -5746,8 +5666,7 @@ def _resolve_share_session_pair(sid: str, handler):
         return snapshot_session, stored_session, cli_meta or {}
     except KeyError:
         cli_meta = _lookup_cli_session_metadata(sid) or {}
-        effective_profile = cli_meta.get("profile") or None
-        if not _session_visible_to_active_profile(effective_profile, handler):
+        if request_session_ownership().refuse_found_session(sid, cli_meta) is not None:
             raise KeyError(sid) from None
         synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta)
         if reason == "was_webui" or synth is None:
@@ -5934,8 +5853,6 @@ def _csrf_exempt_path(path: str) -> bool:
     """Paths that cannot or must not carry a session CSRF token."""
     return path in {
         "/api/auth/login",
-        "/api/auth/passkey/options",
-        "/api/auth/passkey/login",
         "/api/csp-report",
     }
 
@@ -5984,9 +5901,10 @@ def _check_csrf(handler) -> bool:
     if not _is_browser_unsafe_request(handler):
         return True  # non-browser clients (curl, MCP, agent) have no Origin/Referer
 
-    from api.auth import CSRF_HEADER_NAME, is_auth_enabled, parse_cookie, verify_csrf_token
+    from api.auth import CSRF_HEADER_NAME, parse_cookie, verify_csrf_token
+    from api.directory import is_directory_enabled
 
-    if not is_auth_enabled():
+    if not is_directory_enabled():
         return True
     cookie_val = parse_cookie(handler)
     submitted = handler.headers.get(CSRF_HEADER_NAME) or handler.headers.get("X-CSRF-Token")
@@ -6263,16 +6181,6 @@ def _truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _request_client_ip(handler) -> str:
-    try:
-        address = getattr(handler, "client_address", None)
-        if address:
-            return str(address[0] or "")
-    except Exception:
-        pass
-    return ""
-
-
 def _ip_is_loopback_or_private(raw: str):
     """Parse an IP string; return (parsed_ok, is_loopback_or_private).
 
@@ -6290,138 +6198,6 @@ def _ip_is_loopback_or_private(raw: str):
     return (True, bool(addr.is_loopback or addr.is_private))
 
 
-def _trusted_proxy_networks():
-    """Networks whose socket peer is allowed to assert a forwarded client IP.
-
-    Loopback is ALWAYS trusted implicitly (the common same-host reverse-proxy
-    deployment). Operators fronting the WebUI with a LAN/remote proxy add its
-    address(es) via HERMES_WEBUI_TRUSTED_PROXY_CIDRS (comma-separated CIDRs or
-    bare IPs). Malformed entries are skipped, never widening trust.
-    """
-    import ipaddress
-
-    nets = [
-        ipaddress.ip_network("127.0.0.0/8"),
-        ipaddress.ip_network("::1/128"),
-        ipaddress.ip_network("::ffff:127.0.0.0/104"),
-    ]
-    raw = os.getenv("HERMES_WEBUI_TRUSTED_PROXY_CIDRS", "") or ""
-    for token in raw.replace(";", ",").split(","):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            nets.append(ipaddress.ip_network(token, strict=False))
-        except ValueError:
-            # Invalid CIDR/IP → skip (fail closed: never widens trust).
-            continue
-    return nets
-
-
-def _ip_in_networks(addr, networks) -> bool:
-    """Family-aware membership test.
-
-    Checks the parsed address against each network, and — for an IPv4-mapped
-    IPv6 address (e.g. ``::ffff:10.9.9.9``) — ALSO checks its embedded IPv4 form
-    against IPv4 networks. Without this, a mapped-IPv6 proxy peer would never
-    match an IPv4 CIDR allowlist: the trusted proxy would be treated as
-    untrusted (locking out legitimate clients behind it) and, inside an XFF
-    chain, a mapped trusted hop would be mis-returned as the client (admitting a
-    public client that preceded it). See #5764.
-    """
-    candidates = [addr]
-    mapped = getattr(addr, "ipv4_mapped", None)
-    if mapped is not None:
-        candidates.append(mapped)
-    for cand in candidates:
-        for net in networks:
-            try:
-                if cand in net:
-                    return True
-            except TypeError:
-                # IPv4/IPv6 family mismatch between candidate and net → skip.
-                continue
-    return False
-
-
-def _raw_peer_is_trusted_proxy(handler) -> bool:
-    """True when the immediate socket peer is loopback or an allowlisted proxy.
-
-    Only such a peer is allowed to assert a forwarded client IP. Judged on the
-    RAW socket address (never a header), so it cannot be spoofed.
-    """
-    import ipaddress
-
-    raw = _request_client_ip(handler)
-    if not raw:
-        return False
-    try:
-        addr = ipaddress.ip_address(raw)
-    except ValueError:
-        return False
-    return _ip_in_networks(addr, _trusted_proxy_networks())
-
-
-def _forwarded_client_ip_from_trusted_proxy(handler):
-    """Resolve the real client IP from a chain fronted by a trusted proxy.
-
-    Precondition: the caller has verified the raw socket peer is a trusted proxy.
-    Consumes ALL X-Forwarded-For values (across repeated headers), preserves wire
-    order, walks RIGHT-TO-LEFT skipping hops that are themselves trusted-proxy
-    addresses, and returns the first non-trusted (i.e. real-client) hop. Falls
-    back to X-Real-IP, then the raw socket peer. Returns None when the chain is
-    present-but-empty / malformed so the caller fails closed.
-    """
-    import ipaddress
-
-    try:
-        xff_values = handler.headers.get_all("X-Forwarded-For") or []
-    except AttributeError:
-        single = handler.headers.get("X-Forwarded-For", "")
-        xff_values = [single] if single else []
-
-    hops: list[str] = []
-    for header_value in xff_values:
-        for token in str(header_value or "").split(","):
-            hops.append(token.strip())
-
-    if xff_values:
-        # A present-but-empty / all-blank XFF is malformed → fail closed.
-        if not any(hops):
-            return None
-        trusted_nets = _trusted_proxy_networks()
-
-        def _is_trusted_hop(ip_str: str) -> bool:
-            try:
-                addr = ipaddress.ip_address(ip_str)
-            except ValueError:
-                return False
-            return _ip_in_networks(addr, trusted_nets)
-
-        for hop in reversed(hops):
-            if not hop:
-                # An empty hop inside the chain is malformed → fail closed
-                # rather than skip past it (an attacker could inject blanks).
-                return None
-            try:
-                ipaddress.ip_address(hop)
-            except ValueError:
-                # Non-IP token in the chain → malformed → fail closed.
-                return None
-            if _is_trusted_hop(hop):
-                continue
-            return hop
-        # Every hop was a trusted proxy → no distinct client; treat as the proxy
-        # tier itself (loopback/private), i.e. resolve to the raw peer below.
-        return _request_client_ip(handler)
-
-    real_ip = handler.headers.get("X-Real-IP", "").strip()
-    if real_ip:
-        return real_ip
-    # No forwarded header at all → the trusted proxy is speaking for itself.
-    return _request_client_ip(handler)
-
-
 def _onboarding_request_is_local(handler) -> bool:
     """Return True when an unauthenticated onboarding request is local/private.
 
@@ -6435,17 +6211,16 @@ def _onboarding_request_is_local(handler) -> bool:
     * When the peer is NOT a trusted proxy, forwarded headers are ignored and the
       request is classified by the raw socket peer directly. A direct loopback or
       private/LAN client (no proxy) is therefore still correctly local — so
-      onboarding, first-password/passkey setup, and passwordless embedded-terminal
-      access keep working on the common direct-LAN deployment.
+      onboarding and embedded-terminal access with login off keep working on the common direct-LAN deployment.
     * HERMES_WEBUI_TRUST_FORWARDED_FOR=1 is the opt-in that makes us CONSULT the
       forwarded chain at all; without it the raw peer is authoritative. Either
       way the classification fails closed on malformed/empty chains.
     """
     trust_forwarded = _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR")
-    peer_is_trusted_proxy = _raw_peer_is_trusted_proxy(handler)
+    peer_trusted = peer_is_trusted_proxy(handler)
 
-    if trust_forwarded and peer_is_trusted_proxy:
-        client_ip = _forwarded_client_ip_from_trusted_proxy(handler)
+    if trust_forwarded and peer_trusted:
+        client_ip = forwarded_client_address(handler)
         if client_ip is None:
             # Malformed/empty forwarded chain from a trusted proxy → fail closed.
             return False
@@ -6456,7 +6231,7 @@ def _onboarding_request_is_local(handler) -> bool:
     # peer is not a trusted proxy). Classify by the raw socket peer — it cannot
     # be spoofed by a header. A public peer sending X-Forwarded-For: 127.0.0.1 is
     # therefore correctly rejected (its raw peer is public).
-    raw = _request_client_ip(handler)
+    raw = peer_address(handler)
     parsed_ok, is_local = _ip_is_loopback_or_private(raw)
     if not parsed_ok:
         return False
@@ -6476,8 +6251,8 @@ def _onboarding_request_is_local(handler) -> bool:
     # (public) client we can't see. Deny in that case; require the operator to
     # opt in via HERMES_WEBUI_TRUST_FORWARDED_FOR (+ HERMES_WEBUI_TRUSTED_PROXY_CIDRS
     # for a non-loopback proxy). With NO forwarded header, a direct private/LAN
-    # client (the common direct-LAN deployment) stays local so onboarding,
-    # first-password/passkey setup, and passwordless terminal keep working.
+    # client (the common direct-LAN deployment) stays local so onboarding and
+    # the terminal keep working with login off.
     forwarded_present = bool(
         (handler.headers.get("X-Forwarded-For", "") or "").strip()
         or (handler.headers.get("X-Real-IP", "") or "").strip()
@@ -6488,9 +6263,9 @@ def _onboarding_request_is_local(handler) -> bool:
 
 
 def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
-    from api.auth import is_auth_enabled
+    from api.directory import is_directory_enabled
 
-    auth_enabled = is_auth_enabled() if auth_enabled is None else auth_enabled
+    auth_enabled = is_directory_enabled() if auth_enabled is None else auth_enabled
     if auth_enabled or _truthy_env("HERMES_WEBUI_ONBOARDING_OPEN"):
         return True
     return _onboarding_request_is_local(handler)
@@ -6498,8 +6273,9 @@ def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
 
 # Operator-facing copy reused by every embedded-terminal endpoint refusal.
 _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE = (
-    "Embedded terminal is only available from local networks when authentication "
-    "is not configured. Configure a password/passkey, or set "
+    "Embedded terminal is only available from local networks when login is off. "
+    "Configure the Directory (HERMES_WEBUI_DIRECTORY=ldap and the "
+    "HERMES_WEBUI_LDAP_* settings) to turn login on, or set "
     "HERMES_WEBUI_ONBOARDING_OPEN=1 to allow it on a deliberately-exposed server."
 )
 
@@ -6515,7 +6291,7 @@ def _embedded_terminal_gate_allows(handler) -> bool:
     admits every caller unconditionally, so restrict the terminal to local/private
     origins — the same trust model the onboarding/bootstrap endpoints use, ignoring
     spoofable forwarded headers unless an operator has opted into trusting them.
-    A deliberately-exposed passwordless server (access secured at another layer)
+    A deliberately-exposed server with login off (access secured at another layer)
     opts out with ``HERMES_WEBUI_ONBOARDING_OPEN=1``.
     """
     return _onboarding_gate_allows(handler)
@@ -11061,7 +10837,7 @@ from api.workspace import (
     list_workspace_suggestions,
     read_file_content,
     read_authorized_escape_file_content,
-    safe_resolve_ws,
+    resolve_in_workspace,
     raw_authorized_escape_target,
     resolve_trusted_workspace,
     _resolve_path,
@@ -11073,10 +10849,6 @@ from api.workspace import (
     rmtree_anchored,
     rename_anchored,
     make_anchored_dir,
-    validate_workspace_to_add,
-    _is_blocked_system_path,
-    _home_path,
-    _is_within,
     _strip_surrounding_quotes,
     _is_remote_terminal_backend,
     _workspace_blocked_roots,
@@ -11474,11 +11246,6 @@ button{width:100%;padding:10px;border-radius:10px;border:none;background:rgba(12
   border:1px solid rgba(124,185,255,.3);color:#7cb9ff;font-size:14px;font-weight:600;cursor:pointer;
   transition:all .15s}
 button:hover{background:rgba(124,185,255,.25)}
-.oidc-login{display:block;margin-top:10px;padding:10px;border-radius:10px;text-decoration:none;
-  background:rgba(255,255,255,.04);border:1px solid rgba(111,214,164,.35);color:#6fd6a4;
-  font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
-.oidc-login:hover{background:rgba(111,214,164,.12)}
-.passkey-login{margin-top:10px;background:rgba(255,255,255,.04);border-color:rgba(232,160,48,.35);color:#e8a030}
 .err{color:#e94560;font-size:12px;margin-top:10px;display:none}
 </style></head><body>
 <div class="card">
@@ -11486,8 +11253,7 @@ button:hover{background:rgba(124,185,255,.25)}
   <h1>{{APP_NAME}}</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
-    {{PASSWORD_FORM_HTML}}
-    {{OIDC_LOGIN_HTML}}
+    {{LOGIN_FORM_HTML}}
   </form>
   <div class="err" id="err"></div>
 </div>
@@ -11497,38 +11263,26 @@ button:hover{background:rgba(124,185,255,.25)}
 
 
 def _directory_session_role(handler) -> str | None:
-    """The GFIT-CoWork role (``admin``/``member``) of this request's Directory session, if any."""
-    from api.access import ROLE_ADMIN, ROLE_MEMBER
-    from api.auth import DIRECTORY_AUTH_TYPE, ensure_trusted_auth_session
+    """The GFIT-CoWork role (``admin``/``member``) of this request's Directory session, if any.
 
-    info = ensure_trusted_auth_session(handler)
+    The role is the request's Admission: a session with none has no role.
+    """
+    from api.access import request_admission
+    from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
+
+    info = ensure_request_session(handler)
     if not info or info.get("auth_type") != DIRECTORY_AUTH_TYPE:
         return None
-    role = info.get("role")
-    return role if role in (ROLE_ADMIN, ROLE_MEMBER) else None
+    admission = request_admission()
+    return admission.role if admission is not None else None
 
 
-def _login_client_ip(handler) -> str:
-    """The address the login rate limit counts attempts against.
-
-    Behind a reverse proxy every request arrives from the proxy, so one person's
-    wrong passwords would lock out the whole Team. With
-    ``HERMES_WEBUI_TRUST_FORWARDED_FOR=1`` and a trusted proxy as the socket
-    peer, the forwarded client address is used instead; otherwise (or on a
-    malformed chain) the socket peer.
-    """
-    raw = _request_client_ip(handler)
-    if _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR") and _raw_peer_is_trusted_proxy(handler):
-        return _forwarded_client_ip_from_trusted_proxy(handler) or raw
-    return raw
-
-
-def _handle_directory_login(handler, body, client_ip: str) -> bool:
+def _handle_directory_login(handler, body) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
-    from api.member_login import attempt_login
+    from api.login import attempt_login, rate_limit_key
 
-    outcome = attempt_login(body.get("username"), body.get("password"), client_ip)
+    outcome = attempt_login(body.get("username"), body.get("password"), rate_limit_key(handler))
     if outcome.status != 200:
         return j(handler, {"error": outcome.error}, status=outcome.status)
     return _send_login_success(
@@ -11554,75 +11308,6 @@ def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bo
     handler.end_headers()
     handler.wfile.write(payload)
     return True
-
-
-def _safe_login_redirect_path(raw_path: str | None) -> str:
-    path = str(raw_path or "").strip()
-    if not path:
-        return "/"
-    if path[0] != "/":
-        return "/"
-    if path[1:2] in {"/", "\\"}:
-        return "/"
-    if re.search(r"[\x00-\x1f\x7f\s]", path):
-        return "/"
-    # #5578: reject a `next` that points back at the login page, so an
-    # expired-auth bounce on the login page can't feed the redirect its own
-    # address and grow the URL exponentially. Length cap is belt-and-suspenders:
-    # a legitimate app path is never this long.
-    if len(path) > 2048:
-        return "/"
-    # Detect a login-route target even through nested percent-encoding: a nested
-    # login-redirect chain looks like `/session/login%3Fnext%3D...`, where the
-    # `?` separating the path from the query is itself encoded, so a plain
-    # split("?") wouldn't isolate the real path. Fully decode (bounded) and check
-    # the leading PATH of EVERY decode level, including the final fully-decoded
-    # form. Only collapse login-route chains — a legitimate non-login path that
-    # merely carries its own `next=` query key (e.g. `/admin?action=foo&next=/x`)
-    # must still round-trip (regression guarded by test_v050258_opus_followups.py).
-    _probe = path
-    for _ in range(8):
-        _path_only = _probe.split("?", 1)[0].split("#", 1)[0].split("&", 1)[0].rstrip("/")
-        if _path_only.endswith("/login") or _path_only == "/login":
-            return "/"
-        _decoded = unquote(_probe)
-        if _decoded == _probe:
-            break
-        _probe = _decoded
-    else:
-        # Loop exhausted the cap while STILL decoding (pathologically deep
-        # encoding): check the final decoded form too, then fail closed — an
-        # 8-level-deep encoded value is never a legitimate redirect.
-        _path_only = _probe.split("?", 1)[0].split("#", 1)[0].split("&", 1)[0].rstrip("/")
-        if _path_only.endswith("/login") or _path_only == "/login":
-            return "/"
-        return "/"
-    return path
-
-
-def _request_base_url(handler) -> str:
-    from api.auth import _is_secure_context
-
-    scheme = "https" if _is_secure_context(handler) else "http"
-    host = str(handler.headers.get("Host") or "").strip() or "127.0.0.1:8787"
-    return f"{scheme}://{host}"
-
-
-def _oidc_login_html(parsed) -> str:
-    from api.auth import is_oidc_auth_enabled
-
-    if not is_oidc_auth_enabled():
-        return ""
-    next_path = _safe_login_redirect_path(
-        parse_qs(parsed.query or "").get("next", [""])[0]
-    )
-    href = "/api/auth/oidc/start"
-    if next_path != "/":
-        href += "?next=" + quote(next_path, safe="/")
-    return (
-        '<a id="oidc-login" class="oidc-login" '
-        f'href="{_html.escape(href, quote=True)}">Continue with SSO</a>'
-    )
 
 
 # ── Logs endpoint ─────────────────────────────────────────────────────────────
@@ -13413,7 +13098,7 @@ def _render_index_shell_base() -> str:
     extension-tag injection are intentionally NOT applied here — they vary per
     request and are applied by the caller against this base string.
     """
-    from api.updates import WEBUI_VERSION
+    from api.version import WEBUI_VERSION
 
     index_path = api_config.get_index_html_path()
     st = index_path.stat()
@@ -13498,19 +13183,13 @@ def _handle_session_get(handler, parsed) -> bool:
         if _diag: _diag.stage("t1_after_get_session_check")
         s = get_session(sid, metadata_only=(not load_messages))
         _session_profile = getattr(s, 'profile', None) or None
-        if not _session_visible_to_active_profile(_session_profile, handler):
-            if _session_profile:
-                # Valid session owned by a KNOWN other profile: 409 so the
-                # client can offer to switch to it (#5419).
-                if _diag: _diag.finish()
-                return _session_profile_mismatch(handler, sid, _session_profile)
-            # Unknown/legacy None-profile sidecar: keep the original 404 so
-            # the frontend's self-heal (clear stale URL + localStorage) still
-            # fires. _profiles_match coerces None->'default', so a truly
-            # missing/legacy session under a non-default active profile would
-            # otherwise emit a useless 409 with profile=null.
+        # Session ownership answers: a KNOWN other profile's session is the
+        # Admin's 409 so the client can offer to switch to it (#5419); a
+        # legacy None-profile sidecar keeps the 404 self-heal.
+        _refusal = request_session_ownership().refuse_found_session(sid, s)
+        if _refusal is not None:
             if _diag: _diag.finish()
-            return bad(handler, "Session not found", 404)
+            return _refusal.answer(handler, sid)
         original_stream_id = getattr(s, "active_stream_id", None)
         _clear_stale_stream_state(s)
         cli_meta = _lookup_cli_session_metadata(sid) if _session_requires_cli_metadata_lookup(s) else {}
@@ -13966,23 +13645,13 @@ def _handle_session_get(handler, parsed) -> bool:
         # gate (via _is_claimable_cli_source) so the two endpoints can't
         # drift on foreign-session semantics.
         cli_meta = _lookup_cli_session_metadata(sid)
-        _session_profile = (cli_meta or {}).get("profile") or None
-        # Claude Code rows are profile-less by construction (they come from
-        # ~/.claude/projects, not from any profile's state.db), so the gate
-        # below would 404 every one of them under a named active profile
-        # even though /api/sessions happily lists them. Exempt them.
-        _profile_agnostic = _is_profile_agnostic_foreign_session(cli_meta)
-        if not _profile_agnostic and not _session_visible_to_active_profile(_session_profile, handler):
-            if _session_profile:
-                # Valid CLI/foreign session owned by a KNOWN other profile:
-                # 409 so the client can offer to switch to it (#5419).
-                return _session_profile_mismatch(handler, sid, _session_profile)
-            # Missing session (cli_meta={} -> profile=None): keep the 404
-            # self-heal path. _profiles_match coerces None->'default', so a
-            # truly-missing session under a non-default active profile would
-            # otherwise emit a useless 409 with profile=null and skip the
-            # frontend self-heal + spin the SSE reconnect against a dead sid.
-            return bad(handler, "Session not found", 404)
+        # Session ownership answers from the listed row: another KNOWN
+        # profile's CLI/foreign session is the Admin's 409 (#5419); a missing
+        # session keeps the 404 self-heal; a Profile-less Claude Code row opens
+        # under any profile for the Admin, and never for a User.
+        _refusal = request_session_ownership().refuse_listed_session(sid, cli_meta or {})
+        if _refusal is not None:
+            return _refusal.answer(handler, sid)
         synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta or {})
         if reason == "was_webui":
             # Deleted WebUI session: 404 so the client self-heals
@@ -14070,12 +13739,11 @@ def handle_get(handler, parsed) -> bool:
 
             csrf_token = ""
             try:
-                from api.auth import csrf_token_for_session, is_auth_enabled, parse_cookie, verify_session
+                from api.auth import csrf_token_for_session, parse_cookie, verify_session
+                from api.directory import is_directory_enabled
 
-                if is_auth_enabled():
+                if is_directory_enabled():
                     cookie_val = parse_cookie(handler)
-                    if not cookie_val:
-                        cookie_val = getattr(handler, "_trusted_auth_session_cookie_value", None)
                     if cookie_val and verify_session(cookie_val):
                         csrf_token = csrf_token_for_session(cookie_val) or ""
             except Exception:
@@ -14091,9 +13759,9 @@ def handle_get(handler, parsed) -> bool:
 
             role = _directory_session_role(handler)
             if role:
-                # GFIT-CoWork: the stylesheet hides Admin-only menus for Members
+                # GFIT-CoWork: the stylesheet hides Admin-only menus for Users
                 # (cosmetic; the server gate is the source of truth). Extensions
-                # are Admin-only, so a Member's shell does not load them.
+                # are Admin-only, so a User's shell does not load them.
                 html = html.replace("<html ", f'<html data-gfit-role="{role}" ', 1)
             return t(
                 handler,
@@ -14121,14 +13789,14 @@ def handle_get(handler, parsed) -> bool:
             _resolve_login_locale_key(_lang)
         ])
         from urllib.parse import quote
-        from api.updates import WEBUI_VERSION
+        from api.version import WEBUI_VERSION
         # GFIT-CoWork: the Directory login (employee ID + password) is the only
         # way in (ADR 0004), so it is the only form. Locales without Directory
         # copy yet fall back to English.
         for _key in ("directory_subtitle", "username_placeholder"):
             _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
         _login_strings["subtitle"] = _login_strings["directory_subtitle"]
-        _password_form_html = (
+        _login_form_html = (
             '<input type="text" id="username" name="username" '
             f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
             'autocomplete="username" '
@@ -14146,123 +13814,38 @@ def handle_get(handler, parsed) -> bool:
             .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
             .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))
             .replace("{{LOGIN_SUBTITLE}}", _html.escape(_login_strings["subtitle"]))
-            .replace("{{PASSWORD_FORM_HTML}}", _password_form_html)
+            .replace("{{LOGIN_FORM_HTML}}", _login_form_html)
             .replace("{{LOGIN_INVALID_PW}}", _html.escape(_login_strings["invalid_pw"]))
             .replace(
                 "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])
             )
-            .replace("{{OIDC_LOGIN_HTML}}", _oidc_login_html(parsed))
         )
         return t(handler, _page, content_type="text/html; charset=utf-8")
 
-    if parsed.path in ("/api/auth/oidc/start", "/api/auth/oidc/callback"):
-        from api.auth import is_oidc_auth_enabled
-
-        if not is_oidc_auth_enabled():
-            return j(handler, {"error": "OIDC login is disabled"}, status=404)
-
-    if parsed.path == "/api/auth/oidc/start":
-        from api.auth_oidc import OIDCAuthError, OIDCConfigError, build_authorization_redirect
-
-        next_path = _safe_login_redirect_path(
-            parse_qs(parsed.query or "").get("next", [""])[0]
-        )
-        try:
-            location = build_authorization_redirect(
-                _request_base_url(handler), next_path
-            )
-        except OIDCConfigError as exc:
-            return j(handler, {"error": str(exc)}, status=404)
-        except OIDCAuthError as exc:
-            return j(handler, {"error": str(exc)}, status=exc.status_code)
-        handler.send_response(302)
-        handler.send_header("Location", location)
-        handler.send_header("Cache-Control", "no-store")
-        handler.send_header("Content-Length", "0")
-        _security_headers(handler)
-        handler.end_headers()
-        return True
-
-    if parsed.path == "/api/auth/oidc/callback":
-        from api.auth import create_session, set_auth_cookie
-        from api.auth_oidc import OIDCAuthError, OIDCConfigError, complete_authorization_code_flow
-
-        query = parse_qs(parsed.query or "")
-        error = str(query.get("error", [""])[0] or "").strip()
-        if error:
-            description = str(query.get("error_description", [""])[0] or "").strip()
-            return j(handler, {"error": description or error}, status=401)
-        state = str(query.get("state", [""])[0] or "").strip()
-        code = str(query.get("code", [""])[0] or "").strip()
-        if not state or not code:
-            return j(handler, {"error": "Missing OIDC callback state or code"}, status=400)
-        try:
-            result = complete_authorization_code_flow(
-                _request_base_url(handler), state, code
-            )
-        except OIDCConfigError as exc:
-            return j(handler, {"error": str(exc)}, status=404)
-        except OIDCAuthError as exc:
-            return j(handler, {"error": str(exc)}, status=exc.status_code)
-        cookie_val = create_session()
-        handler.send_response(302)
-        handler.send_header(
-            "Location",
-            _safe_login_redirect_path(result.get("next_path")),
-        )
-        handler.send_header("Cache-Control", "no-store")
-        _security_headers(handler)
-        set_auth_cookie(handler, cookie_val)
-        handler.send_header("Content-Length", "0")
-        handler.end_headers()
-        return True
-
     if parsed.path == "/api/auth/status":
-        from api.auth import (
-            _passkey_feature_flag_enabled,
-            ensure_trusted_auth_session,
-            is_auth_enabled,
-            is_directory_auth_enabled,
-            is_oidc_auth_enabled,
-            is_password_auth_enabled,
-            is_trusted_auth_enabled,
-            DIRECTORY_AUTH_TYPE,
-        )
-        from api.passkeys import registered_credentials
-
+        from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
+        from api.directory import is_directory_enabled
         logged_in = False
         session_info = None
-        auth_enabled = is_auth_enabled()
-        oidc_enabled = is_oidc_auth_enabled()
+        auth_enabled = is_directory_enabled()
         if auth_enabled:
-            session_info = ensure_trusted_auth_session(handler)
+            session_info = ensure_request_session(handler)
             logged_in = bool(session_info)
-        passkey_flag = _passkey_feature_flag_enabled()
-        passkeys = registered_credentials() if passkey_flag else []
-        password_auth_enabled = is_password_auth_enabled()
         payload = {
             "auth_enabled": auth_enabled,
             "logged_in": logged_in,
-            "oidc_enabled": oidc_enabled,
-            "password_auth_enabled": password_auth_enabled,
-            "passwordless_enabled": bool(passkeys) and not password_auth_enabled,
-            "passkeys_enabled": bool(passkeys),
-            "passkeys_count": len(passkeys),
-            "passkey_feature_flag": passkey_flag,
             "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
         }
-        if is_trusted_auth_enabled() or (session_info and session_info.get("auth_type") == "trusted"):
-            payload["trusted_auth_enabled"] = True
-        if is_directory_auth_enabled():
+        if auth_enabled:
             payload["directory_auth_enabled"] = True
-        if session_info and session_info.get("auth_type") in ("trusted", DIRECTORY_AUTH_TYPE):
+        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
+            from api.login import session_identity
+
             payload["auth_type"] = session_info.get("auth_type")
             payload["user"] = session_info.get("username")
             payload["bound_profile"] = session_info.get("bound_profile")
-        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
-            from api.member_login import session_identity
 
-            payload["role"] = session_info.get("role")
+            payload["role"] = _directory_session_role(handler)
             payload.update(session_identity(session_info))
         return j(handler, payload)
 
@@ -14290,7 +13873,7 @@ def handle_get(handler, parsed) -> bool:
             # Inject the current git-derived version as the cache name so the
             # service worker cache busts automatically on every new deploy.
             from urllib.parse import quote
-            from api.updates import WEBUI_VERSION
+            from api.version import WEBUI_VERSION
             version_token = quote(WEBUI_VERSION, safe="")
             text = sw_path.read_text(encoding="utf-8").replace(
                 "__WEBUI_VERSION__", version_token
@@ -14532,7 +14115,8 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/settings":
         settings = load_settings()
         settings["persisted_speech_keys"] = persisted_speech_settings_keys()
-        # Never expose the stored password hash to clients
+        # A password hash stored by the Upstream password login is left on disk
+        # and ignored; never send it to a client.
         settings.pop("password_hash", None)
         settings.setdefault("max_tokens", None)
         settings.setdefault("max_tokens_effective", None)
@@ -14544,44 +14128,15 @@ def handle_get(handler, parsed) -> bool:
             settings["max_tokens"] = None
             settings["max_tokens_effective"] = None
             settings["max_tokens_fallback"] = None
-        # Surface env-var precedence so the UI can disable the password field
-        # instead of silently no-oping the save (#1560). The setting takes
-        # precedence in api.auth.get_password_hash(), but until now the UI
-        # had no way to know — see issue #1139 / #1560.
-        settings["password_env_var"] = bool(
-            os.getenv("HERMES_WEBUI_PASSWORD", "").strip()
-        )
-        # Auth-state fields for frontend safety badge / confirmation flows
-        from api.auth import is_auth_enabled, is_password_auth_enabled
-        settings["auth_enabled"] = is_auth_enabled()
-        settings["password_auth_enabled"] = is_password_auth_enabled()
-        try:
-            from api.auth import _passkey_feature_flag_enabled as _pffe
-            from api.passkeys import registered_credentials as _rc
-            if _pffe():
-                settings["passkeys_enabled"] = bool(_rc())
-                settings["passwordless_enabled"] = bool(_rc()) and not settings["password_auth_enabled"]
-            else:
-                settings["passkeys_enabled"] = False
-                settings["passwordless_enabled"] = False
-        except Exception:
-            pass
+        # Auth-state field for the frontend's unauthenticated warning
+        from api.directory import is_directory_enabled
+        settings["auth_enabled"] = is_directory_enabled()
         # Inject the running version so the UI badge stays in sync with git tags
         # without any manual release step.
         try:
-            from api.updates import AGENT_VERSION, WEBUI_VERSION
+            from api.version import AGENT_VERSION, WEBUI_VERSION
             settings["webui_version"] = WEBUI_VERSION
             settings["agent_version"] = AGENT_VERSION
-        except Exception:
-            pass
-        # Channel-scoped display badge — SEPARATE from webui_version (which is
-        # load-bearing for asset cache-busting / SW cache / skew detection and
-        # must stay channel-neutral). update_channel_version is display-only.
-        try:
-            from api.updates import channel_version_badge, _read_update_channel
-            channel = _read_update_channel()
-            settings["update_channel"] = channel
-            settings["update_channel_version"] = channel_version_badge(channel)
         except Exception:
             pass
         return j(handler, settings)
@@ -14613,11 +14168,6 @@ def handle_get(handler, parsed) -> bool:
         from api.extensions import get_extension_status
 
         return j(handler, get_extension_status())
-
-    if parsed.path == "/api/extensions/registry":
-        from api.extensions import get_extension_registry
-
-        return j(handler, get_extension_registry())
 
     if parsed.path.startswith("/extensions/"):
         from api.extensions import serve_extension_static
@@ -14747,9 +14297,8 @@ def handle_get(handler, parsed) -> bool:
                 archived_offset=archived_offset,
             )
             # Keep the visible /api/sessions contract unchanged even though the
-            # heavy lifting now lives in the cache builder: profile scoping via
-            # `_profiles_match(s.get("profile"), active_profile)` still happens
-            # before `_keep_latest_messaging_session_per_source(`.
+            # heavy lifting now lives in the cache builder: the view's profile
+            # scoping still happens before `_keep_latest_messaging_session_per_source(`.
             payload = _get_cached_session_list_payload(
                 key=key,
                 builder=lambda: _build_session_list_cache_payload(
@@ -14772,6 +14321,7 @@ def handle_get(handler, parsed) -> bool:
                 ),
                 diag=diag,
             )
+            payload = _session_list_rows_for_caller(payload, active_profile, all_profiles)
             diag.stage("response_write")
             return j(handler, _session_list_payload_to_response(payload), pretty=False)
         finally:
@@ -14903,11 +14453,11 @@ def handle_get(handler, parsed) -> bool:
                 workspace = resolve_trusted_workspace(cli_meta["workspace"])
             except (FileNotFoundError, ValueError):
                 return j(handler, {"git": None})
-        from api.workspace import confine_to_member_workspace
         from api.workspace_git import GitWorkspaceError, git_status
+        from api.workspace_policy import request_workspace_policy
 
         try:
-            workspace = confine_to_member_workspace(Path(workspace))
+            workspace = request_workspace_policy().confine(Path(workspace))
         except ValueError:
             return j(handler, {"git": None})
         try:
@@ -14940,46 +14490,6 @@ def handle_get(handler, parsed) -> bool:
             return j(handler, resolve_moa_config())
         except RuntimeError as e:
             return bad(handler, str(e), 503)
-
-    if parsed.path == "/api/updates/check":
-        settings = load_settings()
-        if not settings.get("check_for_updates", True):
-            return j(handler, {"disabled": True})
-        include_agent_updates = not bool(settings.get("ignore_agent_updates"))
-        qs = parse_qs(parsed.query)
-        # ?simulate=1 returns fake behind counts for UI testing (localhost only)
-        if (
-            qs.get("simulate", ["0"])[0] == "1"
-            and handler.client_address[0] == "127.0.0.1"
-        ):
-            return j(
-                handler,
-                {
-                    "webui": {
-                        "name": "webui",
-                        "behind": 3,
-                        "current_sha": "abc1234",
-                        "latest_sha": "def5678",
-                        "branch": "master",
-                        "repo_url": "https://github.com/nesquena/hermes-webui",
-                        "compare_url": "https://github.com/nesquena/hermes-webui/compare/abc1234...def5678",
-                    },
-                    "agent": {
-                        "name": "agent",
-                        "behind": 1 if include_agent_updates else 0,
-                        "ignored": not include_agent_updates,
-                        "current_sha": "aaa0001",
-                        "latest_sha": "bbb0002",
-                        "branch": "master",
-                        "repo_url": "https://github.com/NousResearch/hermes-agent",
-                        "compare_url": "https://github.com/NousResearch/hermes-agent/compare/aaa0001...bbb0002",
-                    },
-                    "checked_at": 0,
-                },
-            )
-        from api.updates import cached_update_status
-
-        return j(handler, cached_update_status(include_agent=include_agent_updates))
 
     if parsed.path == "/api/chat/stream/status":
         stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
@@ -15506,26 +15016,6 @@ def handle_get(handler, parsed) -> bool:
 
 # ── POST auth helpers
 
-def _require_passkey_registration_auth(handler) -> tuple[bool, str, int]:
-    """Require auth, or the existing local-only first-run bootstrap gate.
-
-    Registering additional passkeys is an auth-factor enrollment action and
-    requires a valid WebUI session.  The first passkey can still bootstrap a
-    passkey-only instance, but only through the same local/private-network
-    onboarding gate used for first password setup.
-    """
-    from api.auth import is_auth_enabled, parse_cookie, verify_session
-
-    auth_enabled = is_auth_enabled()
-    if not auth_enabled:
-        if _onboarding_gate_allows(handler, auth_enabled):
-            return True, "", 200
-        return False, "Authentication required", 401
-    cookie_val = parse_cookie(handler)
-    if not cookie_val or not verify_session(cookie_val):
-        return False, "Authentication required", 401
-    return True, "", 200
-
 def _validate_session_toolsets_shape(toolsets):
     """Validate per-session toolset override shape without catalog lookup."""
     if toolsets is None:
@@ -15575,93 +15065,17 @@ def _resolve_new_session_workspace(body, visible_prev_session_id, profile=None):
     return str(workspace)
 
 
-def _llm_update_summary(system_prompt: str, user_prompt: str, active_profile: str | None = None) -> str:
-    from api import profiles as profiles_api
+def _profile_refused(handler, refusal):
+    """Answer a refused Profile management action (``roster.ProfileRefused``) with its HTTP status."""
+    from api import roster
 
-    profile = active_profile or profiles_api.get_active_profile_name() or "default"
-
-    with profiles_api.profile_env_for_background_worker(
-        profile,
-        "update summary",
-        logger_override=logger,
-    ):
-        from api.config import (
-            get_effective_default_model,
-            resolve_model_provider,
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        _main_model, _main_provider, _main_base_url = resolve_model_provider(get_effective_default_model())
-        _main_api_key = None
-        _rt = None
-        try:
-            from api.oauth import resolve_runtime_provider_with_anthropic_env_lock
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-
-            _rt = resolve_runtime_provider_with_anthropic_env_lock(
-                resolve_runtime_provider,
-                requested=_main_provider,
-            )
-            _main_api_key = _rt.get("api_key")
-            if not _main_provider:
-                _main_provider = _rt.get("provider")
-            if not _main_base_url:
-                _main_base_url = _rt.get("base_url")
-        except Exception as _e:
-            logger.debug("update summary runtime provider resolution failed: %s", _e)
-        # Atomic custom-provider authority (see the /api/chat note): the record
-        # that supplies the endpoint must also supply the credential — and the
-        # wire protocol, credential pool and ACP transport that go with it.
-        _bundle = _resolve_agent_connection_bundle(
-            _main_provider, _main_api_key, _main_base_url, _rt
-        )
-        _main_provider = _bundle["provider"]
-        _main_api_key = _bundle["api_key"]
-        _main_base_url = _bundle["base_url"]
-
-        main_runtime = _auxiliary_main_runtime(_bundle, _main_model)
-
-        ensure_agent_runtime_current()
-        try:
-            from agent.auxiliary_client import get_text_auxiliary_client
-
-            aux_client, aux_model = get_text_auxiliary_client(
-                "compression",
-                main_runtime=main_runtime,
-            )
-            if aux_client is not None and aux_model:
-                response = aux_client.chat.completions.create(
-                    model=aux_model,
-                    messages=messages,
-                )
-                return str(response.choices[0].message.content or "").strip()
-        except Exception as _e:
-            logger.debug("update summary auxiliary model failed; falling back to main model: %s", _e)
-
-        AIAgent = require_ai_agent_class()
-
-        agent = AIAgent(
-            model=_main_model,
-            provider=_main_provider,
-            base_url=_main_base_url,
-            api_key=_main_api_key,
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=[],
-            session_id=f"updates-summary-{uuid.uuid4().hex[:8]}",
-            **_agent_bundle_kwargs(AIAgent, _bundle),
-        )
-        result = agent.run_conversation(
-            user_message=user_prompt,
-            system_message=system_prompt,
-            conversation_history=[],
-            task_id=f"updates-summary-{uuid.uuid4().hex[:8]}",
-        )
-        return str(result.get("final_response") or "").strip()
+    status = {
+        roster.REFUSED_BAD_REQUEST: 400,
+        roster.REFUSED_FORBIDDEN: 403,
+        roster.REFUSED_NOT_FOUND: 404,
+        roster.REFUSED_CONFLICT: 409,
+    }.get(refusal.kind, 500)
+    return bad(handler, _sanitize_error(refusal), status)
 
 
 def handle_post(handler, parsed) -> bool:
@@ -15779,40 +15193,6 @@ def handle_post(handler, parsed) -> bool:
     if parsed.path == "/api/escape/authorize":
         return _handle_escape_authorize(handler, parsed, body)
 
-    if parsed.path == "/api/updates/check":
-        settings = load_settings()
-        if not settings.get("check_for_updates", True):
-            force = bool(body.get("force", False)) if isinstance(body, dict) else False
-            if force:
-                # Manual force-check bypasses auto-check toggle (#6082)
-                pass
-            else:
-                return j(handler, {"disabled": True})
-        include_agent_updates = not bool(settings.get("ignore_agent_updates"))
-        force = bool(body.get("force", False))
-        # Allow the client to pass the channel explicitly in the POST body. This
-        # avoids a race on channel switch: the Settings dropdown re-checks
-        # immediately, but its autosave PUT (debounced) may not have landed
-        # server-side yet, so reading the saved setting here could answer for the
-        # OLD channel. An explicit body channel (validated against the enum) wins;
-        # otherwise fall back to the saved setting. (Fable UX gate.)
-        channel = body.get("channel") if isinstance(body, dict) else None
-        if channel not in ("stable", "experimental"):
-            channel = settings.get("update_channel")
-        from api.updates import check_for_updates
-
-        logger.info("checking for updates (force=%s, include_agent=%s, channel=%s)", force, include_agent_updates, channel)
-        # Defensive-only guard: wrap check_for_updates() for consistent
-        # exception protection across all route handlers. Does NOT fix #6086
-        # (root cause is likely signal/process-group reaping, per maintainer analysis).
-        try:
-            payload = check_for_updates(force=force, include_agent=include_agent_updates, channel=channel)
-        except Exception:
-            logger.exception("update check failed unexpectedly (defensive guard caught exception)")
-            return bad(handler, "Update check failed, see server log for details", status=500)
-        logger.info("update check completed")
-        return j(handler, payload)
-
     if parsed.path == "/api/extensions/toggle":
         from api.extensions import ExtensionToggleError, set_extension_user_enabled
 
@@ -15846,34 +15226,6 @@ def handle_post(handler, parsed) -> bool:
         except Exception:
             logger.exception("extension sidecar proxy consent update failed")
             return bad(handler, "Failed to update extension state", status=500)
-
-    if parsed.path == "/api/extensions/install":
-        from api.extensions import ExtensionInstallError, install_extension
-
-        try:
-            return j(
-                handler,
-                install_extension(body.get("id"), body.get("download_url"), body.get("sha256")),
-            )
-        except ExtensionInstallError as exc:
-            return bad(handler, str(exc), status=exc.status)
-        except Exception:
-            logger.exception("extension install failed")
-            return bad(handler, "Failed to install extension", status=500)
-
-    if parsed.path == "/api/extensions/uninstall":
-        from api.extensions import ExtensionInstallError, uninstall_extension
-
-        try:
-            return j(
-                handler,
-                uninstall_extension(body.get("id")),
-            )
-        except ExtensionInstallError as exc:
-            return bad(handler, str(exc), status=exc.status)
-        except Exception:
-            logger.exception("extension uninstall failed")
-            return bad(handler, "Failed to uninstall extension", status=500)
 
     if parsed.path == "/api/session/recovery/repair-safe":
         from api.session_recovery import repair_safe_session_recovery
@@ -17395,13 +16747,13 @@ def handle_post(handler, parsed) -> bool:
         if not name:
             return bad(handler, "name is required")
         try:
-            from api.auth import ensure_trusted_auth_session
+            from api.auth import ensure_request_session
             from api.profiles import switch_profile, _validate_profile_name
             from api.helpers import build_profile_cookie
             if name != 'default':
                 _validate_profile_name(name)
-            session_info = ensure_trusted_auth_session(handler)
-            if getattr(handler, '_trusted_auth_session_rejected', False):
+            session_info = ensure_request_session(handler)
+            if getattr(handler, '_request_session_rejected', False):
                 return bad(handler, 'Authentication required', 401)
             bound_profile = str((session_info or {}).get("bound_profile") or "").strip() or None
             if bound_profile and name != bound_profile:
@@ -17420,15 +16772,8 @@ def handle_post(handler, parsed) -> bool:
                 restart_watcher_for_profile(name)
             except Exception as exc:
                 logger.warning("Failed to restart gateway watcher for profile %s: %s", name, exc)
-            session_cookie_value = getattr(handler, '_trusted_auth_session_cookie_value', None)
-            if session_cookie_value:
-                if bound_profile and name == bound_profile:
-                    return j(handler, result)
-                extra_header = build_profile_cookie(name, session_cookie_value=session_cookie_value)
-            else:
-                extra_header = build_profile_cookie(name, handler)
             return j(handler, result, extra_headers={
-                'Set-Cookie': extra_header,
+                'Set-Cookie': build_profile_cookie(name, handler),
             })
         except PermissionError as e:
             return bad(handler, _sanitize_error(e), 403)
@@ -17441,33 +16786,24 @@ def handle_post(handler, parsed) -> bool:
         name = body.get("name", "").strip()
         if not name:
             return bad(handler, "name is required")
-        import re as _re
-
-        if not _re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", name):
-            return bad(
-                handler,
-                "Invalid profile name: name it after the employee ID "
-                "(lowercase letters, numbers, hyphens, underscores; up to 64 characters)",
-            )
         display_name = body.get("display_name")
         if display_name is not None and not isinstance(display_name, str):
             return bad(handler, "display_name must be text")
         clone_from = body.get("clone_from")
         if clone_from is not None:
             clone_from = str(clone_from).strip()
-            if not _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", clone_from):
-                return bad(handler, "Invalid clone_from name")
         base_url = body.get("base_url", "").strip() if body.get("base_url") else None
         api_key = body.get("api_key", "").strip() if body.get("api_key") else None
         default_model = body.get("default_model", "").strip() if body.get("default_model") else None
         model_provider = body.get("model_provider", "").strip() if body.get("model_provider") else None
         if base_url and not base_url.startswith(("http://", "https://")):
             return bad(handler, "base_url must start with http:// or https://")
-        try:
-            from api.profiles import create_profile_api
+        from api import roster
 
-            result = create_profile_api(
+        try:
+            profile = roster.create_profile(
                 name,
+                display_name or "",
                 clone_from=clone_from,
                 clone_config=bool(body.get("clone_config", False)),
                 base_url=base_url,
@@ -17475,41 +16811,21 @@ def handle_post(handler, parsed) -> bool:
                 default_model=default_model,
                 model_provider=model_provider,
             )
-        except PermissionError as e:
-            return bad(handler, _sanitize_error(e), 403)
-        except (ValueError, FileExistsError, RuntimeError) as e:
-            return bad(handler, str(e))
-        from api import roster
-
-        try:
-            roster.add(name, display_name or "")
-        except (OSError, roster.RosterUnreadable) as e:
-            logger.warning("Profile %s created, but its roster record was not saved: %s", name, e)
-            return bad(handler, f"Profile '{name}' was created, but its display name could not be saved.", 500)
-        return j(handler, {"ok": True, "profile": {**result, **roster.view(name)}})
+        except roster.ProfileRefused as e:
+            return _profile_refused(handler, e)
+        return j(handler, {"ok": True, "profile": profile})
 
     if parsed.path in ("/api/profile/disable", "/api/profile/enable"):
         name = body.get("name", "").strip()
         if not name:
             return bad(handler, "name is required")
         from api import roster
-        from api.access import is_admin
-        from api.profiles import _validate_profile_name, named_profile_exists
 
+        action = roster.disable_profile if parsed.path == "/api/profile/disable" else roster.enable_profile
         try:
-            _validate_profile_name(name)
-        except ValueError as e:
-            return bad(handler, _sanitize_error(e))
-        if not named_profile_exists(name):
-            return bad(handler, f"Profile '{name}' does not exist.", 404)
-        if is_admin(name):
-            # An Admin logs in to `default`, so this Profile's status would not shut them out.
-            return bad(handler, f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
-        if parsed.path == "/api/profile/disable":
-            roster.disable(name)
-        else:
-            roster.enable(name)
-        return j(handler, {"ok": True, "profile": roster.view(name)})
+            return j(handler, {"ok": True, "profile": action(name)})
+        except roster.ProfileRefused as e:
+            return _profile_refused(handler, e)
 
     if parsed.path == "/api/profile/delete":
         name = body.get("name", "").strip()
@@ -17518,118 +16834,29 @@ def handle_post(handler, parsed) -> bool:
         # Deleting is permanent: the caller confirms by repeating the name.
         if str(body.get("confirm") or "").strip() != name:
             return bad(handler, "Confirm the deletion: send confirm set to the Profile name")
-        try:
-            from api import roster
-            from api.profiles import delete_profile_api, _validate_profile_name
+        from api import roster
 
-            _validate_profile_name(name)
-            result = delete_profile_api(name)
-            roster.remove(name)
-            return j(handler, result)
-        except PermissionError as e:
-            return bad(handler, _sanitize_error(e), 403)
-        except (ValueError, FileNotFoundError) as e:
-            return bad(handler, _sanitize_error(e))
-        except RuntimeError as e:
-            return bad(handler, str(e), 409)
+        try:
+            return j(handler, roster.delete_profile(name))
+        except roster.ProfileRefused as e:
+            return _profile_refused(handler, e)
 
     # ── Settings (POST) ──
     if parsed.path == "/api/settings":
-        from api.auth import (
-            create_session,
-            get_password_hash,
-            is_auth_enabled,
-            is_password_auth_enabled,
-            parse_cookie,
-            set_auth_cookie,
-            verify_password,
-            verify_session,
-        )
+        from api.directory import is_directory_enabled
 
         if "bot_name" in body:
             body["bot_name"] = (str(body["bot_name"]) or "").strip() or "Hermes"
-
-        auth_enabled_before = is_auth_enabled()
-        password_auth_enabled_before = auth_enabled_before and get_password_hash() is not None
-        current_cookie = parse_cookie(handler)
-        logged_in_before = bool(current_cookie and verify_session(current_cookie))
-        requested_password = bool(
-            isinstance(body.get("_set_password"), str)
-            and body.get("_set_password", "").strip()
-        )
-        requested_passwordless = bool(body.pop("_passwordless", False))
-        requested_clear_password = bool(body.get("_clear_password") or requested_passwordless)
-        if requested_passwordless:
-            body["_clear_password"] = True
-
-        current_password = body.pop("_current_password", None)
-
-        # #1560: HERMES_WEBUI_PASSWORD env var takes precedence in
-        # api.auth.get_password_hash(), so writing password_hash to settings.json
-        # has no effect on auth. Refuse loudly with 409 instead of silently
-        # succeeding — the previous behaviour returned 200 + a green save toast
-        # while every subsequent login still required the env-var password.
-        if requested_password or requested_clear_password:
-            if os.getenv("HERMES_WEBUI_PASSWORD", "").strip():
-                return bad(
-                    handler,
-                    "HERMES_WEBUI_PASSWORD env var is set — it overrides the settings password. "
-                    "Unset the env var and restart the server before changing the password here.",
-                    409,
-                )
 
         max_tokens_provided = "max_tokens" in body
         max_tokens_status = None
         max_tokens_value = body.pop("max_tokens", None) if max_tokens_provided else None
 
-        # First password creation decides who owns a previously passwordless
-        # WebUI. While auth is disabled, the generic /api/settings route is also
-        # unauthenticated, so gate bootstrap password setup the same way as
-        # onboarding setup: local/private networks only, unless the operator
-        # explicitly opts into remote bootstrap with HERMES_WEBUI_ONBOARDING_OPEN.
-        if requested_password and not auth_enabled_before:
-            if not _onboarding_gate_allows(handler, auth_enabled_before):
-                return bad(
-                    handler,
-                    "First password setup is only available from local networks when auth is not enabled. "
-                    "To bootstrap this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.",
-                    403,
-                )
-
-        # Auth-disable safety: when password auth is currently enabled, require
-        # the current password to change, clear, or switch to passwordless.
-        if auth_enabled_before and password_auth_enabled_before and (requested_password or requested_clear_password):
-            if not isinstance(current_password, str) or not current_password:
-                return bad(
-                    handler,
-                    "Current password is required to change or disable authentication.",
-                    403,
-                )
-            if not verify_password(current_password):
-                return bad(
-                    handler,
-                    "Current password is incorrect.",
-                    403,
-                )
-
-        if requested_passwordless:
-            from api.auth import _passkey_feature_flag_enabled
-            from api.passkeys import registered_credentials
-
-            if not _passkey_feature_flag_enabled():
-                return bad(handler, "Passkey support is disabled. Enable HERMES_WEBUI_PASSKEY before going passwordless.", 409)
-            if not registered_credentials():
-                return bad(handler, "Register a passkey before going passwordless.", 409)
-        elif requested_clear_password:
-            from api.passkeys import clear_credentials
-
-            clear_credentials()
-
         # Handle auth_disabled_acknowledged setting
         ack = body.pop("_auth_disabled_acknowledged", None)
-        if ack is not None and not is_auth_enabled():
+        if ack is not None and not is_directory_enabled():
             body["auth_disabled_acknowledged"] = bool(ack)
-        elif is_auth_enabled() or requested_password:
+        elif is_directory_enabled():
             body["auth_disabled_acknowledged"] = False
 
         from api.config import get_max_tokens_status, set_max_tokens
@@ -17638,7 +16865,9 @@ def handle_post(handler, parsed) -> bool:
         saved["persisted_speech_keys"] = persisted_speech_settings_keys()
         if max_tokens_provided:
             max_tokens_status = set_max_tokens(max_tokens_value)
-        saved.pop("password_hash", None)  # never expose hash to client
+        # A password hash stored by the Upstream password login is left on disk
+        # and ignored; never send it to a client.
+        saved.pop("password_hash", None)
         saved.update(max_tokens_status if max_tokens_provided else get_max_tokens_status())
 
         # Settings that change which sessions appear in the sidebar must
@@ -17671,46 +16900,8 @@ def handle_post(handler, parsed) -> bool:
             except Exception:
                 pass
 
-        auth_enabled_after = is_auth_enabled()
-        auth_just_enabled = bool(
-            requested_password and auth_enabled_after and not auth_enabled_before
-        )
-        logged_in_after = logged_in_before
-        new_cookie = None
-
-        if auth_just_enabled and not logged_in_before:
-            new_cookie = create_session()
-            logged_in_after = True
-
-        saved["auth_enabled"] = auth_enabled_after
-        saved["password_auth_enabled"] = is_password_auth_enabled()
-        saved["logged_in"] = logged_in_after
-        saved["auth_just_enabled"] = auth_just_enabled
-        try:
-            from api.auth import _passkey_feature_flag_enabled as _pffe
-            from api.passkeys import registered_credentials as _rc
-            if _pffe():
-                saved["passkeys_enabled"] = bool(_rc())
-                saved["passwordless_enabled"] = bool(_rc()) and not saved["password_auth_enabled"]
-            else:
-                saved["passkeys_enabled"] = False
-                saved["passwordless_enabled"] = False
-        except Exception:
-            pass
-
-        if not new_cookie:
-            return j(handler, saved)
-
-        response_body = json.dumps(saved, ensure_ascii=False, indent=2).encode("utf-8")
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json; charset=utf-8")
-        handler.send_header("Content-Length", str(len(response_body)))
-        handler.send_header("Cache-Control", "no-store")
-        set_auth_cookie(handler, new_cookie)
-        _security_headers(handler)
-        handler.end_headers()
-        handler.wfile.write(response_body)
-        return True
+        saved["auth_enabled"] = is_directory_enabled()
+        return j(handler, saved)
 
     if parsed.path == "/api/onboarding/oauth/start":
         if not _onboarding_gate_allows(handler):
@@ -17749,7 +16940,7 @@ def handle_post(handler, parsed) -> bool:
         # Marking onboarding complete flips the first-run wizard off (persists
         # onboarding_completed=True). Gate it on the same local-network check as
         # the other onboarding mutators so an unauthenticated public client on a
-        # passwordless bind can't hide the first-run wizard. (#3765)
+        # bind with login off can't hide the first-run wizard. (#3765)
         if not _onboarding_gate_allows(handler):
             return bad(handler, "Onboarding is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
         return j(handler, complete_onboarding())
@@ -18125,183 +17316,27 @@ def handle_post(handler, parsed) -> bool:
     if parsed.path == "/api/session/import":
         return _handle_session_import(handler, body)
 
-    # ── Self-update (POST) ──
-    if parsed.path == "/api/updates/apply":
-        target = body.get("target", "")
-        if target not in ("webui", "agent"):
-            return bad(handler, 'target must be "webui" or "agent"')
-        # Honor an explicit validated body channel (the client sends the channel
-        # the banner was offering) so a channel switch whose debounced autosave
-        # hasn't landed can't make apply read the OLD saved channel (Codex gate).
-        # Fall back to the saved setting when absent/invalid.
-        _apply_channel = body.get("channel") if isinstance(body, dict) else None
-        if _apply_channel not in ("stable", "experimental"):
-            _apply_channel = None
-        from api.updates import apply_update
-
-        return j(handler, apply_update(target, _apply_channel))
-
-    if parsed.path == "/api/updates/force":
-        target = body.get("target", "")
-        if target not in ("webui", "agent"):
-            return bad(handler, 'target must be "webui" or "agent"')
-        _force_channel = body.get("channel") if isinstance(body, dict) else None
-        if _force_channel not in ("stable", "experimental"):
-            _force_channel = None
-        from api.updates import apply_force_update
-
-        return j(handler, apply_force_update(target, _force_channel))
-
-    if parsed.path == "/api/updates/clear_lock":
-        # Manual-instruction recovery for the .git/index.lock case. The
-        # endpoint NEVER removes a lock file from the server -- it returns
-        # the diagnostic + the exact 'rm' command for the operator, and on
-        # a re-click with the lock already gone, it re-runs the normal
-        # non-destructive apply path. See apply_clear_lock for the v2.2
-        # design rationale (round-2 gate cert: fcntl-flock cannot detect
-        # git's O_CREAT|O_EXCL locks, so any auto-delete path races).
-        target = body.get("target", "")
-        if target not in ("webui", "agent"):
-            return bad(handler, 'target must be "webui" or "agent"')
-        from api.updates import apply_clear_lock
-
-        return j(handler, apply_clear_lock(target))
-
-    if parsed.path == "/api/updates/summary":
-        from api.updates import summarize_update_payload
-
-        updates = body.get("updates") if isinstance(body, dict) else {}
-        target = body.get("target") if isinstance(body, dict) else None
-
-        return j(handler, summarize_update_payload(updates, llm_callback=_llm_update_summary, target=target))
-
     # ── CLI session import (POST) ──
     if parsed.path == "/api/session/import_cli":
         return _handle_session_import_cli(handler, body)
 
     # ── Auth endpoints (POST) ──
     if parsed.path == "/api/auth/login":
-        from api.auth import is_auth_enabled
+        from api.directory import is_directory_enabled
 
-        if not is_auth_enabled():
+        if not is_directory_enabled():
             return j(handler, {"ok": True, "message": "Auth not enabled"})
-        # GFIT-CoWork: the Directory is the only way in (ADR 0004). With a
-        # legacy method configured but no Directory, every login is refused.
-        return _handle_directory_login(handler, body, _login_client_ip(handler))
-
-    if parsed.path == "/api/auth/passkey/options":
-        from api.auth import _passkey_feature_flag_enabled, is_auth_enabled
-        from api.passkeys import PasskeyError, PasskeyRateLimitError, authentication_options
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled. Set HERMES_WEBUI_PASSKEY=1 or webui_passkey_enabled: true to enable."}, status=404)
-        if not is_auth_enabled():
-            return j(handler, {"error": "Auth not enabled"}, status=400)
-        try:
-            return j(handler, {"ok": True, "publicKey": authentication_options(handler)})
-        except PasskeyRateLimitError as e:
-            return bad(handler, str(e), status=429)
-        except PasskeyError as e:
-            return bad(handler, str(e), status=400)
-
-    if parsed.path == "/api/auth/passkey/login":
-        from api.auth import _passkey_feature_flag_enabled, create_session, is_auth_enabled, set_auth_cookie
-        from api.auth import _check_login_rate, _record_login_attempt
-        from api.passkeys import PasskeyError, finish_login
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        if not is_auth_enabled():
-            return j(handler, {"error": "Auth not enabled"}, status=400)
-        client_ip = handler.client_address[0]
-        if not _check_login_rate(client_ip):
-            return j(handler, {"error": "Too many attempts. Try again in a minute."}, status=429)
-        try:
-            finish_login(body, handler)
-        except PasskeyError as e:
-            _record_login_attempt(client_ip)
-            return bad(handler, str(e), status=401)
-        cookie_val = create_session()
-        body = json.dumps({"ok": True}).encode()
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(body)))
-        handler.send_header("Cache-Control", "no-store")
-        _security_headers(handler)
-        set_auth_cookie(handler, cookie_val)
-        handler.end_headers()
-        handler.wfile.write(body)
-        return True
-
-    if parsed.path == "/api/auth/passkey/register/options":
-        from api.auth import _passkey_feature_flag_enabled
-        from api.passkeys import PasskeyError, PasskeyRateLimitError, registration_options
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        ok, error, status = _require_passkey_registration_auth(handler)
-        if not ok:
-            return j(handler, {"error": error}, status=status)
-        try:
-            return j(handler, {"ok": True, "publicKey": registration_options(handler)})
-        except PasskeyRateLimitError as e:
-            return bad(handler, str(e), status=429)
-        except PasskeyError as e:
-            return bad(handler, str(e), status=400)
-
-    if parsed.path == "/api/auth/passkey/register":
-        from api.auth import _passkey_feature_flag_enabled
-        from api.passkeys import PasskeyError, finish_registration, registered_credentials
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        ok, error, status = _require_passkey_registration_auth(handler)
-        if not ok:
-            return j(handler, {"error": error}, status=status)
-        try:
-            result = finish_registration(body, handler)
-            result["credentials"] = registered_credentials()
-            return j(handler, result)
-        except PasskeyError as e:
-            return bad(handler, str(e), status=400)
-
-    if parsed.path == "/api/auth/passkey/delete":
-        from api.auth import _passkey_feature_flag_enabled, get_password_hash
-        from api.passkeys import PasskeyError, delete_credential, registered_credentials
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"error": "Passkey support is disabled."}, status=404)
-        try:
-            credential_id = str(body.get("id") or "")
-            creds = registered_credentials()
-            if get_password_hash() is None and len(creds) <= 1 and any(c.get("id") == credential_id for c in creds):
-                return bad(handler, "Set a password or disable auth before removing the last passkey.", 409)
-            return j(handler, delete_credential(credential_id))
-        except PasskeyError as e:
-            return bad(handler, str(e), status=404)
-
-    if parsed.path == "/api/auth/passkeys":
-        from api.auth import _passkey_feature_flag_enabled
-        from api.passkeys import registered_credentials
-
-        if not _passkey_feature_flag_enabled():
-            return j(handler, {"credentials": [], "disabled": True})
-        return j(handler, {"credentials": registered_credentials()})
+        # GFIT-CoWork: the Directory is the only way in (ADR 0004).
+        return _handle_directory_login(handler, body)
 
     if parsed.path == "/api/auth/logout":
-        from api.auth import clear_auth_cookie, ensure_trusted_auth_session, get_trusted_auth_logout_url, invalidate_session, parse_cookie
+        from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
         from api.helpers import clear_profile_cookie
 
-        session_info = ensure_trusted_auth_session(handler)
-        cookie_val = getattr(handler, '_trusted_auth_session_cookie_value', None) or parse_cookie(handler)
+        cookie_val = parse_cookie(handler)
         if cookie_val:
             invalidate_session(cookie_val)
-        payload = {"ok": True}
-        if session_info and session_info.get("auth_type") == "trusted":
-            logout_url = get_trusted_auth_logout_url()
-            if logout_url:
-                payload["trusted_logout_url"] = logout_url
-        body = json.dumps(payload).encode()
+        body = json.dumps({"ok": True}).encode()
         handler.send_response(200)
         handler.send_header("Content-Type", "application/json")
         handler.send_header("Content-Length", str(len(body)))
@@ -18556,9 +17591,9 @@ def _handle_session_export(handler, parsed):
         s = get_session(sid)
     except KeyError:
         return bad(handler, "Session not found", 404)
-    active_profile = get_active_profile_name()
-    if not _profiles_match(getattr(s, "profile", None), active_profile):
-        return bad(handler, "Session not found", 404)
+    _refusal = request_session_ownership().refuse_found_session(sid, s)
+    if _refusal is not None:
+        return _refusal.answer_not_found(handler)
     # ``public_session_projection`` supersedes the narrower
     # ``redact_session_data`` path so export context_messages uses the same
     # alias-stripping boundary as the visible transcript.
@@ -18652,12 +17687,11 @@ def _handle_sessions_search(handler, parsed):
     from api.profiles import get_active_profile_name
     active_profile = get_active_profile_name()
     all_profiles = _all_profiles_enabled(parsed)
-    sessions = all_sessions()
-    if not all_profiles:
-        sessions = [
-            s for s in sessions
-            if _profiles_match(s.get("profile"), active_profile)
-        ]
+    ownership = request_session_ownership()
+    sessions = [
+        s for s in all_sessions()
+        if ownership.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+    ]
     # Reject a malformed depth instead of letting int() raise ValueError and
     # surface as a confusing 500. Clamp to >= 0 so a negative value can't reach
     # the messages[:depth] slice below — messages[:-n] would silently exclude
@@ -19620,8 +18654,7 @@ def _handle_sse_stream(handler, parsed):
 
 
 def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
-    if not _session_id_visible_to_request_profile(handler, session_id):
-        return True
+    # The dispatch guard has asked session ownership about the id in the path.
     try:
         session = get_session(session_id, metadata_only=True)
     except KeyError:
@@ -20078,6 +19111,10 @@ def _handle_session_events_stream(handler):
     end_sse_headers(handler)
     _sse_set_write_deadline(handler)  # Defect A: slow tab can't pin this thread
 
+    # The subscriber's own session ownership, chosen once from its Admission:
+    # events are filtered for whoever opened the stream, never for whoever
+    # published the event.
+    ownership = request_session_ownership()
     q = subscribe_session_events()
     try:
         while True:
@@ -20086,6 +19123,8 @@ def _handle_session_events_stream(handler):
             except queue.Empty:
                 handler.wfile.write(b': keepalive\n\n')
                 handler.wfile.flush()
+                continue
+            if not ownership.may_receive_event(event_data):
                 continue
             _sse(handler, event_data.get('type', 'sessions_changed'), event_data)
     except _CLIENT_DISCONNECT_ERRORS:
@@ -20680,9 +19719,10 @@ def _handle_tts(handler, parsed):
         from api.helpers import bad as _bad
         return _bad(handler, "text too long (max 5000 characters)", 400)
 
-    from api.auth import is_auth_enabled, parse_cookie, verify_session
+    from api.auth import parse_cookie, verify_session
+    from api.directory import is_directory_enabled
     cv = None
-    if is_auth_enabled():
+    if is_directory_enabled():
         cv = parse_cookie(handler)
         if not (cv and verify_session(cv)):
             from api.helpers import bad as _bad
@@ -21290,8 +20330,9 @@ def _media_deny_reason(target: Path) -> str | None:
         _under_hermes_root = any(_within_ci(target, _root) for _root in _hermes_roots)
         _name_cf = target.name.casefold()
         # Exact secret/state basenames, plus atomic-write temp files for those
-        # (api/auth.py and api/passkeys.py write via a `tmp*.<name>.tmp` / `tmp*.tmp`
-        # sidecar then rename) — deny those suffixes too so a momentary temp file
+        # (api/auth.py, and before it was removed the Upstream passkey store, write
+        # via a `tmp*.<name>.tmp` / `tmp*.tmp` sidecar then rename) — deny those
+        # suffixes too so a momentary temp file
         # cannot be fetched. (Codex review #3234.)
         _deny_tmp_suffixes = (".sessions.tmp", ".login_attempts.tmp",
                               ".passkeys.tmp", ".passkey_challenges.tmp")
@@ -21316,12 +20357,13 @@ def _handle_media(handler, parsed):
       (os.pathsep-separated list of absolute paths; ":" on POSIX, ";" on Windows)
     """
     import os as _os
-    from api.auth import is_auth_enabled, parse_cookie, verify_session
+    from api.auth import parse_cookie, verify_session
+    from api.directory import is_directory_enabled
     _HOME = Path(_os.path.expanduser("~"))
     _HERMES_HOME = Path(_os.getenv("HERMES_HOME", str(_HOME / ".hermes"))).expanduser()
 
     # Auth check
-    if is_auth_enabled():
+    if is_directory_enabled():
         cv = parse_cookie(handler)
         if not (cv and verify_session(cv)):
             body = b'{"error":"Authentication required"}'
@@ -21343,11 +20385,11 @@ def _handle_media(handler, parsed):
     except Exception:
         return bad(handler, "Invalid path", 400)
 
-    # GFIT-CoWork: a Member may only view files inside their own Profile.
-    from api.profiles import _resolve_named_profile_home, pinned_request_profile
+    # GFIT-CoWork: the request's Workspace policy says whether the media viewer
+    # may serve this file (a User: only inside their own Profile).
+    from api.workspace_policy import request_workspace_policy
 
-    _pinned = pinned_request_profile()
-    if _pinned and not target.is_relative_to(_resolve_named_profile_home(_pinned)):
+    if not request_workspace_policy().may_serve_media(target):
         return bad(handler, "That file is outside your Profile.", 403)
 
     # Allowed roots: hermes home, /tmp, and active workspace.
@@ -21521,7 +20563,7 @@ def _file_raw_target(session, sid: str, rel: str) -> tuple[Path, Path] | None:
     """Resolve /api/file/raw paths from the workspace or this session's uploads."""
     workspace_root = Path(session.workspace)
     try:
-        target = safe_resolve(workspace_root, rel)
+        target = resolve_in_workspace(workspace_root, rel)
     except ValueError:
         target = None
     if target and target.exists() and target.is_file():
@@ -21631,7 +20673,7 @@ def _handle_folder_download(handler, parsed):
 
     rel = qs.get("path", [""])[0]
     try:
-        target = safe_resolve(Path(s.workspace), rel)
+        target = resolve_in_workspace(Path(s.workspace), rel)
     except ValueError:
         return bad(handler, "invalid path", 400)
     if not target.exists():
@@ -24713,14 +23755,13 @@ def _handle_session_compression_recovery_start(handler, body):
         source = get_session(sid)
     except KeyError:
         return bad(handler, "Session not found", 404)
-    if not _session_visible_to_active_profile(getattr(source, "profile", None), handler):
-        # #7710: same contract as the detail-load endpoint — 409
-        # ``session_profile_mismatch`` for a known other profile,
-        # 404 only for the None-profile self-heal path.
-        _recovery_session_profile = getattr(source, "profile", None)
-        if _recovery_session_profile:
-            return _session_profile_mismatch(handler, sid, _recovery_session_profile)
-        return bad(handler, "Session not found", 404)
+    # #7710: same contract as the detail-load endpoint — 409
+    # ``session_profile_mismatch`` for a known other profile, 404 only for the
+    # None-profile self-heal path. Recovery continues only into this
+    # request's own sessions.
+    _refusal = request_session_ownership().refuse_found_session(sid, source)
+    if _refusal is not None:
+        return _refusal.answer(handler, sid)
     recovery = compression_recovery_payload_for_session(source)
     if not recovery:
         return bad(handler, "Session does not have a compression recovery action.", 409)
@@ -25110,23 +24151,26 @@ def _handle_chat_start(handler, body, diag=None):
             or getattr(s, "context_messages", None)
             or getattr(s, "pending_user_message", None)
         )
-        if not _session_visible_to_active_profile(session_profile, handler):
+        ownership = request_session_ownership()
+        _refusal = ownership.refuse_found_session(body.get("session_id", ""), s)
+        if _refusal is not None:
             if (
-                requested_profile
+                ownership.keeps_upstream_rules()
+                and requested_profile
                 and _profiles_match(requested_profile, active_profile)
                 and not has_persisted_turns
             ):
                 # Empty placeholders can still be retagged when the
                 # requested profile matches the active request profile.
+                # Never for a User: their request names only their own
+                # Profile's sessions.
                 s.profile = requested_profile
-            elif session_profile:
+            else:
                 # #7710: known other profile → 409 ``session_profile_mismatch``
                 # so the client can offer to switch to it (#5419).
                 # 404 is preserved only for the None-profile
                 # (unknown/legacy) self-heal case.
-                return _session_profile_mismatch(handler, body.get("session_id", ""), session_profile)
-            else:
-                return bad(handler, "Session not found", 404)
+                return _refusal.answer(handler, body.get("session_id", ""))
         # Resolve durable rotations before any workspace/model/pending mutation.
         # GET navigation adopts the tip; POST never silently replays a user turn.
         from api.compression_continuation import durable_compression_continuation
@@ -25953,13 +24997,13 @@ def _git_session_workspace(handler, session_id: str):
 
 
 def _git_session_and_workspace(handler, session_id: str):
-    from api.workspace import confine_to_member_workspace
+    from api.workspace_policy import request_workspace_policy
 
     session = _git_session(handler, session_id)
     if session is None:
         return None, None
     try:
-        return session, confine_to_member_workspace(Path(session.workspace))
+        return session, request_workspace_policy().confine(Path(session.workspace))
     except ValueError as exc:
         bad(handler, str(exc), 403)
         return None, None
@@ -26437,7 +25481,7 @@ def _handle_file_delete(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         # Reject a symlinked entry BEFORE the follow-based exists() check: a
         # dangling symlink resolves to a missing target, so an exists()-first
         # order would misclassify it as 404 "File not found" and leave it
@@ -26469,7 +25513,7 @@ def _handle_file_save(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if (ws_root / body["path"]).is_symlink():
             return bad(handler, "Cannot save to a symlinked entry")
         if not target.exists():
@@ -26500,7 +25544,7 @@ def _handle_office_file_save(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if (ws_root / body["path"]).is_symlink():
             return bad(handler, "Cannot save to a symlinked entry")
         if not target.exists():
@@ -26535,7 +25579,7 @@ def _handle_file_create(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if target.exists():
             return bad(handler, "File already exists")
         data = str(body.get("content", "")).encode("utf-8")
@@ -26563,7 +25607,7 @@ def _handle_file_rename(handler, body):
     try:
         ws_root = Path(s.workspace)
         ws_root_resolved = ws_root.resolve()
-        source = safe_resolve(ws_root, body["path"])
+        source = resolve_in_workspace(ws_root, body["path"])
         # Reject a symlinked entry BEFORE the follow-based exists() check (see
         # _handle_file_delete): a dangling symlink would otherwise 404 and stay
         # unrenameable. is_symlink() is a no-follow lstat on the requested path.
@@ -26597,15 +25641,15 @@ def _handle_file_move(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        # safe_resolve() returns paths under the RESOLVED root, so compute
+        # resolve_in_workspace() returns paths under the RESOLVED root, so compute
         # returned relative paths against the resolved root too — otherwise a
         # symlinked workspace root (e.g. macOS /tmp -> /private/tmp) makes
         # dest.relative_to(ws_root) raise after a successful on-disk move,
         # returning a confusing 400 for a move that actually happened.
         ws_root_resolved = ws_root.resolve()
-        source = safe_resolve(ws_root, body["path"])
+        source = resolve_in_workspace(ws_root, body["path"])
         # Reject a symlinked SOURCE entry BEFORE the follow-based exists() check.
-        # safe_resolve() follows the final symlink, so source.name/source.parent
+        # resolve_in_workspace() follows the final symlink, so source.name/source.parent
         # would point at the link's TARGET, not the dragged entry — moving
         # link.txt would silently move dir/real.txt and leave link.txt dangling.
         # Detect the symlink on the lexically-requested final component (lstat,
@@ -26621,7 +25665,7 @@ def _handle_file_move(handler, body):
             dest_dir_raw = "."
         if ".." in dest_dir_raw.split("/"):
             return bad(handler, "Invalid destination")
-        dest_parent = safe_resolve(ws_root, dest_dir_raw)
+        dest_parent = resolve_in_workspace(ws_root, dest_dir_raw)
         if not dest_parent.is_dir():
             return bad(handler, "Destination folder not found", 404)
         if source.is_dir():
@@ -26695,7 +25739,7 @@ def _handle_create_dir(handler, body):
         return bad(handler, "Session not found", 404)
     try:
         ws_root = Path(s.workspace)
-        target = safe_resolve(ws_root, body["path"])
+        target = resolve_in_workspace(ws_root, body["path"])
         if target.exists():
             return bad(handler, "Path already exists")
         make_anchored_dir(ws_root, target)
@@ -26716,7 +25760,7 @@ def _handle_file_reveal(handler, body):
     except KeyError:
         return bad(handler, "Session not found", 404)
     try:
-        target = safe_resolve(Path(s.workspace), body["path"])
+        target = resolve_in_workspace(Path(s.workspace), body["path"])
         if not target.exists():
             # Include the resolved server-side path in the error message so
             # the frontend toast can show *which* file the system expected.
@@ -26761,7 +25805,7 @@ def _handle_file_path(handler, body):
     absolute path on the user's clipboard so they can paste it into a
     terminal, editor, or anywhere else without having to round-trip through
     the OS file browser. The frontend can't compute the absolute path on
-    its own — `safe_resolve` joins against the session's workspace root
+    its own — `resolve_in_workspace` joins against the session's workspace root
     which only the server knows. The handler here is a thin lookup; no
     filesystem mutation, no OS-specific dispatch. We do NOT require the
     target to exist (unlike `_handle_file_reveal`) — copying the path of a
@@ -26777,7 +25821,7 @@ def _handle_file_path(handler, body):
     except KeyError:
         return bad(handler, "Session not found", 404)
     try:
-        target = safe_resolve(Path(s.workspace), body["path"])
+        target = resolve_in_workspace(Path(s.workspace), body["path"])
         return j(handler, {"ok": True, "path": str(target)})
     except (ValueError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
@@ -26807,7 +25851,7 @@ def _handle_file_open_vscode(handler, body):
     except KeyError:
         return bad(handler, "Session not found", 404)
     try:
-        target = safe_resolve(Path(s.workspace), body["path"])
+        target = resolve_in_workspace(Path(s.workspace), body["path"])
         if not target.exists():
             return bad(handler, f"File not found: {target}", 404)
 
@@ -26874,49 +25918,39 @@ def _handle_workspace_add(handler, body):
     # Finder's "Copy as Pathname" wraps paths in single quotes, and users
     # routinely paste those quoted strings into the Add Space input.
     # Doing this at the route entry means every downstream check (blocked
-    # system path, validate_workspace_to_add, duplicate detection) sees the
+    # system path, the Workspace policy, duplicate detection) sees the
     # cleaned form.
     path_str = _strip_surrounding_quotes(body.get("path", "").strip())
     name = body.get("name", "").strip()
     auto_create = body.get("create", False)
     if not path_str:
         return bad(handler, "path is required")
-    # Validate the path is NOT a blocked system root BEFORE any filesystem mutation.
-    # This prevents creating orphan directories on rejected paths (#782 review).
-    # _is_blocked_system_path honours user-tmp carve-outs (e.g. /var/folders on
-    # macOS) so pytest's tmp_path_factory paths and other legit user-tmp dirs
-    # still register cleanly.
+    # The request's Workspace policy checks the folder BEFORE any filesystem
+    # mutation, so a refused request leaves nothing behind (#782 review; a User
+    # may only register inside their Workspace, ADR 0002). It refuses a blocked
+    # system root (with the home carve-out) and, for a User, anything outside
+    # their Workspace; None means a target-side remote-terminal path, with
+    # nothing to create here.
+    from api.profiles import get_active_profile_name
+    from api.workspace_policy import request_workspace_policy
+    active_profile = get_active_profile_name()
+    policy = request_workspace_policy()
     try:
-        from api.workspace import _remote_terminal_workspace_candidate, _resolve_path
-        from api.profiles import get_active_profile_name
-        active_profile = get_active_profile_name()
-        remote_candidate = _remote_terminal_workspace_candidate(path_str, profile=active_profile)
-        candidate = _resolve_path(path_str, profile=active_profile)
-    except (ValueError, OSError, RuntimeError) as e:
-        # Invalid path (e.g. embedded null byte) — fail closed with a clean 400
-        # instead of letting .resolve() raise an uncaught 500.
+        candidate = policy.register_target(path_str, profile=active_profile)
+    except ValueError as e:
+        return bad(handler, str(e))
+    except (OSError, RuntimeError) as e:
+        # Invalid path — fail closed with a clean 400 instead of an uncaught 500.
         return bad(handler, f"Invalid path: {_sanitize_error(e)}")
-    if remote_candidate is None:
-        if _is_blocked_system_path(candidate):
-            # Home-directory carve-out, mirroring the validators
-            # (resolve_trusted_workspace / validate_workspace_to_add): a workspace
-            # at or under the active user's home must stay allowed even when that
-            # home lives under an otherwise-blocked root (e.g. systemd-homed
-            # /var/home/<user>/...). Without this the route rejects valid
-            # /var/home workspaces before validate_workspace_to_add()'s carve-out
-            # can run.
-            _home = _home_path()
-            if not (_home != Path("/") and (candidate == _home or _is_within(candidate, _home))):
-                return bad(handler, f"Path points to a system directory: {candidate}")
-        # Now safe to create the directory if requested
-        if auto_create:
-            try:
-                candidate.mkdir(parents=True, exist_ok=True)
-            except (OSError, PermissionError) as e:
-                return bad(handler, f"Could not create directory: {_sanitize_error(e)}")
+    # Now safe to create the directory if requested
+    if candidate is not None and auto_create:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            return bad(handler, f"Could not create directory: {_sanitize_error(e)}")
     # Full validation (exists, is_dir) — should pass now that dir exists
     try:
-        p = validate_workspace_to_add(path_str, profile=active_profile)
+        p = policy.resolve_to_register(path_str, profile=active_profile)
     except ValueError as e:
         return bad(handler, str(e))
     try:
@@ -29394,13 +28428,13 @@ def _handle_session_import_cli(handler, body):
         if allow_all_profiles:
             if requested_profile and not _profiles_match(existing_profile, requested_profile):
                 return bad(handler, "Session not found in CLI store", 404)
-        elif not _session_visible_to_active_profile(existing_profile, handler):
+        else:
             # #7710: same contract as the detail-load endpoint —
             # 409 ``session_profile_mismatch`` for a known other
             # profile, 404 only for the None-profile self-heal path.
-            if existing_profile:
-                return _session_profile_mismatch(handler, sid, existing_profile)
-            return bad(handler, "Session not found in CLI store", 404)
+            _refusal = request_session_ownership().refuse_found_session(sid, existing)
+            if _refusal is not None:
+                return _refusal.answer(handler, sid, not_found="Session not found in CLI store")
         refresh_profile = requested_profile or existing_profile
         cli_meta = _resolve_cli_import_metadata(
             sid,

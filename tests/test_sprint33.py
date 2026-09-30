@@ -54,21 +54,6 @@ def test_prompt_dialog_honors_custom_label_and_danger_state():
     assert "opts.danger?'alertdialog':'dialog'" in src
 
 
-def test_disable_auth_prompt_uses_destructive_label_not_create():
-    src = read("static/panels.js")
-    match = re.search(r"async function disableAuth\(\)\{(.*?)\n\}", src, re.DOTALL)
-    assert match, "disableAuth() not found"
-    body = match.group(1)
-    assert "const confirmText='DISABLE AUTH'" in body
-    assert "currentPwField=$('settingsCurrentPassword')" in body
-    assert "showToast(t('current_password_required'))" in body
-    assert body.index("showToast(t('current_password_required'))") < body.index("showPromptDialog")
-    assert "showPromptDialog" in body
-    assert "confirmLabel:t('disable_auth')" in body
-    assert "danger:true" in body
-    assert "t('create')" not in body
-
-
 def test_auth_disabled_warning_uses_status_payload_without_extra_settings_fetch():
     src = read("static/panels.js")
     match = re.search(r"function _updateAuthDisabledWarning\(authStatus\)\{(.*?)\n\}", src, re.DOTALL)
@@ -87,38 +72,7 @@ def test_acknowledgement_save_failure_uses_i18n_toast():
     assert "Failed to update acknowledgement" not in body
 
 
-def test_save_settings_password_change_preflights_current_password_before_api():
-    src = read("static/panels.js")
-    match = re.search(r"async function saveSettings\([^)]*\)\{(.*?)\n\}", src, re.DOTALL)
-    assert match, "saveSettings() not found"
-    body = match.group(1)
-    assert "currentPwField=$('settingsCurrentPassword')" in body
-    assert "showToast(t('current_password_required'))" in body
-    assert body.index("showToast(t('current_password_required'))") < body.index("_enqueueSettingsPost(")
-
-
-def test_disable_auth_typed_confirm_locales_show_literal_phrase():
-    src = read("static/i18n.js")
-    values = re.findall(r"disable_auth_typed_confirm:\s*'([^']*)'", src)
-    assert values, "disable_auth_typed_confirm keys missing"
-    assert len(values) == len(_i18n_locale_blocks(src)), (
-        "Every locale must define disable_auth_typed_confirm exactly once"
-    )
-    missing_literal = [value for value in values if "DISABLE AUTH" not in value]
-    assert not missing_literal, (
-        "Disable-auth prompt must display the exact phrase accepted by "
-        f"disableAuth(), but these translations do not: {missing_literal}"
-    )
-
-
 AUTH_SAFETY_LOCALE_KEYS = (
-    "current_password_label",
-    "current_password_placeholder",
-    "current_password_required",
-    "current_password_incorrect",
-    "disable_auth_typed_confirm",
-    "auth_status_password",
-    "auth_status_passkey_only",
     "auth_status_unauthenticated",
     "auth_warning_badge",
     "auth_disabled_warning_message",
@@ -151,19 +105,6 @@ def test_auth_safety_keys_exist_once_per_locale():
         ]
         assert not missing, f"{locale} missing auth-safety locale keys: {missing}"
         assert not duplicated, f"{locale} has duplicated auth-safety locale keys: {duplicated}"
-
-
-def test_auth_safety_pt_and_zh_hant_strings_stay_in_correct_locale_blocks():
-    src = read("static/i18n.js")
-    blocks = _i18n_locale_blocks(src)
-    zh_hant = blocks["zh-Hant"]
-    pt = blocks["pt"]
-    assert "目前密碼" in zh_hant
-    assert "輸入 DISABLE AUTH" in zh_hant
-    assert "Senha atual" not in zh_hant
-    assert "Digite DISABLE AUTH" not in zh_hant
-    assert "Senha atual" in pt
-    assert "Digite DISABLE AUTH" in pt
 
 
 def test_no_native_confirm_calls_remain_in_static_js():

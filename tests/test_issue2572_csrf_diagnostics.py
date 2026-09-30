@@ -40,7 +40,7 @@ def _json_body(handler: _FakeHandler) -> dict:
 
 
 def test_origin_mismatch_csrf_rejection_has_diagnostic_error(monkeypatch):
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     handler = _FakeHandler(
         {
             "Origin": "https://evil.example",
@@ -56,7 +56,7 @@ def test_origin_mismatch_csrf_rejection_has_diagnostic_error(monkeypatch):
 
 def test_token_mismatch_csrf_rejection_has_reload_error(monkeypatch):
     cookie = _signed_cookie("z" * 64)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     try:
         handler = _FakeHandler(
             {

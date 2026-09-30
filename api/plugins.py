@@ -1,5 +1,5 @@
 """
-Plugin discovery and static serving for Hermes Web UI.
+Plugin discovery and static serving for GFIT-CoWork.
 
 Scans ~/.hermes/plugins/<name>/dashboard/ for manifest.json files,
 matching the official Hermes dashboard plugin format.

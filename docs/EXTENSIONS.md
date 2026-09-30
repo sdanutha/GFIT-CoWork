@@ -17,15 +17,6 @@ This is intentionally not a plugin marketplace or dependency system. It is a
 safe escape hatch for local dashboards, internal tooling, and workflow-specific
 panels that should not live in core Hermes WebUI.
 
-> **The vetted extension library.** The curated, one-click-installable extensions
-> that appear in the gallery live in a separate public repo:
-> **[hermes-webui/hermes-webui-extensions](https://github.com/hermes-webui/hermes-webui-extensions)**.
-> "In the registry == vetted." That repo holds the entries, the authoring
-> conventions ([`docs/extension-entry.md`](https://github.com/hermes-webui/hermes-webui-extensions/blob/main/docs/extension-entry.md)),
-> the JSON schema, and the CI safety gates. This document covers the WebUI-side
-> *infrastructure* (loader, manifest contract, capabilities, install client);
-> see the library repo to browse existing extensions or contribute a new one.
-
 ## What extensions can do
 
 Extensions can:
@@ -50,38 +41,12 @@ Extensions cannot, by themselves:
 
 ## Configuration
 
-### One-click install (no configuration required)
-
-For a single-user self-hosted instance you do not need to configure anything.
-Open **Settings → Extensions**, pick an extension from the gallery, and click
-**Install** — it just works. The first install creates a WebUI-managed
-extension directory under your state dir (`STATE_DIR/extensions`, e.g.
-`~/.hermes/webui/extensions/`) and installs into it; gallery-installed
-extensions load automatically on the next app-shell render with no environment
-variables and no restart of your shell.
-
-The managed directory lives alongside your sessions and settings in the
-WebUI-owned state dir. That is a different trust domain from "a world-writable
-directory on a shared box": only the WebUI process (and whoever can already
-write your `~/.hermes` state) can place code there. The trust model below still
-applies — installed extension code runs with full session authority — so only
-install extensions from the vetted gallery or sources you trust as much as the
-WebUI source itself.
-
-Some gallery entries need more than WebUI assets. If an extension declares
-post-install guidance or lifecycle requirements such as a loopback sidecar or a
-native host, Settings -> Extensions shows a **Next step** note on the card after
-install. For example, Desktop Companion can install the WebUI bridge from the
-gallery, but the desktop pet is only visible after the local Desktop Companion
-app is started.
-
-### Manual / advanced configuration (optional)
-
-`HERMES_WEBUI_EXTENSION_DIR` is **optional** and overrides the managed default.
-Set it when you want extensions to live in a specific directory you control
-(e.g. a checked-out bundle, or a path mounted into a container). When set it
-must point to an existing directory before any script or stylesheet URLs are
-injected; WebUI never auto-creates an admin-specified path:
+Extensions load only from the directory named by `HERMES_WEBUI_EXTENSION_DIR`.
+With it unset, no extension loads. It must point to an existing directory the
+Admin controls (e.g. a checked-out bundle, or a path mounted into the
+container) before any script or stylesheet URLs are injected; GFIT-CoWork never
+auto-creates it. There is no in-app gallery or installer: GFIT-CoWork does not
+fetch or install extension code from anywhere.
 
 ```bash
 export HERMES_WEBUI_EXTENSION_DIR=/path/to/my-extension/static
@@ -135,17 +100,8 @@ may be kept in the manifest with the JSON boolean `"enabled": false`. Explicit
 `HERMES_WEBUI_EXTENSION_STYLESHEET_URLS` still work and are appended after
 manifest assets, with duplicates ignored.
 
-When an extension is installed from Settings -> Extensions, WebUI records the
-installed package and loads that package's `manifest.json` automatically on the
-next app-shell render. In this gallery-installed mode, a manifest located at
-`HERMES_WEBUI_EXTENSION_DIR/<extension-id>/manifest.json` resolves bare relative
-assets relative to that package directory. For example,
-`"scripts": ["assets/companion-adapter.js"]` in
-`desktop-companion/manifest.json` injects
-`/extensions/desktop-companion/assets/companion-adapter.js`.
-
-Manual manifests configured with `HERMES_WEBUI_EXTENSION_MANIFEST` follow the
-same rule: relative assets resolve from the manifest file's directory. A root
+Manifests configured with `HERMES_WEBUI_EXTENSION_MANIFEST` resolve relative
+assets from the manifest file's directory. A root
 manifest such as `extensions.json` keeps the existing
 `/extensions/<asset-path>` behavior, while a subdirectory manifest such as
 `desktop-companion/manifest.json` resolves relative assets under
@@ -536,7 +492,7 @@ browser session.
 
 For shared or remotely exposed installations:
 
-- keep `HERMES_WEBUI_PASSWORD` enabled
+- keep login on (configure the Directory)
 - bind to loopback unless you intentionally expose the service
 - review extension code before enabling it
 - prefer small, auditable extension files
@@ -699,16 +655,6 @@ If host CSS overrides `[hidden]`, add an extension-scoped rule such as:
   display: none !important;
 }
 ```
-
-### Contributing to the extension library
-
-To publish an extension in the vetted gallery, open a PR against
-**[hermes-webui/hermes-webui-extensions](https://github.com/hermes-webui/hermes-webui-extensions)**
-following [`docs/extension-entry.md`](https://github.com/hermes-webui/hermes-webui-extensions/blob/main/docs/extension-entry.md)
-(entry layout, `extension.json`/`manifest.json` shape, and the capability +
-best-practice conventions). Every entry PR runs the repo's CI validators and
-safety scan before it can merge, and merged entries are published to the registry
-that powers Settings → Extensions.
 
 ## Minimal example
 

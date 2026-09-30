@@ -1,4 +1,4 @@
-"""Crash-visibility hardening for the Hermes WebUI server (issue #4633).
+"""Crash-visibility hardening for the GFIT-CoWork server (issue #4633).
 
 Background
 ----------

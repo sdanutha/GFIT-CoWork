@@ -1,7 +1,7 @@
 """
-Hermes Web UI -- optional authentication.
-Off by default. Enable by setting HERMES_WEBUI_PASSWORD, configuring a
-password in Settings, registering passkeys, or configuring native OIDC SSO.
+GFIT-CoWork -- authentication: the session store, the session cookie, CSRF,
+the signed Profile cookie and the per-request gate.
+Login is the Directory (api.login, ADR 0004); off when no Directory is configured.
 """
 import hashlib
 import hmac
@@ -16,7 +16,8 @@ import threading
 import time
 from pathlib import Path
 
-from api.config import STATE_DIR, get_config, load_settings
+from api import directory
+from api.config import STATE_DIR, load_settings
 from api.helpers import request_declares_body
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,7 @@ SESSION_TTL = 86400 * 30  # 30 days
 def _resolve_session_ttl() -> int:
     """Resolve session TTL from env > settings > default.
 
-    Priority mirrors get_password_hash(): HERMES_WEBUI_SESSION_TTL env var
-    first, then settings.json, falling back to ``SESSION_TTL`` (30 days).
+    HERMES_WEBUI_SESSION_TTL env var first, then settings.json, falling back to ``SESSION_TTL`` (30 days).
     Clamped to [60s, 1 year] to prevent runaway cookies or self-lockout.
     """
     env_v = os.getenv('HERMES_WEBUI_SESSION_TTL', '').strip()
@@ -52,8 +52,6 @@ def _resolve_session_ttl() -> int:
 PUBLIC_PATHS = frozenset({
     '/login', '/health', '/favicon.ico', '/sw.js',
     '/api/auth/login', '/api/auth/status',
-    '/api/auth/oidc/start', '/api/auth/oidc/callback',
-    '/api/auth/passkey/options', '/api/auth/passkey/login',
     '/share',
     '/manifest.json', '/manifest.webmanifest',
     '/session/manifest.json', '/session/manifest.webmanifest',
@@ -102,26 +100,6 @@ def _warn_auth_persistence_failure(prefix: str, artifact: Path, exc: Exception, 
 
 
 _SESSIONS_FILE = STATE_DIR / '.sessions.json'
-_TRUSTED_AUTH_HEADER_ENV = 'HERMES_WEBUI_TRUSTED_AUTH_HEADER'
-_TRUSTED_GROUPS_HEADER_ENV = 'HERMES_WEBUI_TRUSTED_GROUPS_HEADER'
-_TRUSTED_GROUP_PROFILE_MAP_ENV = 'HERMES_WEBUI_GROUP_PROFILE_MAP'
-_TRUSTED_AUTH_LOGOUT_URL_ENV = 'HERMES_WEBUI_TRUSTED_AUTH_LOGOUT_URL'
-# Opt-in: also treat '|' as a group separator in the trusted-groups header.
-# Off by default so an existing deployment whose group NAME legitimately
-# contains a literal '|' is never silently re-split into two groups (which
-# could change its profile binding). Set to 1/true/yes/on for identity
-# providers (some Authentik outpost configs) that emit "admins|developpeur".
-_TRUSTED_GROUPS_PIPE_SEPARATOR_ENV = 'HERMES_WEBUI_TRUSTED_GROUPS_PIPE_SEPARATOR'
-_TRUSTED_AUTH_WARNINGS_EMITTED: set[str] = set()
-
-
-def _warn_trusted_auth_once(key: str, message: str, *args) -> None:
-    if key in _TRUSTED_AUTH_WARNINGS_EMITTED:
-        return
-    _TRUSTED_AUTH_WARNINGS_EMITTED.add(key)
-    logger.warning(message, *args)
-
-
 def _session_expiry(record) -> float | None:
     if isinstance(record, dict):
         expiry = record.get('expiry', record.get('expires_at'))
@@ -221,94 +199,6 @@ def _save_sessions(sessions: dict[str, float | dict]) -> None:
 _sessions = _load_sessions()
 _SESSIONS_LOCK = threading.Lock()
 
-# ── Login rate limiter ──────────────────────────────────────────────────────
-_LOGIN_ATTEMPTS_FILE = STATE_DIR / '.login_attempts.json'
-_LOGIN_MAX_ATTEMPTS = 5
-_LOGIN_WINDOW = 60  # seconds
-
-
-def _load_login_attempts() -> dict[str, list[float]]:
-    """Load persisted login attempts from STATE_DIR, pruning expired entries."""
-    try:
-        if _LOGIN_ATTEMPTS_FILE.exists():
-            data = json.loads(_LOGIN_ATTEMPTS_FILE.read_text(encoding='utf-8'))
-            if not isinstance(data, dict):
-                raise ValueError('malformed login-attempts file — expected dict')
-            now = time.time()
-            attempts: dict[str, list[float]] = {}
-            for ip, raw_times in data.items():
-                if not isinstance(ip, str) or not isinstance(raw_times, list):
-                    continue
-                fresh = [
-                    float(t)
-                    for t in raw_times
-                    if isinstance(t, (int, float)) and now - float(t) < _LOGIN_WINDOW
-                ]
-                if fresh:
-                    attempts[ip] = fresh
-            return attempts
-    except Exception as e:
-        logger.debug("Failed to load login attempts file, starting fresh: %s", e)
-    return {}
-
-
-def _save_login_attempts(attempts: dict[str, list[float]]) -> None:
-    """Atomically persist login attempts to STATE_DIR/.login_attempts.json (0600)."""
-    try:
-        _LOGIN_ATTEMPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=_LOGIN_ATTEMPTS_FILE.parent, suffix='.login_attempts.tmp')
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(attempts, f)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, _LOGIN_ATTEMPTS_FILE)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-    except Exception as e:
-        logger.debug("Failed to persist login attempts: %s", e)
-
-
-_login_attempts = _load_login_attempts()  # ip -> [timestamp, ...]
-_LOGIN_ATTEMPTS_LOCK = threading.Lock()
-
-
-def _check_login_rate(ip: str) -> bool:
-    """Return True if the IP is allowed to attempt login (thread-safe)."""
-    with _LOGIN_ATTEMPTS_LOCK:
-        now = time.time()
-        attempts = _login_attempts.get(ip, [])
-        # Prune old attempts
-        attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
-        if attempts:
-            _login_attempts[ip] = attempts
-        else:
-            _login_attempts.pop(ip, None)
-        _save_login_attempts(_login_attempts)
-        return len(attempts) < _LOGIN_MAX_ATTEMPTS
-
-
-def _record_login_attempt(ip: str) -> None:
-    """Record a login attempt for rate limiting (thread-safe)."""
-    with _LOGIN_ATTEMPTS_LOCK:
-        now = time.time()
-        attempts = _login_attempts.get(ip, [])
-        attempts.append(now)
-        _login_attempts[ip] = attempts
-        _save_login_attempts(_login_attempts)
-
-
-def _clear_login_attempts(ip: str) -> None:
-    """Clear failed login attempts after a successful login (thread-safe)."""
-    with _LOGIN_ATTEMPTS_LOCK:
-        if ip in _login_attempts:
-            _login_attempts.pop(ip, None)
-            _save_login_attempts(_login_attempts)
-
-
 def _load_key(filename: str) -> bytes:
     """Load a 32-byte key from STATE_DIR, generating and persisting one if missing."""
     key_file = STATE_DIR / filename
@@ -353,15 +243,7 @@ def _load_key(filename: str) -> bytes:
     return key
 
 
-_PBKDF2_KEY_CACHE: bytes | None = None
 _SIGNING_KEY_CACHE: bytes | None = None
-
-
-def _pbkdf2_key() -> bytes:
-    global _PBKDF2_KEY_CACHE
-    if _PBKDF2_KEY_CACHE is None:
-        _PBKDF2_KEY_CACHE = _load_key('.pbkdf2_key')
-    return _PBKDF2_KEY_CACHE
 
 
 def _signing_key() -> bytes:
@@ -371,284 +253,8 @@ def _signing_key() -> bytes:
     return _SIGNING_KEY_CACHE
 
 
-def _hash_password(password, *, salt: bytes | None = None) -> str:
-    """PBKDF2-SHA256 with 600k iterations (OWASP recommendation).
-    Salt is the persisted PBKDF2 key, which is secret and unique per
-    installation. This keeps the stored hash format a plain hex string
-    (no format change to settings.json) while replacing the predictable
-    STATE_DIR-derived salt from the original implementation.
-
-    The *salt* parameter exists solely to support transparent migration
-    of password hashes that were computed with a different key (e.g. the
-    old `.signing_key`). Normal callers should never pass it.
-    """
-    if salt is None:
-        salt = _pbkdf2_key()
-    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 600_000)
-    return dk.hex()
-
-
-_AUTH_HASH_LOCK = threading.Lock()
-_AUTH_HASH_COMPUTED: bool = False
-_AUTH_HASH_CACHE: str | None = None
-
-
-def _invalidate_password_hash_cache() -> None:
-    """Invalidate the in-process password hash cache so the next call to
-    get_password_hash() re-reads from settings.json or the env var."""
-    global _AUTH_HASH_COMPUTED, _AUTH_HASH_CACHE
-    with _AUTH_HASH_LOCK:
-        _AUTH_HASH_COMPUTED = False
-        _AUTH_HASH_CACHE = None
-
-
-def get_password_hash() -> str | None:
-    """Return the active password hash, or None if auth is disabled.
-    Priority: env var > settings.json.
-
-    The hash is computed once and cached for the lifetime of the process.
-    PBKDF2-600k takes ~1 s and is called on nearly every HTTP request via
-    check_auth → is_auth_enabled, so caching avoids wasting a full second
-    of CPU per request after the first one.
-
-    Thread-safe: double-checked locking ensures that under a burst of
-    concurrent requests only one thread computes PBKDF2, while the fast
-    path (after initialisation) requires zero locks.
-    """
-    global _AUTH_HASH_COMPUTED, _AUTH_HASH_CACHE
-
-    # Fast path — no lock needed once cache is populated.
-    if _AUTH_HASH_COMPUTED:
-        return _AUTH_HASH_CACHE
-
-    with _AUTH_HASH_LOCK:
-        # Re-check inside lock — another thread may have populated while
-        # we were waiting to acquire.
-        if _AUTH_HASH_COMPUTED:
-            return _AUTH_HASH_CACHE
-
-        env_pw = os.getenv('HERMES_WEBUI_PASSWORD', '').strip()
-        if env_pw:
-            result = _hash_password(env_pw)
-        else:
-            result = load_settings().get('password_hash') or None
-
-        _AUTH_HASH_CACHE = result
-        _AUTH_HASH_COMPUTED = True
-        return result
-
-
-# ── GFIT-CoWork: the Upstream login methods are off (ADR 0004, ticket 09) ────
-# The Directory is the only way in. The single shared password, passkeys, OIDC
-# and the trusted header report "not enabled", so every one of their endpoints
-# refuses and the UI hides them. Their configuration still turns the auth gate
-# on (see is_auth_enabled), so a Deployment that set a password but no
-# Directory is locked rather than open. Deleting their code is left to later
-# cleanup.
-
-def is_password_auth_enabled() -> bool:
-    """Always False: the single shared password is off in GFIT-CoWork."""
-    return False
-
-
-def _passkey_feature_flag_enabled() -> bool:
-    """Always False: passkeys are off in GFIT-CoWork."""
-    return False
-
-
-def is_oidc_auth_enabled() -> bool:
-    """Always False: OIDC login is off in GFIT-CoWork."""
-    return False
-
-
-def is_trusted_auth_enabled() -> bool:
-    """Always False: trusted-header login is off in GFIT-CoWork."""
-    return False
-
-
-def _legacy_login_configured() -> bool:
-    """True if an Upstream login method is configured, though none of them is honoured."""
-    return (
-        get_password_hash() is not None
-        or _passkey_feature_flag_configured()
-        or _oidc_configured()
-        or _trusted_auth_header_configured()
-    )
-
-
-def _passkey_feature_flag_configured() -> bool:
-    """Return True if the passkey/WebAuthn surface is enabled for this deployment.
-
-    Passkey support is opt-in default-off behind a feature flag so deployments
-    that don't want the WebAuthn surface (or whose RP-ID setup isn't ready for
-    non-localhost hosts) can disable it entirely with no UI surface, no
-    endpoints, no credential storage. To enable:
-
-      - Set ``HERMES_WEBUI_PASSKEY=1`` in the environment, OR
-      - Set ``webui_passkey_enabled: true`` in the per-profile config.yaml
-
-    With the flag off, ``are_passkeys_enabled()`` always returns False even if
-    credentials were registered in the past, and ``/login`` shows password-only.
-    """
-    env_value = os.getenv("HERMES_WEBUI_PASSKEY", "")
-    if env_value:
-        return env_value.strip().lower() in {"1", "true", "yes", "on"}
-    try:
-        from api.config import get_config
-
-        cfg = get_config()
-        if isinstance(cfg, dict):
-            raw = cfg.get("webui_passkey_enabled")
-            if isinstance(raw, bool):
-                return raw
-            if isinstance(raw, str):
-                return raw.strip().lower() in {"1", "true", "yes", "on"}
-    except Exception:
-        pass
-    return False
-
-
-def are_passkeys_enabled() -> bool:
-    """True if the passkey feature flag is on AND at least one local passkey credential is registered."""
-    if not _passkey_feature_flag_enabled():
-        return False
-    try:
-        from api.passkeys import passkeys_available
-
-        return passkeys_available()
-    except Exception as exc:
-        logger.debug("Failed to inspect passkey availability: %s", exc)
-        return False
-
-
-def _oidc_configured() -> bool:
-    """True if native OIDC login is configured for WebUI sessions."""
-    try:
-        from api.auth_oidc import is_oidc_enabled
-
-        return is_oidc_enabled()
-    except Exception as exc:
-        logger.debug("Failed to inspect OIDC availability: %s", exc)
-        return False
-
-
-def get_oidc_startup_warning() -> str | None:
-    """Return a startup warning when OIDC auth is only partially configured,
-    or when allow_values uses whitespace that is no longer a separator."""
-    try:
-        cfg = get_config()
-        raw = cfg.get("webui_oidc") if isinstance(cfg, dict) else {}
-        if not isinstance(raw, dict):
-            raw = {}
-    except Exception:
-        logger.debug("Failed to read webui_oidc config", exc_info=True)
-        raw = {}
-
-    def pick(name: str, env_name: str) -> str:
-        env_value = os.getenv(env_name)
-        value = env_value if env_value is not None else raw.get(name)
-        return str(value or "").strip()
-
-    issuer = bool(pick("issuer", "HERMES_WEBUI_OIDC_ISSUER"))
-    client_id = bool(pick("client_id", "HERMES_WEBUI_OIDC_CLIENT_ID"))
-    allow_claim = bool(pick("allow_claim", "HERMES_WEBUI_OIDC_ALLOW_CLAIM"))
-    raw_allow_env = os.getenv("HERMES_WEBUI_OIDC_ALLOW_VALUES")
-    raw_allow = raw_allow_env if raw_allow_env is not None else raw.get("allow_values")
-    normalized_allow_values = []
-    allow_values_warning = None
-    try:
-        from api import auth_oidc
-
-        normalized_allow_values = auth_oidc._normalize_allow_values(raw_allow)
-        allow_values_warning = auth_oidc._ALLOW_VALUES_WHITESPACE_WARNING
-    except Exception:
-        logger.debug("Failed to normalize OIDC allow_values", exc_info=True)
-    allow_values = bool(normalized_allow_values)
-
-    if not any((issuer, client_id, allow_claim, allow_values)):
-        return None
-
-    warnings = []
-
-    if not (issuer and client_id and allow_claim and allow_values):
-        missing = []
-        if not issuer:
-            missing.append("issuer")
-        if not client_id:
-            missing.append("client_id")
-        if not allow_claim:
-            missing.append("allow_claim")
-        if not allow_values:
-            missing.append("allow_values")
-        joined = ", ".join(missing)
-        warnings.append(
-            "Native OIDC login is only partially configured; missing "
-            f"{joined}. The WebUI will not enable OIDC auth until all four fields are set."
-        )
-
-    # Detect whitespace-only allow_values scalar that may contain multiple intended values.
-    # Runs unconditionally so the warning reaches startup even when other auth methods
-    # short-circuit is_auth_enabled() before the OIDC branch is evaluated.
-    if (
-        allow_values_warning is not None
-        and raw_allow is not None
-        and not isinstance(raw_allow, (list, tuple, set))
-        and any(any(ch.isspace() for ch in v) for v in normalized_allow_values)
-    ):
-        warnings.append(allow_values_warning)
-
-    return "\n".join(warnings) if warnings else None
-
-
 # Session ``auth_type`` for a GFIT-CoWork Directory login.
 DIRECTORY_AUTH_TYPE = 'directory'
-
-
-def is_directory_auth_enabled() -> bool:
-    """True if GFIT-CoWork Directory login (employee ID + password) is configured."""
-    from api.directory import is_directory_enabled
-
-    return is_directory_enabled()
-
-
-def is_auth_enabled() -> bool:
-    """True if Directory login, or any Upstream login method, is configured.
-
-    Only the Directory can log anyone in; a configured Upstream method keeps
-    the gate on so the Deployment fails closed.
-    """
-    return is_directory_auth_enabled() or _legacy_login_configured()
-
-
-def verify_password(plain: str) -> bool:
-    """Verify a plaintext password against the stored hash.
-
-    Supports transparent migration of password hashes that were computed
-    with the old `.signing_key` salt.  When the two keys differ and the
-    legacy-salted hash matches, the password is transparently re-hashed
-    with the current `.pbkdf2_key` and persisted to settings.json.
-    """
-    expected = get_password_hash()
-    if not expected:
-        return False
-    # Fast path: current PBKDF2 key
-    if hmac.compare_digest(_hash_password(plain), expected):
-        return True
-    # Migration: some hashes were computed with `.signing_key` before the
-    # PBKDF2 key was separated.  Try the legacy salt; if it matches,
-    # transparently upgrade so the next login uses the fast path.
-    legacy_salt = _signing_key()
-    current_salt = _pbkdf2_key()
-    if legacy_salt != current_salt:
-        if hmac.compare_digest(_hash_password(plain, salt=legacy_salt), expected):
-            from api.config import save_settings
-
-            save_settings({'_set_password': plain})
-            # Password re-hashed and persisted to disk using the current salt.
-            # Cache invalidation is handled by fix 2/3 (#2192) which adds the
-            # _invalidate_password_hash_cache() call inside save_settings().
-            return True
-    return False
 
 
 def create_session(
@@ -716,114 +322,6 @@ def verify_session(cookie_value: str) -> bool:
             _save_sessions(_sessions)
             return False
     return True
-
-
-def _trusted_auth_header_name() -> str | None:
-    name = os.getenv(_TRUSTED_AUTH_HEADER_ENV, '').strip()
-    if not name:
-        return None
-    if not _COOKIE_NAME_RE.match(name):
-        _warn_trusted_auth_once(
-            'trusted-auth-header',
-            'Ignoring invalid %s=%r; trusted-header auth rejects every request',
-            _TRUSTED_AUTH_HEADER_ENV,
-            name,
-        )
-        return None
-    return name
-
-
-def _trusted_auth_header_configured() -> bool:
-    return bool(os.getenv(_TRUSTED_AUTH_HEADER_ENV, '').strip())
-
-
-def _trusted_group_profile_map() -> dict[str, str] | None:
-    raw = os.getenv(_TRUSTED_GROUP_PROFILE_MAP_ENV, '').strip()
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _warn_trusted_auth_once(
-            'trusted-group-map',
-            'Ignoring invalid %s JSON; trusted-header auth falls back to default profile binding',
-            _TRUSTED_GROUP_PROFILE_MAP_ENV,
-        )
-        return {}
-    if not isinstance(data, dict):
-        _warn_trusted_auth_once(
-            'trusted-group-map-type',
-            'Ignoring non-dict %s; trusted-header auth falls back to default profile binding',
-            _TRUSTED_GROUP_PROFILE_MAP_ENV,
-        )
-        return {}
-    mapping: dict[str, str] = {}
-    for group, profile in data.items():
-        group_name = str(group or '').strip()
-        profile_name = str(profile or '').strip()
-        if not group_name or not profile_name:
-            _warn_trusted_auth_once(
-                'trusted-group-map-entry',
-                'Ignoring invalid entry in %s; trusted-header auth falls back to default profile binding',
-                _TRUSTED_GROUP_PROFILE_MAP_ENV,
-            )
-            continue
-        mapping[group_name] = profile_name
-    return mapping
-
-
-def _trusted_groups_header_value(handler) -> list[str]:
-    header_name = os.getenv(_TRUSTED_GROUPS_HEADER_ENV, '').strip()
-    if not header_name:
-        return []
-    try:
-        raw = handler.headers.get(header_name, '')
-    except Exception:
-        return []
-    if not raw:
-        return []
-    values = []
-    # Authentik's outpost typically joins multiple group names with a comma or
-    # newline; parse those as separators by default. Some proxy provider /
-    # property-mapping configs instead emit a pipe-separated list (e.g.
-    # "admins|developpeur"), which a comma-only split would treat as one
-    # unmatched group name — silently dropping the session to the unbound
-    # "default" profile despite a legitimate mapped membership. Pipe splitting
-    # is therefore available but OPT-IN (HERMES_WEBUI_TRUSTED_GROUPS_PIPE_SEPARATOR),
-    # because a group NAME can legitimately contain a literal '|' and must not be
-    # re-split by default — doing so unconditionally could change an existing
-    # deployment's profile binding.
-    normalized = str(raw).replace('\n', ',')
-    if str(os.getenv(_TRUSTED_GROUPS_PIPE_SEPARATOR_ENV, '')).strip().lower() in ('1', 'true', 'yes', 'on'):
-        normalized = normalized.replace('|', ',')
-    for part in normalized.split(','):
-        part = part.strip()
-        if part:
-            values.append(part)
-    return values
-
-
-def _trusted_auth_username(handler) -> str | None:
-    header_name = _trusted_auth_header_name()
-    if not header_name:
-        return None
-    try:
-        raw = handler.headers.get(header_name, '')
-    except Exception:
-        return None
-    username = str(raw or '').strip()
-    return username or None
-
-
-def _trusted_auth_bound_profile(handler) -> str | None:
-    mapping = _trusted_group_profile_map()
-    if mapping is None:
-        return None
-    groups = set(_trusted_groups_header_value(handler))
-    for group, profile in mapping.items():
-        if group in groups:
-            return profile
-    return 'default'
 
 
 def _queue_pending_cookie(handler, cookie_header: str) -> None:
@@ -908,31 +406,20 @@ def session_bound_profile(cookie_value: str) -> str | None:
     return bound_profile or None
 
 
-def get_trusted_auth_logout_url() -> str | None:
-    value = os.getenv(_TRUSTED_AUTH_LOGOUT_URL_ENV, '').strip()
-    return value or None
-
-
-def _remember_trusted_auth_session(handler, info: dict | None, cookie_value: str | None = None) -> dict | None:
-    handler._trusted_auth_session_reconciled = info
-    if info and info.get('auth_type') == 'trusted':
-        handler._trusted_auth_session_info = info
-        handler._trusted_auth_session_cookie_value = cookie_value
+def _remember_request_session(handler, info: dict | None) -> dict | None:
+    handler._request_session = info
     return info
 
 
-def reset_trusted_auth_request_state(handler) -> None:
+def reset_request_auth_state(handler) -> None:
     for name in (
-        '_trusted_auth_session_reconciled',
-        '_trusted_auth_session_rejected',
-        '_trusted_auth_session_info',
-        '_trusted_auth_session_cookie_value',
+        '_request_session',
+        '_request_session_rejected',
         # Clear any auth cookie queued by a prior request but not yet flushed.
         # The handler is reused across HTTP/1.1 keep-alive requests, so a stale
         # queued Set-Cookie would otherwise cross the request boundary and be
-        # emitted by a later response — e.g. after trusted-identity rotation on
-        # logout it could overwrite a subsequent valid login cookie and 401 the
-        # user. Reset it at the per-request boundary (server.py do_GET/do_POST).
+        # emitted by a later response. Reset it at the per-request boundary
+        # (server.py do_GET/do_POST).
         '_pending_set_cookies',
     ):
         try:
@@ -941,7 +428,7 @@ def reset_trusted_auth_request_state(handler) -> None:
             pass
 
 
-def _apply_trusted_session_profile(handler, bound_profile: str | None, cookie_value: str) -> None:
+def _apply_session_profile(handler, bound_profile: str | None, cookie_value: str) -> None:
     if bound_profile is None:
         return
     from api.helpers import get_profile_cookie
@@ -952,94 +439,62 @@ def _apply_trusted_session_profile(handler, bound_profile: str | None, cookie_va
         _queue_pending_cookie(handler, _build_profile_cookie_header(bound_profile, cookie_value))
 
 
-def ensure_trusted_auth_session(handler) -> dict | None:
-    if hasattr(handler, '_trusted_auth_session_reconciled'):
-        return handler._trusted_auth_session_reconciled
+def ensure_request_session(handler) -> dict | None:
+    """This request's session, decided once per request: a Directory session still admitted, else None.
+
+    Only a Directory session is honoured (ADR 0004); any other session is ended.
+    """
+    if hasattr(handler, '_request_session'):
+        return handler._request_session
     cookie_value = parse_cookie(handler)
     info = get_session_info(cookie_value) if cookie_value and verify_session(cookie_value) else None
     if info and info.get('auth_type') == DIRECTORY_AUTH_TYPE:
         return _reconcile_directory_session(handler, info, cookie_value)
-    if not is_trusted_auth_enabled():
-        # GFIT-CoWork: only a Directory session is honoured (ticket 09).
-        if info:
-            invalidate_session(cookie_value)
-            handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    if info and info.get('auth_type') != 'trusted':
-        return _remember_trusted_auth_session(handler, info)
-    from api.routes import _raw_peer_is_trusted_proxy
-
-    if not _raw_peer_is_trusted_proxy(handler):
-        if info:
-            invalidate_session(cookie_value)
-            handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    username = _trusted_auth_username(handler)
-    if not username:
-        if info:
-            invalidate_session(cookie_value)
-            handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    bound_profile = _trusted_auth_bound_profile(handler)
-    if info and info.get('username') == username and info.get('bound_profile') == bound_profile:
-        _apply_trusted_session_profile(handler, bound_profile, cookie_value)
-        return _remember_trusted_auth_session(handler, info, cookie_value)
     if info:
         invalidate_session(cookie_value)
-    cookie_value = create_session(
-        auth_type='trusted',
-        username=username,
-        bound_profile=bound_profile,
-    )
-    _queue_pending_cookie(handler, _auth_cookie_header(cookie_value, handler))
-    _apply_trusted_session_profile(handler, bound_profile, cookie_value)
-    info = get_session_info(cookie_value)
-    return _remember_trusted_auth_session(handler, info, cookie_value)
+        handler._request_session_rejected = True
+    return _remember_request_session(handler, None)
 
 
 def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict | None:
     """Run a Directory session's request in its bound Profile, whatever the client sent.
 
-    A Member's request is pinned to the bound Profile, so no Profile the client
-    names (cookie, query or body) can reach another Profile's data. An Admin's
-    request runs in ``default``.
+    A User's request runs in, and is bound to, the Profile its Admission names
+    (:func:`api.access.caller_bound_profile`), so no Profile the client names
+    (cookie, query or body) can reach another Profile's data. An Admin's request
+    runs in ``default``.
 
     Fails closed: the session is ended when Directory login is no longer
-    configured, the bound Profile no longer exists or is disabled, the
-    session's role is unknown, or an Admin is no longer on the Admin list.
+    configured, or when Admission (:func:`api.access.admit`) for the session's
+    employee ID no longer gives the session's role and Profile -- the Profile
+    was deleted or disabled, the Admin list changed, or the role is unknown.
+    Otherwise the confirmed Admission is recorded as the request's Admission.
     """
-    from api.access import ROLE_ADMIN, ROLE_MEMBER, is_admin
-    from api.profiles import named_profile_exists, pin_request_profile
+    from api.access import admit_request
 
-    bound_profile = str(info.get('bound_profile') or '').strip()
-    role = info.get('role')
-    if role == ROLE_ADMIN:
-        valid = bound_profile == 'default' and is_admin(info.get('username'))
-    elif role == ROLE_MEMBER:
-        from api import roster
-
-        valid = named_profile_exists(bound_profile) and not roster.is_disabled(bound_profile)
-    else:
-        valid = False
-    if not is_directory_auth_enabled() or not valid:
+    admission = admit_request(info) if directory.is_directory_enabled() else None
+    if admission is None:
         invalidate_session(cookie_value)
-        handler._trusted_auth_session_rejected = True
-        return _remember_trusted_auth_session(handler, None)
-    if role == ROLE_MEMBER:
-        pin_request_profile(bound_profile)
-    _apply_trusted_session_profile(handler, bound_profile, cookie_value)
-    return _remember_trusted_auth_session(handler, info)
+        handler._request_session_rejected = True
+        return _remember_request_session(handler, None)
+    _apply_session_profile(handler, admission.profile, cookie_value)
+    return _remember_request_session(handler, info)
 
 
-def _refuse_admin_only_for_member(handler, parsed, session_info: dict) -> bool:
-    """The Admin-only gate: True (after sending 403) when a Member calls a non-Member endpoint."""
+def _refuse_admin_only_for_user(handler, parsed, session_info: dict) -> bool:
+    """The Admin-only gate: True (after sending 403) when a User calls a non-User endpoint.
+
+    The role is the request's Admission. A Directory session with none was not
+    admitted for this request, so it may call nothing.
+    """
     if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
         return False
-    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, member_may_call
+    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, request_admission, user_may_call
 
-    if session_info.get('role') == ROLE_ADMIN:
+    admission = request_admission()
+    if admission is not None and admission.role == ROLE_ADMIN:
         return False
-    if member_may_call(getattr(handler, 'command', 'GET'), parsed.path):
+    if admission is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
         return False
     _send_forbidden(handler, parsed, ADMIN_ONLY_MESSAGE)
     return True
@@ -1059,7 +514,7 @@ def _send_forbidden(handler, parsed, message: str) -> None:
     handler.wfile.write(body)
 
 
-def trusted_session_allows_active_profile(info: dict | None) -> bool:
+def session_allows_active_profile(info: dict | None) -> bool:
     if not info:
         return True
     return _request_profile_matches_bound(str(info.get('bound_profile') or '') or None)
@@ -1191,7 +646,7 @@ def _safe_login_inner_next(query: str | None) -> str:
     itself safe (path-absolute, not protocol-relative/backslash, no control
     chars) AND not login-shaped / not itself carrying a nested next param.
     Anything else collapses to '' (no inner redirect), which kills the
-    self-referential chain. Mirrors _safe_login_redirect_path().
+    self-referential chain. Mirrors login.js `_safeNextPath()`.
     """
     import urllib.parse as _u
     raw = _u.parse_qs(query or "").get("next", [""])[0]
@@ -1225,7 +680,7 @@ def _safe_login_inner_next(query: str | None) -> str:
 def check_auth(handler, parsed) -> bool:
     """Check if request is authorized. Returns True if OK.
     If not authorized, sends 401 (API) or 302 redirect (page) and returns False."""
-    if not is_auth_enabled():
+    if not directory.is_directory_enabled():
         return True
     # Public paths don't require auth
     if (
@@ -1251,11 +706,11 @@ def check_auth(handler, parsed) -> bool:
         handler.end_headers()
         handler.wfile.write(body)
         return False
-    session_info = ensure_trusted_auth_session(handler)
+    session_info = ensure_request_session(handler)
     if session_info:
-        if _refuse_admin_only_for_member(handler, parsed, session_info):
+        if _refuse_admin_only_for_user(handler, parsed, session_info):
             return False
-        if not trusted_session_allows_active_profile(session_info):
+        if not session_allows_active_profile(session_info):
             if parsed.path.startswith('/api/'):
                 body = b'{"error":"Profile access forbidden"}'
                 handler.send_response(403)

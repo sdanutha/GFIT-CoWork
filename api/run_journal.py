@@ -1,4 +1,4 @@
-"""Append-only WebUI run event journal helpers.
+"""Append-only GFIT-CoWork run event journal helpers.
 
 This is the first #1925 journal/replay slice.  It mirrors SSE events emitted by
 the existing in-process streaming path without changing execution ownership.

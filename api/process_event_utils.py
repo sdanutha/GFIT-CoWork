@@ -1,4 +1,4 @@
-"""Shared helpers for WebUI completion/delegation delivery."""
+"""Shared helpers for GFIT-CoWork completion/delegation delivery."""
 from __future__ import annotations
 
 from collections import OrderedDict

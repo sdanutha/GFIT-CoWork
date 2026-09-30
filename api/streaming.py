@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- SSE streaming engine and agent thread runner.
+GFIT-CoWork -- SSE streaming engine and agent thread runner.
 Includes Sprint 10 cancel support via CANCEL_FLAGS.
 """
 import base64
@@ -3392,7 +3392,7 @@ def _stale_completion_max_age_seconds() -> float:
 
     Completions older than this are silently consumed (not requeued) so a
     notification that finally fires long after the user moved on cannot
-    contaminate an unrelated later turn. See nesquena/hermes-webui#4029.
+    contaminate an unrelated later turn. See Upstream #4029.
 
     Configurable via HERMES_WEBUI_STALE_COMPLETION_MAX_AGE_SECONDS. A value of
     0 (or negative) disables age-gating and restores the legacy drain-all
@@ -3551,7 +3551,7 @@ def _drain_webui_process_notifications(
             continue
         # Age-gate stale completions: a completion that fires long after the
         # user moved on must not be prepended to an unrelated later turn
-        # (nesquena/hermes-webui#4029). Drop (consume, do not requeue) any
+        # (Upstream #4029). Drop (consume, do not requeue) any
         # completion whose enqueue time is older than the configured cap.
         # Events without a 'completed_at' (older agent builds) are never
         # dropped here, preserving backward-compatible behavior.
@@ -9790,7 +9790,7 @@ def _run_agent_streaming(
     # MCP discovery moved to AFTER the per-profile HERMES_HOME mutation below
     # (was here at v0.51.30) — the previous placement always read the default
     # profile's mcp_servers because os.environ['HERMES_HOME'] hadn't been
-    # rewritten yet.  See https://github.com/nesquena/hermes-webui/issues/1968.
+    # rewritten yet.  See Upstream #1968.
 
     agent = None
     _live_prompt_estimate_tokens = [0]

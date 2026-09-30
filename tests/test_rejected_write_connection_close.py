@@ -22,7 +22,7 @@ def _rejected_write(monkeypatch, headers):
         headers=headers,
         close_connection=False,
     )
-    monkeypatch.setattr(server, "reset_trusted_auth_request_state", lambda _handler: None)
+    monkeypatch.setattr(server, "reset_request_auth_state", lambda _handler: None)
     monkeypatch.setattr(server, "get_profile_cookie", lambda _handler: None)
     monkeypatch.setattr(server, "clear_request_profile", lambda: None)
     monkeypatch.setattr(auth, "check_auth", lambda _handler, _parsed: False)
@@ -92,7 +92,7 @@ def _csrf_token_rejection(monkeypatch, headers):
     handler = SimpleNamespace(headers=headers, close_connection=False)
     monkeypatch.setattr(routes, "_check_same_origin_browser_request", lambda _handler: True)
     monkeypatch.setattr(routes, "_is_browser_unsafe_request", lambda _handler: True)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.setattr(auth, "parse_cookie", lambda _handler: "session-cookie")
     monkeypatch.setattr(auth, "verify_csrf_token", lambda _cookie, _token: False)
 

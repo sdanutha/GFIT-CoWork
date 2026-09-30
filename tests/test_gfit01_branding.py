@@ -91,7 +91,39 @@ def test_readme_introduces_gfit_cowork_as_fork_of_hermes_webui():
     assert "hermes-webui" in head and "MIT" in head
 
 
+def test_readme_names_upstream_only_as_the_fork_credit():
+    """upstream-gone ticket 07: the README describes GFIT-CoWork, and names Upstream once."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert readme.count("github.com/nesquena/hermes-webui") == 1
+    for gone in ("About Hermes Web UI", "## Why Hermes", "get-hermes.ai", "user-attachments",
+                 "## Contributors", "Tailscale", "Gallery", "/pet", "Update Now"):
+        assert gone not in readme, gone
+
+
 def test_license_keeps_original_copyright():
     lic = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert "MIT License" in lic
-    assert "Copyright" in lic
+    # upstream-gone ticket 10: the fork's holder is added; Upstream's notice stays word for word.
+    assert "Copyright (c) 2026 GFIT-CoWork contributors\n" in lic
+    assert "Copyright (c) 2025 Hermes Web UI Contributors\n" in lic
+    assert "Permission is hereby granted, free of charge" in lic
+
+
+def _locale_blocks() -> dict:
+    i18n = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
+    heads = [(m.start(), m.group(1)) for m in re.finditer(r"^  '?([a-zA-Z-]+)'?: \{", i18n, re.M)]
+    blocks = {}
+    for i, (start, name) in enumerate(heads):
+        end = heads[i + 1][0] if i + 1 < len(heads) else len(i18n)
+        blocks[name] = i18n[start:end]
+    return blocks
+
+
+def test_every_locale_names_the_web_app_gfit_cowork():
+    """upstream-gone ticket 08: every locale says GFIT-CoWork wherever English does."""
+    offenders = {}
+    for name, block in _locale_blocks().items():
+        found = re.findall(r"(?<![A-Za-z])(?<!Open )Web ?UI(?![A-Za-z])", block)
+        if found:
+            offenders[name] = len(found)
+    assert not offenders, f"Locale(s) still name the product WebUI: {offenders}"

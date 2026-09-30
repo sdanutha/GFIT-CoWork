@@ -1,13 +1,13 @@
-# Login ด้วย AD/LDAP ของบริษัท โดยใช้ชื่อ Profile เป็น username
+# Login with the company AD over LDAP, using the Profile name as the username
 
-GFIT-CoWork ไม่เก็บรหัสผ่านของ User เอง แต่ตรวจ username/password กับ Active Directory ของบริษัทผ่าน LDAP แทน การ login ผ่านได้ก็ต่อเมื่อ AD ยืนยันรหัสผ่านถูก **และ** มี Profile ชื่อตรงกับ username นั้นอยู่แล้ว เพราะ Admin เป็นคนสร้าง Profile ให้ล่วงหน้า AD จึงบอกว่า "คนนี้คือใคร" ส่วนการมี Profile บอกว่า "คนนี้ใช้ Deployment นี้ได้" เราเลือกแบบนี้แทนการเก็บรหัสผ่านเองหรือใช้ SSO/OIDC เพราะบริษัทมี AD อยู่แล้ว User ใช้รหัสเดิมได้เลย และเมื่อ IT ปิดบัญชี AD ของคนที่ลาออก คนนั้นก็เข้าไม่ได้ทันทีโดยที่ Admin ไม่ต้องทำอะไร
+GFIT-CoWork does not store Users' passwords itself. It checks the username and password against the company's Active Directory over LDAP instead. A login succeeds only when AD confirms the password is correct **and** a Profile with a name matching that username already exists, because the Admin creates Profiles in advance. AD answers "who is this person", and the existence of a Profile answers "may this person use this Deployment". We chose this over storing passwords ourselves or using SSO/OIDC because the company already has AD, Users keep their existing password, and when IT disables the AD account of someone who has left, that person is locked out at once without the Admin doing anything.
 
 ## Consequences
 
-- วิธี login เดิมทั้งหมดใน Upstream (รหัสผ่านเดียวทั้งระบบ, passkey, OIDC, trusted header) ไม่ใช้แล้ว
-- ต้องเชื่อมต่อ AD ผ่าน LDAPS หรือ StartTLS เท่านั้น ห้ามส่งรหัสผ่านผ่าน LDAP แบบไม่เข้ารหัส
-- username ของ AD ที่ GFIT คือรหัสพนักงานที่เป็นตัวเลข (เช่น `521740`) ซึ่งใช้เป็นชื่อ Profile ได้ตรง ๆ ตามกฎของ Hermes (`a-z 0-9 _ -`) จึงไม่ต้องมีกฎแปลงชื่อ ก่อนเทียบชื่อ ให้ตัดส่วนนำหน้า `DOMAIN\` และส่วนท้าย `@domain` ออก แล้วแปลงเป็นตัวเล็ก
-- ชื่อ Profile เป็นตัวเลข หน้าเว็บจึงแสดงชื่อจริงคู่กับรหัส เช่น "สมชาย ใจดี (521740)" ชื่อจริงดึงมาจาก `displayName` ใน AD ตอน login ถ้าคนนั้นยังไม่เคย login ระบบจะใช้ชื่อที่ Admin พิมพ์ไว้ตอนสร้าง Profile ถ้าไม่มีก็แสดงแค่รหัส
-- Admin ไม่ได้มาจาก AD group แต่ระบุชื่อ AD user ไว้ใน config ของแต่ละ Deployment (ใส่ได้หลายคน เช่น `ADMIN_USERS=521740,671278`) Admin login แล้วเข้า Profile `default` เลย และไม่มี Profile ส่วนตัว
-- AD ไม่รู้ว่าใครย้ายทีม Profile จึงต้องปิดได้ (disabled) โดยไม่ลบข้อมูล เพื่อให้ Admin ห้าม login ได้ แต่ยังเก็บงานไว้ส่งต่อ
-- ที่อยู่ของ AD server และการตั้งค่า LDAPS ยังไม่รู้ ต้องตั้งได้ใน config ระหว่างพัฒนาให้ใช้ LDAP จำลองไปก่อน
+- None of the Upstream login methods (one password for the whole system, passkeys, OIDC, trusted header) are used any more.
+- AD must be reached over LDAPS or StartTLS only. Passwords must never be sent over unencrypted LDAP.
+- AD usernames at GFIT are numeric employee IDs (e.g. `521740`), which are valid Profile names under Hermes's rules (`a-z 0-9 _ -`), so no name-mapping rule is needed. Before comparing names, strip a leading `DOMAIN\` and a trailing `@domain`, then lowercase.
+- Profile names are numbers, so the web app shows the real name next to the ID, e.g. "สมชาย ใจดี (521740)". The real name comes from `displayName` in AD at login. If the person has never logged in, the name the Admin typed when creating the Profile is used; if there is none, only the ID is shown.
+- Admins do not come from an AD group. They are named by AD user in each Deployment's config (several are allowed, e.g. `ADMIN_USERS=521740,671278`). An Admin logs in straight to the `default` Profile and has no personal Profile.
+- AD does not know when someone moves Team, so a Profile must be able to be disabled without deleting its data. The Admin can then stop that person logging in while keeping their work to hand over.
+- The AD server address and LDAPS settings are not known yet. They must be configurable; during development, use a mock LDAP.

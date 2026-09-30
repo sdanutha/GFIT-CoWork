@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared, TLS-aware /health probe used by every shell launcher (start.sh,
-# ctl.sh, the WSL autostart helper) and the Docker HEALTHCHECK.
+# ctl.sh) and the Docker HEALTHCHECK.
 #
 # The WebUI serves HTTPS when both HERMES_WEBUI_TLS_CERT and
 # HERMES_WEBUI_TLS_KEY are set (see api/config.py:TLS_ENABLED). The probe must

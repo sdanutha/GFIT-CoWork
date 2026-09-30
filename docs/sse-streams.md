@@ -6,8 +6,8 @@ should integrate against this page so every client describes the same
 behavior.
 
 All endpoints below are served by the WebUI origin and sit behind the same
-authentication as every other `/api/*` route: when a WebUI password or OIDC
-is configured, clients must authenticate before opening any stream.
+authentication as every other `/api/*` route: when login is on (a Directory
+is configured), clients must authenticate before opening any stream.
 
 ## Endpoint inventory
 

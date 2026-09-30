@@ -57,9 +57,7 @@ def _reset_limiter():
 @pytest.fixture(autouse=True)
 def _setup(monkeypatch):
     # Disable auth and reset limiter so guard-rail tests are deterministic.
-    import api.auth as _auth
-    monkeypatch.setattr(_auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(routes, "is_auth_enabled", lambda: False, raising=False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     _reset_limiter()
     yield
     _reset_limiter()

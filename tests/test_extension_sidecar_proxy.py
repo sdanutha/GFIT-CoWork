@@ -38,17 +38,13 @@ class FakeHandler:
 
 @pytest.fixture(autouse=True)
 def _clear_extension_env(monkeypatch):
-    from api import auth as auth_mod
-
     for name in (
         "HERMES_WEBUI_EXTENSION_DIR",
         "HERMES_WEBUI_EXTENSION_MANIFEST",
-        "HERMES_WEBUI_PASSWORD",
+        "HERMES_WEBUI_DIRECTORY",
     ):
         monkeypatch.delenv(name, raising=False)
-    auth_mod._invalidate_password_hash_cache()
     yield
-    auth_mod._invalidate_password_hash_cache()
 
 
 def _use_extension_state_dir(monkeypatch, tmp_path):
@@ -77,7 +73,7 @@ def _configure_manifest_extension(monkeypatch, tmp_path, payload):
 
 
 def test_extension_sidecar_proxy_requires_webui_auth(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
 
     from api.auth import check_auth
 
@@ -975,10 +971,9 @@ def test_extension_sidecar_proxy_consent_route_fails_closed_auth_off(tmp_path, m
     # exercised end-to-end.
     from api import routes
 
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    from api.auth import _invalidate_password_hash_cache, is_auth_enabled
-    _invalidate_password_hash_cache()
-    assert is_auth_enabled() is False
+    monkeypatch.delenv("HERMES_WEBUI_DIRECTORY", raising=False)
+    from api.directory import is_directory_enabled
+    assert is_directory_enabled() is False
     _token_v1_manifest(monkeypatch, tmp_path, origin="http://127.0.0.1:17787")
 
     captured = {}
@@ -1035,9 +1030,7 @@ def _token_v1_manifest(monkeypatch, tmp_path, origin="http://127.0.0.1:17787"):
 
 
 def test_token_v1_injects_persisted_token_when_auth_enabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "pw")
-    from api.auth import _invalidate_password_hash_cache
-    _invalidate_password_hash_cache()
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
     _token_v1_manifest(monkeypatch, tmp_path)
     from api.extensions import (
         resolve_extension_sidecar_proxy_target,
@@ -1059,10 +1052,9 @@ def test_token_v1_auth_off_blocks_consent_and_resolution_fail_closed(tmp_path, m
     # (unauthenticated) WebUI listener could otherwise self-grant consent and drive
     # the token-bearing proxy (a forwarding oracle); another local UID can reach the
     # listener without ever reading the 0600 token file.
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    from api.auth import _invalidate_password_hash_cache, is_auth_enabled
-    _invalidate_password_hash_cache()
-    assert is_auth_enabled() is False
+    monkeypatch.delenv("HERMES_WEBUI_DIRECTORY", raising=False)
+    from api.directory import is_directory_enabled
+    assert is_directory_enabled() is False
     _token_v1_manifest(monkeypatch, tmp_path, origin="http://127.0.0.1:17787")
     from api.extensions import (
         ExtensionSidecarProxyError,
@@ -1073,15 +1065,17 @@ def test_token_v1_auth_off_blocks_consent_and_resolution_fail_closed(tmp_path, m
     with pytest.raises(ExtensionSidecarProxyError) as consent_exc:
         set_extension_sidecar_proxy_consent("templates", True)
     assert consent_exc.value.status == 403
+    # The refusal names the Directory (the only login), never a password.
+    assert "Directory" in str(consent_exc.value)
+    assert "password" not in str(consent_exc.value).lower()
 
 
 def test_token_v1_resolution_fails_closed_when_auth_disabled_after_consent(tmp_path, monkeypatch):
     # Defense in depth: even if a consent record somehow exists (e.g. granted while
     # auth was enabled, then auth turned off), the resolution path must ALSO fail
     # closed so a stale consent can't be exercised without WebUI auth.
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "pw")
-    from api.auth import _invalidate_password_hash_cache, is_auth_enabled
-    _invalidate_password_hash_cache()
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+    from api.directory import is_directory_enabled
     _token_v1_manifest(monkeypatch, tmp_path, origin="http://127.0.0.1:17787")
     from api.extensions import (
         ExtensionSidecarProxyError,
@@ -1090,15 +1084,16 @@ def test_token_v1_resolution_fails_closed_when_auth_disabled_after_consent(tmp_p
     )
 
     # Grant consent WHILE auth is enabled (allowed).
-    assert is_auth_enabled() is True
+    assert is_directory_enabled() is True
     set_extension_sidecar_proxy_consent("templates", True)
     # Now disable auth and confirm resolution refuses the pre-existing consent.
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    _invalidate_password_hash_cache()
-    assert is_auth_enabled() is False
+    monkeypatch.delenv("HERMES_WEBUI_DIRECTORY", raising=False)
+    assert is_directory_enabled() is False
     with pytest.raises(ExtensionSidecarProxyError) as exc:
         resolve_extension_sidecar_proxy_target("templates", "v1/ping")
     assert exc.value.status == 403
+    assert "Directory" in str(exc.value)
+    assert "password" not in str(exc.value).lower()
 
 
 def test_unknown_proxy_auth_value_rejects_sidecar(tmp_path, monkeypatch):

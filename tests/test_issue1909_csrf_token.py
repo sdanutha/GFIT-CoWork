@@ -54,7 +54,7 @@ def test_csrf_token_is_bound_to_auth_session():
 def test_authenticated_same_origin_browser_post_requires_session_csrf_token(monkeypatch):
     cookie = _signed_cookie("c" * 64)
     token = auth.csrf_token_for_session(cookie)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     try:
         base_headers = {
             "Origin": "http://127.0.0.1:8787",
@@ -72,7 +72,7 @@ def test_authenticated_same_origin_browser_post_requires_session_csrf_token(monk
 def test_authenticated_allowed_public_origin_accepts_valid_csrf_token(monkeypatch):
     cookie = _signed_cookie("f" * 64)
     token = auth.csrf_token_for_session(cookie)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.setenv("HERMES_WEBUI_ALLOWED_ORIGINS", "https://myapp.example.com:8000")
     try:
         headers = {
@@ -89,7 +89,7 @@ def test_authenticated_allowed_public_origin_accepts_valid_csrf_token(monkeypatc
 def test_authenticated_reverse_proxy_same_origin_accepts_valid_csrf_token(monkeypatch):
     cookie = _signed_cookie("g" * 64)
     token = auth.csrf_token_for_session(cookie)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_HOST", "1")
     try:
         headers = {
@@ -107,7 +107,7 @@ def test_authenticated_reverse_proxy_same_origin_accepts_valid_csrf_token(monkey
 def test_authenticated_forwarded_host_is_ignored_without_proxy_opt_in(monkeypatch):
     cookie = _signed_cookie("h" * 64)
     token = auth.csrf_token_for_session(cookie)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_HOST", raising=False)
     try:
         headers = {
@@ -124,7 +124,7 @@ def test_authenticated_forwarded_host_is_ignored_without_proxy_opt_in(monkeypatc
 
 def test_non_browser_mcp_style_authenticated_post_remains_compatible(monkeypatch):
     cookie = _signed_cookie("d" * 64)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     try:
         handler = _FakeHandler({"Cookie": f"{auth.COOKIE_NAME}={cookie}"})
         assert routes._check_csrf(handler)
@@ -146,7 +146,7 @@ def test_login_route_remains_csrf_exempt(monkeypatch):
         raise AssertionError("/api/auth/login must not require a pre-login CSRF token")
 
     monkeypatch.setattr(routes, "_check_csrf", fail_if_called)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
 
     routes.handle_post(handler, SimpleNamespace(path="/api/auth/login"))
     assert handler.status == 200
@@ -165,7 +165,7 @@ def test_index_shell_includes_csrf_fetch_and_sendbeacon_injection():
 def test_index_shell_injects_session_bound_csrf_token(monkeypatch):
     cookie = _signed_cookie("e" * 64)
     token = auth.csrf_token_for_session(cookie)
-    monkeypatch.setattr(auth, "is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
 
     captured = {}
 

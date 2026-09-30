@@ -378,7 +378,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             )
             with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home)}), \
                  mock.patch.object(routes, "get_last_workspace", lambda: str(hermes_home)), \
-                 mock.patch("api.auth.is_auth_enabled", lambda: False):
+                 mock.patch("api.directory.is_directory_enabled", lambda: False):
                 routes._handle_media(handler, parsed)
 
             self.assertEqual(
@@ -436,7 +436,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             }
             with mock.patch.dict(os.environ, env), \
                  mock.patch.object(routes, "get_last_workspace", lambda: str(ws)), \
-                 mock.patch("api.auth.is_auth_enabled", lambda: False), \
+                 mock.patch("api.directory.is_directory_enabled", lambda: False), \
                  mock.patch("api.config.STATE_DIR", state_dir):
                 # workspace media → not blocked by the #3234 deny
                 h1 = _Handler()
@@ -501,7 +501,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             active = base / "profiles" / "p1"  # active profile HERMES_HOME
             with mock.patch.dict(os.environ, {"HERMES_HOME": str(active)}), \
                  mock.patch.object(routes, "get_last_workspace", lambda: str(p1_ws)), \
-                 mock.patch("api.auth.is_auth_enabled", lambda: False), \
+                 mock.patch("api.directory.is_directory_enabled", lambda: False), \
                  mock.patch("api.profiles._DEFAULT_HERMES_HOME", base):
                 # named-profile workspace media → served
                 h1 = _Handler()
@@ -578,7 +578,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             ), mock.patch.object(
                 routes, "get_last_workspace", lambda: str(hermes_home / "workspace")
             ), mock.patch(
-                "api.auth.is_auth_enabled", lambda: False
+                "api.directory.is_directory_enabled", lambda: False
             ):
                 handler = _Handler()
                 routes._handle_media(
@@ -720,7 +720,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home), "MEDIA_ALLOWED_ROOTS": ""}), \
                  mock.patch.object(routes, "get_last_workspace", lambda: str(ws)), \
                  mock.patch.object(routes, "get_session", return_value=session), \
-                 mock.patch("api.auth.is_auth_enabled", lambda: False):
+                 mock.patch("api.directory.is_directory_enabled", lambda: False):
                 handler = _Handler()
                 routes._handle_media(
                     handler,

@@ -510,7 +510,9 @@ def auth_on(monkeypatch):
 
     monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
     monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", _ADMIN)
-    assert auth.is_auth_enabled(), "the auth-path regression needs auth enabled"
+    from api.directory import is_directory_enabled
+
+    assert is_directory_enabled(), "the auth-path regression needs auth enabled"
     return auth
 
 

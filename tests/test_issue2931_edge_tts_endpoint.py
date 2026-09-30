@@ -61,12 +61,10 @@ def _fresh_tts_limiter(monkeypatch):
     # neither prior suite state nor these tests leak rate-limit state.
     # Also force auth OFF: these tests exercise the method/length/voice/rate-limit
     # guards, which sit before the auth check. Another test in the full suite can
-    # leave is_auth_enabled() True globally, which would 401 these requests before
+    # leave is_directory_enabled() True globally, which would 401 these requests before
     # they reach the path under test. Pin it False so the assertions are
     # deterministic regardless of suite order.
-    import api.auth as _auth
-    monkeypatch.setattr(_auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(routes, "is_auth_enabled", lambda: False, raising=False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
     _reset_limiter()
     yield

@@ -1960,12 +1960,12 @@ Each has automated API-level tests in `tests/test_sprint{N}.py`.
 - If a turn has 2+ tool cards, use "Expand all / Collapse all" and verify the same smooth animation applies to every card in the group.
 
 ### Sprint 19: Auth + Security
-- No password set: everything works as normal. No login page.
-- Set `HERMES_WEBUI_PASSWORD=test` env var. Restart. All pages redirect to `/login`.
-- Login page: minimal card, password field, "Sign in" button.
-- Enter correct password → redirected to `/`. Cookie set (24h).
-- Enter wrong password → error message, stay on login page.
-- Settings panel: set password via "Access Password" field. Auth activates.
+- No Directory configured (loopback): everything works as normal. No login page.
+- Set `HERMES_WEBUI_DIRECTORY=memory` and `HERMES_WEBUI_DIRECTORY_USERS` (or `ldap`). Restart. All pages redirect to `/login`.
+- Login page: minimal card, employee ID and password fields, "Sign in" button.
+- Enter a correct employee ID and password → redirected to `/`. Cookie set.
+- Enter a wrong password → error message, stay on login page.
+- Settings panel: no password controls.
 - "Sign Out" button visible when auth active. Click → redirected to /login.
 - API calls without auth cookie → 401 JSON response.
 - Check response headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.

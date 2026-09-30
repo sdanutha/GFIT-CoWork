@@ -35,19 +35,15 @@ class FakeHandler:
 
 @pytest.fixture(autouse=True)
 def _clear_extension_env(monkeypatch):
-    from api import auth as auth_mod
-
     for name in (
         "HERMES_WEBUI_EXTENSION_DIR",
         "HERMES_WEBUI_EXTENSION_MANIFEST",
         "HERMES_WEBUI_EXTENSION_SCRIPT_URLS",
         "HERMES_WEBUI_EXTENSION_STYLESHEET_URLS",
-        "HERMES_WEBUI_PASSWORD",
+        "HERMES_WEBUI_DIRECTORY",
     ):
         monkeypatch.delenv(name, raising=False)
-    auth_mod._invalidate_password_hash_cache()
     yield
-    auth_mod._invalidate_password_hash_cache()
 
 
 def _use_extension_state_dir(monkeypatch, tmp_path):
@@ -71,15 +67,13 @@ def _status_counts_empty():
 
 
 def test_extension_status_disabled_by_default(tmp_path, monkeypatch):
-    # With no HERMES_WEBUI_EXTENSION_DIR and no managed default dir yet, the
-    # gallery is "configured" (a managed install target is always available)
-    # but not yet valid/enabled until the first install creates the directory.
+    # With no HERMES_WEBUI_EXTENSION_DIR, no extension folder is configured.
     _use_extension_state_dir(monkeypatch, tmp_path)
     from api.extensions import get_extension_status
 
     assert get_extension_status() == {
         "enabled": False,
-        "extension_dir_configured": True,
+        "extension_dir_configured": False,
         "extension_dir_valid": False,
         "script_urls": [],
         "stylesheet_urls": [],
@@ -339,8 +333,7 @@ def test_extension_status_reports_unreadable_manifest_safely(tmp_path, monkeypat
 
 
 def test_extension_status_reports_manifest_disabled_when_dir_unconfigured(tmp_path, monkeypatch):
-    # No managed default dir exists yet, so even though the gallery target is
-    # "configured", a manifest env points at a directory that isn't valid yet.
+    # A manifest env is set, but no extension folder is configured.
     _use_extension_state_dir(monkeypatch, tmp_path)
     monkeypatch.setenv("HERMES_WEBUI_EXTENSION_MANIFEST", "extensions.json")
 
@@ -348,7 +341,7 @@ def test_extension_status_reports_manifest_disabled_when_dir_unconfigured(tmp_pa
 
     status = get_extension_status()
     assert status["enabled"] is False
-    assert status["extension_dir_configured"] is True
+    assert status["extension_dir_configured"] is False
     assert status["extension_dir_valid"] is False
     assert status["manifest"]["status"] == "extension_disabled"
     assert status["manifest"]["configured"] is True
@@ -1242,10 +1235,9 @@ def test_set_extension_user_enabled_rejects_when_extensions_unconfigured(monkeyp
 
 
 def test_extension_toggle_route_uses_csrf_gate(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
-    from api import auth as auth_mod, routes
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+    from api import routes
 
-    auth_mod._invalidate_password_hash_cache()
     handler = FakeHandler()
     handler.headers = {
         "Origin": "http://example.com",
@@ -1261,12 +1253,10 @@ def test_extension_toggle_route_uses_csrf_gate(monkeypatch):
 
 
 def test_extension_toggle_route_requires_webui_auth(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
 
-    from api import auth as auth_mod
     from api.auth import check_auth
 
-    auth_mod._invalidate_password_hash_cache()
     handler = FakeHandler()
 
     assert check_auth(handler, SimpleNamespace(path="/api/extensions/toggle", query="")) is False
@@ -1341,7 +1331,7 @@ def test_extension_status_route_is_wired(monkeypatch):
 
 
 def test_extension_status_route_requires_webui_auth(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_PASSWORD", "test-password")
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
 
     from api.auth import check_auth
 

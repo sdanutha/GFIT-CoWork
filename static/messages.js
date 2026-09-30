@@ -1535,23 +1535,6 @@ async function send(){
       }
     }
     if(_parsedCmd&&!_cmd){
-      if(_parsedCmd.name==='pet'){
-        if(!S.session){await newSession();await renderSessionList();}
-        S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
-        let _petOutput=null;
-        try{
-          _petOutput=typeof handlePetSlashCommand==='function'
-            ? await handlePetSlashCommand(text,{name:'pet'})
-            : {handled:false,message:'Desktop Companion is unavailable in WebUI.'};
-        }catch(e){
-          _petOutput={handled:false,message:`Desktop Companion command error: ${e&&e.message||e}`};
-        }
-        if(_petOutput&&_petOutput.message){
-          S.messages.push({role:'assistant',content:String(_petOutput.message),_ts:Date.now()/1000});
-        }
-        renderMessages();
-        $('msg').value='';autoResize();hideCmdDropdown();return;
-      }
       if(_parsedCmd.name==='sessions' || _parsedCmd.name==='resume'){
         // Open the native WebUI session browser rather than sending as chat text (#6224).
         // Use the mobile-aware opener so phone-width layouts (where expandSidebar is a

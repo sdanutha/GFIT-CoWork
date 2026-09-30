@@ -28,8 +28,8 @@ def _git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def changed_agent_checkout(monkeypatch, tmp_path):
-    """Exercise the real revision guard and scheduler without replacing a process."""
-    from api import agent_runtime, routes, updates
+    """Exercise the real revision guard without replacing a process."""
+    from api import agent_runtime, routes
 
     agent_root = tmp_path / "agent"
     agent_root.mkdir()
@@ -50,16 +50,6 @@ def changed_agent_checkout(monkeypatch, tmp_path):
     (venv_root / "venv" / "bin").mkdir(parents=True)
     monkeypatch.setattr(agent_runtime, "_HERMES_HOME", hermes_home)
     monkeypatch.setattr(agent_runtime, "_AGENT_PYTHON", venv_root / "venv" / "bin" / "python")
-    workers = []
-
-    class CapturedThread:
-        def __init__(self, *, target, daemon):
-            self.target = target
-
-        def start(self):
-            workers.append(self.target)
-
-    monkeypatch.setattr(updates, "threading", types.SimpleNamespace(Thread=CapturedThread))
     monkeypatch.setattr(routes, "get_config", lambda: {})
     monkeypatch.setattr(routes, "webui_gateway_chat_enabled", lambda _cfg: False)
     monkeypatch.setattr(
@@ -72,7 +62,7 @@ def changed_agent_checkout(monkeypatch, tmp_path):
 
     monkeypatch.setattr(routes, "_get_or_materialize_session", no_session_mutation)
     return types.SimpleNamespace(
-        root=agent_root, home=hermes_home, venv_root=venv_root, workers=workers,
+        root=agent_root, home=hermes_home, venv_root=venv_root,
         request=lambda: routes._handle_chat_start(object(), {"session_id": "stale-session"}),
     )
 
@@ -138,14 +128,13 @@ def test_unverified_update_keeps_manual_409_without_restart(
 
     response = checkout.request()
 
-    assert checkout.workers == [], "revision mismatch scheduled an automatic restart"
     assert response["status"] == 409
     payload = response["payload"]
     assert payload["type"] == "agent_runtime_stale"
     assert payload["retryable"] is True
     assert payload["restart_scheduled"] is False
     assert payload["agent_update_state"] == diagnostic
-    assert "Restart Hermes WebUI manually" in payload["error"]
+    assert "Restart GFIT-CoWork manually" in payload["error"]
     assert "success" not in payload["error"].lower()
 
 
@@ -169,7 +158,6 @@ def test_final_read_cannot_authorize_restart_without_atomic_handoff(
     monkeypatch.setattr(agent_runtime, "_read_agent_revision", read_then_start_update)
     response = checkout.request()
 
-    assert checkout.workers == [], "an unprotected read authorized automatic restart"
     assert revision_reads == [_git(checkout.root, "rev-parse", "HEAD")]
     assert marker.is_file()
     assert response["status"] == 409
@@ -211,8 +199,7 @@ def test_async_compression_preserves_manual_restart_diagnostics(
         assert payload["retryable"] is True
         assert payload["restart_scheduled"] is False
         assert payload["agent_update_state"] == "incomplete"
-        assert "Restart Hermes WebUI manually" in payload["error"]
-    assert checkout.workers == []
+        assert "Restart GFIT-CoWork manually" in payload["error"]
 
 
 def test_loaded_agent_runtime_fails_closed_after_source_revision_changes(tmp_path: Path):
@@ -275,14 +262,14 @@ try:
 except RuntimeError as exc:
     message = str(exc)
     assert "Hermes Agent was updated" in message
-    assert "Restart Hermes WebUI manually" in message
+    assert "Restart GFIT-CoWork manually" in message
 else:
     raise AssertionError("stale in-process AIAgent was reused after its source revision changed")
 
 try:
     agent_runtime.require_ai_agent_class()
 except agent_runtime.AgentRuntimeChangedError as exc:
-    assert "Restart Hermes WebUI manually" in str(exc)
+    assert "Restart GFIT-CoWork manually" in str(exc)
 else:
     raise AssertionError("unguarded AIAgent import was allowed after its source revision changed")
 """.strip()

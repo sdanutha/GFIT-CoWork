@@ -178,7 +178,7 @@ def test_file_move_succeeds_under_symlinked_workspace_root():
 
 def test_file_move_rejects_symlinked_source_entry():
     """Security (#3422 hardening, round 3): dragging a SYMLINK entry must not
-    move the link's resolved target. safe_resolve() follows the final symlink,
+    move the link's resolved target. resolve_in_workspace() follows the final symlink,
     so without a guard moving link.txt (-> dir/real.txt) would move
     dir/real.txt and leave link.txt dangling. The handler rejects a symlinked
     source (lstat on the lexically-requested path) with 400, leaving both the

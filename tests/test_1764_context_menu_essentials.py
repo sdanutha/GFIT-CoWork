@@ -78,7 +78,7 @@ class TestCopyFilePathMenuItem:
         src = ROUTES.read_text(encoding="utf-8")
         assert 'parsed.path == "/api/file/path"' in src
         assert "def _handle_file_path(handler, body):" in src
-        # Must use safe_resolve to prevent path traversal.
+        # Must use resolve_in_workspace to prevent path traversal.
         # Find the handler body and check.
         m = re.search(
             r"def _handle_file_path\(handler, body\):\s*(?:\"\"\".*?\"\"\")?\s*(.*?)(?=\ndef )",
@@ -87,7 +87,7 @@ class TestCopyFilePathMenuItem:
         )
         assert m, "_handle_file_path body not found"
         body = m.group(1)
-        assert "safe_resolve(Path(s.workspace)" in body
+        assert "resolve_in_workspace(Path(s.workspace)" in body
         assert "session_id" in body  # require() check
         # Returns the absolute path as a string.
         assert 'j(handler, {"ok": True, "path": str(target)})' in body
@@ -291,14 +291,14 @@ class TestFilePathEndpointBehaviour:
         assert "definitely-does-not-exist-xyz123.tmp" in body.get("path", "")
 
     def test_rejects_path_traversal(self):
-        """The endpoint must use safe_resolve, which rejects paths that
+        """The endpoint must use resolve_in_workspace, which rejects paths that
         escape the workspace root."""
         sid = self._new_session()
         body, status = _post(
             "/api/file/path",
             {"session_id": sid, "path": "../../../../../../etc/passwd"},
         )
-        assert status == 400, body  # safe_resolve raises ValueError → bad()
+        assert status == 400, body  # resolve_in_workspace raises ValueError → bad()
         # Error message must NOT include the attempted traversal target's
         # contents, just a generic safe-resolve message.
         assert "passwd" not in body.get("error", "").lower() or "outside" in body.get("error", "").lower()

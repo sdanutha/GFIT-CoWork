@@ -1,7 +1,7 @@
 """Regression coverage for #3194 — two-container Docker first-deploy shows
 "Gateway not configured" even though the gateway is running.
 
-Reported by @chenghaopeng: after a fresh ``docker-compose.two-container.yml``
+Reported by @chenghaopeng: after a fresh two-container Docker
 deploy, the WebUI banner says "Gateway not configured" while
 ``hermes gateway status`` reports the gateway is running. The trigger is an
 empty ``identity_map`` (no conversation has happened yet, so no session

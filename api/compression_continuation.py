@@ -1,4 +1,4 @@
-"""Read-only routing hints for externally compressed WebUI sessions.
+"""Read-only routing hints for externally compressed GFIT-CoWork sessions.
 
 SQLite owns compression lineage; sidecar snapshot flags may predate a
 Desktop/CLI rotation. Never reopen a sealed parent or mutate Agent state here.

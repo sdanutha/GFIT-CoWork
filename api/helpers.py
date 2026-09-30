@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- HTTP helper functions.
+GFIT-CoWork -- HTTP helper functions.
 """
 import base64 as _base64
 import binascii as _binascii
@@ -63,21 +63,19 @@ def _sanitize_error(e: Exception) -> str:
 
 
 def resolve_inside(root: Path, requested: str) -> Path:
-    """Resolve a relative path inside root, raising ValueError on traversal."""
-    resolved = (root / requested).resolve()
-    resolved.relative_to(root.resolve())  # raises ValueError if outside root
-    return resolved
+    """Resolve a relative path inside root, raising ValueError on traversal.
 
-
-def safe_resolve(root: Path, requested: str) -> Path:
-    """Resolve a relative path inside the Workspace root, raising ValueError on traversal.
-
-    A GFIT-CoWork Member is also refused any path outside their Profile's
-    Workspace, whatever *root* is.
+    The unconfined primitive: both raw ``..`` traversal and symlink escapes out
+    of *root* are refused, and nothing else is checked. Use it for roots that
+    are not Workspaces (a session's attachment folder); a Workspace path goes
+    through :func:`api.workspace.resolve_in_workspace`, which also confines it.
     """
-    from api.workspace import confine_to_member_workspace
-
-    return confine_to_member_workspace(resolve_inside(root, requested))
+    resolved = (root / requested).resolve()
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError:
+        raise ValueError(f"Path traversal blocked: {requested}") from None
+    return resolved
 
 
 _CSP_CONNECT_BASE = (
@@ -1766,8 +1764,9 @@ def get_profile_cookie(handler) -> str | None:
 
     raw_val = morsel.value
     try:
-        from api.auth import is_auth_enabled, parse_cookie, verify_profile_cookie_value
-        if is_auth_enabled():
+        from api.auth import parse_cookie, verify_profile_cookie_value
+        from api.directory import is_directory_enabled
+        if is_directory_enabled():
             val = verify_profile_cookie_value(raw_val, parse_cookie(handler))
             return val if val and _valid_profile_name(val) else None
     except Exception:
@@ -1800,8 +1799,8 @@ def build_profile_cookie(name: str, handler=None, *, session_cookie_value: str |
     # it would weaken the binding). If auth is on we require a handler so the
     # cookie is bound to the session. (#4023 Opus hardening.)
     try:
-        from api.auth import is_auth_enabled
-        _auth_on = is_auth_enabled()
+        from api.directory import is_directory_enabled
+        _auth_on = is_directory_enabled()
     except Exception:
         _auth_on = False
     if _auth_on and handler is None:
@@ -1816,8 +1815,9 @@ def build_profile_cookie(name: str, handler=None, *, session_cookie_value: str |
             raise RuntimeError("could not sign active profile cookie") from exc
     elif handler is not None:
         try:
-            from api.auth import is_auth_enabled, parse_cookie, sign_profile_cookie_value
-            if is_auth_enabled():
+            from api.auth import parse_cookie, sign_profile_cookie_value
+            from api.directory import is_directory_enabled
+            if is_directory_enabled():
                 value = sign_profile_cookie_value(name, parse_cookie(handler))
         except Exception as exc:
             logger.warning("Failed to sign active profile cookie", exc_info=True)

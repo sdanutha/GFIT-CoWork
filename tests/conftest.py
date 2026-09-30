@@ -29,7 +29,7 @@ import pytest
 
 if not (3, 11) <= sys.version_info[:2] <= (3, 13):
     pytest.exit(
-        "Hermes WebUI tests require Python 3.11, 3.12, or 3.13. "
+        "GFIT-CoWork tests require Python 3.11, 3.12, or 3.13. "
         "Run ./scripts/test.sh so the repo-local supported .venv is used "
         "instead of an unsupported system python.",
         returncode=3,
@@ -180,6 +180,15 @@ os.environ['HERMES_BASE_HOME'] = str(TEST_STATE_DIR)
 # ~/.hermes/config.yaml.  Override it before any product modules are imported so
 # tests that read/write config.yaml stay inside the isolated test home.
 os.environ['HERMES_CONFIG_PATH'] = str(TEST_STATE_DIR / 'config.yaml')
+# Every agent entry point (run_agent, which server.py imports) runs the agent's
+# hermes_bootstrap -> venv_sync.prepare_launch() against the REAL agent checkout.
+# With HERMES_HOME at the test dir, a self-managed checkout looks like an
+# unfinished source update: it installs a Python under TEST_STATE_DIR and
+# publish_launchers() rewrites <agent>/.hermes/bin/hermes and hermes-acp to exec
+# that temp Python, which breaks `hermes` once the test dir is gone. This is the
+# agent's switch for hermetic test harnesses; the test server env is copied from
+# os.environ, so it inherits it too.
+os.environ['HERMES_DISABLE_LAZY_INSTALLS'] = '1'
 
 # Model-selection env overrides must NOT leak from the runner into tests.
 # get_effective_default_model() (api/config.py) treats HERMES_MODEL / OPENAI_MODEL
@@ -205,47 +214,19 @@ def _isolate_hermes_config_path():
     os.environ['HERMES_CONFIG_PATH'] = isolated_config_path
 
 
-@pytest.fixture(autouse=True)
-def _reset_password_hash_cache():
-    """Reset the memoized password-hash cache around every test (#5588).
-
-    api.auth.get_password_hash() caches the resolved hash process-wide
-    (_AUTH_HASH_CACHE / _AUTH_HASH_COMPUTED) for perf — it is NOT keyed on the
-    HERMES_WEBUI_PASSWORD env var. A test that sets that env var (e.g.
-    test_session_static_assets.test_session_static_auth_exemption) populates the
-    cache with a real hash; monkeypatch pops the env var on teardown but the
-    cache stays populated, so is_auth_enabled() reads stale True and later tests
-    (e.g. test_issue803's profile-cookie helpers) fail with a spurious
-    "requires a request handler when auth is enabled". Invalidate before AND
-    after each test so neither a pre-existing cached value nor a value this test
-    populates leaks across the isolation boundary. No-op when auth is off.
-    """
-    try:
-        from api.auth import _invalidate_password_hash_cache
-    except Exception:
-        _invalidate_password_hash_cache = None
-    if _invalidate_password_hash_cache:
-        _invalidate_password_hash_cache()
-    yield
-    if _invalidate_password_hash_cache:
-        _invalidate_password_hash_cache()
-
-
-def _strip_leaked_webui_password_env() -> None:
-    """Remove a leaked HERMES_WEBUI_PASSWORD between tests (#7168 review).
+def _strip_leaked_login_env() -> None:
+    """Remove a leaked HERMES_WEBUI_DIRECTORY between tests (#7168 review).
 
     bootstrap.py runs _load_repo_dotenv() at import time, which copies values
     from the developer's real repo .env straight into os.environ. When any
     test imports bootstrap mid-session (e.g. tests/test_bootstrap_foreground.py
-    via its import_bootstrap fixture), a local .env containing
-    HERMES_WEBUI_PASSWORD leaks into the process environment OUTSIDE
-    monkeypatch's undo scope. Every later test then sees is_auth_enabled()
-    True and no-handler cookie helpers raise spurious
-    "build_profile_cookie requires a request handler" errors — exactly the
-    #5588 failure shape, but sourced from the repo .env instead of the hash
-    cache. Tests that legitimately enable auth set the var themselves AFTER
-    this strip; an intentionally-empty value ("") is preserved so
-    ctl.sh-style override semantics keep working.
+    via its import_bootstrap fixture), a local .env configuring the Directory
+    leaks into the process environment OUTSIDE monkeypatch's undo scope. Every
+    later test then sees is_directory_enabled() True and no-handler cookie helpers
+    raise spurious "build_profile_cookie requires a request handler" errors
+    (the #5588 failure shape). Tests that legitimately turn login on set the
+    var themselves AFTER this strip; an intentionally-empty value ("") is
+    preserved so ctl.sh-style override semantics keep working.
 
     HERMES_COMMAND gets the same treatment (#7168 re-gate round 7): a local
     .env carrying HERMES_COMMAND leaks past bootstrap imports and redirects
@@ -255,18 +236,16 @@ def _strip_leaked_webui_password_env() -> None:
     HERMES_COMMAND override, so stripping a leaked value restores exact
     upstream semantics.
     """
-    if os.environ.get("HERMES_WEBUI_PASSWORD") == "":
-        pass  # intentional empty override preserved for the password var
-    else:
-        os.environ.pop("HERMES_WEBUI_PASSWORD", None)
+    if os.environ.get("HERMES_WEBUI_DIRECTORY") != "":
+        os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
     os.environ.pop("HERMES_COMMAND", None)
 
 
 @pytest.fixture(autouse=True)
-def _strip_leaked_webui_password():
-    _strip_leaked_webui_password_env()
+def _strip_leaked_login():
+    _strip_leaked_login_env()
     yield
-    _strip_leaked_webui_password_env()
+    _strip_leaked_login_env()
 
 
 @pytest.fixture(autouse=True)
@@ -478,19 +457,18 @@ def pytest_report_collectionfinish(config, items):
 os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 
 # ── Permanent os.execv guard for the pytest session ────────────────────────
-# Several tests in tests/test_update_banner_fixes.py exercise
-# api.updates._schedule_restart(), which spawns a DAEMON thread that sleeps
-# for a short delay and then calls ``os.execv(sys.executable, sys.argv)``.
-# Those tests monkeypatch ``os.execv`` to a no-op for the test scope, but
-# monkeypatch teardown happens at test exit — if the daemon thread has not
-# yet woken up by then (system load, GC pause, _apply_lock contention), the
-# real ``os.execv`` is restored before the thread fires it. The daemon then
+# A restart path that spawns a DAEMON thread which sleeps for a short delay
+# and then calls ``os.execv(sys.executable, sys.argv)`` (the removed
+# self-update restart was one) is unsafe under pytest. A test that
+# monkeypatches ``os.execv`` to a no-op for its scope restores the real one at
+# teardown — if the daemon thread has not yet woken up by then (system load,
+# GC pause, lock contention), the real ``os.execv`` fires. The daemon then
 # REPLACES the pytest process image with a fresh ``pytest tests/ -q ...``
 # invocation, looking from the outside like pytest "hangs at 99%" and then
 # restarts the entire suite from 0% — a self-perpetuating loop.
 #
 # Daemon threads cannot be reliably joined from a test fixture (they live in
-# ``api.updates`` module scope), so the only safe answer is to render
+# module scope), so the only safe answer is to render
 # ``os.execv`` permanently inert for the pytest session. Production code is
 # unaffected because production never imports this conftest.
 #
@@ -1079,7 +1057,7 @@ def test_server():
         # causing onboarding writes (config.yaml, .env) to land in the production
         # ~/.hermes/profiles/webui/ and overwrite real API keys.
         "HERMES_BASE_HOME":               str(TEST_STATE_DIR),
-        "HERMES_WEBUI_PASSWORD":          "",
+        "HERMES_WEBUI_DIRECTORY":         "",
     })
 
     # Pass agent dir if discovered so server.py doesn't have to re-discover
@@ -1230,25 +1208,6 @@ _REAL_HERMES_STATE = sys.modules.get("hermes_state")
 _AGENT_PATH_ENV_KEYS = ("HERMES_WEBUI_AGENT_DIR", "PYTHONPATH", "HERMES_WEBUI_PYTHON")
 _REAL_AGENT_ENV = {k: os.environ.get(k) for k in _AGENT_PATH_ENV_KEYS}
 _REAL_SYS_PATH = list(sys.path)
-
-# Keep the Windows restart seams inert after the suite isolation snapshots.
-from api import updates as _updates
-
-_real_windows_restart_spawn = _updates._windows_restart_spawn
-_real_windows_restart_exit = _updates._windows_restart_exit
-
-
-def _pytest_session_safe_windows_restart_spawn(_args, **_kwargs):  # pragma: no cover
-    return None
-
-
-def _pytest_session_safe_windows_restart_exit(_code):  # pragma: no cover
-    return None
-
-
-_updates._windows_restart_spawn = _pytest_session_safe_windows_restart_spawn
-_updates._windows_restart_exit = _pytest_session_safe_windows_restart_exit
-
 
 def _hermes_cli_is_healthy() -> bool:
     mod = sys.modules.get("hermes_cli")

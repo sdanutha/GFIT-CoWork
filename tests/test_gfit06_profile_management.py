@@ -73,6 +73,7 @@ def test_a_name_that_breaks_the_profile_name_rules_is_refused(srv, admin, name):
     status, body, _ = admin.post("/api/profile/create", {"name": name, "display_name": "Someone"})
     assert status == 400, body
     assert "name" in body["error"].lower()
+    assert "employee ID" in body["error"]
     assert _row(admin, name) is None
 
 
@@ -86,6 +87,125 @@ def test_the_built_in_default_profile_cannot_be_created(admin):
 def test_creating_an_existing_profile_is_refused(admin):
     status, body, _ = admin.post("/api/profile/create", {"name": MEMBER})
     assert status == 400, body
+
+
+@pytest.mark.parametrize("clone_from", ["Bad Name!", "../etc", "-leading-dash", "x" * 65, ""])
+def test_a_clone_from_name_that_breaks_the_profile_name_rule_is_refused(srv, admin, clone_from):
+    status, body, _ = admin.post(
+        "/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J.", "clone_from": clone_from})
+    assert status == 400, body
+    assert "employee ID" in body["error"]
+    assert not srv.profile_home(NEWCOMER).exists()
+    # No record is left behind: creating it again starts fresh.
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
+    assert status == 200, body
+    assert _row(admin, NEWCOMER)["label"] == NEWCOMER
+
+
+def test_a_profile_cannot_be_created_for_an_admin_id(srv, admin):
+    # An Admin logs in to `default`, so nobody could ever log in to this Profile.
+    status, body, _ = admin.post("/api/profile/create", {"name": ADMIN, "display_name": "Admin One"})
+    assert status == 400, body
+    assert "Admin" in body["error"]
+    assert "default" in body["error"]
+    assert not srv.profile_home(ADMIN).exists()
+    # No record either: a Profile made by hand under that ID shows no display name.
+    srv.profile_home(ADMIN).mkdir()
+    assert _row(admin, ADMIN)["label"] == ADMIN
+
+
+def _fail(*_args, **_kwargs):
+    raise OSError("disk full")
+
+
+def _cannot_log_in(srv, name):
+    status, _, _ = srv.client().login(name)
+    return status == 403
+
+
+def test_a_failed_roster_write_on_create_leaves_no_profile(srv, admin, monkeypatch):
+    import api.roster as roster
+
+    with monkeypatch.context() as patch:
+        patch.setattr(roster, "_save", _fail)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 500, body
+    assert "not created" in body["error"]
+    assert not srv.profile_home(NEWCOMER).exists()
+    assert _cannot_log_in(srv, NEWCOMER)
+
+
+def test_an_unreadable_roster_refuses_create(srv, admin):
+    (srv.state / "gfit_roster.json").write_text("{not json")
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
+    assert status == 500, body
+    assert not srv.profile_home(NEWCOMER).exists()
+    assert (srv.state / "gfit_roster.json").read_text() == "{not json"
+
+
+def test_a_failed_hermes_create_leaves_no_roster_record(srv, admin, monkeypatch):
+    import api.profiles as profiles
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("hermes said no")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(profiles, "create_profile_api", refuse)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 400, body
+    assert "hermes said no" in body["error"]
+    assert _row(admin, NEWCOMER) is None
+    assert _cannot_log_in(srv, NEWCOMER)
+    # No record is left behind: creating it again works and starts fresh.
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
+    assert status == 200, body
+    assert _row(admin, NEWCOMER)["label"] == NEWCOMER
+
+
+def test_a_create_that_fails_part_way_leaves_the_profile_disabled(srv, admin, monkeypatch):
+    # The Hermes Profile directory is made, then a later step fails: shut, not open.
+    import api.profiles as profiles
+
+    with monkeypatch.context() as patch:
+        patch.setattr(profiles, "_write_endpoint_to_config", _fail)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 500, body
+    assert "disabled" in body["error"]
+    assert _row(admin, NEWCOMER)["status"] == "disabled"
+    assert _cannot_log_in(srv, NEWCOMER)
+
+
+def test_a_failed_activation_leaves_the_new_profile_disabled(srv, admin, monkeypatch):
+    # The record is written disabled, then made active once the Hermes Profile exists.
+    import api.roster as roster
+
+    real_save = roster._save
+    saves = []
+
+    def save_once(records):
+        saves.append(records)
+        if len(saves) > 1:
+            raise OSError("disk full")
+        real_save(records)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(roster, "_save", save_once)
+        status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    assert status == 500, body
+    assert "disabled" in body["error"]
+    assert srv.profile_home(NEWCOMER).is_dir()
+    assert _row(admin, NEWCOMER)["status"] == "disabled"
+    assert _cannot_log_in(srv, NEWCOMER)
+
+
+def test_creating_an_existing_disabled_profile_leaves_it_disabled(admin):
+    admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
+    admin.post("/api/profile/disable", {"name": NEWCOMER})
+    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Someone Else"})
+    assert status == 400, body
+    row = _row(admin, NEWCOMER)
+    assert row["status"] == "disabled"
+    assert row["label"] == f"Somsri J. ({NEWCOMER})"
 
 
 def test_member_list_is_labelled_with_the_roster(srv, admin):
@@ -171,6 +291,28 @@ def test_an_unreadable_roster_fails_closed(srv, admin):
     assert (srv.state / "gfit_roster.json").read_text() == "{not json"
 
 
+@pytest.mark.parametrize("action", ["disable", "enable"])
+def test_an_unreadable_roster_leaves_the_profile_unchanged(srv, admin, action):
+    (srv.state / "gfit_roster.json").write_text("{not json")
+    status, body, _ = admin.post(f"/api/profile/{action}", {"name": MEMBER})
+    assert status == 500, body
+    assert f"'{MEMBER}' was not changed" in body["error"]
+    assert (srv.state / "gfit_roster.json").read_text() == "{not json"
+
+
+def test_a_failed_roster_write_leaves_the_profile_unchanged(srv, admin, monkeypatch):
+    member = srv.logged_in(MEMBER)
+    import api.roster as roster
+
+    with monkeypatch.context() as patch:
+        patch.setattr(roster, "_save", _fail)
+        status, body, _ = admin.post("/api/profile/disable", {"name": MEMBER})
+    assert status == 500, body
+    assert f"'{MEMBER}' was not changed" in body["error"]
+    assert member.get("/api/sessions")[0] == 200
+    assert _row(admin, MEMBER)["status"] == "active"
+
+
 # ── delete ──────────────────────────────────────────────────────────────────
 
 def test_delete_without_confirmation_is_refused(srv, admin):
@@ -205,6 +347,41 @@ def test_deleting_a_profile_ends_its_sessions(srv, admin):
     assert member.get("/api/sessions")[0] == 401
     status, _, _ = srv.client().login(MEMBER)
     assert status == 403
+
+
+def test_a_deletion_that_cannot_finish_leaves_the_profile_disabled(srv, admin, monkeypatch):
+    import api.profiles as profiles
+
+    def busy(*_args, **_kwargs):
+        raise RuntimeError("an agent is still running")
+
+    member = srv.logged_in(MEMBER)
+    with monkeypatch.context() as patch:
+        patch.setattr(profiles, "delete_profile_api", busy)
+        status, body, _ = admin.post("/api/profile/delete", {"name": MEMBER, "confirm": MEMBER})
+    assert status == 409, body
+    assert "disabled" in body["error"]
+    assert "an agent is still running" in body["error"]
+    assert member.get("/api/sessions")[0] == 401
+    assert srv.profile_home(MEMBER).is_dir()
+    assert _row(admin, MEMBER)["status"] == "disabled"
+    assert _cannot_log_in(srv, MEMBER)
+
+
+def test_an_unreadable_roster_refuses_delete(srv, admin):
+    (srv.state / "gfit_roster.json").write_text("{not json")
+    status, body, _ = admin.post("/api/profile/delete", {"name": MEMBER, "confirm": MEMBER})
+    assert status == 500, body
+    assert "not deleted" in body["error"]
+    assert srv.profile_home(MEMBER).is_dir()
+    assert (srv.state / "gfit_roster.json").read_text() == "{not json"
+
+
+def test_the_default_profile_cannot_be_deleted(admin):
+    status, body, _ = admin.post("/api/profile/delete", {"name": "default", "confirm": "default"})
+    assert status == 400, body
+    assert "default" in body["error"]
+    assert "create" not in body["error"]
 
 
 # ── Members are refused ─────────────────────────────────────────────────────

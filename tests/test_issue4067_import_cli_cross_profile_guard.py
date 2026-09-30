@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import io
 
+import api.profiles as profiles
 import api.routes as routes
+import api.session_ownership as session_ownership
 
 
 class _FakeHandler:
@@ -51,12 +53,14 @@ def _capture(monkeypatch):
         cap["ok_status"] = status
         return True
 
-    monkeypatch.setattr(routes, "j", _fake_j)
-    monkeypatch.setattr(
-        routes,
-        "bad",
-        lambda h, m, c=400: (cap.__setitem__("bad", (m, c)), True)[1],
-    )
+    # Session ownership writes its own refusals.
+    for module in (routes, session_ownership):
+        monkeypatch.setattr(module, "j", _fake_j)
+        monkeypatch.setattr(
+            module,
+            "bad",
+            lambda h, m, c=400: (cap.__setitem__("bad", (m, c)), True)[1],
+        )
     return cap
 
 
@@ -89,6 +93,7 @@ def test_import_cli_existing_foreign_profile_unqualified_request_404(monkeypatch
     foreign = _FakeSession("foreign_existing_001", "other")
     monkeypatch.setattr(routes.Session, "load", staticmethod(lambda sid: foreign))
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
     # If the gate fails open, these would be reached — make them loud.
     monkeypatch.setattr(
         routes, "get_cli_session_messages",
@@ -117,6 +122,7 @@ def test_import_cli_existing_same_profile_still_refreshes(monkeypatch):
     own.save = lambda touch_updated_at=False: None  # allow refresh
     monkeypatch.setattr(routes.Session, "load", staticmethod(lambda sid: own))
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
     monkeypatch.setattr(routes, "_resolve_cli_import_metadata", lambda *a, **k: {})
     monkeypatch.setattr(routes, "get_cli_session_messages", lambda *a, **k: [])
     cap = _capture(monkeypatch)
@@ -136,6 +142,7 @@ def test_import_cli_all_profiles_requires_matching_profile(monkeypatch):
     foreign = _FakeSession("foreign_002", "other")
     monkeypatch.setattr(routes.Session, "load", staticmethod(lambda sid: foreign))
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
     monkeypatch.setattr(
         routes, "get_cli_session_messages",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("foreign read attempted")),

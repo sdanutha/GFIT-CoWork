@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import api.auth as auth
+import api.login as login
 import api.profiles as profiles
 import api.roster as roster
+
 
 PASSWORD = "Tr0ub4dor&3-correct-horse"
 WRONG_PASSWORD = "not-the-password"
@@ -30,12 +32,13 @@ class Client:
         self.port = port
         self.cookies: dict[str, str] = {}
 
-    def request(self, method, path, body=None, headers=None):
+    def request(self, method, path, body=None, headers=None, raw=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=15)
         sent = dict(headers or {})
         if self.cookies:
             sent["Cookie"] = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
-        data = None
+        assert body is None or raw is None, "pass a JSON body or raw bytes, not both"
+        data = raw
         if body is not None:
             data = json.dumps(body).encode()
             sent["Content-Type"] = "application/json"
@@ -63,6 +66,24 @@ class Client:
 
     def post(self, path, body=None, **kw):
         return self.request("POST", path, {} if body is None else body, **kw)
+
+    def post_file(self, path, fields: dict, filename: str, content: bytes):
+        """POST a multipart form with *fields* and one ``file`` upload."""
+        boundary = "gfit-test-boundary"
+        parts = []
+        for name, value in fields.items():
+            parts.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+            )
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n".encode() + content + b"\r\n"
+        )
+        parts.append(f"--{boundary}--\r\n".encode())
+        return self.request(
+            "POST", path, raw=b"".join(parts),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
 
     def login(self, username, password=PASSWORD):
         return self.request("POST", "/api/auth/login", {"username": username, "password": password})
@@ -120,17 +141,18 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
     # (ticket 09), so nothing else needs switching off.
     monkeypatch.setattr(auth, "STATE_DIR", state)
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
-    monkeypatch.setattr(auth, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
+    monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
     monkeypatch.setattr(roster, "STATE_DIR", state)
     for name, value in (legacy_env or {}).items():
         monkeypatch.setenv(name, value)
     auth._sessions.clear()
-    auth._login_attempts.clear()
+    login._login_attempts.clear()
 
     # Profiles live under an isolated Hermes home.
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)
     profiles._invalidate_root_profile_cache()
+    profiles._invalidate_list_profiles_cache()
 
     httpd = server.QuietHTTPServer(("127.0.0.1", 0), server.Handler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -141,5 +163,6 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
         httpd.shutdown()
         httpd.server_close()
         auth._sessions.clear()
-        auth._login_attempts.clear()
+        login._login_attempts.clear()
         profiles._invalidate_root_profile_cache()
+        profiles._invalidate_list_profiles_cache()

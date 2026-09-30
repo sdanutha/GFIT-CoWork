@@ -273,5 +273,5 @@ def test_ctl_status_survives_readonly_env_vars(tmp_path: Path):
         capture_output=True, text=True, env=env, timeout=30,
     )
     assert res.returncode == 0, res.stderr
-    assert "hermes-webui" in res.stdout
+    assert "gfit-cowork" in res.stdout
     assert "readonly variable" not in res.stderr

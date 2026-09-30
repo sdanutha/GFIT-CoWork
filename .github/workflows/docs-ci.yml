@@ -19,7 +19,7 @@ name: Docs CI
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main, dev]
     paths:
       - '**/*.md'
       - '**/*.markdown'
@@ -28,7 +28,7 @@ on:
       - 'CHANGELOG*'
       - '**/README*'
   push:
-    branches: [master]
+    branches: [main, dev]
     paths:
       - '**/*.md'
       - '**/*.markdown'
@@ -66,7 +66,7 @@ jobs:
           # LINE. We never echo untrusted names into another shell; downstream steps
           # read this file. Fall back to all tracked docs if the diff can't compute.
           if [ -n "${BASE_SHA:-}" ] && [ -n "${HEAD_SHA:-}" ]; then
-            git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || git fetch --no-tags origin master || true
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || git fetch --no-tags origin "${{ github.base_ref || 'main' }}" || true
             RANGE="$BASE_SHA...$HEAD_SHA"
           else
             RANGE="${{ github.event.before }}...${{ github.sha }}"

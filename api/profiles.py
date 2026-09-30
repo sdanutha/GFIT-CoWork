@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- Profile state management.
+GFIT-CoWork -- Profile state management.
 Wraps hermes_cli.profiles to provide profile switching for the web UI.
 
 The web UI maintains a process-level "active profile" that determines which
@@ -296,9 +296,11 @@ def _is_isolated_profile_mode() -> bool:
     not the current os.environ value. init_profile_state() overwrites HERMES_HOME
     at startup, which would disable detection if we read it here.
     """
-    # A request pinned to one Profile (a GFIT-CoWork Member) is an isolated
-    # request, whatever the process posture.
-    if pinned_request_profile():
+    # A request bound to one Profile (a GFIT-CoWork User's, by the request's
+    # Admission) is an isolated request, whatever the process posture.
+    from api.access import caller_bound_profile
+
+    if caller_bound_profile():
         return True
     # PRIMARY gate: explicit startup opt-in. Default OFF → a normal named-profile
     # launch is never treated as isolated, so profile switching keeps working
@@ -331,15 +333,19 @@ def _is_isolated_profile_mode() -> bool:
 
 
 def _isolated_profile_name() -> str:
-    """Return the pinned request Profile, else the directory name from _INITIAL_HERMES_HOME."""
-    return pinned_request_profile() or Path(_INITIAL_HERMES_HOME).expanduser().name
+    """Return the caller's bound Profile, else the directory name from _INITIAL_HERMES_HOME."""
+    from api.access import caller_bound_profile
+
+    return caller_bound_profile() or Path(_INITIAL_HERMES_HOME).expanduser().name
 
 
 def _isolated_profile_home() -> Path:
-    """Return the home of the pinned request Profile, else the startup HERMES_HOME."""
-    pinned = pinned_request_profile()
-    if pinned:
-        return _resolve_named_profile_home(pinned)
+    """Return the home of the caller's bound Profile, else the startup HERMES_HOME."""
+    from api.access import caller_bound_profile
+
+    bound = caller_bound_profile()
+    if bound:
+        return _resolve_named_profile_home(bound)
     return Path(_INITIAL_HERMES_HOME).expanduser()
 
 
@@ -535,26 +541,13 @@ def clear_request_profile() -> None:
 
     Called by server.py in the finally block of do_GET / do_POST.
     Safe to call even if set_request_profile() was never called.
+    Also clears the request's Admission (GFIT-CoWork), which ends with the
+    request Profile, before the next keep-alive request on this thread.
     """
+    from api.access import clear_request_admission
+
     _tls.profile = None
-    _tls.pinned_profile = None
-
-
-def pin_request_profile(name: str) -> None:
-    """Pin this request to Profile *name* (a GFIT-CoWork Member's bound Profile).
-
-    A pinned request is an isolated-profile request: every lookup clamps to
-    *name*, cross-profile reads are off, and switching, creating or deleting a
-    Profile is refused. Cleared with the request profile by
-    clear_request_profile().
-    """
-    _tls.pinned_profile = name
-    _tls.profile = name
-
-
-def pinned_request_profile() -> str | None:
-    """Return the Profile this request is pinned to, or None."""
-    return getattr(_tls, 'pinned_profile', None)
+    clear_request_admission()
 
 
 def _resolve_profile_home_for_name(name: str) -> Path:
@@ -2089,6 +2082,22 @@ def _invalidate_list_profiles_cache() -> None:
         _LIST_PROFILES_CACHE = None
 
 
+def _read_config_model_without_hermes_cli(home: Path) -> tuple:
+    """(model, provider) from a Profile's ``config.yaml`` when hermes_cli is unavailable."""
+    try:
+        cfg = yaml.safe_load((Path(home) / 'config.yaml').read_text(encoding='utf-8'))
+    except Exception:
+        return None, None
+    model_cfg = cfg.get('model') if isinstance(cfg, dict) else None
+    if isinstance(model_cfg, str):
+        return model_cfg or None, None
+    if isinstance(model_cfg, dict):
+        model = model_cfg.get('default') or model_cfg.get('model')
+        provider = model_cfg.get('provider')
+        return (str(model) if model else None), (str(provider) if provider else None)
+    return None, None
+
+
 def _build_profile_rows_fast() -> list | None:
     """Build the profile list WITHOUT the upstream alias scan.
 
@@ -2104,21 +2113,35 @@ def _build_profile_rows_fast() -> list | None:
     ``list_profiles()`` — the same per-profile metadata, the same hardcoded
     ``"default"`` name for the base home — and simply skip the alias scan.
 
-    Returns ``None`` if the upstream cheap helpers can't be imported, so the
-    caller can fall back to the original (slow but correct) path. Forward-
-    compatible: if upstream fixes ``find_alias_for_profile`` this stays fast and
-    correct with nothing to revert.
+    Returns ``None`` if hermes_cli imports but lacks the cheap helpers, so the
+    caller falls back to upstream's (slow but correct) ``list_profiles()``.
+    When ``hermes_cli`` cannot be imported at all, the same rows are built from this
+    module's own Profile paths and name rule, with the model read straight
+    from each Profile's ``config.yaml`` and no gateway probe, so the Admin still
+    sees every named Profile. Forward-compatible: if upstream fixes
+    ``find_alias_for_profile`` this stays fast and correct with nothing to revert.
     """
     try:
-        from hermes_cli.profiles import (
-            _get_default_hermes_home,
-            _get_profiles_root,
-            _read_config_model,
-            _check_gateway_running,
-            _PROFILE_ID_RE as _UPSTREAM_PROFILE_ID_RE,
-        )
-    except Exception:
-        return None
+        import hermes_cli.profiles as _upstream_profiles
+    except ImportError:
+        _upstream_profiles = None
+    if _upstream_profiles is None:
+        _get_default_hermes_home = lambda: _DEFAULT_HERMES_HOME  # noqa: E731
+        _get_profiles_root = _profiles_root
+        _read_config_model = _read_config_model_without_hermes_cli
+        _check_gateway_running = lambda _home: False  # noqa: E731
+        _UPSTREAM_PROFILE_ID_RE = _PROFILE_ID_RE
+    else:
+        try:
+            from hermes_cli.profiles import (
+                _get_default_hermes_home,
+                _get_profiles_root,
+                _read_config_model,
+                _check_gateway_running,
+                _PROFILE_ID_RE as _UPSTREAM_PROFILE_ID_RE,
+            )
+        except Exception:
+            return None
 
     def _row(home: Path, name: str, is_default: bool) -> dict:
         try:
@@ -2689,7 +2712,7 @@ def create_profile_api(name: str, clone_from: str = None,
     if _is_isolated_profile_mode():
         raise PermissionError("Profile creation is not allowed in isolated profile mode.")
     _validate_profile_name(name)
-    # Defense-in-depth: validate clone_from here too, even though routes.py
+    # Defense-in-depth: validate clone_from here too, even though api/roster.py
     # also validates it. Any caller that bypasses the HTTP layer gets protection.
     if clone_from is not None and not _is_root_profile(clone_from):
         _validate_profile_name(clone_from)

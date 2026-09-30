@@ -46,7 +46,6 @@ _COMMON_PATCHES = [
     ("api.onboarding.load_workspaces",      lambda: []),
     ("api.onboarding.get_last_workspace",   lambda: "/tmp"),
     ("api.onboarding.get_available_models", lambda: []),
-    ("api.onboarding.is_auth_enabled",      lambda: False),
     ("api.onboarding._build_setup_catalog", lambda cfg: {}),
     ("api.onboarding._get_config_path",     lambda: __import__("pathlib").Path("/tmp/fake.yaml")),
 ]

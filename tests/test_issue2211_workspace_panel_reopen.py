@@ -6,7 +6,6 @@ ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
 BOOT_JS = (ROOT / "static" / "boot.js").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_workspace_panel_has_edge_reopen_toggle_outside_hidden_panel():
@@ -29,9 +28,3 @@ def test_workspace_panel_sync_updates_edge_toggle_state_and_accessibility():
     assert "edgeToggleBtn.classList.toggle('active',isOpen)" in BOOT_JS
     assert "edgeToggleBtn.setAttribute('aria-expanded',isOpen?'true':'false')" in BOOT_JS
     assert "edgeToggleBtn.disabled=!canBrowse" in BOOT_JS
-
-
-def test_changelog_mentions_workspace_panel_reopen_affordance():
-    assert "#2211" in CHANGELOG
-    assert "workspace panel" in CHANGELOG.lower()
-    assert "reopen" in CHANGELOG.lower()

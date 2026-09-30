@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
 
 import api.routes as routes
+import api.session_ownership as session_ownership
 from api.models import Session
 
 
@@ -85,8 +86,10 @@ def _capture(monkeypatch):
         cap["status"] = status
         return True
 
-    monkeypatch.setattr(routes, "j", fake_j)
-    monkeypatch.setattr(routes, "bad", fake_bad)
+    # Session ownership writes its own refusals.
+    for module in (routes, session_ownership):
+        monkeypatch.setattr(module, "j", fake_j)
+        monkeypatch.setattr(module, "bad", fake_bad)
     return cap
 
 
@@ -100,6 +103,7 @@ def test_claude_code_detail_load_survives_named_active_profile(monkeypatch):
 
     with patch("api.routes.get_session", side_effect=KeyError(CLAUDE_SID)), \
          patch("api.routes._get_active_profile_name", return_value="feng-family"), \
+         patch("api.profiles.get_active_profile_name", return_value="feng-family"), \
          patch("api.routes._lookup_cli_session_metadata", return_value=row), \
          patch(
              "api.routes._claim_or_synthesize_cli_session",
@@ -138,6 +142,7 @@ def test_profile_tagged_foreign_session_still_scoped(monkeypatch):
 
     with patch("api.routes.get_session", side_effect=KeyError(row["session_id"])), \
          patch("api.routes._get_active_profile_name", return_value="feng-family"), \
+         patch("api.profiles.get_active_profile_name", return_value="feng-family"), \
          patch("api.routes._lookup_cli_session_metadata", return_value=row):
         assert routes.handle_get(handler, parsed) is True
 
@@ -146,13 +151,15 @@ def test_profile_tagged_foreign_session_still_scoped(monkeypatch):
 
 
 def test_profile_agnostic_predicate_is_narrow():
-    assert routes._is_profile_agnostic_foreign_session(_claude_code_row()) is True
+    from api.session_ownership import _is_profile_less_row
+
+    assert _is_profile_less_row(_claude_code_row()) is True
     # A Claude Code row that somehow carries a profile stays scoped.
     tagged = dict(_claude_code_row(), profile="feng-family")
-    assert routes._is_profile_agnostic_foreign_session(tagged) is False
+    assert _is_profile_less_row(tagged) is False
     # A profile-less row from any other source stays scoped.
     other = dict(_claude_code_row(), source_tag="cli", raw_source="cli")
-    assert routes._is_profile_agnostic_foreign_session(other) is False
+    assert _is_profile_less_row(other) is False
     # Missing / empty metadata is never exempt.
-    assert routes._is_profile_agnostic_foreign_session({}) is False
-    assert routes._is_profile_agnostic_foreign_session(None) is False
+    assert _is_profile_less_row({}) is False
+    assert _is_profile_less_row(None) is False

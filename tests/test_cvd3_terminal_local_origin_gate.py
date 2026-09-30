@@ -47,8 +47,8 @@ class _Handler:
 
 
 def _no_auth(monkeypatch):
-    """Default out-of-the-box state: no password, no passkey, no opt-outs."""
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
+    """Default out-of-the-box state: login off, no opt-outs."""
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
 
@@ -95,7 +95,7 @@ def test_terminal_gate_allows_any_client_when_auth_enabled(monkeypatch):
     """With auth enabled, check_auth() already verified the cookie upstream."""
     from api import routes
 
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
     handler = _Handler(client_ip="8.8.8.8", headers={})
     assert routes._embedded_terminal_gate_allows(handler) is True
@@ -105,7 +105,7 @@ def test_terminal_gate_honors_onboarding_open_escape_hatch(monkeypatch):
     """Deliberately-exposed passwordless server (secured elsewhere) opts out."""
     from api import routes
 
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.setenv("HERMES_WEBUI_ONBOARDING_OPEN", "1")
     handler = _Handler(client_ip="8.8.8.8", headers={})
     assert routes._embedded_terminal_gate_allows(handler) is True

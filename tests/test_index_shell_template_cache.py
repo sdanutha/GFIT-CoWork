@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 import api.config as api_config
 import api.routes as routes
-from api.updates import WEBUI_VERSION
+from api.version import WEBUI_VERSION
 
 
 def _old_inline_render(csrf_token: str) -> str:

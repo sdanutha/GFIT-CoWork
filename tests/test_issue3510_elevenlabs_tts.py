@@ -48,9 +48,7 @@ def _post(body_dict, **kw):
 def _fresh(monkeypatch):
     # Auth + limiter sit before the engine branch; pin them off/clean so these
     # assertions are deterministic regardless of suite order.
-    import api.auth as _auth
-    monkeypatch.setattr(_auth, "is_auth_enabled", lambda: False)
-    monkeypatch.setattr(routes, "is_auth_enabled", lambda: False, raising=False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
     if hasattr(routes._handle_tts, "_tts_limiter"):
         del routes._handle_tts._tts_limiter

@@ -16,7 +16,7 @@ usage() {
 Usage: ./ctl.sh <command> [args]
 
 Commands:
-  start [bootstrap args...]   Start Hermes WebUI as a background daemon
+  start [bootstrap args...]   Start GFIT-CoWork as a background daemon
   stop                        Stop the daemon started by ctl.sh
   restart [bootstrap args...] Stop, then start again
   status                      Show daemon, host/port, log, and health status
@@ -597,18 +597,18 @@ start_cmd() {
 
   local existing_pid
   if existing_pid="$(_current_pid 2>/dev/null)"; then
-    echo "[ctl] Hermes WebUI is already running (PID ${existing_pid})"
+    echo "[ctl] GFIT-CoWork is already running (PID ${existing_pid})"
     return 0
   fi
   local launchd_pid
   if launchd_pid="$(_launchd_webui_pid 2>/dev/null)"; then
-    echo "[ctl] Refusing to start a second Hermes WebUI while launchd job ${HERMES_WEBUI_LAUNCHD_LABEL:-${DEFAULT_LAUNCHD_LABEL}} is running (PID ${launchd_pid})." >&2
+    echo "[ctl] Refusing to start a second GFIT-CoWork while launchd job ${HERMES_WEBUI_LAUNCHD_LABEL:-${DEFAULT_LAUNCHD_LABEL}} is running (PID ${launchd_pid})." >&2
     echo "[ctl] Use launchctl kickstart -k gui/$(id -u)/${HERMES_WEBUI_LAUNCHD_LABEL:-${DEFAULT_LAUNCHD_LABEL}} or disable the launchd job before using ctl.sh start." >&2
     return 2
   fi
   local systemd_conflict
   if systemd_conflict="$(_systemd_webui_conflict 2>/dev/null)"; then
-    echo "[ctl] Refusing to start a second Hermes WebUI: systemd ${systemd_conflict}." >&2
+    echo "[ctl] Refusing to start a second GFIT-CoWork: systemd ${systemd_conflict}." >&2
     echo "[ctl] Manage that instance with systemctl instead (e.g. sudo systemctl restart ${HERMES_WEBUI_SYSTEMD_UNIT:-hermes-webui.service}), or disable the unit before using ctl.sh start. Set HERMES_WEBUI_CTL_ALLOW_SYSTEMD_CONFLICT=1 to override." >&2
     return 2
   fi
@@ -659,7 +659,7 @@ start_cmd() {
   local grace_steps=$(( grace * 4 )) step=0 healthy=0
   while (( step < grace_steps )); do
     if ! _is_alive "${pid}"; then
-      echo "[ctl] Hermes WebUI failed to stay running. Log: ${LOG_FILE}" >&2
+      echo "[ctl] GFIT-CoWork failed to stay running. Log: ${LOG_FILE}" >&2
       rm -f "${PID_FILE}" "${STATE_FILE}"
       return 1
     fi
@@ -671,11 +671,11 @@ start_cmd() {
     step=$(( step + 1 ))
   done
   if ! _is_alive "${pid}"; then
-    echo "[ctl] Hermes WebUI failed to stay running. Log: ${LOG_FILE}" >&2
+    echo "[ctl] GFIT-CoWork failed to stay running. Log: ${LOG_FILE}" >&2
     rm -f "${PID_FILE}" "${STATE_FILE}"
     return 1
   fi
-  echo "[ctl] Started Hermes WebUI (PID ${pid})"
+  echo "[ctl] Started GFIT-CoWork (PID ${pid})"
   echo "[ctl] Bound: ${CTL_HOST}:${CTL_PORT}"
   echo "[ctl] Log: ${LOG_FILE}"
   if (( ! healthy )); then
@@ -706,7 +706,7 @@ stop_cmd() {
   ensure_home
   local pid
   if ! pid="$(_pid_from_file 2>/dev/null)"; then
-    echo "[ctl] Hermes WebUI is stopped"
+    echo "[ctl] GFIT-CoWork is stopped"
     # Warn BEFORE deleting the state file: it carries the saved host/port
     # binding the probe needs when the instance was started off-default.
     _warn_if_unmanaged_instance_serving
@@ -720,7 +720,7 @@ stop_cmd() {
     return 0
   fi
 
-  echo "[ctl] Stopping Hermes WebUI (PID ${pid})"
+  echo "[ctl] Stopping GFIT-CoWork (PID ${pid})"
   _stop_webui_pid "${pid}" TERM
   local i
   for i in {1..50}; do
@@ -777,7 +777,7 @@ status_cmd() {
   if pid="$(_current_pid 2>/dev/null)"; then
     uptime="$(ps -p "${pid}" -o etime= 2>/dev/null | sed 's/^ *//' || true)"
     health="$(_health_line "${host}" "${port}")"
-    echo "● hermes-webui — running"
+    echo "● gfit-cowork — running"
     echo "  PID:     ${pid}"
     echo "  Uptime:  ${uptime:-unknown}"
     echo "  Bound:   ${host}:${port}"
@@ -792,7 +792,7 @@ status_cmd() {
       # launchd job, manual run). Saying "stopped" here is what leads
       # operators to start a doomed duplicate.
       health="$(_health_line "${probe_host}" "${port}")"
-      echo "● hermes-webui — running (not managed by ctl.sh)"
+      echo "● gfit-cowork — running (not managed by ctl.sh)"
       local listener_diag
       listener_diag="$(_port_listener_diag "${port}")"
       echo "  PID:     -"
@@ -802,7 +802,7 @@ status_cmd() {
       echo "  Health:  ${health}"
       echo "  Note:    manage it via its own supervisor (systemctl/launchctl) or the process directly."
     else
-      echo "● hermes-webui — stopped"
+      echo "● gfit-cowork — stopped"
       echo "  PID:     -"
       echo "  Bound:   ${host}:${port}"
       echo "  Log:     ${log_path}"

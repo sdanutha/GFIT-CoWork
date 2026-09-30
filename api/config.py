@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- Shared configuration, constants, and global state.
+GFIT-CoWork -- Shared configuration, constants, and global state.
 Imported by all other api/* modules and by server.py.
 
 Discovery order for all paths:
@@ -420,12 +420,6 @@ def _get_config_path() -> Path:
 
 _WEBUI_SESSION_SAVE_MODES = {"deferred", "eager"}
 _DEFAULT_WEBUI_SESSION_SAVE_MODE = "deferred"
-_DEFAULT_EXPERIMENTAL_CONFIG = {
-    # Dormant first slice for the unified SessionDB migration. Runtime WebUI
-    # session call sites must continue using the existing JSON paths unless a
-    # later PR deliberately enables and wires this flag.
-    "unified_session_db": False,
-}
 _DEFAULT_AGENT_PERSONALITIES = {
     # Mirrors the Hermes Agent CLI built-ins so WebUI's config-derived
     # /personality path is not empty for fresh profiles.
@@ -462,13 +456,6 @@ def _apply_config_defaults(config_data: dict) -> None:
         # Keep behavior aligned with CLI loader defaults: if personalities are
         # absent or malformed, replace the section entirely with built-ins.
         agent_cfg["personalities"] = copy.deepcopy(_DEFAULT_AGENT_PERSONALITIES)
-
-    experimental = config_data.get("experimental")
-    if not isinstance(experimental, dict):
-        experimental = {}
-        config_data["experimental"] = experimental
-    for key, value in _DEFAULT_EXPERIMENTAL_CONFIG.items():
-        experimental.setdefault(key, value)
 
  
 def reload_config_if_stale() -> None:
@@ -551,19 +538,6 @@ def get_webui_session_save_mode(config_data: dict | None = None) -> str:
         if normalized in _WEBUI_SESSION_SAVE_MODES:
             return normalized
     return _DEFAULT_WEBUI_SESSION_SAVE_MODE
-
-
-def is_unified_session_db_enabled(config_data: dict | None = None) -> bool:
-    """Return the dormant unified-session-db feature flag.
-
-    The default is intentionally false so adding the JSON adapter cannot change
-    runtime persistence until a later migration PR switches call sites.
-    """
-    active_cfg = config_data if isinstance(config_data, dict) else cfg
-    experimental = active_cfg.get("experimental", {}) if isinstance(active_cfg, dict) else {}
-    if not isinstance(experimental, dict):
-        return False
-    return experimental.get("unified_session_db") is True
 
 
 def _refresh_config_cache(config_path: Path | None = None) -> None:
@@ -979,7 +953,7 @@ def print_startup_config() -> None:
 
     lines = [
         "",
-        "  Hermes Web UI -- startup config",
+        "  GFIT-CoWork -- startup config",
         "  --------------------------------",
         f"  repo root   : {REPO_ROOT}",
         f"  agent dir   : {_AGENT_DIR if _AGENT_DIR else 'NOT FOUND'}  {ok if _AGENT_DIR else err}",
@@ -7574,11 +7548,11 @@ _provider_models_invalidated_ts: dict[str, float] = {}  # provider_id -> timesta
 def _current_webui_version() -> str | None:
     """Lazy resolver for the WebUI version, used to stamp the disk cache (#1633).
 
-    `api.updates` imports `api.config` at module-load time, so we cannot
-    `from api.updates import WEBUI_VERSION` at the top of this module without a
+    `api.version` imports `api.config` at module-load time, so we cannot
+    `from api.version import WEBUI_VERSION` at the top of this module without a
     circular import. Instead we resolve lazily on each cache load/save.
 
-    Returns the runtime version string (e.g. ``v0.50.293``) when api.updates
+    Returns the runtime version string (e.g. ``v0.50.293``) when api.version
     has been imported, or None if it isn't loaded yet (boot-time corner case
     before the server has finished initializing). A None return is treated as
     "do not stamp / do not validate" by the cache layer so cache reads/writes
@@ -7588,7 +7562,7 @@ def _current_webui_version() -> str | None:
     try:
         # Read attribute via dotted lookup so we don't add an import-time edge.
         import sys as _sys
-        mod = _sys.modules.get('api.updates')
+        mod = _sys.modules.get('api.version')
         if mod is None:
             return None
         v = getattr(mod, 'WEBUI_VERSION', None)
@@ -8238,7 +8212,7 @@ def _save_models_cache_to_disk(cache: dict) -> None:
     The version stamp is omitted (not the literal None — the field is just
     skipped) when the runtime version cannot be resolved at the moment of
     save, which would happen only in a very early boot path before
-    api.updates is loaded. _is_loadable_disk_cache treats a missing field as
+    api.version is loaded. _is_loadable_disk_cache treats a missing field as
     a mismatch (since runtime_version is non-None on every subsequent call),
     so this is safe — at worst we write one cache file that gets rejected
     once on the next boot.
@@ -11543,10 +11517,6 @@ _SETTINGS_DEFAULTS = {
     "show_kanban_sessions": False,  # surface kanban worker sessions in the sidebar (subordinate to show_cli_sessions)
     "show_previous_messaging_sessions": False,  # show older Telegram/Discord/etc. reset segments
     "sync_to_insights": False,  # mirror WebUI token usage to state.db for /insights
-    "check_for_updates": True,  # check if webui/agent repos are behind upstream
-    "update_channel": "stable",  # stable | experimental — which release stream to track (stable = soaked/promoted; experimental = every batch)
-    "ignore_agent_updates": False,  # keep WebUI update notices but suppress Agent update checks
-    "whats_new_summary_enabled": False,  # show an LLM-written What's New summary before diff links
     "tts_enabled": False,
     "tts_auto_read": False,
     "tts_engine": "browser",
@@ -11618,7 +11588,6 @@ _SETTINGS_DEFAULTS = {
     "sidebar_density": "compact",  # compact | detailed
     "auto_title_refresh_every": "0",  # adaptive title refresh: 0=off, 5/10/20=every N exchanges
     "default_message_mode": "steer",  # behavior when sending while agent is running: queue | interrupt | steer
-    "password_hash": None,  # PBKDF2-HMAC-SHA256 hash; None = auth disabled
     "auth_disabled_acknowledged": False,  # user acknowledged unauthenticated risk
     "provider_cost_budget": None,
 }
@@ -11641,6 +11610,11 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     "default_model",
     "activity_feed_expanded_default",
     "simplified_tool_calling",
+    # The update check is gone: a Deployment is upgraded by rebuilding its image.
+    "check_for_updates",
+    "update_channel",
+    "ignore_agent_updates",
+    "whats_new_summary_enabled",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -11856,7 +11830,6 @@ def load_settings() -> dict:
 
 
 _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
-    "password_hash",
     "default_model",
     "simplified_tool_calling",
 } | {
@@ -11872,7 +11845,6 @@ _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
 _SETTINGS_ENUM_VALUES = {
     "send_key": {"enter", "ctrl+enter", "shift+enter"},
     "sidebar_density": {"compact", "detailed"},
-    "update_channel": {"stable", "experimental"},
     "font_size": {"small", "default", "large", "xlarge"},
     "auto_title_refresh_every": {"0", "5", "10", "20"},
     "default_message_mode": {"queue", "interrupt", "steer"},
@@ -11913,9 +11885,6 @@ _SETTINGS_BOOL_KEYS = {
     "show_kanban_sessions",
     "show_previous_messaging_sessions",
     "sync_to_insights",
-    "check_for_updates",
-    "ignore_agent_updates",
-    "whats_new_summary_enabled",
     "tts_enabled",
     "tts_auto_read",
     "voice_mode_button",
@@ -11968,16 +11937,14 @@ def _atomic_write_settings_text(path: Path, text: str) -> None:
     ``settings.json`` was rewritten with a plain ``Path.write_text``, which
     truncates the file in place: a crash or full disk mid-write leaves it
     truncated/empty, so the next start loses every persisted setting (theme,
-    workspace, tab order, and the login ``password_hash``). Writing to a
+    workspace, tab order). Writing to a
     sibling temp file, fsyncing, then ``os.replace`` keeps the old contents
-    intact until the rename commits the new ones in one step.  Mirrors the
-    tempfile+fsync+os.replace pattern already used by
-    ``webui_session_db.WebUIJsonSessionDB._atomic_write``.
+    intact until the rename commits the new ones in one step.
 
     The existing file's mode is carried onto the replacement: ``os.replace``
     swaps in the temp file's inode, and a plain ``open`` respects the umask
     (typically 0644), so without this an operator-hardened ``settings.json``
-    (chmod 0600 because it holds the password hash) would be silently loosened
+    (chmod 0600) would be silently loosened
     on the next save.  New files fall back to the umask-adjusted default.
 
     A symlinked target is written through to its referent (same follow-through
@@ -12056,19 +12023,6 @@ def save_settings(settings: dict) -> dict:
     pending_skin = current.get("skin")
     theme_was_explicit = False
     skin_was_explicit = False
-    # Handle _set_password: hash and store as password_hash
-    _password_changed = False
-    raw_pw = settings.pop("_set_password", None)
-    if raw_pw and isinstance(raw_pw, str) and raw_pw.strip():
-        # Use PBKDF2 from auth module (600k iterations) -- never raw SHA-256
-        from api.auth import _hash_password
-
-        current["password_hash"] = _hash_password(raw_pw.strip())
-        _password_changed = True
-    # Handle _clear_password: explicitly disable auth
-    if settings.pop("_clear_password", False):
-        current["password_hash"] = None
-        _password_changed = True
     # Deep-merge dashboard_plugins dict (plugin_name -> bool)
     _dashboard_plugins = settings.get("dashboard_plugins")
     if isinstance(_dashboard_plugins, dict):
@@ -12186,12 +12140,6 @@ def save_settings(settings: dict) -> dict:
     global _SETTINGS_WRITE_VERSION
     with _SETTINGS_WRITE_LOCK:
         _SETTINGS_WRITE_VERSION += 1
-    # Invalidate the in-memory password hash cache so the next call to
-    # get_password_hash() picks up the new value from disk immediately.
-    if _password_changed:
-        from api.auth import _invalidate_password_hash_cache
-
-        _invalidate_password_hash_cache()
     # Update runtime defaults so new sessions use them immediately
     global DEFAULT_WORKSPACE
     if "default_workspace" in current:

@@ -7,7 +7,6 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 PANELS_JS = (ROOT / "static" / "panels.js").read_text(encoding="utf-8")
 STYLE_CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
 
 
@@ -82,9 +81,3 @@ def test_mcp_tool_pagination_strings_are_i18n_backed():
         "mcp_tools_next_page_aria",
     ]:
         assert f"{key}:" in I18N_JS
-
-
-def test_changelog_mentions_large_mcp_tool_inventory_fix():
-    assert "large MCP tool inventories" in CHANGELOG
-    assert "5-item default pages" in CHANGELOG
-    assert "per-page selector up to 40 tools" in CHANGELOG

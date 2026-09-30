@@ -1,4 +1,4 @@
-"""Hermes Web UI -- provider management endpoints.
+"""GFIT-CoWork -- provider management endpoints.
 
 Provides CRUD operations for configuring provider API keys post-onboarding.
 Closes #586 (allow provider key update) and part of #604 (model picker

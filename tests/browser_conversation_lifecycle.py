@@ -817,7 +817,7 @@ def main() -> int:
             env.pop(key, None)
     for key in (
         "API_SERVER_KEY",
-        "HERMES_WEBUI_PASSWORD",
+        "HERMES_WEBUI_DIRECTORY",
         "HERMES_WEBUI_EXTENSION_DIR",
         "HERMES_WEBUI_EXTENSION_MANIFEST",
     ):

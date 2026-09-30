@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- File upload: multipart parser and upload handler.
+GFIT-CoWork -- File upload: multipart parser and upload handler.
 """
 import mimetypes
 import os
@@ -11,13 +11,13 @@ from api.config import MAX_UPLOAD_BYTES, STATE_DIR
 from api.helpers import (
     arm_connection_close_if_body_pending,
     j,
+    resolve_inside,
     unreadable_content_length,
     unsupported_transfer_encoding,
 )
 from api.models import get_session
-from api.profiles import _profiles_match, get_active_profile_name as _get_active_profile_name
 from api.workspace import (
-    safe_resolve_ws,
+    resolve_in_workspace,
     resolve_trusted_workspace,
     open_anchored_create_fd,
     make_anchored_dir,
@@ -203,6 +203,11 @@ def _attachment_root() -> Path:
     Plain chat attachments are transient context for the agent, not project
     source files.  Keep them out of the active workspace by default while still
     allowing operators to move the inbox with HERMES_WEBUI_ATTACHMENT_DIR.
+
+    Attachments are outside Workspace confinement on purpose: they belong to a
+    session, and session ownership (``_refuse_unowned_session``) decides who
+    may reach them. Resolve paths inside them with the unconfined primitive
+    :func:`api.helpers.resolve_inside`, never a Workspace check.
     """
     override = os.getenv('HERMES_WEBUI_ATTACHMENT_DIR', '').strip()
     if override:
@@ -237,18 +242,18 @@ def _session_attachment_dir(session_id: str, *, root: Path | None = None) -> Pat
     return dest_dir
 
 
-def _session_visible_to_active_profile(session) -> bool:
-    """Return whether an upload target session belongs to the active profile."""
-    session_profile = getattr(session, 'profile', None)
-    if not isinstance(session_profile, str):
-        session_profile = None
-    return _profiles_match(session_profile, _get_active_profile_name())
+def _refuse_unowned_session(handler, session_id, session) -> bool:
+    """Answer 404 and return True unless the request owns *session*, already loaded.
 
+    Session ownership decides (:mod:`api.session_ownership`). An upload's
+    answer never names another Profile, so every refusal is "Session not found".
+    """
+    from api.session_ownership import request_session_ownership
 
-def _reject_invisible_session(handler, session) -> bool:
-    if _session_visible_to_active_profile(session):
+    refusal = request_session_ownership().refuse_found_session(session_id, session)
+    if refusal is None:
         return False
-    j(handler, {'error': 'Session not found'}, status=404)
+    refusal.answer_not_found(handler)
     return True
 
 
@@ -308,7 +313,7 @@ def handle_upload(handler):
             s = get_session(session_id)
         except KeyError:
             return j(handler, {'error': 'Session not found'}, status=404)
-        if _reject_invisible_session(handler, s):
+        if _refuse_unowned_session(handler, session_id, s):
             return True
         safe_name = _sanitize_upload_name(filename)
         dest_dir = _session_attachment_dir(session_id)
@@ -340,8 +345,13 @@ def handle_upload(handler):
         return j(handler, {'error': 'Upload failed'}, status=500)
 
 
-def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
-    """Extract a zip or tar archive into the workspace.
+def extract_archive(file_bytes: bytes, filename: str, workspace: Path, *, resolve=resolve_in_workspace):
+    """Extract a zip or tar archive into the folder *workspace*.
+
+    The destination folder is found with *resolve*: the Workspace check by
+    default, or :func:`api.helpers.resolve_inside` for a session's attachment
+    folder, which is not a Workspace (see :func:`_attachment_root`). Every
+    archive entry must stay inside the destination either way.
 
     Returns a dict with ``extracted`` (int), ``files`` (list[str]).
     Raises ValueError on zip-slip or unsupported format.
@@ -360,7 +370,7 @@ def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
         raise ValueError(f'Unsupported archive format: {filename}')
 
     # Determine destination directory — use archive stem as folder name
-    dest_dir = safe_resolve_ws(workspace, stem)
+    dest_dir = resolve(workspace, stem)
     # Avoid overwriting existing files by appending a suffix (bounded — astronomically
     # unlikely to collide, but never spin forever).
     if dest_dir.exists():
@@ -369,7 +379,7 @@ def extract_archive(file_bytes: bytes, filename: str, workspace: Path):
             if not dest_dir.exists():
                 break
             suffix = ''.join(random.choices(string.digits, k=3))
-            dest_dir = safe_resolve_ws(workspace, stem).with_name(stem + '_' + suffix)
+            dest_dir = resolve(workspace, stem).with_name(stem + '_' + suffix)
         else:
             raise ValueError('Could not allocate a unique extraction directory')
     # #3398: create the extraction root race-safely under the true workspace root.
@@ -497,11 +507,11 @@ def handle_upload_extract(handler):
             s = get_session(session_id)
         except KeyError:
             return j(handler, {'error': 'Session not found'}, status=404)
-        if _reject_invisible_session(handler, s):
+        if _refuse_unowned_session(handler, session_id, s):
             return True
         session_dir = _session_attachment_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
-        result = extract_archive(file_bytes, filename, session_dir)
+        result = extract_archive(file_bytes, filename, session_dir, resolve=resolve_inside)
         return j(handler, {'ok': True, **result})
     except ValueError as e:
         return j(handler, {'error': str(e)}, status=400)
@@ -715,7 +725,7 @@ def handle_workspace_upload(handler):
             session = get_session(session_id)
         except KeyError:
             return j(handler, {'error': 'Session not found'}, status=404)
-        if _reject_invisible_session(handler, session):
+        if _refuse_unowned_session(handler, session_id, session):
             return True
 
         # Resolve workspace root using the session profile, not the ambient request profile.
@@ -727,8 +737,8 @@ def handle_workspace_upload(handler):
             workspace = resolve_trusted_workspace(session.workspace)
 
         # Resolve target subdirectory within workspace
-        target_dir = safe_resolve_ws(workspace, subpath) if subpath else workspace
-        # safe_resolve_ws intentionally permits in-workspace symlinks pointing
+        target_dir = resolve_in_workspace(workspace, subpath) if subpath else workspace
+        # resolve_in_workspace intentionally permits in-workspace symlinks pointing
         # outside the root (read trust model). For an UPLOAD target that's not
         # acceptable: a planted symlink subpath would let mkdir() + writes create
         # files OUTSIDE the workspace. Require the resolved target to be inside
@@ -749,9 +759,9 @@ def handle_workspace_upload(handler):
                 continue
 
             safe_name = _sanitize_upload_name(filename)
-            dest = safe_resolve_ws(target_dir, safe_name)
+            dest = resolve_in_workspace(target_dir, safe_name)
 
-            # Path traversal guard (belt-and-suspenders: safe_resolve_ws above is
+            # Path traversal guard (belt-and-suspenders: resolve_in_workspace above is
             # the authoritative guard and raises ValueError on traversal; this
             # check catches any edge case where the resolved path escapes).
             if not dest.resolve().is_relative_to(workspace.resolve()):
@@ -762,7 +772,7 @@ def handle_workspace_upload(handler):
                 stem = dest.stem
                 suffix = dest.suffix
                 for idx in range(1, 1000):
-                    candidate = safe_resolve_ws(target_dir, f'{stem}-{idx}{suffix}')
+                    candidate = resolve_in_workspace(target_dir, f'{stem}-{idx}{suffix}')
                     if not candidate.resolve().is_relative_to(workspace.resolve()):
                         return j(handler, {'error': 'Path traversal blocked'}, status=403)
                     if not candidate.exists():

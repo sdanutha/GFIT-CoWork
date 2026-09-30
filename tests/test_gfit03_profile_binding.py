@@ -190,3 +190,17 @@ def test_member_sees_only_own_cron_jobs(srv, alice, fake_cron):
         assert status == 200, body
         assert [j["id"] for j in body["jobs"]] == [f"job-{ALICE}"]
         assert body["other_profile_count"] == 0
+
+
+def test_member_b_cannot_clean_up_member_a_empty_sessions(alice, bob):
+    status, body, _ = alice.post("/api/session/new", {})
+    assert status == 200, body
+    alice_sid = body["session"]["session_id"]
+    status, body, _ = alice.post("/api/session/rename", {"session_id": alice_sid, "title": "Plans"})
+    assert status == 200, body  # now on disk, still with no messages
+
+    status, body, _ = bob.post("/api/sessions/cleanup_zero_message", {})
+    assert status == 403, body
+
+    status, body, _ = alice.get(f"/api/session?session_id={alice_sid}")
+    assert status == 200, body

@@ -1,5 +1,5 @@
 """
-Hermes Web UI -- public read-only share snapshots.
+GFIT-CoWork -- public read-only share snapshots.
 
 Stores a sanitized, immutable snapshot of a conversation under STATE_DIR/shares.
 The snapshot is intentionally narrower than a full session export so public

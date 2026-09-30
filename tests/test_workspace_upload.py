@@ -135,7 +135,6 @@ def _configure_direct_office_upload(monkeypatch, tmp_path):
     session = SimpleNamespace(workspace=workspace, profile="default")
 
     monkeypatch.setattr(upload, "get_session", lambda _sid: session)
-    monkeypatch.setattr(upload, "_reject_invisible_session", lambda *_args: False)
     monkeypatch.setattr(upload, "resolve_trusted_workspace", lambda path, **_kw: path)
     return upload, office_documents, workspace
 
@@ -553,7 +552,7 @@ class TestWorkspaceUploadPathTraversal:
             {"file": ("safe.txt", b"safe")},
         )
 
-        # safe_resolve_ws raises ValueError on traversal → caught as 400
+        # resolve_in_workspace raises ValueError on traversal → caught as 400
         assert status == 400, f"Expected 400, got {status}: {result}"
         assert "error" in result
 
@@ -821,7 +820,7 @@ class TestWorkspaceUploadSymlinkTarget:
             )
             # The escaping target must be rejected outright, and nothing may land
             # outside the workspace. Either a 403 (upload-handler symlink-target
-            # rejection) or a 400 ("Path traversal blocked" from safe_resolve_ws,
+            # rejection) or a 400 ("Path traversal blocked" from resolve_in_workspace,
             # which #3398 made the workspace boundary enforce consistently for all
             # symlink escapes) is an acceptable rejection — the invariant is that
             # the upload does NOT land outside the workspace.

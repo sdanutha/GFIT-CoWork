@@ -217,25 +217,26 @@ def test_anchor_scene_persistence_rejects_cross_profile_write(tmp_path, monkeypa
     monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
     monkeypatch.setattr(routes, "read_body", lambda handler: request_body)
     # Request runs under a profile that CANNOT see profile-b's session.
-    monkeypatch.setattr(
-        routes,
-        "_session_visible_to_active_profile",
-        lambda session_profile, handler=None: session_profile not in ("profile-b",),
-    )
-    monkeypatch.setattr(
-        routes,
-        "bad",
-        lambda handler, msg, status=400, extra_headers=None: captured.update(
-            error=msg, status=status
-        ) or True,
-    )
-    monkeypatch.setattr(
-        routes,
-        "j",
-        lambda handler, payload, status=200, extra_headers=None: captured.update(
-            payload=payload, status=status
-        ) or True,
-    )
+    from api import profiles, session_ownership
+
+    monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "profile-a")
+    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "profile-a")
+    # Session ownership writes its own refusals.
+    for module in (routes, session_ownership):
+        monkeypatch.setattr(
+            module,
+            "bad",
+            lambda handler, msg, status=400, extra_headers=None: captured.update(
+                error=msg, status=status
+            ) or True,
+        )
+        monkeypatch.setattr(
+            module,
+            "j",
+            lambda handler, payload, status=200, extra_headers=None: captured.update(
+                payload=payload, status=status
+            ) or True,
+        )
 
     assert routes.handle_post(
         SimpleNamespace(command="POST"),

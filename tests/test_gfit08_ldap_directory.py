@@ -119,10 +119,10 @@ def unreachable_srv(monkeypatch, tmp_path, ldap_env):
 
 
 def test_login_while_ad_is_unreachable_says_so(unreachable_srv):
-    import api.auth as auth
+    import api.login as login
 
     client = unreachable_srv.client()
-    for _ in range(auth._LOGIN_MAX_ATTEMPTS + 1):
+    for _ in range(login._LOGIN_MAX_ATTEMPTS + 1):
         status, body, _ = client.login(MEMBER, "a-password")
         assert status == 503, body
         assert "incorrect" not in body["error"].lower()

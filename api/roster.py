@@ -9,9 +9,16 @@ A Profile with no record is active and shown by its ID alone, so Profiles made
 before the roster existed (or outside GFIT-CoWork) keep working. An unreadable
 roster fails closed: every Profile counts as disabled until it is fixed.
 
-Disabling a Profile ends its sessions straight away; its data stays. The Hermes
-Profile itself is created and deleted through ``api.profiles``; this module
-only keeps the roster in step.
+This module owns the Profile lifecycle: each Admin action on a Profile is one
+function here (``create_profile``, ``disable_profile``, ``enable_profile``,
+``delete_profile``) that checks the action is allowed, keeps the Hermes Profile (``api.profiles``)
+and its record in step, returns the Profile's roster view, and raises
+ProfileRefused (a message for the Admin and its kind) when it refuses. The
+steps run in an order where a failure part way leaves the Profile shut, never
+open: create writes the record disabled before the Hermes Profile and makes it
+active only once the Profile exists, and delete disables the Profile before the
+Hermes Profile is deleted. Disabling a Profile
+ends its sessions straight away; its data stays.
 """
 from __future__ import annotations
 
@@ -40,6 +47,22 @@ _cache: tuple[tuple, dict[str, dict]] | None = None
 
 class RosterUnreadable(Exception):
     """The roster file exists but cannot be read or parsed."""
+
+
+# The kinds of ProfileRefused.
+REFUSED_BAD_REQUEST = "bad_request"
+REFUSED_FORBIDDEN = "forbidden"
+REFUSED_NOT_FOUND = "not_found"
+REFUSED_CONFLICT = "conflict"
+REFUSED_SERVER_FAULT = "server_fault"
+
+
+class ProfileRefused(Exception):
+    """An Admin action on a Profile was refused: ``str()`` is the message for the Admin."""
+
+    def __init__(self, message: str, kind: str = REFUSED_BAD_REQUEST):
+        super().__init__(message)
+        self.kind = kind
 
 
 def _path() -> Path:
@@ -177,21 +200,193 @@ def record_login(name: str, display_name="") -> None:
     _set(name, **fields)
 
 
-def disable(name: str) -> None:
-    """Disable Profile *name* and end its sessions now. Its data stays."""
-    _set(name, status=STATUS_DISABLED)
+def _check_existing_user_profile(name: str) -> None:
+    """Refuse unless *name* is an existing Profile that is not the built-in one or an Admin's."""
+    from api.access import is_admin
+    from api.profiles import named_profile_exists
+
+    _check_name(name)
+    if not named_profile_exists(name):
+        raise ProfileRefused(f"Profile '{name}' does not exist.", REFUSED_NOT_FOUND)
+    if is_admin(name):
+        # An Admin logs in to `default`, so this Profile's status would not shut them out.
+        raise ProfileRefused(f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
+
+
+def _refusal_from_hermes(exc: Exception, message: str, busy_kind: str) -> ProfileRefused:
+    """A ProfileRefused for a failure of the Hermes Profile layer, with its reason.
+
+    *busy_kind* is the kind for a RuntimeError (for example, an agent is running).
+    """
+    if isinstance(exc, PermissionError):
+        kind = REFUSED_FORBIDDEN
+    elif isinstance(exc, RuntimeError):
+        kind = busy_kind
+    elif isinstance(exc, (ValueError, FileExistsError, FileNotFoundError)):
+        kind = REFUSED_BAD_REQUEST
+    else:
+        kind = REFUSED_SERVER_FAULT
+    return ProfileRefused(f"{message}: {exc}", kind)
+
+
+def _refuse_isolated_mode(action: str) -> None:
+    """Refuse before anything changes when Profiles cannot be created or deleted here."""
+    from api.profiles import _is_isolated_profile_mode
+
+    if _is_isolated_profile_mode():
+        raise ProfileRefused(f"Profile {action} is not allowed in isolated profile mode.", REFUSED_FORBIDDEN)
+
+
+def _check_name(name: str, field: str = "profile name") -> None:
+    """Refuse a name that breaks the Profile-name rule (``default`` included).
+
+    The rule is the Hermes Profile layer's; the message is in the Admin's terms.
+    """
+    from api.profiles import _validate_profile_name
+
+    try:
+        _validate_profile_name(name)
+    except ValueError as exc:
+        if name == "default":
+            raise ProfileRefused(str(exc)) from exc
+        raise ProfileRefused(
+            f"Invalid {field}: name it after the employee ID "
+            "(lowercase letters, numbers, hyphens, underscores; up to 64 characters)",
+        ) from exc
+
+
+def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
+    """The Admin creates Profile *name*, active, with *display_name*.
+
+    The record is written disabled before the Hermes Profile is created and
+    made active only once it exists, so a failure at any step leaves the
+    Profile shut, never without a record (which would count as active).
+    *hermes_options* go to ``api.profiles.create_profile_api`` (clone and model
+    options). Returns the new Profile's row for the Profile list.
+    """
+    from api import profiles
+    from api.access import is_admin
+
+    _refuse_isolated_mode("creation")
+    _check_name(name)
+    # create_profile_api checks clone_from too, but only after the record is written.
+    clone_from = hermes_options.get("clone_from")
+    if clone_from is not None and not profiles._is_root_profile(clone_from):
+        _check_name(clone_from, "clone_from name")
+    if is_admin(name):
+        raise ProfileRefused(
+            f"{name} is an Admin: an Admin logs in to the default Profile, "
+            "so nobody could log in to this one.")
+    if profiles.named_profile_exists(name):
+        raise ProfileRefused(f"Profile '{name}' already exists.")
+    try:
+        _write(lambda records: records.__setitem__(
+            name, {"display_name": clean_display_name(display_name), "status": STATUS_DISABLED}))
+    except (OSError, RosterUnreadable) as exc:
+        logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
+        raise ProfileRefused(
+            f"Profile '{name}' was not created: the Profile roster could not be written.",
+            REFUSED_SERVER_FAULT,
+        ) from exc
+    try:
+        result = profiles.create_profile_api(name, **hermes_options)
+    except Exception as exc:
+        if profiles.named_profile_exists(name) and not isinstance(exc, FileExistsError):
+            # Made in part: its record keeps it shut until the Admin deletes it.
+            profiles._invalidate_list_profiles_cache()
+            raise _refusal_from_hermes(
+                exc,
+                f"Profile '{name}' was created only in part and is disabled; delete it and create it again",
+                REFUSED_BAD_REQUEST,
+            ) from exc
+        _drop_record(name)
+        raise _refusal_from_hermes(exc, f"Profile '{name}' was not created", REFUSED_BAD_REQUEST) from exc
+    try:
+        _set(name, status=STATUS_ACTIVE)
+    except (OSError, RosterUnreadable) as exc:
+        logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
+        raise ProfileRefused(
+            f"Profile '{name}' was created but is disabled: the Profile roster could not be written. "
+            "Enable it once the roster is fixed.",
+            REFUSED_SERVER_FAULT,
+        ) from exc
+    return {**result, **view(name)}
+
+
+def _drop_record(name: str) -> None:
+    """Forget Profile *name*'s record. A leftover is harmless: Admission needs the Profile to exist."""
+    try:
+        _write(lambda records: records.pop(name, None))
+    except (OSError, RosterUnreadable):
+        logger.warning("The roster record of Profile %s could not be removed", name, exc_info=True)
+
+
+def _set_status(name: str, status: str, outcome: str = "changed") -> None:
+    """Record *status* for Profile *name*; when the roster cannot be written, refuse
+    saying the Profile was not *outcome* (``changed``, ``deleted``)."""
+    try:
+        _set(name, status=status)
+    except (OSError, RosterUnreadable) as exc:
+        logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
+        raise ProfileRefused(
+            f"Profile '{name}' was not {outcome}: the Profile roster could not be written.",
+            REFUSED_SERVER_FAULT,
+        ) from exc
+
+
+def _end_sessions(name: str) -> None:
     from api.auth import invalidate_sessions_for_profile
 
     invalidate_sessions_for_profile(name)
+
+
+def disable(name: str) -> None:
+    """Mark Profile *name*'s record disabled and end its sessions now, with no guards."""
+    _set(name, status=STATUS_DISABLED)
+    _end_sessions(name)
 
 
 def enable(name: str) -> None:
+    """Mark Profile *name*'s record active, with no guards."""
     _set(name, status=STATUS_ACTIVE)
 
 
-def remove(name: str) -> None:
-    """End Profile *name*'s sessions and forget it (after it is deleted)."""
-    from api.auth import invalidate_sessions_for_profile
+def disable_profile(name: str) -> dict:
+    """The Admin disables Profile *name*: its sessions end now and its data stays."""
+    _check_existing_user_profile(name)
+    _set_status(name, STATUS_DISABLED)
+    _end_sessions(name)
+    return view(name)
 
-    invalidate_sessions_for_profile(name)
-    _write(lambda records: records.pop(name, None))
+
+def enable_profile(name: str) -> dict:
+    """The Admin re-enables Profile *name*, so its User can log in again."""
+    _check_existing_user_profile(name)
+    _set_status(name, STATUS_ACTIVE)
+    return view(name)
+
+
+def delete_profile(name: str) -> dict:
+    """The Admin deletes Profile *name*: shut it first, then delete it, then forget it.
+
+    The Profile is disabled (ending its sessions) before its data is removed,
+    so a deletion that cannot finish leaves it shut. Returns ``{'ok': True, 'name': name}``.
+    """
+    from api import profiles
+
+    _refuse_isolated_mode("deletion")
+    if name == "default":
+        raise ProfileRefused("The built-in default Profile cannot be deleted.")
+    _check_name(name)
+    if not profiles.named_profile_exists(name):
+        raise ProfileRefused(f"Profile '{name}' does not exist.")
+    _set_status(name, STATUS_DISABLED, "deleted")
+    _end_sessions(name)
+    try:
+        result = profiles.delete_profile_api(name)
+    except Exception as exc:
+        raise _refusal_from_hermes(
+            exc, f"Profile '{name}' is now disabled but was not deleted", REFUSED_CONFLICT,
+        ) from exc
+    _drop_record(name)
+    return result

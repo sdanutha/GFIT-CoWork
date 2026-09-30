@@ -165,7 +165,6 @@ def test_generation_save_load_round_trip_is_in_metadata_prefix(monkeypatch, tmp_
 def test_transcript_generation_round_trips_and_advances_only_on_shrink(monkeypatch, tmp_path):
     models, _session_dir = _seed_session_dir(monkeypatch, tmp_path)
     from api.session_ops import truncate_session_at_keep
-    from api.webui_session_db import WebUIJsonSessionDB
 
     session = models.Session(
         session_id="issue6911_transcript_generation",
@@ -183,7 +182,10 @@ def test_transcript_generation_round_trips_and_advances_only_on_shrink(monkeypat
 
     loaded = models.Session.load(session.session_id)
     metadata = models.Session.load_metadata_only(session.session_id)
-    listed = WebUIJsonSessionDB().list_sessions()
+    listed = [
+        row for row in models.all_sessions()
+        if row["session_id"] == session.session_id
+    ]
     assert loaded.transcript_generation == 5
     assert loaded.transcript_generation_baseline == 2
     assert metadata.transcript_generation == 5

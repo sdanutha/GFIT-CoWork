@@ -3,7 +3,7 @@ set -euo pipefail
 
 # If invoked as root (e.g. via `sudo ./start.sh` or accidental root shell
 # inside the container), re-exec as the unprivileged hermeswebui user so the
-# WebUI process never owns root-only file modes on bind-mounted state.
+# GFIT-CoWork process never owns root-only file modes on bind-mounted state.
 # Outside containers the EUID==0 case is rare; inside the production image
 # the entrypoint drops to hermeswebui itself, so this is a defensive guard.
 # Sourced from PR #1686 (@binhpt310) — Cluster 1 (operational hardening),
@@ -30,7 +30,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -f "${REPO_ROOT}/.env" ]]; then
   # Filter out shell-readonly vars (UID, GID, EUID, EGID, PPID) before
-  # `source`ing.  docker-compose.yml's macOS instructions document
+  # `source`ing.  Docker setups commonly document
   # `echo "UID=$(id -u)" >> .env` to set host UID/GID, which then crashes
   # `start.sh` with "UID: readonly variable" when bash tries to assign to
   # those names.  Filtering them out lets the .env file carry those entries
@@ -146,7 +146,7 @@ fi
 
 if [[ -n "${_hermes_already_up}" ]]; then
   cat >&2 <<EOF
-[==] Hermes WebUI is already running at ${_hermes_probe_scheme}://${_hermes_probe_host}:${_hermes_port}
+[==] GFIT-CoWork is already running at ${_hermes_probe_scheme}://${_hermes_probe_host}:${_hermes_port}
      The server was NOT started again (start.sh does not double-start).
 
      If you need to restart the server, do the following:

@@ -10,7 +10,6 @@ Covers:
   6. HMAC signature length — 32-char hex (128-bit), not 16
   7. Skills path traversal — path outside SKILLS_DIR rejected
   8. Content-Disposition for dangerous MIME types — HTML/SVG force download
-  9. PBKDF2 password hashing — save_settings uses auth._hash_password
   10. Non-loopback startup warning (manual / integration test)
   11. SSRF DNS check logic (unit test on helper function)
   12. ENV_LOCK export — _ENV_LOCK importable from streaming module
@@ -74,9 +73,7 @@ class TestCSRF:
         become order-dependent. Auth-enabled token coverage lives in
         test_issue1909_csrf_token.py.
         """
-        import api.auth as auth
-
-        monkeypatch.setattr(auth, "is_auth_enabled", lambda: False)
+        monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
 
     @staticmethod
     def _csrf_allowed(headers):
@@ -336,35 +333,33 @@ class TestCSRFHelpers:
 class TestLoginRateLimit:
     def test_rate_limit_triggers_429(self):
         """More than 5 failed login attempts from same IP must yield 429."""
-        from api.auth import _login_attempts, _LOGIN_WINDOW
-
         # Force the rate limiter state: inject 5 stale-now timestamps so next call is fresh
         # Actually easier: just hit the endpoint 6 times with wrong password
         # But we can't set a password in a test without config file.
         # Instead test the helper directly.
         import time
-        from api import auth as _auth
+        from api import login as _login
 
         # Reset state for a fake IP
         fake_ip = "10.255.254.253"
-        _auth._login_attempts[fake_ip] = []
+        _login._login_attempts[fake_ip] = []
 
         # Record 5 attempts — should still be allowed
         for _ in range(5):
-            _auth._record_login_attempt(fake_ip)
-        assert not _auth._check_login_rate(fake_ip), \
+            _login._record_login_attempt(fake_ip)
+        assert not _login._check_login_rate(fake_ip), \
             "After 5 attempts, _check_login_rate should return False (blocked)"
 
     def test_rate_limit_resets_after_window(self):
         """After window expires, rate limit resets."""
         import time
-        from api import auth as _auth
+        from api import login as _login
 
         fake_ip = "10.255.254.252"
         # Inject 5 old timestamps (outside window)
         old_ts = time.time() - 70  # 70s ago, outside 60s window
-        _auth._login_attempts[fake_ip] = [old_ts] * 5
-        assert _auth._check_login_rate(fake_ip), \
+        _login._login_attempts[fake_ip] = [old_ts] * 5
+        assert _login._check_login_rate(fake_ip), \
             "After window expires, IP should be allowed again"
 
     def test_rate_limit_endpoint_returns_429(self, webui_server):
@@ -372,12 +367,12 @@ class TestLoginRateLimit:
         # This test only runs meaningfully when auth is enabled.
         # We can still verify the helper returns 429 from the unit test above.
         # If auth not enabled, endpoint returns 200 OK with 'Auth not enabled'.
-        from api import auth as _auth
+        from api import login as _login
 
         fake_ip = "10.255.254.251"
         # Fill the bucket
-        _auth._login_attempts[fake_ip] = [time.time()] * 5
-        assert not _auth._check_login_rate(fake_ip)
+        _login._login_attempts[fake_ip] = [time.time()] * 5
+        assert not _login._check_login_rate(fake_ip)
 
 
 # ── 3. Session ID Validation ───────────────────────────────────────────────
@@ -629,82 +624,6 @@ class TestContentDisposition:
         assert disp.startswith("inline; ")
         assert "filename*=UTF-8''" in disp
         disp.encode("latin-1")
-
-
-# ── 9. PBKDF2 Password Hashing ───────────────────────────────────────────
-
-
-class TestPasswordHashing:
-    def test_hash_password_is_hex(self):
-        """_hash_password must produce a non-empty hex string (PBKDF2-SHA256)."""
-        from api.auth import _hash_password
-        result = _hash_password("mysecretpassword")
-        assert isinstance(result, str) and len(result) == 64, \
-            f"Expected 64-char hex hash (SHA-256 output), got len={len(result)}: {result}"
-        # Hex-only chars
-        assert all(c in "0123456789abcdef" for c in result), \
-            f"Hash must be hex string, got: {result}"
-
-    def test_hash_password_is_deterministic_with_same_salt(self):
-        """_hash_password must return the same hash for same input (signing key is stable)."""
-        from api.auth import _hash_password
-        h1 = _hash_password("consistent_password")
-        h2 = _hash_password("consistent_password")
-        assert h1 == h2, "Same password must produce same hash (stable signing key)"
-
-    def test_hash_password_different_inputs_differ(self):
-        """Different passwords must produce different hashes."""
-        from api.auth import _hash_password
-        assert _hash_password("password_a") != _hash_password("password_b"), \
-            "Different passwords must produce different hashes"
-
-    def test_hash_password_longer_than_sha256(self):
-        """PBKDF2 with 600k iterations is much stronger than single SHA-256.
-        We verify indirectly: the code must call pbkdf2_hmac, not sha256 directly."""
-        import inspect
-        from api import auth as _auth
-        src = inspect.getsource(_auth._hash_password)
-        assert "pbkdf2_hmac" in src, \
-            "_hash_password must use pbkdf2_hmac, not raw sha256"
-        assert "600_000" in src or "600000" in src, \
-            "_hash_password must use 600,000 iterations"
-
-    def test_save_settings_stores_64char_hex_hash(self):
-        """save_settings with _set_password must store a 64-char hex hash (PBKDF2)."""
-        from api.config import save_settings, load_settings, SETTINGS_FILE
-        import json
-
-        # Remember original content so we can restore it
-        original = None
-        if SETTINGS_FILE.exists():
-            original = SETTINGS_FILE.read_text()
-
-        try:
-            save_settings({"_set_password": "test_pbkdf2_pw"})
-            settings = load_settings()
-            ph = settings.get("password_hash", "")
-            assert len(ph) == 64 and all(c in "0123456789abcdef" for c in ph), \
-                f"save_settings must store 64-char hex PBKDF2 hash, got: {ph!r}"
-        finally:
-            # Restore original settings
-            if original is not None:
-                SETTINGS_FILE.write_text(original)
-            else:
-                save_settings({"_clear_password": True})
-
-
-# ── 10. Non-loopback Startup Warning ─────────────────────────────────────
-
-
-class TestStartupWarning:
-    def test_warning_code_present_in_server(self):
-        """server.py must contain non-loopback warning code."""
-        src = pathlib.Path(__file__).parent.parent / "server.py"
-        text = src.read_text()
-        assert "0.0.0.0" in text or "non-loopback" in text.lower() or "WARNING" in text, \
-            "server.py must contain non-loopback warning logic"
-        assert "is_auth_enabled" in text, \
-            "server.py must check is_auth_enabled() before warning"
 
 
 # ── 11. SSRF DNS Check ─────────────────────────────────────────────────────

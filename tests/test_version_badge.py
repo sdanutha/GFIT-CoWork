@@ -2,9 +2,9 @@
 Tests for the dynamic version badge (issue: stale hardcoded version strings).
 
 Covers:
-  1. api/updates.py: _detect_webui_version() resolution chain
-  2. api/updates.py: _detect_agent_version() detection fallback
-  3. api/updates.py: WEBUI_VERSION module constant is set and non-empty
+  1. api/version.py: _detect_webui_version() resolution chain
+  2. api/version.py: _detect_agent_version() detection fallback
+  3. api/version.py: WEBUI_VERSION module constant is set and non-empty
   4. api/routes.py: GET /api/settings includes webui_version and agent_version keys
   5. static/index.html: two version badges are present
   6. static/panels.js: loadSettingsPanel() populates both version badges from settings
@@ -28,7 +28,7 @@ class TestDetectWebUIVersion:
 
     def _fresh_detect(self, mock_run_git=None, version_file_content=None, scm_version=None, tmp_path=None):
         """Call _detect_webui_version() with controlled dependencies."""
-        import api.updates as upd
+        import api.version as upd
 
         fake_root = tmp_path or Path('/nonexistent-path')
 
@@ -186,7 +186,7 @@ class TestDetectWebUIVersion:
 
     def test_dirty_suffix_changes_when_tracked_diff_changes(self, tmp_path):
         """Real git diff hashing should produce a new suffix for each tracked edit."""
-        import api.updates as upd
+        import api.version as upd
 
         def git(*args):
             subprocess.run(['git', *args], cwd=tmp_path, check=True, capture_output=True, text=True)
@@ -229,7 +229,7 @@ class TestDetectAgentVersion:
 
     def _fresh_detect(self, mock_run_git=None, version_file_content=None, tmp_path=None):
         """Call _detect_agent_version() with controlled dependencies."""
-        import api.updates as upd
+        import api.version as upd
 
         fake_root = tmp_path or Path('/nonexistent-agent-path')
 
@@ -266,7 +266,7 @@ class TestDetectAgentVersion:
 
     def test_missing_agent_returns_not_detected(self):
         """When no agent checkout is available, detect function returns 'not detected'."""
-        import api.updates as upd
+        import api.version as upd
         with patch.object(upd, '_AGENT_DIR', None):
             assert upd._detect_agent_version() == 'not detected'
 
@@ -286,15 +286,15 @@ class TestDetectAgentVersion:
 class TestWebUIVersionConstant:
 
     def test_webui_version_is_set(self):
-        """WEBUI_VERSION is a non-empty string exported from api.updates."""
-        import api.updates as upd
-        assert hasattr(upd, 'WEBUI_VERSION'), 'WEBUI_VERSION not exported from api.updates'
+        """WEBUI_VERSION is a non-empty string exported from api.version."""
+        import api.version as upd
+        assert hasattr(upd, 'WEBUI_VERSION'), 'WEBUI_VERSION not exported from api.version'
         assert isinstance(upd.WEBUI_VERSION, str)
         assert upd.WEBUI_VERSION, 'WEBUI_VERSION must not be empty string'
 
     def test_webui_version_is_not_old_hardcoded(self):
         """WEBUI_VERSION must not be the old stale value from server.py."""
-        import api.updates as upd
+        import api.version as upd
         # These were the two stale hardcoded strings before this fix
         assert upd.WEBUI_VERSION not in ('0.50.38', 'HermesWebUI/0.50.38'), (
             'WEBUI_VERSION still holds the old hardcoded server.py value'
@@ -310,7 +310,7 @@ class TestSettingsEndpointVersion:
     def test_api_settings_includes_webui_version(self):
         """GET /api/settings response dict must include webui_version key."""
         import api.routes as routes
-        import api.updates as upd
+        import api.version as upd
 
         # Patch load_settings to return a minimal dict (no disk I/O)
         minimal_settings = {'send_key': 'enter', 'theme': 'dark'}
@@ -451,22 +451,22 @@ class TestServerVersionHeader:
         src = (REPO_ROOT / 'server.py').read_text(encoding='utf-8')
         assert 'HermesWebUI/0.50.38' not in src, (
             'server.py still contains the old hardcoded server_version string. '
-            'It should use WEBUI_VERSION from api.updates.'
+            'It should use WEBUI_VERSION from api.version.'
         )
 
     def test_server_version_uses_webui_version(self):
         """server.py must reference WEBUI_VERSION when setting server_version."""
         src = (REPO_ROOT / 'server.py').read_text(encoding='utf-8')
         assert 'WEBUI_VERSION' in src, (
-            'server.py must import and use WEBUI_VERSION from api.updates '
+            'server.py must import and use WEBUI_VERSION from api.version '
             'to keep the HTTP Server: header in sync with git tags'
         )
 
     def test_server_py_imports_webui_version(self):
-        """server.py must import WEBUI_VERSION from api.updates."""
+        """server.py must import WEBUI_VERSION from api.version."""
         src = (REPO_ROOT / 'server.py').read_text(encoding='utf-8')
-        assert 'from api.updates import WEBUI_VERSION' in src, (
-            'server.py must import WEBUI_VERSION from api.updates'
+        assert 'from api.version import WEBUI_VERSION' in src, (
+            'server.py must import WEBUI_VERSION from api.version'
         )
 
     def test_server_version_no_slash_when_unknown(self):

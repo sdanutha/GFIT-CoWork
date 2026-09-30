@@ -157,7 +157,7 @@ def test_escape_raw_helper_reanchors_through_safe_resolve():
     src = WORKSPACE_PY.read_text(encoding="utf-8")
     helper = _func_body(src, "raw_authorized_escape_target")
 
-    assert "safe_resolve_ws(resolved[\"external_root\"], resolved[\"external_rel\"])" in helper
+    assert "resolve_in_workspace(resolved[\"external_root\"], resolved[\"external_rel\"])" in helper
     assert "return resolved[\"external_root\"], target" in helper
 
 

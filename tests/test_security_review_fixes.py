@@ -1,6 +1,5 @@
 import io
 from types import SimpleNamespace
-from urllib.parse import urlsplit
 from pathlib import Path
 
 
@@ -95,57 +94,6 @@ def test_docker_env_log_obfuscates_password_and_secret_names():
     assert "KEY" in line
 
 
-def test_get_update_check_returns_cache_without_fetch(monkeypatch):
-    from api import routes, updates
-
-    monkeypatch.setattr(routes, "load_settings", lambda: {"check_for_updates": True})
-    monkeypatch.setattr(updates, "cached_update_status", lambda include_agent=True: {"checked_at": 123, "webui": None, "agent": None, "include_agent": include_agent})
-    monkeypatch.setattr(updates, "check_for_updates", lambda *a, **k: (_ for _ in ()).throw(AssertionError("GET must not fetch")))
-
-    handler = _Handler(client_ip="127.0.0.1")
-    routes.handle_get(handler, urlsplit("/api/updates/check?force=1"))
-    assert handler.status == 200
-
-
-def test_cached_update_status_does_not_drop_agent_info_when_reenabled(monkeypatch):
-    from api import updates
-
-    cached_agent = {"name": "agent", "behind": 2}
-    monkeypatch.setattr(
-        updates,
-        "_update_cache",
-        {
-            "webui": {"name": "webui", "behind": 0},
-            "agent": cached_agent,
-            "checked_at": 123,
-            "include_agent": False,
-        },
-    )
-
-    result = updates.cached_update_status(include_agent=True)
-
-    assert result["agent"] == cached_agent
-
-
-def test_post_update_check_performs_forced_fetch(monkeypatch):
-    from api import routes
-
-    calls = []
-    monkeypatch.setattr(routes, "load_settings", lambda: {"check_for_updates": True})
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-
-    def fake_check(*, force=False, include_agent=True, channel="stable"):
-        calls.append((force, include_agent))
-        return {"checked_at": 456, "webui": None, "agent": None}
-
-    monkeypatch.setattr("api.updates.check_for_updates", fake_check)
-    body = b'{"force": true}'
-    handler = _Handler(client_ip="127.0.0.1", body=body, headers={"Content-Length": str(len(body))})
-    routes.handle_post(handler, SimpleNamespace(path="/api/updates/check", query=""))
-    assert handler.status == 200
-    assert calls == [(True, True)]
-
-
 def test_onboarding_untrusted_forwarded_header_denies_lan_proxy_socket(monkeypatch):
     """Reverse-proxy regression (release-gate CORE fix): when forwarded headers
     are present but HERMES_WEBUI_TRUST_FORWARDED_FOR is NOT set, the spoofable
@@ -206,7 +154,7 @@ def test_onboarding_complete_is_gated_against_public_clients(monkeypatch):
     monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
     monkeypatch.setenv("HERMES_WEBUI_ONBOARDING_OPEN", "")
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
 
     called = {"n": 0}
     def fake_complete():
@@ -232,140 +180,9 @@ def test_onboarding_complete_allowed_when_auth_enabled(monkeypatch):
     from api import routes
 
     monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: True)
+    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: True)
     monkeypatch.setattr(routes, "complete_onboarding", lambda: {"completed": True})
 
     h = _Handler(client_ip="8.8.8.8", body=b"{}", headers={"Content-Length": "2"})
     routes.handle_post(h, SimpleNamespace(path="/api/onboarding/complete", query=""))
     assert h.status == 200
-
-
-def test_first_password_setup_is_gated_against_public_clients(monkeypatch):
-    """Unauthenticated first-password setup is bootstrap-sensitive.
-
-    While auth is disabled, POST /api/settings normally passes the auth/CSRF
-    checks. A public client must not be able to win first-run ownership by
-    setting `_set_password`; it should be gated like onboarding setup and should
-    not write settings.
-    """
-    from api import routes
-
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: False)
-    monkeypatch.setattr("api.auth.parse_cookie", lambda handler: "")
-    monkeypatch.setattr("api.auth.verify_session", lambda cookie: False)
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
-    monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-
-    saved = {"called": False}
-    monkeypatch.setattr(
-        routes,
-        "save_settings",
-        lambda body: saved.__setitem__("called", True) or dict(body),
-    )
-
-    body = b'{"_set_password":"attacker-password"}'
-    handler = _Handler(
-        client_ip="8.8.8.8",
-        body=body,
-        headers={"Content-Length": str(len(body))},
-    )
-    routes.handle_post(handler, SimpleNamespace(path="/api/settings", query=""))
-
-    assert handler.status == 403
-    assert saved["called"] is False
-
-
-def test_first_password_setup_allows_genuine_loopback_client(monkeypatch):
-    """A same-host first-run setup flow still works without setting the bypass env."""
-    from api import routes
-
-    auth_state = {"enabled": False}
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: auth_state["enabled"])
-    monkeypatch.setattr("api.auth.parse_cookie", lambda handler: "")
-    monkeypatch.setattr("api.auth.verify_session", lambda cookie: False)
-    monkeypatch.setattr("api.auth.create_session", lambda: "new-session")
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
-    monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-
-    def fake_save_settings(body):
-        auth_state["enabled"] = True
-        return {"theme": "dark", "password_hash": "redacted"}
-
-    monkeypatch.setattr(routes, "save_settings", fake_save_settings)
-
-    body = b'{"_set_password":"local-owner-password"}'
-    handler = _Handler(
-        client_ip="127.0.0.1",
-        body=body,
-        headers={"Content-Length": str(len(body))},
-    )
-    routes.handle_post(handler, SimpleNamespace(path="/api/settings", query=""))
-
-    assert handler.status == 200
-    assert any(key.lower() == "set-cookie" for key, _ in handler.sent_headers)
-
-
-def test_first_password_setup_uses_initial_auth_state_for_gate(monkeypatch):
-    """A public bootstrap request cannot pass just because auth flips mid-request."""
-    from api import routes
-
-    auth_checks = iter([False, True])
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: next(auth_checks))
-    monkeypatch.setattr("api.auth.parse_cookie", lambda handler: "")
-    monkeypatch.setattr("api.auth.verify_session", lambda cookie: False)
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
-
-    saved = {"called": False}
-    monkeypatch.setattr(
-        routes,
-        "save_settings",
-        lambda body: saved.__setitem__("called", True) or dict(body),
-    )
-
-    body = b'{"_set_password":"attacker-password"}'
-    handler = _Handler(
-        client_ip="8.8.8.8",
-        body=body,
-        headers={"Content-Length": str(len(body))},
-    )
-    routes.handle_post(handler, SimpleNamespace(path="/api/settings", query=""))
-
-    assert handler.status == 403
-    assert saved["called"] is False
-
-
-def test_first_password_setup_allows_public_client_with_open_onboarding(monkeypatch):
-    """The documented operator opt-in permits remote first-run bootstrap."""
-    from api import routes
-
-    auth_state = {"enabled": False}
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr("api.auth.is_auth_enabled", lambda: auth_state["enabled"])
-    monkeypatch.setattr("api.auth.parse_cookie", lambda handler: "")
-    monkeypatch.setattr("api.auth.verify_session", lambda cookie: False)
-    monkeypatch.setattr("api.auth.create_session", lambda: "new-session")
-    monkeypatch.delenv("HERMES_WEBUI_PASSWORD", raising=False)
-    monkeypatch.setenv("HERMES_WEBUI_ONBOARDING_OPEN", "1")
-
-    def fake_save_settings(body):
-        auth_state["enabled"] = True
-        return {"theme": "dark", "password_hash": "redacted"}
-
-    monkeypatch.setattr(routes, "save_settings", fake_save_settings)
-
-    body = b'{"_set_password":"remote-owner-password"}'
-    handler = _Handler(
-        client_ip="8.8.8.8",
-        body=body,
-        headers={"Content-Length": str(len(body))},
-    )
-    routes.handle_post(handler, SimpleNamespace(path="/api/settings", query=""))
-
-    assert handler.status == 200
-    assert any(key.lower() == "set-cookie" for key, _ in handler.sent_headers)

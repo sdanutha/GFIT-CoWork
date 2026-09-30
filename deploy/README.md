@@ -120,14 +120,14 @@ use another name, another port and another hostname (e.g. `account`, `8802`,
    with an Admin's employee ID and AD password. Admins land in the `default`
    Profile. In **Settings → Providers**, save the Team's provider key, then
    choose the model the Team will use. This saves both in the `default`
-   Profile, and new Profiles copy them from there. A Member's Profile never
+   Profile, and new Profiles copy them from there. A User's Profile never
    uses a key from `.env` directly, because each Profile keeps its own
    credentials.
 
-6. **Check the Admin gate.** Log in with a Member's account (after adding one,
+6. **Check the Admin gate.** Log in with a User's account (after adding one,
    below). They must not see Settings, the terminal or the Profiles panel.
 
-## Add a Member
+## Add a User
 
 The Admin does this in the web UI. There is no sign-up and no automatic
 Profile: a person can log in only after an Admin has created their Profile.
@@ -155,10 +155,10 @@ them a Profile in each Deployment they need.
 Run one Team with 5–10 people for two to four weeks before adding more people
 or more Teams.
 
-1. **Pick the pilot group:** one Team, its two Admins, and 5–10 Members who
+1. **Pick the pilot group:** one Team, its two Admins, and 5–10 Users who
    will use it every day and say what goes wrong.
-2. **Set up** that Team as above, and create Profiles for the pilot Members only.
-3. **Check on day one** that every pilot Member can log in, sees their name
+2. **Set up** that Team as above, and create Profiles for the pilot Users only.
+3. **Check on day one** that every pilot User can log in, sees their name
    in the Profile chip, can start a conversation, and can use Sign Out.
 4. **Watch during the pilot:**
    - `docker stats` for memory and CPU with everyone working at once. Size
@@ -166,16 +166,16 @@ or more Teams.
    - `docker compose logs gfit-cowork` for AD errors ("directory is
      unavailable") and refused logins.
    - The model provider's usage and cost for the Team's key.
-   - What Members ask the Admins for.
+   - What Users ask the Admins for.
 5. **Roll out further** when the pilot has run without AD or capacity problems.
-   Add the rest of the Team's Members, then add the next Team as a new
+   Add the rest of the Team's Users, then add the next Team as a new
    Deployment.
 
 ## Look after a Deployment
 
 - **Logs:** `docker compose logs --tail 200 gfit-cowork` (or `hermes-agent`).
 - **Back up** the volumes `gfit-<TEAM>_hermes-home` (Profiles, sessions,
-  memory, Member Workspaces, the Profile roster) and
+  memory, User Workspaces, the Profile roster) and
   `gfit-<TEAM>_admin-workspace`, e.g. with
   `docker run --rm -v gfit-sales_hermes-home:/data -v "$PWD":/backup alpine tar czf /backup/sales-home.tgz -C /data .`
 - **Upgrade GFIT-CoWork:** pull the source, rebuild the image (see "Once per
@@ -198,8 +198,8 @@ or more Teams.
 
 ## Before you rely on it
 
-- All Profiles in one Deployment run their agents as the same OS user. A Member
-  can ask the agent to read another Member's files (ADR 0002). Only put people
+- All Profiles in one Deployment run their agents as the same OS user. A User
+  can ask the agent to read another User's files (ADR 0002). Only put people
   who trust each other in one Deployment.
 - GFIT-CoWork never stores AD passwords. They go to AD over LDAPS or StartTLS
   only; plain LDAP is refused.

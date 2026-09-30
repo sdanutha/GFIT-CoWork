@@ -44,8 +44,6 @@ PREFERENCE_FIELDS_AUTOSAVE = [
     ("settingsShowClaudeCodeSessions", "show_claude_code_sessions"),
     ("settingsShowPreviousMessagingSessions", "show_previous_messaging_sessions"),
     ("settingsSyncInsights", "sync_to_insights"),
-    ("settingsCheckUpdates", "check_for_updates"),
-    ("settingsIgnoreAgentUpdates", "ignore_agent_updates"),
     ("settingsSoundEnabled", "sound_enabled"),
     ("settingsNotificationsEnabled", "notifications_enabled"),
     ("settingsSidebarDensity", "sidebar_density"),
@@ -95,30 +93,12 @@ def test_preference_fields_use_schedule_autosave_not_mark_dirty():
             f"{dom_id} should not call _markSettingsDirty (Phase 2 autosaves it)"
 
 
-def test_password_still_uses_mark_dirty():
-    """SECURITY INVARIANT: password field must NEVER autosave; it must still
-    call _markSettingsDirty so user explicitly clicks Save Settings."""
-    panel = _load_settings_panel_block()
-    idx = panel.find("$('settingsPassword')")
-    assert idx != -1, "settingsPassword field not loaded"
-    window = panel[idx:idx + 400]
-    assert "_markSettingsDirty" in window, \
-        "Password field MUST call _markSettingsDirty (security: never autosave passwords)"
-    assert "_schedulePreferencesAutosave" not in window, \
-        "Password field MUST NOT call _schedulePreferencesAutosave (security)"
-
-
 def test_autosave_clears_dirty_flag_and_hides_unsaved_bar():
     """_autosavePreferencesSettings must clear the dirty flag and hide the
-    unsaved-changes bar on success — but ONLY when password and model are
-    not pending. Q1 from Opus pre-release review of v0.50.250."""
+    unsaved-changes bar on success — but ONLY when the model is not
+    pending. Q1 from Opus pre-release review of v0.50.250."""
     block = _function_block(PANELS_JS, "_autosavePreferencesSettings")
-    # Must check pwField/modelSel state before clearing dirty + hiding bar
-    assert "settingsPassword" in block, (
-        "_autosavePreferencesSettings must check the password field before "
-        "clearing _settingsDirty (Opus SHOULD-FIX Q1: autosave was clobbering "
-        "pending password edits)"
-    )
+    # Must check modelSel state before clearing dirty + hiding bar
     assert "settingsModel" in block, (
         "_autosavePreferencesSettings must check the model selector before "
         "clearing _settingsDirty (autosave was clobbering pending model changes)"
@@ -129,7 +109,7 @@ def test_autosave_clears_dirty_flag_and_hides_unsaved_bar():
     )
     # The clear-and-hide block must be conditional, not unconditional
     compact = block.replace(" ", "").replace("\n", "")
-    assert "if(!pwDirty&&!modelDirty)" in compact or "if(pwDirty||modelDirty)" in compact, (
+    assert "if(!modelDirty)" in compact, (
         "_autosavePreferencesSettings must guard the dirty-clear and bar-hide "
         "with a condition that defers when a manual field has pending edits"
     )

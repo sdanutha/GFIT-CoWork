@@ -1002,14 +1002,9 @@ function _cronGatewayNoticeHtml(status) {
       : isRemoteUnreachable
         ? 'The gateway health endpoint is not reachable from WebUI. Verify the configured gateway URL env var (`GATEWAY_HEALTH_URL`, `HERMES_GATEWAY_HEALTH_URL`, `HERMES_API_URL`, or `HERMES_WEBUI_GATEWAY_BASE_URL`) points to a reachable gateway service and network path before relying on cron ticking.'
         : 'In GFIT-CoWork, scheduled jobs require the Hermes gateway daemon to be running. Start the gateway container or `hermes gateway` before relying on offline scheduled runs.';
-  const docsHref = 'https://github.com/nesquena/hermes-webui/blob/master/docs/docker.md#scheduled-jobs-and-the-gateway-daemon';
-  const helpLink = notConfigured || isRemoteUnreachable || isStaleMetadata
-    ? `<p><a href="${docsHref}" target="_blank" rel="noopener">How to enable scheduled jobs in Docker ↗</a></p>`
-    : '';
   return `
     <div class="detail-alert-title">${esc(title)}</div>
     <p>${esc(body)}</p>
-    ${helpLink}
   `;
 }
 
@@ -2674,7 +2669,7 @@ function _normalizeWebUIVersion(value){
   if(!s) return '';
   // Suppress placeholder / non-version sentinels (case-insensitive) so a real
   // client version never "mismatches" against a server that couldn't detect its
-  // own version. api/updates.py can emit 'unknown' (git describe failure in a
+  // own version. api/version.py can emit 'unknown' (git describe failure in a
   // Docker/CI image); comparing a real version against 'unknown' would FALSELY
   // fire the stale-client banner. (Codex #5480 gate)
   const lower=s.toLowerCase();
@@ -7685,9 +7680,7 @@ let _settingsIndexPromise = null;
 let _settingsSearchSeq = 0;
 let _extensionsStatusData = null;
 let _extensionsSidecarMonitorSeq = 0;
-let _extensionsGalleryData = null;
-let _extensionsGalleryLoaded = false;
-let _extensionsActiveTab = 'gallery';
+let _extensionsActiveTab = 'installed';
 let _settingsSearchDismissListenerRegistered = false;
 let _settingsAppearanceAutosaveTimer = null;
 let _settingsAppearanceAutosaveRetryPayload = null;
@@ -8905,15 +8898,6 @@ function _preferencesPayloadFromUi(){
   if(showPreviousMessagingCb) payload.show_previous_messaging_sessions=showPreviousMessagingCb.checked;
   const syncCb=$('settingsSyncInsights');
   if(syncCb) payload.sync_to_insights=syncCb.checked;
-  const updateCb=$('settingsCheckUpdates');
-  if(updateCb) payload.check_for_updates=updateCb.checked;
-  // update_channel is NOT included here — it has its own dedicated write path
-  // (_saveUpdateChannelFromSelector) so a stale tab's generic autosave cannot
-  // overwrite a newer channel selection made in another tab. (#6612)
-  const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
-  if(ignoreAgentUpdatesCb) payload.ignore_agent_updates=ignoreAgentUpdatesCb.checked;
-  const whatsNewSummaryCb=$('settingsWhatsNewSummary');
-  if(whatsNewSummaryCb) payload.whats_new_summary_enabled=whatsNewSummaryCb.checked;
   const soundCb=$('settingsSoundEnabled');
   if(soundCb) payload.sound_enabled=soundCb.checked;
   const rtlCb=$('settingsRtl');
@@ -8980,7 +8964,7 @@ function _enqueueSettingsPost(options){
 }
 
 // Ownership token for the shared preferences autosave status slot. Prevents
-// the channel writer from clearing or overwriting a 'failed'+Retry state the
+// another writer from clearing or overwriting a 'failed'+Retry state the
 // generic preferences autosave set; that Retry button has exactly one call
 // site and becomes unreachable if another writer replaces the node.
 let _preferencesAutosaveStatusOwner=null;
@@ -9084,14 +9068,11 @@ async function _autosavePreferencesSettings(payload){
     _settingsPreferencesAutosaveRetryPayload=null;
     _setPreferencesAutosaveStatus('saved');
     // Only clear the global dirty flag and hide the unsaved-changes bar when
-    // there is no pending edit on a manually-saved field. Password and model
-    // are still committed via the explicit "Save Settings" button (password
-    // for security; model goes through /api/default-model). Without this
-    // guard, autosaving a checkbox right after a user typed in the password
-    // field would silently dismiss the password edit. (Opus pre-release
+    // there is no pending edit on a manually-saved field. The model is still
+    // committed via the explicit "Save Settings" button (it goes through
+    // /api/default-model). Without this guard, autosaving a checkbox right
+    // after a model pick would silently dismiss that edit. (Opus pre-release
     // review of v0.50.250, SHOULD-FIX Q1.)
-    const pwField=$('settingsPassword');
-    const pwDirty=!!(pwField&&pwField.value);
     const modelSel=$('settingsModel');
     const modelState=(typeof _captureModelDropdownSelection==='function'&&modelSel)
       ? (_captureModelDropdownSelection(modelSel)||{model:String((modelSel&&modelSel.value)||''),model_provider:null})
@@ -9102,7 +9083,7 @@ async function _autosavePreferencesSettings(payload){
         ((modelState.model_provider||null)!==(_settingsHermesDefaultModelProviderOnOpen||null))
       )
     );
-    if(!pwDirty&&!modelDirty){
+    if(!modelDirty){
       const maxTokensField=$('settingsMaxTokens');
       const maxTokensDirty=!!(
         maxTokensField&&
@@ -9126,57 +9107,6 @@ function _retryPreferencesAutosave(){
   _autosavePreferencesSettings(payload);
 }
 
-let _channelSaveSeq=0;
-// Last server-confirmed update_channel value. Seeded at panel hydration so the
-// failure-revert path always has a known-good value. _confirmedUpdateChannel is
-// the only reliable "previous" value: by the time a change event fires the
-// browser has already applied the picked option to the <select>, so
-// channelSel.value inside the handler IS the new value, not the old one.
-let _confirmedUpdateChannel=null;
-
-async function _saveUpdateChannelFromSelector(channelSel){
-  // #6612: dedicated write path for update_channel so the generic preferences
-  // autosave payload never carries this field. A stale tab toggling an unrelated
-  // preference must not overwrite a newer channel selection from another tab.
-  if(!channelSel) return;
-  const val=channelSel.value==='experimental'?'experimental':'stable';
-  const seq=++_channelSaveSeq;
-  if(typeof _setPreferencesAutosaveStatus==='function') _setPreferencesAutosaveStatus('saving','channel');
-  try{
-    const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify({update_channel:val})});
-    const confirmed=(saved&&(saved.update_channel==='experimental'||saved.update_channel==='stable'))
-      ?saved.update_channel:val;
-    _confirmedUpdateChannel=confirmed;
-    // The queue makes the server state FIFO; the sequence guard protects only
-    // the selector and other response-driven UI from stale completions.
-    if(seq!==_channelSaveSeq) return;
-    channelSel.value=confirmed;
-    if(typeof _setPreferencesAutosaveStatus==='function') _setPreferencesAutosaveStatus('saved','channel');
-    // Run the update check and badge sync against the confirmed server value,
-    // not the optimistic pre-save value.
-    if(typeof checkUpdatesNow==='function'){
-      try{checkUpdatesNow(confirmed);}catch(_){}
-    }
-    if(typeof _syncUpdateChannelBadge==='function') _syncUpdateChannelBadge(confirmed);
-  }catch(e){
-    console.warn('[settings] update_channel save failed',e);
-    // Revert selector and badge to the last server-confirmed value so both
-    // controls agree with what the server actually holds. Status clear and
-    // revert are both inside the seq guard so a superseded in-flight failure
-    // does not clear status that a newer write or the generic autosave owns.
-    if(seq===_channelSaveSeq){
-      const revertTo=_confirmedUpdateChannel||'stable';
-      channelSel.value=revertTo;
-      if(typeof _syncUpdateChannelBadge==='function') _syncUpdateChannelBadge(revertTo);
-      // Do not call _setPreferencesAutosaveStatus('failed','channel'): its retry
-      // button replays _retryPreferencesAutosave(), which cannot contain
-      // update_channel (#6612). Clear the saving indicator instead; the selector
-      // snap-back is the user's signal.
-      if(typeof _setPreferencesAutosaveStatus==='function') _setPreferencesAutosaveStatus(null,'channel');
-    }
-  }
-}
-
 function _syncSettingsMaxTokensPlaceholder(field, fallbackValue){
   if(!field) return;
   const parsedFallback=parseInt(fallbackValue,10);
@@ -9195,22 +9125,8 @@ async function loadSettingsPanel(){
     checkWebUIVersionSkew(settings);
     // Populate the version badges from the server — keeps them in sync with git
     // tags automatically without any manual release step.
-    //
-    // The DISPLAY badge uses update_channel_version (a channel-scoped
-    // `git describe --match`), which is SEPARATE from settings.webui_version.
-    // webui_version is load-bearing for asset cache-busting / SW cache / stale-
-    // client skew detection and must stay channel-neutral — never render it as
-    // the channel badge. See api/updates.channel_version_badge().
     const webuiBadge = $('settings-webui-version-badge');
-    if(webuiBadge){
-      const chanVer = settings.update_channel_version || settings.webui_version || 'not detected';
-      const chan = settings.update_channel==='experimental' ? 'experimental' : 'stable';
-      // Only annotate the channel when on experimental — stable is the implicit
-      // default and needs no extra chrome.
-      webuiBadge.textContent = chan==='experimental'
-        ? `GFIT-CoWork: ${chanVer} · Experimental`
-        : `GFIT-CoWork: ${chanVer}`;
-    }
+    if(webuiBadge) webuiBadge.textContent = `GFIT-CoWork: ${settings.webui_version || 'not detected'}`;
     const agentBadge = $('settings-agent-version-badge');
     if(agentBadge){
       const agentVersion = (settings.agent_version || 'not detected').toString().trim() || 'not detected';
@@ -9645,24 +9561,6 @@ async function loadSettingsPanel(){
     if(showPreviousMessagingCb){showPreviousMessagingCb.checked=!!settings.show_previous_messaging_sessions;showPreviousMessagingCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const syncCb=$('settingsSyncInsights');
     if(syncCb){syncCb.checked=!!settings.sync_to_insights;syncCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const updateCb=$('settingsCheckUpdates');
-    if(updateCb){updateCb.checked=settings.check_for_updates!==false;updateCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const updateChannelSel=$('settingsUpdateChannel');
-    if(updateChannelSel){
-      updateChannelSel.value=settings.update_channel==='experimental'?'experimental':'stable';
-      _confirmedUpdateChannel=updateChannelSel.value; // #6612: seed revert baseline
-      updateChannelSel.addEventListener('change',function(){
-        // #6612: use the dedicated channel writer so generic preference autosaves
-        // from a stale tab cannot overwrite a newer explicit channel selection.
-        // Update check, badge sync, and failure status are handled inside
-        // _saveUpdateChannelFromSelector after the POST is confirmed.
-        _saveUpdateChannelFromSelector(updateChannelSel);
-      },{once:false});
-    }
-    const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
-    if(ignoreAgentUpdatesCb){ignoreAgentUpdatesCb.checked=!!settings.ignore_agent_updates;ignoreAgentUpdatesCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const whatsNewSummaryCb=$('settingsWhatsNewSummary');
-    if(whatsNewSummaryCb){whatsNewSummaryCb.checked=!!settings.whats_new_summary_enabled;whatsNewSummaryCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const soundCb=$('settingsSoundEnabled');
     if(soundCb){soundCb.checked=!!settings.sound_enabled;soundCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     // Right-to-left chat layout (#1721 salvage) — Settings-only, no composer button.
@@ -9878,44 +9776,13 @@ async function loadSettingsPanel(){
         botNameTimer=setTimeout(_schedulePreferencesAutosave,500);
       },{once:false});
     }
-    // Password field: always blank (we don't send hash back)
-    const pwField=$('settingsPassword');
-    if(pwField){pwField.value='';pwField.addEventListener('input',_markSettingsDirty,{once:false});}
-    // #1560: when HERMES_WEBUI_PASSWORD env var is set, the settings password
-    // field silently no-ops. Disable it + reveal the lock banner so the UI
-    // tells the truth before a user tries (and the backend now also returns
-    // 409 as defense-in-depth).
-    const pwEnvLocked=!!settings.password_env_var;
-    _settingsPasswordEnvLocked=pwEnvLocked;
-    const pwLockBanner=$('settingsPasswordEnvLock');
-    if(pwField){
-      pwField.disabled=pwEnvLocked;
-      if(pwEnvLocked){
-        pwField.value='';
-        pwField.placeholder=t('password_env_var_locked_placeholder')||pwField.placeholder;
-      }
-    }
-    if(pwLockBanner) pwLockBanner.style.display=pwEnvLocked?'block':'none';
     // Show auth buttons only when auth is active
     try{
       const authStatus=await api('/api/auth/status');
-      _settingsPasswordAuthEnabled=!!authStatus.password_auth_enabled;
       _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
-      _syncPasswordlessButton(authStatus);
-      _renderSettingsAuthStatus(authStatus);
-      _updateCurrentPasswordVisibility();
       _updateAuthWarningBadge(authStatus);
       _updateAuthDisabledWarning(authStatus);
     }catch(e){}
-    loadPasskeys();
-    // #1560: env-var-locked password also disables the Disable Auth button —
-    // clearing settings.password_hash is silent no-op when the env var is set,
-    // and the backend now returns 409 anyway, so don't offer the action.
-    // Sign Out remains available since it only clears the session cookie.
-    if(pwEnvLocked){
-      const disableBtn=$('btnDisableAuth');
-      if(disableBtn) disableBtn.style.display='none';
-    }
     _syncHermesPanelSessionActions();
     if(typeof loadDashboardSettings==='function') loadDashboardSettings();
     loadProvidersPanel(); // load provider cards in background
@@ -10181,7 +10048,7 @@ function _extensionSidecarCard(sidecars){
     // enable authentication before wiring up a sidecar (design §9.1).
     const proxyUnprotected=proxy.posture==='local_unprotected';
     const proxyWarning=proxyUnprotected
-      ?`<div class="extension-sidecar-warning">⚠ WebUI authentication is off. This sidecar's proxy consent can be granted by any local process. Set a password in Settings → Password before using sidecar extensions.</div>`
+      ?`<div class="extension-sidecar-warning">⚠ WebUI authentication is off. This sidecar's proxy consent can be granted by any local process. Configure the Directory (HERMES_WEBUI_DIRECTORY) to turn login on before using sidecar extensions.</div>`
       :'';
     const proxyStatus=proxyConsented
       ?'consented'
@@ -10290,7 +10157,7 @@ function _renderExtensionsPanel(data,seq){
   const copyBtn=$('extensionsCopyDiagnosticsBtn');
   if(!target) return;
   _extensionsStatusData=data||null;
-  if(_extensionsGalleryData) _extensionsGalleryData.statusData=data||null;
+  _renderInstalledExtensionsSurface(data);
   _configureExtensionSettingsFromStatus(data);
   if(copyBtn) copyBtn.disabled=!data;
   const manifest=(data&&data.manifest)||{};
@@ -10554,7 +10421,6 @@ async function loadExtensionsPanel(opts){
     if(copyBtn) copyBtn.disabled=true;
     target.innerHTML='<div class="extensions-error">Failed to load extension diagnostics: '+esc(e.message||String(e))+'</div>';
   }
-  if(_extensionsActiveTab==='gallery'&&!_extensionsGalleryLoaded) loadExtensionsGallery();
 }
 
 function switchExtensionsTab(tab){
@@ -10565,8 +10431,7 @@ function switchExtensionsTab(tab){
   document.querySelectorAll('[data-extensions-pane]').forEach(pane=>{
     pane.hidden=pane.dataset.extensionsPane!==tab;
   });
-  if(tab==='diagnostics') loadExtensionsPanel({preserveExisting:true});
-  if(tab==='gallery'&&!_extensionsGalleryLoaded) loadExtensionsGallery();
+  if(tab==='diagnostics'||tab==='installed') loadExtensionsPanel({preserveExisting:true});
 }
 
 function _handleExtensionConfigureChange(change){
@@ -10575,168 +10440,11 @@ function _handleExtensionConfigureChange(change){
     _syncExtensionConfigureButtonState(change.id);
     return;
   }
-  if(_extensionsGalleryData&&_extensionsGalleryData.statusData){
-    _renderInstalledExtensionsSurface(_extensionsGalleryData.statusData);
-  }
+  if(_extensionsStatusData) _renderInstalledExtensionsSurface(_extensionsStatusData);
 }
 
 if(window.HermesExtensionSettings&&typeof window.HermesExtensionSettings._onConfigureChange==='function'){
   window.HermesExtensionSettings._onConfigureChange(_handleExtensionConfigureChange);
-}
-
-function _extensionSafeHttpUrl(value){
-  if(!value) return '';
-  const raw=String(value).trim();
-  if(!/^https?:\/\//i.test(raw)) return '';
-  try{
-    const url=new URL(raw);
-    if(url.username||url.password) return '';
-    return (url.protocol==='http:'||url.protocol==='https:')?url.href:'';
-  }catch(_){
-    return '';
-  }
-}
-
-function _extensionRegistrySourceUrl(entryPath){
-  const raw=String(entryPath||'').trim();
-  if(!raw||raw.startsWith('/')||raw.includes('\\')||raw.includes('\0')) return '';
-  const parts=raw.split('/').filter(Boolean);
-  if(parts.length===0||parts.some(part=>part==='.'||part==='..')) return '';
-  const folder=parts.length>1?parts.slice(0,-1):parts;
-  return 'https://github.com/hermes-webui/hermes-webui-extensions/tree/main/'+folder.map(encodeURIComponent).join('/');
-}
-
-function _extensionSourceUrl(entry){
-  if(!entry||typeof entry!=='object') return '';
-  const candidates=[
-    entry.homepage,
-    entry.repository_url,
-    entry.repo_url,
-    entry.source_url,
-    entry.source,
-  ];
-  const repository=entry.repository;
-  if(typeof repository==='string'){
-    candidates.push(repository);
-  }else if(repository&&typeof repository==='object'){
-    candidates.push(repository.url,repository.html_url);
-  }
-  for(const candidate of candidates){
-    const safe=_extensionSafeHttpUrl(candidate);
-    if(safe) return safe;
-  }
-  return _extensionSafeHttpUrl(_extensionRegistrySourceUrl(entry.entry_path||entry.runtime_manifest_path));
-}
-
-function _extensionSourceLink(entry){
-  const url=_extensionSourceUrl(entry);
-  if(!url) return '';
-  return `<a class="extension-gallery-source-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Source</a>`;
-}
-
-function _extensionPermissionList(value){
-  if(!Array.isArray(value)) return '';
-  const items=value
-    .map(item=>String(item||'').trim())
-    .filter(Boolean);
-  return items.length?items.join(', '):'';
-}
-
-function _extensionPermissionRows(perms){
-  if(!perms||typeof perms!=='object') return [];
-  const rows=[];
-  const api=(perms.webui_api&&typeof perms.webui_api==='object')?perms.webui_api:{};
-  const apiRead=_extensionPermissionList(api.read);
-  const apiWrite=_extensionPermissionList(api.write);
-  if(apiRead) rows.push(['WebUI API reads',apiRead]);
-  if(apiWrite) rows.push(['WebUI API writes',apiWrite]);
-  if(perms.webui_navigation===true) rows.push(['Navigation','Can open or switch WebUI views']);
-
-  const sidecarCommands=(perms.sidecar_commands&&typeof perms.sidecar_commands==='object')?perms.sidecar_commands:{};
-  const commandLabels=[
-    ['from_loopback','accepts loopback commands'],
-    ['can_switch_sessions','switch sessions'],
-    ['can_write_drafts','write drafts'],
-    ['can_autosend','auto-send drafts'],
-    ['can_respond_approval','respond to approvals'],
-    ['can_respond_clarify','respond to clarifications'],
-  ];
-  const commands=commandLabels
-    .filter(([key])=>sidecarCommands[key]===true)
-    .map(([,label])=>label);
-  if(commands.length) rows.push(['Sidecar commands',commands.join(', ')]);
-
-  const dom=(perms.dom&&typeof perms.dom==='object')?perms.dom:{};
-  const domItems=[];
-  if(dom.owned===true) domItems.push('renders extension-owned UI');
-  if(dom.mutates_core_views===true) domItems.push('can alter core WebUI views');
-  if(domItems.length) rows.push(['DOM access',domItems.join(', ')]);
-
-  const storage=(perms.storage&&typeof perms.storage==='object')?perms.storage:{};
-  const ownedStorage=_extensionPermissionList(storage.owned||storage.owned_keys);
-  const sharedStorage=_extensionPermissionList(storage.shared_webui_keys);
-  if(ownedStorage) rows.push(['Owned storage keys',ownedStorage]);
-  if(sharedStorage) rows.push(['Shared WebUI storage',sharedStorage]);
-
-  if(perms.loopback_sidecar===true) rows.push(['Loopback sidecar','Can contact a declared local loopback helper']);
-  if(perms.native_host===true) rows.push(['Native host','Requires a local native host or desktop app']);
-
-  const filesystem=(perms.filesystem&&typeof perms.filesystem==='object')?perms.filesystem:{};
-  if(filesystem.arbitrary===true){
-    rows.push(['Filesystem','Can access arbitrary filesystem paths']);
-  }else if(filesystem.serves_bundled_assets===true){
-    rows.push(['Filesystem','Serves bundled extension assets only']);
-  }
-  if(perms.network_external===true||perms.external_network===true){
-    rows.push(['External network','Can contact external network origins']);
-  }
-  return rows;
-}
-
-function _extensionPermissionSummary(perms){
-  const rows=_extensionPermissionRows(perms);
-  const body=rows.length
-    ? '<div class="extension-gallery-permission-list">'+rows.map(([label,value])=>`
-      <div class="extension-gallery-permission-row">
-        <span class="extension-gallery-permission-label">${esc(label)}</span>
-        <span class="extension-gallery-permission-value">${esc(value)}</span>
-      </div>`).join('')+'</div>'
-    : `<div class="extension-gallery-permission-empty">${esc(t('ext_gallery_permissions_empty'))}</div>`;
-  return `<details class="extension-gallery-perms">
-    <summary>${esc(t('ext_gallery_permissions_show'))}</summary>
-    ${body}
-  </details>`;
-}
-
-function _extensionPostInstallNote(entry,isInstalled){
-  const lifecycle=(entry&&entry.lifecycle&&typeof entry.lifecycle==='object')?entry.lifecycle:{};
-  const post=(entry&&entry.post_install&&typeof entry.post_install==='object')?entry.post_install:null;
-  const needsSidecar=!!lifecycle.sidecar_start_required;
-  const needsNative=!!lifecycle.native_host_start_required;
-  const summary=post&&post.summary?String(post.summary):(
-    (needsSidecar||needsNative)
-      ? t('ext_gallery_local_component_required')
-      : ''
-  );
-  if(!summary) return '';
-  const docsUrl=_extensionSafeHttpUrl(post&&post.docs_url);
-  const localAppLabel=post&&post.local_app_label?String(post.local_app_label):t('ext_gallery_local_app_label');
-  const chips=[];
-  if(post&&post.requires_local_app===true) chips.push(t('ext_gallery_required_suffix',localAppLabel));
-  if(needsSidecar) chips.push(t('ext_gallery_sidecar_required'));
-  if(needsNative) chips.push(t('ext_gallery_native_host_required'));
-  const chipHtml=chips.length
-    ? '<div class="extension-gallery-next-chips">'+chips.map(item=>`<span>${esc(item)}</span>`).join('')+'</div>'
-    : '';
-  const docsHtml=docsUrl
-    ? `<a class="extension-gallery-next-link" href="${esc(docsUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('ext_gallery_open_setup_guide'))}</a>`
-    : '';
-  return `<div class="extension-gallery-next-step">
-    <div class="extension-gallery-next-label">${esc(t(isInstalled?'ext_gallery_next_step':'ext_gallery_after_install'))}</div>
-    <div class="extension-gallery-next-summary">${esc(summary)}</div>
-    ${chipHtml}
-    ${docsHtml}
-  </div>`;
 }
 
 function _renderInstalledExtensionsSurface(statusData){
@@ -10750,141 +10458,6 @@ function _renderInstalledExtensionsSurface(statusData){
   _bindExtensionToggleButtons(installedEl);
   _bindExtensionSettingsButtons(installedEl);
   _bindExtensionConfigureButtons(installedEl);
-}
-
-async function loadExtensionsGallery(){
-  _extensionsGalleryLoaded=true;
-  const galleryEl=$('extensionsGallery');
-  const installedEl=$('extensionsInstalled');
-  if(galleryEl) galleryEl.innerHTML='<div class="extensions-loading">Loading gallery…</div>';
-  if(installedEl) installedEl.innerHTML='<div class="extensions-loading">Loading installed extensions…</div>';
-  try{
-    const [regData,statusData]=await Promise.all([
-      api('/api/extensions/registry'),
-      api('/api/extensions/status'),
-    ]);
-    _extensionsGalleryData={regData,statusData};
-    _renderExtensionsGallery(regData.entries||[],statusData);
-  }catch(e){
-    _extensionsGalleryLoaded=false;
-    const msg=esc(e&&e.message?e.message:String(e));
-    if(galleryEl) galleryEl.innerHTML='<div class="extensions-error">Failed to load gallery: '+msg+'</div>';
-    if(installedEl) installedEl.innerHTML='<div class="extensions-error">Failed to load extension status.</div>';
-  }
-}
-
-function _renderExtensionsGallery(entries,statusData){
-  const galleryEl=$('extensionsGallery');
-  _configureExtensionSettingsFromStatus(statusData);
-  const installedIds=new Set();
-  if(statusData&&statusData.gallery_installed){
-    Object.keys(statusData.gallery_installed).forEach(id=>installedIds.add(id));
-  }
-  if(statusData&&Array.isArray(statusData.extensions)){
-    statusData.extensions.forEach(e=>{ if(e&&e.id) installedIds.add(e.id); });
-  }
-  if(!Array.isArray(entries)||entries.length===0){
-    if(galleryEl) galleryEl.innerHTML='<div class="extensions-empty">No extensions found in the registry.</div>';
-    _renderInstalledExtensionsSurface(statusData);
-    return;
-  }
-  const galleryCards=[];
-  for(const entry of entries){
-    const id=esc(String(entry.id||''));
-    const name=esc(String(entry.name||entry.id||''));
-    const author=esc(String(entry.author||''));
-    const version=esc(String(entry.version||''));
-    const desc=esc(String(entry.description||''));
-    const caps=Array.isArray(entry.capabilities)?entry.capabilities:[];
-    const perms=entry.permissions||null;
-    const isInstalled=installedIds.has(String(entry.id||''));
-    const restartRequired=!!(entry.lifecycle&&(entry.lifecycle.restart_required||entry.lifecycle.webui_restart_required));
-    const badgesHtml=caps.map(c=>`<span class="extension-gallery-badge">${esc(String(c))}</span>`).join('');
-    const metaBits=[];
-    if(author) metaBits.push('by '+author);
-    if(version) metaBits.push('v'+version);
-    const sourceLinkHtml=_extensionSourceLink(entry);
-    const metaHtml=(metaBits.length||sourceLinkHtml)
-      ? `<div class="extension-gallery-meta">${metaBits.length?`<span>${metaBits.join(' · ')}</span>`:''}${sourceLinkHtml}</div>`
-      : '';
-    const permsHtml=perms?_extensionPermissionSummary(perms):'';
-    const postInstallHtml=_extensionPostInstallNote(entry,isInstalled);
-    const actionBtn=isInstalled
-      ?`<button class="extension-gallery-uninstall-btn" data-ext-uninstall-id="${id}" type="button" data-i18n="ext_gallery_uninstall">Uninstall</button>`
-      :`<button class="extension-gallery-install-btn" data-ext-install-id="${id}" type="button" data-i18n="ext_gallery_install">Install</button>`;
-    const installedBadge=isInstalled?'<span class="extension-gallery-installed-badge">Installed</span>':'';
-    const card=`<div class="extension-gallery-card">
-      <div class="extension-gallery-head">
-        <div class="extension-gallery-info">
-          <div class="extension-gallery-name">${name}${installedBadge}</div>
-          ${metaHtml}
-        </div>
-      </div>
-      <div class="extension-gallery-desc">${desc}</div>
-      ${badgesHtml?'<div class="extension-gallery-badge-row">'+badgesHtml+'</div>':''}
-      ${postInstallHtml}
-      ${permsHtml}
-      <div class="extension-gallery-actions">${actionBtn}</div>
-    </div>`;
-    galleryCards.push(card);
-  }
-  if(galleryEl) galleryEl.innerHTML=galleryCards.length?galleryCards.join(''):'<div class="extensions-empty">No extensions found.</div>';
-  _renderInstalledExtensionsSurface(statusData);
-  _bindExtensionGalleryButtons(entries);
-}
-
-function _bindExtensionGalleryButtons(entries){
-  const entryMap=new Map();
-  if(Array.isArray(entries)) entries.forEach(e=>{if(e&&e.id)entryMap.set(String(e.id),e);});
-  document.querySelectorAll('[data-ext-install-id]').forEach(btn=>{
-    const entry=entryMap.get(btn.dataset.extInstallId);
-    if(entry) btn.addEventListener('click',()=>handleExtensionInstall(btn,entry));
-  });
-  document.querySelectorAll('[data-ext-uninstall-id]').forEach(btn=>{
-    btn.addEventListener('click',()=>handleExtensionUninstall(btn,btn.dataset.extUninstallId));
-  });
-}
-
-async function handleExtensionInstall(btn,entry){
-  if(!btn||btn.disabled) return;
-  const previousText=btn.textContent;
-  btn.disabled=true;
-  btn.textContent=t('ext_gallery_installing');
-  try{
-    const result=await api('/api/extensions/install',{method:'POST',body:JSON.stringify({
-      id:entry.id,
-      download_url:entry.download_url||entry.download,
-      sha256:entry.sha256,
-    })});
-    const restart=!!(entry.lifecycle&&(entry.lifecycle.restart_required||entry.lifecycle.webui_restart_required));
-    const hasPostInstall=!!(entry.post_install||(entry.lifecycle&&(entry.lifecycle.sidecar_start_required||entry.lifecycle.native_host_start_required)));
-    showToast(restart
-      ? t('ext_gallery_install_restart_required')
-      : (hasPostInstall?t('ext_gallery_install_followup'):t('ext_gallery_install_ok')));
-    _extensionsGalleryLoaded=false;
-    await loadExtensionsGallery();
-  }catch(e){
-    btn.disabled=false;
-    btn.textContent=previousText;
-    showToast('Install failed: '+(e&&e.message?e.message:String(e)));
-  }
-}
-
-async function handleExtensionUninstall(btn,id){
-  if(!btn||btn.disabled) return;
-  const previousText=btn.textContent;
-  btn.disabled=true;
-  btn.textContent='Uninstalling…';
-  try{
-    await api('/api/extensions/uninstall',{method:'POST',body:JSON.stringify({id})});
-    showToast('Extension uninstalled.');
-    _extensionsGalleryLoaded=false;
-    await loadExtensionsGallery();
-  }catch(e){
-    btn.disabled=false;
-    btn.textContent=previousText;
-    showToast('Uninstall failed: '+(e&&e.message?e.message:String(e)));
-  }
 }
 
 async function copyExtensionsDiagnostics(){
@@ -12076,44 +11649,9 @@ async function _refreshProviderModels(providerId, btn){
   }
 }
 
-let _settingsPasswordEnvLocked=false;
-let _settingsPasswordAuthEnabled=false;
 function _setSettingsAuthButtonsVisible(active){
   const signOutBtn=$('btnSignOut');
   if(signOutBtn) signOutBtn.style.display=active?'':'none';
-  const disableBtn=$('btnDisableAuth');
-  if(disableBtn) disableBtn.style.display=active?'':'none';
-  const passkeyBtn=$('btnRegisterPasskey');
-  if(passkeyBtn) passkeyBtn.disabled=!active||!window.PublicKeyCredential||!navigator.credentials;
-}
-function _syncPasswordlessButton(authStatus){
-  const btn=$('btnGoPasswordless');
-  if(!btn) return;
-  const can=!!(authStatus&&authStatus.auth_enabled&&authStatus.password_auth_enabled&&authStatus.passkeys_count>0&&!_settingsPasswordEnvLocked);
-  btn.style.display=can?'':'none';
-  btn.disabled=!can;
-}
-
-function _renderSettingsAuthStatus(authStatus){
-  const el=$('settingsAuthStatus');
-  if(!el) return;
-  if(!authStatus) { el.style.display='none'; return; }
-  el.style.display='block';
-  let label='',cls='detail-badge ok';
-  if(authStatus.auth_enabled && authStatus.password_auth_enabled){
-    label=t('auth_status_password'); cls='detail-badge ok';
-  }else if(authStatus.auth_enabled && !authStatus.password_auth_enabled){
-    label=t('auth_status_passkey_only'); cls='detail-badge warn';
-  }else{
-    label=t('auth_status_unauthenticated'); cls='detail-badge err';
-  }
-  el.innerHTML='<span class="'+cls+'" style="font-size:11px">'+label+'</span>';
-}
-
-function _updateCurrentPasswordVisibility(){
-  const block=$('settingsCurrentPasswordBlock');
-  if(!block) return;
-  block.style.display=_settingsPasswordAuthEnabled?'block':'none';
 }
 
 function _updateAuthWarningBadge(authStatus){
@@ -12151,84 +11689,6 @@ async function _setAuthDisabledAck(checked){
   }
 }
 
-function _b64uToBytes(s){
-  s=String(s||'').replace(/-/g,'+').replace(/_/g,'/');
-  while(s.length%4) s+='=';
-  const bin=atob(s), out=new Uint8Array(bin.length);
-  for(let i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i);
-  return out;
-}
-function _bytesToB64u(buf){
-  const bytes=new Uint8Array(buf);let bin='';
-  for(let i=0;i<bytes.length;i++) bin+=String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
-}
-
-async function loadPasskeys(){
-  const list=$('passkeyList');
-  const block=$('passkeysSettingsBlock');
-  if(!list) return;
-  // Stage-batch14: respect the HERMES_WEBUI_PASSKEY feature flag — hide the
-  // whole block when passkey support is disabled at the server level so users
-  // don't see a non-functional "Add passkey" button (clicking it would 404).
-  try{
-    const status=await api('/api/auth/status');
-    if(status && status.passkey_feature_flag === false){
-      if(block) block.style.display='none';
-      return;
-    }
-    if(block) block.style.display='';
-  }catch(_e){
-    // If /api/auth/status fails, keep the block hidden to avoid showing a
-    // broken affordance.
-    if(block) block.style.display='none';
-    return;
-  }
-  if(!window.PublicKeyCredential||!navigator.credentials){
-    list.textContent='Passkeys are not supported by this browser/context.';
-    const btn=$('btnRegisterPasskey'); if(btn) btn.disabled=true;
-    return;
-  }
-  try{
-    const data=await api('/api/auth/passkeys',{method:'POST',body:'{}'});
-    if(data && data.disabled){
-      if(block) block.style.display='none';
-      return;
-    }
-    const creds=(data&&data.credentials)||[];
-    if(!creds.length){list.textContent='No passkeys registered.';return;}
-    list.innerHTML=creds.map(c=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px"><span>${esc(c.label||'Passkey')}</span><button class="btn-tiny" onclick="deletePasskey(${jsArg(c.id)})">Remove</button></div>`).join('');
-  }catch(e){list.textContent='Failed to load passkeys: '+e.message;}
-}
-
-async function registerPasskey(){
-  if(!window.PublicKeyCredential||!navigator.credentials){showToast('Passkeys require a supported browser and secure context.');return;}
-  const label='This device';
-  try{
-    const optData=await api('/api/auth/passkey/register/options',{method:'POST',body:'{}'});
-    const pk=optData.publicKey;
-    pk.challenge=_b64uToBytes(pk.challenge);
-    pk.user=Object.assign({},pk.user,{id:_b64uToBytes(pk.user.id)});
-    if(Array.isArray(pk.excludeCredentials)) pk.excludeCredentials=pk.excludeCredentials.map(c=>Object.assign({},c,{id:_b64uToBytes(c.id)}));
-    const cred=await navigator.credentials.create({publicKey:pk});
-    if(!cred) throw new Error('Passkey registration cancelled');
-    await api('/api/auth/passkey/register',{method:'POST',body:JSON.stringify({
-      id:cred.id,rawId:_bytesToB64u(cred.rawId),type:cred.type,label,
-      response:{clientDataJSON:_bytesToB64u(cred.response.clientDataJSON),attestationObject:_bytesToB64u(cred.response.attestationObject)}
-    })});
-    showToast('Passkey registered');
-    loadPasskeys();
-    try{_syncPasswordlessButton(await api('/api/auth/status'));}catch(_e){}
-  }catch(e){showToast('Passkey registration failed: '+e.message);}
-}
-
-async function deletePasskey(id){
-  const ok=await showConfirmDialog({title:'Remove passkey?',message:'This browser/device will no longer be able to sign in with that passkey.',confirmLabel:'Remove',danger:true,focusCancel:true});
-  if(!ok) return;
-  try{await api('/api/auth/passkey/delete',{method:'POST',body:JSON.stringify({id})});showToast('Passkey removed');loadPasskeys();try{_syncPasswordlessButton(await api('/api/auth/status'));}catch(_e){}}
-  catch(e){showToast('Failed to remove passkey: '+e.message);}
-}
-
 function _applySavedSettingsUi(saved, body, opts){
   const {sendKey,showTokenUsage,showQuotaChip,showConversationOutline,showBusyPlaceholderHint,showTps,fadeTextEffect,showCliSessions,theme,skin,language,sidebarDensity,fontSize}=opts;
   window._sendKey=sendKey||'enter';
@@ -12244,7 +11704,6 @@ function _applySavedSettingsUi(saved, body, opts){
   window._showPreviousMessagingSessions=!!body.show_previous_messaging_sessions;
   window._soundEnabled=body.sound_enabled;
   window._notificationsEnabled=body.notifications_enabled;
-  window._whatsNewSummaryEnabled=!!body.whats_new_summary_enabled;
   window._showThinking=body.show_thinking!==false;
   window._simplifiedToolCalling=true;
   _syncChatActivityDisplayModeControl(body.chat_activity_display_mode);
@@ -12319,103 +11778,6 @@ function _applySavedSettingsUi(saved, body, opts){
   renderMessages();
   if(typeof syncTopbar==='function') syncTopbar();
   if(typeof renderSessionList==='function') renderSessionList();
-}
-
-// Instant client-side badge feedback when the update channel is toggled, before
-// the server round-trip that authoritatively re-renders the badge from
-// update_channel_version. Keeps the "· Experimental" suffix in sync immediately.
-function _syncUpdateChannelBadge(channel){
-  try{
-    const badge=$('settings-webui-version-badge');
-    if(!badge) return;
-    let base=badge.textContent||'';
-    // Strip any existing " · Experimental" suffix, then re-append if needed.
-    base=base.replace(/\s·\sExperimental\s*$/,'');
-    badge.textContent = channel==='experimental' ? (base+' · Experimental') : base;
-  }catch(e){}
-}
-
-async function checkUpdatesNow(channelOverride){
-  const btn=$('btnCheckUpdatesNow');
-  const label=$('checkUpdatesLabel');
-  const spinner=$('checkUpdatesSpinner');
-  const status=$('checkUpdatesStatus');
-  if(!btn||!label) return;
-  // Disable button, show spinner
-  btn.disabled=true;
-  if(spinner) spinner.style.display='';
-  if(label) label.textContent=t('settings_checking');
-  if(status) status.textContent='';
-
-  try {
-    // Pass the channel explicitly when the caller has one (e.g. the dropdown
-    // just switched) so the check cannot race the debounced settings autosave
-    // and answer for the previous channel. Omit otherwise → server uses the
-    // saved setting. (Fable UX gate.)
-    const _checkBody={force:true};
-    if(channelOverride==='stable'||channelOverride==='experimental') _checkBody.channel=channelOverride;
-    const data=await api('/api/updates/check',{method:'POST',body:JSON.stringify(_checkBody),timeoutMs:300000});
-    if(data.disabled){
-      if(status){status.textContent=t('settings_updates_disabled');status.style.color='var(--muted)';}
-    } else {
-      const errorParts=[];
-      const formatUpdateError=(typeof _formatUpdateCheckError==='function')
-        ? _formatUpdateCheckError
-        : ((label,info)=>info&&info.error?label:null);
-      const webuiError=formatUpdateError('WebUI',data.webui);
-      const agentError=formatUpdateError('Agent',data.agent);
-      if(webuiError) errorParts.push(webuiError);
-      if(agentError) errorParts.push(agentError);
-      const parts=[];
-      const formatUpdatePart=(typeof _formatUpdateTargetStatus==='function')
-        ? _formatUpdateTargetStatus
-        : ((label,info)=>info&&info.behind>0?label+': '+info.behind:null);
-      const webuiPart=formatUpdatePart('WebUI',data.webui);
-      const agentPart=formatUpdatePart('Agent',data.agent);
-      if(webuiPart) parts.push(webuiPart);
-      if(agentPart) parts.push(agentPart);
-      const manualInstruction=(typeof _formatManualUpdateInstruction==='function')
-        ? _formatManualUpdateInstruction(data.webui)
-        : null;
-      // Track non-git targets separately so a mixed deployment (one git
-      // checkout + one no-git install) never hides the "can't check" state
-      // behind an up-to-date summary (#4356).
-      const noGitParts=[];
-      if(data.webui&&data.webui.no_git&&!data.webui.manual_update) noGitParts.push('WebUI');
-      if(data.agent&&data.agent.no_git&&!data.agent.ignored) noGitParts.push('Agent');
-      if(parts.length){
-        let txt=t('settings_updates_available').replace('{count}',parts.join(', '));
-        if(manualInstruction) txt+=' · '+manualInstruction;
-        if(noGitParts.length) txt+=' · '+t('settings_update_no_git');
-        if(status){status.textContent=txt;status.style.color='var(--accent)';}
-        // Also trigger the update banner
-        if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
-      } else if(errorParts.length){
-        if(status){status.textContent=t('settings_update_check_failed')+': '+errorParts.join(', ');status.style.color='var(--error)';}
-      } else if(noGitParts.length){
-        if(status){status.textContent=t('settings_update_no_git');status.style.color='var(--muted)';}
-      } else {
-        if(status){status.textContent=t('settings_up_to_date');status.style.color='var(--success)';}
-        if(typeof _showUpdateBanner==='function') _showUpdateBanner(data);
-      }
-    }
-  } catch(e){
-    // Never expose raw e.message in UI — log to console for debugging only
-    console.warn('[checkUpdatesNow]', e);
-    // Show a generic user-facing error; if the API returned a message body use it
-    let userMsg=t('settings_update_check_failed');
-    if(e&&e.response){
-      try{
-        const body=JSON.parse(e.response);
-        if(body.error) userMsg=String(body.error).substring(0,120);
-      }catch(_){}
-    }
-    if(status){status.textContent=userMsg;status.style.color='var(--error)';}
-  } finally {
-    btn.disabled=false;
-    if(spinner) spinner.style.display='none';
-    if(label) label.textContent=t('settings_check_now');
-  }
 }
 
 // ── Auxiliary Models ──────────────────────────────────────────────────────────
@@ -12932,7 +12294,6 @@ async function saveSettings(andClose){
   const showKanbanSessions=!!($('settingsShowKanbanSessions')||{}).checked;
   const showPreviousMessagingSessions=!!($('settingsShowPreviousMessagingSessions')||{}).checked;
   const pinnedSessionsLimit=parseInt(($('settingsPinnedSessionsLimit')||{}).value,10)||3;
-  const pw=($('settingsPassword')||{}).value;
   const theme=($('settingsTheme')||{}).value||'dark';
   const skin=($('settingsSkin')||{}).value||'default';
   const fontSize=($('settingsFontSize')||{}).value||localStorage.getItem('hermes-font-size')||'default';
@@ -12990,9 +12351,6 @@ async function saveSettings(andClose){
   body.show_previous_messaging_sessions=showPreviousMessagingSessions;
   body.pinned_sessions_limit=pinnedSessionsLimit;
   body.sync_to_insights=!!($('settingsSyncInsights')||{}).checked;
-  body.check_for_updates=!!($('settingsCheckUpdates')||{}).checked;
-  body.ignore_agent_updates=!!($('settingsIgnoreAgentUpdates')||{}).checked;
-  body.whats_new_summary_enabled=!!($('settingsWhatsNewSummary')||{}).checked;
   body.sound_enabled=!!($('settingsSoundEnabled')||{}).checked;
   body.rtl=!!($('settingsRtl')||{}).checked;
   body.notifications_enabled=!!($('settingsNotificationsEnabled')||{}).checked;
@@ -13002,53 +12360,6 @@ async function saveSettings(andClose){
   body.auto_title_refresh_every=(($('settingsAutoTitleRefresh')||{}).value||'0');
   const botName=(($('settingsBotName')||{}).value||'').trim();
   body.bot_name=botName||'Hermes';
-  // Password: only act if the field has content; blank = leave auth unchanged
-  if(pw && pw.trim()){
-    const currentPwField=$('settingsCurrentPassword');
-    const currentPw=(currentPwField||{}).value||'';
-    if(_settingsPasswordAuthEnabled && !currentPw.trim()){
-      if(currentPwField) currentPwField.focus();
-      showToast(t('current_password_required'));
-      return;
-    }
-    const payload={...body,_set_password:pw.trim()};
-    if(_settingsPasswordAuthEnabled) payload._current_password=currentPw;
-    try{
-      const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-      if(modelChanged && model){
-        try{
-        await api('/api/default-model',{method:'POST',body:JSON.stringify({model,provider:modelState.model_provider||null})});
-        body.default_model=model;
-        body.default_model_provider=(modelState&&modelState.model===model)?(modelState.model_provider||null):null;
-        }catch(_modelErr){
-          // A 400 here (e.g. an ambiguous custom-provider slug collision: rename
-          // one provider) is user-fixable, not a partial success. Surface the
-          // message, abort before "settings saved", and retain dirty state so the
-          // user can fix and retry instead of the error being swallowed.
-          const _msg=(_modelErr&&_modelErr.message)?_modelErr.message:'';
-          if(typeof showToast==='function') showToast('Failed to update default model'+(_msg?(': '+_msg):''),6000,'error');
-          return;
-        }
-      }
-      _applySavedSettingsUi(saved, body, {sendKey,showTokenUsage,showQuotaChip,showConversationOutline,showBusyPlaceholderHint,showTps,fadeTextEffect,showCliSessions,theme,skin,language,sidebarDensity,fontSize});
-      showToast(t(saved.auth_just_enabled?'settings_saved_pw':'settings_saved_pw_updated'));
-      const cpField=$('settingsCurrentPassword'); if(cpField) cpField.value='';
-      const pwField=$('settingsPassword'); if(pwField) pwField.value='';
-      _settingsPasswordAuthEnabled=!!saved.password_auth_enabled;
-      _updateCurrentPasswordVisibility();
-      try{
-        const authStatus=await api('/api/auth/status');
-        _renderSettingsAuthStatus(authStatus);
-        _updateAuthWarningBadge(authStatus);
-        _updateAuthDisabledWarning(authStatus);
-      }catch(e){}
-      _settingsDirty=false;
-      _resetSettingsPanelState();
-      if(!andClose) _pendingSettingsTargetPanel = null;
-      if(andClose) _hideSettingsPanel();
-      return;
-    }catch(e){showToast(t('settings_save_failed')+e.message);return;}
-  }
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(body)});
     if(modelChanged && model){
@@ -13079,69 +12390,10 @@ async function saveSettings(andClose){
 
 async function signOut(){
   try{
-    const response=await api('/api/auth/logout',{method:'POST',body:'{}'});
-    window.location.href=response.trusted_logout_url||'login';
+    await api('/api/auth/logout',{method:'POST',body:'{}'});
+    window.location.href='login';
   }catch(e){
     showToast(t('sign_out_failed')+e.message);
-  }
-}
-
-async function goPasswordless(){
-  const ok=await showConfirmDialog({title:'Go passwordless?',message:'This removes the password and keeps passkey sign-in enabled. Keep at least one passkey registered or you could lose access.',confirmLabel:'Go passwordless',danger:false,focusCancel:true});
-  if(!ok) return;
-  const currentPw=($('settingsCurrentPassword')||{}).value;
-  const payload={_passwordless:true};
-  if(_settingsPasswordAuthEnabled && currentPw) payload._current_password=currentPw;
-  try{
-    const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-    showToast('Password removed. Passkey sign-in remains enabled.');
-    _setSettingsAuthButtonsVisible(!!saved.auth_enabled);
-    _syncPasswordlessButton({auth_enabled:saved.auth_enabled,password_auth_enabled:false,passkeys_count:1});
-    const pwField=$('settingsPassword'); if(pwField) pwField.value='';
-    const cpField=$('settingsCurrentPassword'); if(cpField) cpField.value='';
-    _settingsPasswordAuthEnabled=false;
-    _updateCurrentPasswordVisibility();
-    try{
-      const authStatus=await api('/api/auth/status');
-      _renderSettingsAuthStatus(authStatus);
-      _updateAuthWarningBadge(authStatus);
-    }catch(e){}
-  }catch(e){showToast('Failed to go passwordless: '+e.message);}
-}
-
-async function disableAuth(){
-  const currentPwField=$('settingsCurrentPassword');
-  const currentPw=(currentPwField||{}).value||'';
-  if(_settingsPasswordAuthEnabled && !currentPw.trim()){
-    if(currentPwField) currentPwField.focus();
-    showToast(t('current_password_required'));
-    return;
-  }
-  const confirmText='DISABLE AUTH';
-  const userInput=await showPromptDialog({title:t('disable_auth_confirm_title'),message:t('disable_auth_confirm_message')+' '+t('disable_auth_typed_confirm'),placeholder:confirmText,confirmLabel:t('disable_auth'),danger:true});
-  if(!userInput || userInput.trim()!==confirmText) return;
-  const payload={_clear_password:true};
-  if(_settingsPasswordAuthEnabled) payload._current_password=currentPw;
-  try{
-    const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-    showToast(t('auth_disabled'));
-    const disableBtn=$('btnDisableAuth');
-    if(disableBtn) disableBtn.style.display='none';
-    const signOutBtn=$('btnSignOut');
-    if(signOutBtn) signOutBtn.style.display='none';
-    _syncPasswordlessButton({auth_enabled:false,password_auth_enabled:false,passkeys_count:0});
-    _settingsPasswordAuthEnabled=false;
-    _updateCurrentPasswordVisibility();
-    const cpField=$('settingsCurrentPassword'); if(cpField) cpField.value='';
-    loadPasskeys();
-    try{
-      const authStatus=await api('/api/auth/status');
-      _renderSettingsAuthStatus(authStatus);
-      _updateAuthWarningBadge(authStatus);
-      _updateAuthDisabledWarning(authStatus);
-    }catch(e){}
-  }catch(e){
-    showToast(t('disable_auth_failed')+e.message);
   }
 }
 
