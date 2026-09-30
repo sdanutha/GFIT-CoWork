@@ -10591,7 +10591,6 @@ from api.models import (
     get_session_for_scan,
     find_compression_recovery_session,
     get_session_for_file_ops,
-    state_db_has_session,
     persist_recovered_workspace_binding,
     WorkspaceBindingPersistenceError,
     new_session,

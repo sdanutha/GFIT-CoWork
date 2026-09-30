@@ -163,7 +163,7 @@ def dispatched_routes() -> set[DispatchedRoute]:
             continue
         for node in ast.walk(function):
             if isinstance(node, ast.Compare) and _is_request_path(node.left):
-                for op, comparator in zip(node.ops, node.comparators):
+                for op, comparator in zip(node.ops, node.comparators, strict=True):
                     if isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)):
                         routes.update(
                             DispatchedRoute(method, route, False)

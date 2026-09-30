@@ -112,7 +112,7 @@ def test_compose_files_parse_as_valid_yaml():
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
-            raise AssertionError(f"{path} is not valid YAML: {e}")
+            raise AssertionError(f"{path} is not valid YAML: {e}") from e
         assert isinstance(data, dict), f"{path} must parse to a dict"
         assert "services" in data, f"{path} must define a `services:` block"
 

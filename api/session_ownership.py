@@ -259,7 +259,6 @@ class _UnconfinedSessionOwnership:
     def refuse_session(self, session_id) -> Refusal | None:
         """Another known Profile's session names its owner; an id it cannot find passes."""
         from api.models import get_session, is_safe_session_id
-        from api.profiles import _profiles_match, get_active_profile_name
 
         if not isinstance(session_id, str) or not session_id or not is_safe_session_id(session_id):
             return None

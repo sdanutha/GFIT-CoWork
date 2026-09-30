@@ -288,7 +288,7 @@ def _segments_match(pattern: str, path: str) -> bool:
     pattern_parts, path_parts = pattern.split("/"), path.split("/")
     return len(pattern_parts) == len(path_parts) and all(
         (want.startswith("<") and want.endswith(">") and got) or want == got
-        for want, got in zip(pattern_parts, path_parts)
+        for want, got in zip(pattern_parts, path_parts, strict=True)
     )
 
 

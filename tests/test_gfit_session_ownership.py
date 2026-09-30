@@ -119,7 +119,7 @@ ADAPTERS = {
 @pytest.mark.parametrize("case", sorted(SESSION_TABLE))
 @pytest.mark.parametrize("adapter", list(ADAPTERS))
 def test_is_this_session_id_mine(world, case, adapter):
-    expected = dict(zip(ADAPTERS, SESSION_TABLE[case]))[adapter]
+    expected = dict(zip(ADAPTERS, SESSION_TABLE[case], strict=True))[adapter]
     outcome = _outcome(ADAPTERS[adapter]().refuse_session(SESSION_IDS[case]))
     # The unconfined adapter's "owned" for an id it cannot find means "left to the route".
     assert outcome == expected
