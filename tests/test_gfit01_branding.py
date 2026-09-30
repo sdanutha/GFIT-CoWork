@@ -103,7 +103,10 @@ def test_readme_names_upstream_only_as_the_fork_credit():
 def test_license_keeps_original_copyright():
     lic = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert "MIT License" in lic
-    assert "Copyright" in lic
+    # upstream-gone ticket 10: the fork's holder is added; Upstream's notice stays word for word.
+    assert "Copyright (c) 2026 GFIT-CoWork contributors\n" in lic
+    assert "Copyright (c) 2025 Hermes Web UI Contributors\n" in lic
+    assert "Permission is hereby granted, free of charge" in lic
 
 
 def _locale_blocks() -> dict:
