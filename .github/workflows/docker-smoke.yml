@@ -130,6 +130,9 @@ jobs:
           }
           trap cleanup EXIT
 
+          # The container binds 0.0.0.0, where GFIT-CoWork refuses to start without a
+          # Directory. The in-memory Directory with no users file refuses every
+          # login, which is all a /health probe needs.
           # Deliberately NOT mounting /workspace: the point of this gate is that
           # the stock image's own /workspace (owned 1024:1024) must not win over
           # the host-owned state mount.
@@ -137,6 +140,7 @@ jobs:
           docker run -d --name "$CONTAINER" \
             -p 127.0.0.1:8788:8787 \
             -e HERMES_WEBUI_STATE_DIR=/app/data \
+            -e HERMES_WEBUI_DIRECTORY=memory \
             -v "$STATE_DIR":/app/data \
             gfit-cowork:latest
           echo "::endgroup::"
@@ -225,6 +229,7 @@ jobs:
           docker run -d --name "$CONTAINER" \
             -p 127.0.0.1:8789:8787 \
             -e HERMES_WEBUI_STATE_DIR=/app/data \
+            -e HERMES_WEBUI_DIRECTORY=memory \
             -e WANTED_UID=1024 \
             -e WANTED_GID=1024 \
             -v "$STATE_DIR":/app/data \
