@@ -499,7 +499,10 @@ class TestProfileMutationsInIsolatedMode:
             def end_headers(self):
                 pass
 
-        monkeypatch.setattr(routes, "_is_isolated_profile_mode", lambda: True)
+        import api.profiles as profiles
+
+        # The route asks session ownership, which reads Upstream's posture from api.profiles.
+        monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: True)
         monkeypatch.setattr(
             routes,
             "bad",

@@ -187,3 +187,66 @@ def test_session_search_reads_only_the_profiles_a_request_may_read(three_session
     assert _only_own(ids, sids, ADMIN)
     ids, _ = _listed(clients[ADMIN], "/api/sessions/search?q=zebra&all_profiles=1")
     assert set(sids.values()) <= ids
+
+
+# ── Step (b), ticket 08: the Profile list and CLI import ask the question ────
+
+def test_the_profile_list_shows_what_the_request_may_read(srv):
+    status, body, _ = srv.logged_in(ALICE).get("/api/profiles")
+    assert status == 200, body
+    assert [p["name"] for p in body["profiles"]] == [ALICE]
+    assert body["single_profile_mode"] is True
+
+    status, body, _ = srv.logged_in(ADMIN).get("/api/profiles")
+    assert status == 200, body
+    assert {ALICE, BOB} <= {p["name"] for p in body["profiles"]}
+    assert body["single_profile_mode"] is False
+
+
+def _cli_session_in(srv, uid, sid):
+    """A CLI session in *uid*'s Profile state, with no WebUI record."""
+    import sqlite3
+
+    conn = sqlite3.connect(srv.profile_home(uid) / "state.db")
+    with conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, source TEXT, title TEXT,"
+            " model TEXT, cwd TEXT, started_at REAL, ended_at REAL, end_reason TEXT,"
+            " parent_session_id TEXT, message_count INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " session_id TEXT, role TEXT, content TEXT, timestamp REAL)"
+        )
+        now = time.time()
+        conn.execute(
+            "INSERT INTO sessions (id, source, title, started_at, message_count) VALUES (?, 'cli', 'cli chat', ?, 2)",
+            (sid, now),
+        )
+        conn.executemany(
+            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+            [(sid, "user", "hello", now), (sid, "assistant", "hi", now + 1)],
+        )
+    conn.close()
+    return sid
+
+
+def test_all_profiles_cli_import_finds_nothing_in_another_users_profile(srv):
+    import uuid
+
+    from api.models import Session
+
+    sid = _cli_session_in(srv, BOB, f"bob_cli_{uuid.uuid4().hex[:10]}")
+    alice = srv.logged_in(ALICE)
+
+    for body in ({"session_id": sid, "all_profiles": True, "profile": ALICE},
+                 {"session_id": sid, "all_profiles": True}):
+        status, payload, _ = alice.post("/api/session/import_cli", body)
+        assert status in (403, 404), payload
+    assert Session.load(sid) is None
+
+    status, payload, _ = srv.logged_in(ADMIN).post(
+        "/api/session/import_cli", {"session_id": sid, "all_profiles": True, "profile": BOB},
+    )
+    assert status == 200, payload
+    assert payload["session"]["profile"] == BOB

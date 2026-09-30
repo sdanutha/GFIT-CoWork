@@ -14809,16 +14809,22 @@ def handle_get(handler, parsed) -> bool:
             diag.stage("list_profiles_api") if diag else None
             from api import roster
 
-            profiles_payload = roster.label_rows(profiles_api.list_profiles_api())
             diag.stage("active_profile_lookup") if diag else None
             active = profiles_api.get_active_profile_name()
             diag.stage("isolated_mode_check") if diag else None
+            # The Profile list is an all-Profiles view: the cached rows are
+            # everyone's, and this request's reach picks the ones it may see.
+            reach = request_session_ownership().profile_reach(active, all_profiles=True)
+            profiles_payload = roster.label_rows([
+                row for row in profiles_api.list_profiles_api()
+                if isinstance(row, dict) and reach.includes(row.get("name"))
+            ])
             return j(
                 handler,
                 {
                     "profiles": profiles_payload,
                     "active": active,
-                    "single_profile_mode": _is_isolated_profile_mode(),
+                    "single_profile_mode": reach.single_profile,
                 },
             )
         finally:
@@ -28427,7 +28433,7 @@ def _handle_session_import_cli(handler, body):
     if requested_profile == "":
         return bad(handler, "invalid profile", 400)
     allow_all_profiles = _request_wants_all_profiles_import(body)
-    if allow_all_profiles and _is_isolated_profile_mode():
+    if allow_all_profiles and not request_session_ownership().profile_reach(all_profiles=True).every_profile:
         return bad(handler, "all_profiles import is not allowed in isolated profile mode", 403)
     if allow_all_profiles and not requested_profile:
         return bad(handler, "profile is required for all_profiles import", 400)
