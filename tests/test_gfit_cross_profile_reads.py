@@ -4,6 +4,7 @@
 - A User's cron job works only in a folder the Workspace policy lets them use
   (ticket 03).
 - A User's cron status shows only their own running jobs (ticket 04).
+- A User's project dashboard reads only inside their Workspace (ticket 02).
 
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
 Admin keeps today's behaviour in each case.
@@ -488,3 +489,82 @@ def test_a_users_job_set_to_another_profile_runs_in_their_own(srv, fake_cron, mo
     assert status == 200, body
     (_job, _home, execution_home, _event_profile), = runs
     assert Path(execution_home).resolve() == srv.profile_home(ALICE).resolve()
+
+
+# ── Ticket 02: the project dashboard ─────────────────────────────────────────
+
+def _project_folder(path: Path, secret: str, repo_root: Path | None = None) -> Path:
+    docs = path / "docs" / "project-os"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "PROJECT.md").write_text(f"# Project\n{secret}\n")
+    (path / "PLAN.md").write_text(f"{secret} plan\n")
+    if repo_root is not None:
+        status = path / ".ax" / "status"
+        status.mkdir(parents=True, exist_ok=True)
+        (status / "active.json").write_text(json.dumps({"repo_root": str(repo_root)}))
+    return path
+
+
+@pytest.fixture
+def boards(srv, tmp_path, monkeypatch):
+    """Kanban boards (one store for every Profile) pointing at Bob's Workspace and outside it."""
+    import api.kanban_bridge as kanban_bridge
+
+    folders = {
+        "bob": _project_folder(srv.profile_home(BOB) / "workspace" / "bobs-repo", "BOB-SECRET"),
+        "outside": _project_folder(tmp_path / "outside-repo", "SERVER-SECRET"),
+    }
+    metas = [
+        {"slug": "bobs-board", "name": "Bob's board", "default_workdir": str(folders["bob"])},
+        {"slug": "outside-board", "name": "Outside", "default_workdir": str(folders["outside"])},
+        {"slug": "no-folder-board", "name": "No folder"},
+    ]
+    fake_kb = types.SimpleNamespace(list_boards=lambda include_archived=True: metas)
+    monkeypatch.setattr(kanban_bridge, "_kb", lambda: fake_kb)
+    return folders
+
+
+def _dashboard(client, board="") -> dict:
+    status, body, _ = client.get(f"/api/project-os/dashboard?board={board}" if board else "/api/project-os/dashboard")
+    assert status == 200, body
+    return body
+
+
+def _without_board(body: dict) -> dict:
+    return {k: v for k, v in body.items() if k not in ("selected_board_slug", "goal_summary", "board")}
+
+
+@pytest.mark.parametrize("board", ["bobs-board", "outside-board"])
+def test_a_users_dashboard_never_reads_a_board_folder_outside_their_workspace(srv, boards, board):
+    alice = srv.logged_in(ALICE)
+
+    body = _dashboard(alice, board)
+
+    text = json.dumps(body)
+    assert "BOB-SECRET" not in text and "SERVER-SECRET" not in text
+    assert str(boards["bob"]) not in text and str(boards["outside"]) not in text
+    assert _without_board(body) == _without_board(_dashboard(alice, "no-folder-board"))
+
+
+def test_a_repository_path_inside_a_users_project_is_followed_only_inside_their_workspace(srv, boards):
+    # Alice's dashboard reads her last-used Workspace: her Workspace folder.
+    own = srv.profile_home(ALICE) / "workspace"
+    _project_folder(own, "ALICE-PLAN", repo_root=boards["bob"])
+    alice = srv.logged_in(ALICE)
+
+    body = _dashboard(alice)
+
+    # Alice's own status file is echoed back as written (it names Bob's
+    # folder); what matters is that the dashboard did not go there.
+    text = json.dumps(body)
+    assert "BOB-SECRET" not in text
+    assert Path(body["repo_root"]).resolve() == own.resolve()
+    assert Path(body["workspace"]).resolve() == own.resolve()
+    assert "ALICE-PLAN" in text
+
+
+def test_the_admins_dashboard_follows_any_board_folder(srv, boards):
+    admin = srv.logged_in(ADMIN)
+
+    assert "BOB-SECRET" in json.dumps(_dashboard(admin, "bobs-board"))
+    assert "SERVER-SECRET" in json.dumps(_dashboard(admin, "outside-board"))

@@ -12410,10 +12410,26 @@ def _project_os_onboarding_context(repo_root: Path, project_md: dict | None, pla
 
 
 def _handle_project_os_dashboard(handler, parsed) -> bool:
+    from api.workspace_policy import request_workspace_policy
+
+    # Every folder the dashboard reads comes from somewhere a User does not
+    # control alone (the shared Kanban store, a file inside a project), so each
+    # one asks the request's Workspace policy. A refused folder is no folder.
+    policy = request_workspace_policy()
+
+    def usable(path: Path | None) -> Path | None:
+        if path is None:
+            return None
+        try:
+            policy.confine(path)
+        except ValueError:
+            return None
+        return path
+
     qs = parse_qs(parsed.query or "")
     requested_board = str((qs.get("board") or [""])[0] or "").strip()
     workspace_raw = str(get_last_workspace() or "").strip()
-    repo_root = Path(workspace_raw).expanduser() if workspace_raw else None
+    repo_root = usable(Path(workspace_raw).expanduser()) if workspace_raw else None
     selected_board_meta = None
     if requested_board:
         try:
@@ -12425,13 +12441,13 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
                     selected_board_meta = board
                     workdir = str(board.get("default_workdir") or "").strip()
                     if workdir:
-                        candidate = Path(workdir).expanduser()
-                        if candidate.exists():
+                        candidate = usable(Path(workdir).expanduser())
+                        if candidate is not None and candidate.exists():
                             repo_root = candidate
                     break
         except Exception:
             selected_board_meta = None
-    repo_root = _project_os_resolve_repo_root_for_board(repo_root, requested_board)
+    repo_root = usable(_project_os_resolve_repo_root_for_board(repo_root, requested_board))
     if not repo_root or not repo_root.exists():
         j(handler, {
             "workspace": None,
@@ -12465,8 +12481,8 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
         original_repo_root = repo_root
         active_repo_root = str(active.get("repo_root") or "").strip()
         if active_repo_root:
-            candidate = Path(active_repo_root).expanduser()
-            if candidate.exists():
+            candidate = usable(Path(active_repo_root).expanduser())
+            if candidate is not None and candidate.exists():
                 try:
                     repo_root = candidate.resolve()
                 except Exception:
