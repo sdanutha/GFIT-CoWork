@@ -24,8 +24,9 @@ the route has already found, a record or a listed row,
 :meth:`refuse_found_session`; for one the detail load knows only from its
 listed row, :meth:`refuse_listed_session`), is this stream
 id mine (:meth:`refuse_stream`), may this session-list event go to me
-(:meth:`may_receive_event`) and may this listed row go to me
-(:meth:`may_list_row`). A refusal (:class:`Refusal`) writes its own answer:
+(:meth:`may_receive_event`), may this listed row go to me
+(:meth:`may_list_row`), and which Profiles may this request read at all
+(:meth:`profile_reach`, a :class:`ProfileReach`). A refusal (:class:`Refusal`) writes its own answer:
 404 "Session not found", or 409 naming the owning Profile, which only the
 unconfined adapter gives. For a User, another Profile's session and a session
 that does not exist get exactly the same answer.
@@ -78,6 +79,33 @@ class Refusal:
 
 
 NOT_FOUND = Refusal()
+
+
+@dataclass(frozen=True)
+class ProfileReach:
+    """Which Profiles a request may read: the answer to :meth:`profile_reach`.
+
+    *profiles* is the Profiles the request may read, or None for every Profile.
+    *counts_other_profiles* says whether an "N from other Profiles" count may be
+    shown. *single_profile* says whether the web app should treat the caller as
+    single-Profile (no Profile picker, no all-Profiles view).
+    """
+
+    profiles: frozenset | None
+    counts_other_profiles: bool
+    single_profile: bool
+
+    @property
+    def every_profile(self) -> bool:
+        return self.profiles is None
+
+    def includes(self, profile) -> bool:
+        """May the request read data of *profile*? A missing Profile is the root Profile's."""
+        from api.profiles import _profiles_match
+
+        if self.profiles is None:
+            return True
+        return any(_profiles_match(profile, readable) for readable in self.profiles)
 
 
 def _names_nothing(session_id) -> bool:
@@ -224,6 +252,10 @@ class UserSessionOwnership:
         """No: a User's request is answered by this adapter alone, never by a route's own rules."""
         return False
 
+    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+        """Exactly the User's own Profile, whatever was asked; other Profiles are never counted."""
+        return ProfileReach(frozenset({self.profile}), counts_other_profiles=False, single_profile=True)
+
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found (a record, or a listed row): the User's own, else 404."""
         from api.profiles import _profiles_match
@@ -255,6 +287,20 @@ class _UnconfinedSessionOwnership:
         """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
         chat start's placeholder retag) on top of this adapter's answers."""
         return True
+
+    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+        """Today's rules: the active Profile, or every Profile when asked for.
+
+        Upstream's isolated profile mode (a process serving one Profile) keeps
+        the request on the active Profile and counts no other.
+        """
+        from api.profiles import _is_isolated_profile_mode, get_active_profile_name
+
+        single = _is_isolated_profile_mode()
+        if all_profiles and not single:
+            return ProfileReach(None, counts_other_profiles=False, single_profile=False)
+        active = active_profile or get_active_profile_name()
+        return ProfileReach(frozenset({active}), counts_other_profiles=not single, single_profile=single)
 
     def refuse_session(self, session_id) -> Refusal | None:
         """Another known Profile's session names its owner; an id it cannot find passes."""
@@ -337,6 +383,9 @@ class _RefusingSessionOwnership:
 
     def keeps_upstream_rules(self) -> bool:
         return False
+
+    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+        return ProfileReach(frozenset(), counts_other_profiles=False, single_profile=True)
 
     def refuse_found_session(self, session_id, found) -> Refusal:
         return NOT_FOUND

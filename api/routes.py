@@ -11969,13 +11969,13 @@ def _handle_insights(handler, parsed) -> bool:
     else:
         idx = []
 
-    # The index holds every Profile's sessions: a User counts only their own,
-    # the Admin every Profile's (GFIT-CoWork, ADR 0002).
+    # The index holds every Profile's sessions. Insights is an all-Profiles
+    # view: a User counts only their own, the Admin every Profile's.
     from api.session_ownership import request_session_ownership
 
-    ownership = request_session_ownership()
+    reach = request_session_ownership().profile_reach(all_profiles=True)
     for entry in idx:
-        if not ownership.may_list_row(entry, all_profiles=True):
+        if not reach.includes(entry.get("profile")):
             continue
         created = entry.get("created_at", 0) or 0
         updated = entry.get("updated_at", 0) or 0
