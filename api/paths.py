@@ -231,16 +231,18 @@ def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> Non
                 os.unlink(tmp)
                 _write_in_place()
                 return
-        if mode is not None and hasattr(os, "fchmod"):
-            os.fchmod(fd, mode)
-        elif mode is not None:
-            os.chmod(tmp, mode)
         f = os.fdopen(fd, "w", encoding=encoding)
         owns_fd = False
         with f:
             f.write(text)
             f.flush()
+            # Set the mode after writing: on macOS/BSD a write by a non-root
+            # process clears setuid/setgid, so a mode set first loses them.
+            if mode is not None and hasattr(os, "fchmod"):
+                os.fchmod(f.fileno(), mode)
             os.fsync(f.fileno())
+        if mode is not None and not hasattr(os, "fchmod"):
+            os.chmod(tmp, mode)
         _verify_symlink_target()
         os.replace(tmp, write_path)
         _fsync_directory(write_path.parent)
