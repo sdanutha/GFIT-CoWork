@@ -63,7 +63,12 @@ from api.session_events import (
     unsubscribe_session_events,
 )
 from api.gateway_restart import restart_active_profile_gateway
-from api.session_ownership import UNCONFINED as _UNCONFINED_OWNERSHIP, request_session_ownership
+from api.session_ownership import (
+    UNCONFINED as _UNCONFINED_OWNERSHIP,
+    request_caller_reach,
+    request_profile_reach,
+    request_session_ownership,
+)
 from api.shares import create_or_refresh_share, load_share, revoke_share
 from api.trusted_proxy import forwarded_client_address, peer_address, peer_is_trusted_proxy
 
@@ -494,13 +499,6 @@ def _all_profiles_query_flag(parsed_url) -> bool:
     qs = parse_qs(parsed_url.query)
     raw = qs.get('all_profiles', [''])[0].strip().lower()
     return raw in ('1', 'true', 'yes', 'on')
-
-
-def _request_profile_reach(parsed_url, active_profile):
-    """Which Profiles this request may read, asked of session ownership with its all_profiles flag."""
-    return request_session_ownership().profile_reach(
-        active_profile, all_profiles=_all_profiles_query_flag(parsed_url),
-    )
 
 
 def _query_flag(parsed_url, name: str) -> bool:
@@ -1539,7 +1537,7 @@ def _cron_jobs_cross_profile(active_profile: str) -> tuple[list[dict], list[dict
         names.append(name)
 
     # Only the Profiles this request may read are scanned at all.
-    readable = request_session_ownership().profile_reach(active_profile, all_profiles=True)
+    readable = request_caller_reach()
     _add_name(active_profile)
     for row in list_profiles_api():
         if not isinstance(row, dict):
@@ -1583,7 +1581,7 @@ def _available_cron_profile_names() -> set[str]:
     """The Profiles a cron job may be set to run in: the ones this request may read."""
     from api import profiles as profiles_api
 
-    reach = request_session_ownership().profile_reach(profiles_api.get_active_profile_name(), all_profiles=True)
+    reach = request_caller_reach()
     names = {"default"} if reach.includes("default") else set()
     for profile in profiles_api.list_profiles_api():
         try:
@@ -2612,9 +2610,9 @@ def _build_session_list_view(**kwargs) -> dict:
     view, so it is built with the unconfined rule wherever it is built; each
     caller's answer is applied after the cache (_session_list_rows_for_caller).
     """
-    from api.access import view_build_without_admission
+    from api.access import without_request_admission
 
-    with view_build_without_admission():
+    with without_request_admission():
         return _build_session_list_cache_payload(**kwargs)
 
 
@@ -11990,11 +11988,9 @@ def _handle_insights(handler, parsed) -> bool:
     else:
         idx = []
 
-    # The index holds every Profile's sessions. Insights is an all-Profiles
-    # view: a User counts only their own, the Admin every Profile's.
-    from api.session_ownership import request_session_ownership
-
-    reach = request_session_ownership().profile_reach(all_profiles=True)
+    # The index holds every Profile's sessions: a User counts only their own;
+    # the Admin, and Upstream's isolated profile mode, every one in the index.
+    reach = request_caller_reach()
     for entry in idx:
         if not reach.includes(entry.get("profile")):
             continue
@@ -12346,13 +12342,22 @@ def _project_os_candidate_repo_roots(workspace_root: Path | None) -> list[Path]:
     return candidates
 
 
-def _project_os_resolve_repo_root_for_board(repo_root: Path | None, board_slug: str | None) -> Path | None:
+def _project_os_resolve_repo_root_for_board(repo_root: Path | None, board_slug: str | None, usable=None) -> Path | None:
+    """The folder whose project files claim *board_slug*, else *repo_root*.
+
+    *usable* (the request's Workspace check) maps a candidate to the path to
+    use, or None; a candidate it refuses is never read.
+    """
     slug = str(board_slug or "").strip()
     if not slug:
         return repo_root if repo_root and repo_root.exists() else None
     if repo_root and repo_root.exists() and _project_os_repo_matches_board(repo_root, slug):
         return repo_root
     for candidate in _project_os_candidate_repo_roots(repo_root):
+        if usable is not None:
+            candidate = usable(candidate)
+            if candidate is None:
+                continue
         if _project_os_repo_matches_board(candidate, slug):
             return candidate
     return repo_root if repo_root and repo_root.exists() else None
@@ -12431,13 +12436,13 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
     policy = request_workspace_policy()
 
     def usable(path: Path | None) -> Path | None:
+        """The path the policy resolved (the one then read), or None when refused."""
         if path is None:
             return None
         try:
-            policy.confine(path)
+            return Path(policy.confine(path))
         except ValueError:
             return None
-        return path
 
     qs = parse_qs(parsed.query or "")
     requested_board = str((qs.get("board") or [""])[0] or "").strip()
@@ -12460,7 +12465,7 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
                     break
         except Exception:
             selected_board_meta = None
-    repo_root = usable(_project_os_resolve_repo_root_for_board(repo_root, requested_board))
+    repo_root = usable(_project_os_resolve_repo_root_for_board(repo_root, requested_board, usable))
     if not repo_root or not repo_root.exists():
         j(handler, {
             "workspace": None,
@@ -14313,7 +14318,7 @@ def handle_get(handler, parsed) -> bool:
             show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
             agent_session_source_filter = settings.get("agent_session_source_filter")
             active_profile = profiles_api.get_active_profile_name()
-            reach = _request_profile_reach(parsed, active_profile)
+            reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
             all_profiles = reach.every_profile
             include_archived = _query_flag(parsed, "include_archived")
             exclude_hidden = _query_flag(parsed, "exclude_hidden")
@@ -14380,7 +14385,7 @@ def handle_get(handler, parsed) -> bool:
 
         active_profile = profiles_api.get_active_profile_name()
         all_projects = load_projects()
-        reach = _request_profile_reach(parsed, active_profile)
+        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
         all_profiles = reach.every_profile
         scoped = [p for p in all_projects if reach.includes(p.get("profile"))]
         other_profile_count = len(all_projects) - len(scoped) if reach.counts_other_profiles else 0
@@ -14692,7 +14697,7 @@ def handle_get(handler, parsed) -> bool:
             if exc.name in ("cron", "cron.jobs"):
                 return j(handler, {"jobs": [], "cron_unavailable": True})
             raise
-        reach = _request_profile_reach(parsed, active_profile)
+        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
         all_profiles = reach.every_profile
         jobs = active_jobs + other_jobs if all_profiles else active_jobs
         hidden_other_count = len(other_jobs) if reach.counts_other_profiles else 0
@@ -14838,7 +14843,7 @@ def handle_get(handler, parsed) -> bool:
             diag.stage("isolated_mode_check") if diag else None
             # The Profile list is an all-Profiles view: the cached rows are
             # everyone's, and this request's reach picks the ones it may see.
-            reach = request_session_ownership().profile_reach(active, all_profiles=True)
+            reach = request_profile_reach(active, all_profiles=True)
             profiles_payload = roster.label_rows([
                 row for row in profiles_api.list_profiles_api()
                 if isinstance(row, dict) and reach.includes(row.get("name"))
@@ -17279,7 +17284,7 @@ def handle_post(handler, parsed) -> bool:
         if not proj:
             return bad(handler, "Project not found", 404)
         # #1614: a project can only be renamed by the profile that owns it.
-        if not request_session_ownership().profile_reach(get_active_profile_name()).includes(proj.get("profile")):
+        if not request_profile_reach().includes(proj.get("profile")):
             return bad(handler, "Project not found", 404)
         proj["name"] = body["name"].strip()[:128]
         if "color" in body:
@@ -17302,7 +17307,7 @@ def handle_post(handler, parsed) -> bool:
         if not proj:
             return bad(handler, "Project not found", 404)
         # #1614: a project can only be deleted by the profile that owns it.
-        if not request_session_ownership().profile_reach(get_active_profile_name()).includes(proj.get("profile")):
+        if not request_profile_reach().includes(proj.get("profile")):
             return bad(handler, "Project not found", 404)
         projects = [p for p in projects if p["project_id"] != body["project_id"]]
         save_projects(projects)
@@ -17731,7 +17736,7 @@ def _handle_sessions_search(handler, parsed):
     content_search = qs.get("content", ["1"])[0] == "1"
     from api.profiles import get_active_profile_name
     active_profile = get_active_profile_name()
-    all_profiles = _request_profile_reach(parsed, active_profile).every_profile
+    all_profiles = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed)).every_profile
     ownership = request_session_ownership()
     sessions = [
         s for s in all_sessions()
@@ -21908,11 +21913,10 @@ def _cron_status_readable_job_ids():
     """
     from api.profiles import get_active_profile_name
 
-    active = get_active_profile_name()
-    reach = request_session_ownership().profile_reach(active, all_profiles=True)
+    reach = request_caller_reach()
     if reach.every_profile:
         return None
-    if not reach.includes(active):
+    if not reach.includes(get_active_profile_name()):
         return set()
     _ensure_agent_cron_import_path()
     try:
@@ -24958,17 +24962,21 @@ def _handle_cron_update(handler, body):
     # A cron job's working folder is a Workspace the scheduled run works in:
     # the request's Workspace policy decides, before anything is changed.
     workdir = body.get("workdir")
+    confined_workdir = None
     if workdir not in (None, "", False):
         from api.workspace_policy import request_workspace_policy
 
         try:
-            request_workspace_policy().confine(Path(str(workdir)))
+            confined_workdir = str(request_workspace_policy().confine(Path(str(workdir))))
         except ValueError as e:
             return bad(handler, str(e))
     try:
         updates = {}
         for k, v in body.items():
             if k == "job_id":
+                continue
+            if k == "workdir" and confined_workdir is not None:
+                updates[k] = confined_workdir  # the folder checked is the folder stored
                 continue
             if k == "profile":
                 updates[k] = _normalize_cron_profile_value(v)
@@ -28496,10 +28504,14 @@ def _handle_session_import_cli(handler, body):
     if requested_profile == "":
         return bad(handler, "invalid profile", 400)
     allow_all_profiles = _request_wants_all_profiles_import(body)
-    if allow_all_profiles and not request_session_ownership().profile_reach(all_profiles=True).every_profile:
+    caller_reach = request_caller_reach()
+    if allow_all_profiles and caller_reach.every_profile and not request_profile_reach(all_profiles=True).every_profile:
         return bad(handler, "all_profiles import is not allowed in isolated profile mode", 403)
     if allow_all_profiles and not requested_profile:
         return bad(handler, "profile is required for all_profiles import", 400)
+    if requested_profile and not caller_reach.includes(requested_profile):
+        # A User's all-Profiles import finds only sessions in their own Profile.
+        return bad(handler, "Session not found in CLI store", 404)
 
     # Check if already imported — refresh messages from CLI store if new ones arrived
     existing = Session.load(sid)

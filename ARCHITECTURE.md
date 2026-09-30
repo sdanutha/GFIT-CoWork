@@ -1179,9 +1179,10 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   `caller_bound_profile`): the one answer to "who is calling?" for the rest of that request.
   The Admin gate, the page shell's role, the login status role, the profile-name guard, the
   session-ownership answer, the file viewer and Workspace confinement all ask it; none reads
-  the role from the session record. A User's request is bound to their Profile (an
-  isolated-profile request, `profiles._is_isolated_profile_mode`) exactly because its
-  Admission is a User's; there is no separate pin. It lives on the request thread (worker
+  the role from the session record. A User's request is bound to their Profile exactly
+  because its Admission is a User's; there is no separate pin. Upstream's isolated profile
+  mode (`profiles._is_isolated_profile_mode`) is a process posture only and knows nothing of
+  the caller. It lives on the request thread (worker
   threads carry none) and is cleared with the request Profile
   (`profiles.clear_request_profile`) on every exit, before the next keep-alive request.
   `tests/test_gfit_request_admission_guard.py` fails when code outside
@@ -1225,6 +1226,22 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   - **Bound**: the same module says a User's request may name no other Profile and may not
     switch Profile (`may_name_profile`, `may_switch_profile`); `routes._guard_bound_profile_request`
     asks it.
+  - **Profile reach**: the same module says which Profiles a request may read, as a
+    `ProfileReach`. `request_profile_reach(active, all_profiles=...)` answers for a view and
+    follows Upstream's isolated profile mode: the session list and search, projects, the cron
+    list, the Profile list and CLI import ask it, with the "N from other Profiles" count and
+    `single_profile_mode`. `request_caller_reach()` answers what the caller may read at all,
+    whatever the view: insights, cron status, the cron Profile picker, the per-Profile cron
+    scan and every Profile-home lookup ask it. A User reaches only their own Profile; a
+    Profile-home lookup outside the reach raises `profiles.ProfileNotReadable`, which
+    `server.py` answers with 404 (no quiet retarget to the User's own home).
+  - The session list cache is keyed by the view, not the caller: it is built inside
+    `access.without_request_admission()` (the unconfined rule, wherever it is built) and each
+    caller's rows and count are applied after the cache.
+  - `tests/test_gfit_profile_reach_guard.py` fails when code outside the policy modules asks
+    whether the caller is a User, reads isolated profile mode, or filters rows by comparing a
+    row's Profile with the active Profile (each remaining match is listed with its reason;
+    the allowlist is empty).
   - `tests/test_gfit_session_ownership_guard.py` fails when code outside the module compares a
     session's Profile with the active or bound Profile, or names a removed ownership helper
     (its allowlist is empty). `tests/test_gfit_session_route_answers.py` places every User

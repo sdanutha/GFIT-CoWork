@@ -112,7 +112,7 @@ def test_all_profiles_enabled_in_normal_mode(monkeypatch):
     import api.routes as routes
 
     monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: False)
-    reach = routes._request_profile_reach(urlparse('/api/sessions?all_profiles=1'), "default")
+    reach = routes.request_profile_reach("default", all_profiles=routes._all_profiles_query_flag(urlparse('/api/sessions?all_profiles=1')))
     assert reach.every_profile is True
 
 
@@ -122,7 +122,7 @@ def test_all_profiles_disabled_in_isolated_mode(monkeypatch):
     import api.routes as routes
 
     monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: True)
-    reach = routes._request_profile_reach(urlparse('/api/sessions?all_profiles=1'), "default")
+    reach = routes.request_profile_reach("default", all_profiles=routes._all_profiles_query_flag(urlparse('/api/sessions?all_profiles=1')))
     assert reach.every_profile is False
 
 

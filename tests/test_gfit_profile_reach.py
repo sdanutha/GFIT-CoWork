@@ -83,6 +83,24 @@ def test_which_profiles_a_request_may_read(world, monkeypatch, adapter, all_prof
     assert (_readable(reach), reach.counts_other_profiles, reach.single_profile) == expected
 
 
+# (adapter, isolated mode) -> readable at all, whatever the view
+CALLER_CASES = [
+    ("user", False, {ALICE}),
+    ("admin", False, EVERY),
+    ("login off", False, EVERY),
+    ("login off", True, EVERY),  # Upstream's posture shapes views, not what a caller may read
+    ("refusing", False, set()),
+]
+
+
+@pytest.mark.parametrize("adapter,isolated,expected", CALLER_CASES)
+def test_which_profiles_a_caller_may_read_at_all(world, monkeypatch, adapter, isolated, expected):
+    if isolated:
+        _isolated_mode(monkeypatch, world, BOB)
+
+    assert _readable(ADAPTERS[adapter]().caller_reach()) == expected
+
+
 @pytest.mark.parametrize("adapter,row_profile,expected", [
     ("user", ALICE, True),
     ("user", BOB, False),

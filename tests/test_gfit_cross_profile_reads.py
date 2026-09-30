@@ -592,3 +592,127 @@ def test_a_users_per_profile_views_answer_from_their_own_profile(srv, path):
 
     assert status != 500, body
     assert BOB not in json.dumps(body)
+
+
+# ── Review fixes: Upstream's isolated profile mode keeps today's behaviour ───
+
+@pytest.fixture
+def isolated_mode(monkeypatch, tmp_path):
+    """Upstream's posture, login off: this process serves Bob's Profile only."""
+    import api.profiles as profiles
+
+    hermes = tmp_path / "hermes-isolated"
+    for uid in (ALICE, BOB):
+        (hermes / "profiles" / uid).mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes / "profiles" / BOB))
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes)
+    monkeypatch.setattr(profiles, "_INITIAL_ISOLATED_PROFILE_OPT_IN", "1")
+    monkeypatch.setattr(profiles, "_INITIAL_HERMES_HOME", str(hermes / "profiles" / BOB))
+    profiles._invalidate_root_profile_cache()
+    profiles._invalidate_list_profiles_cache()
+    yield hermes
+    profiles._invalidate_root_profile_cache()
+    profiles._invalidate_list_profiles_cache()
+
+
+class _Handler:
+    def __init__(self):
+        import io
+        self.status, self.wfile, self.headers = None, io.BytesIO(), {}
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, *_args):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def body(self):
+        return json.loads(self.wfile.getvalue())
+
+
+def test_isolated_mode_insights_still_count_every_session_in_the_index(isolated_mode, usage_index):
+    handler = _Handler()
+    routes._handle_insights(handler, types.SimpleNamespace(query="days=7"))
+
+    assert handler.body()["total_sessions"] == 3
+
+
+def test_isolated_mode_cron_status_still_shows_every_running_job(isolated_mode):
+    for job_id in ("iso-a", "iso-b"):
+        routes._mark_cron_running(job_id)
+    try:
+        handler = _Handler()
+        routes._handle_cron_status(handler, types.SimpleNamespace(query=""))
+        assert {"iso-a", "iso-b"} <= set(handler.body()["running"])
+    finally:
+        for job_id in ("iso-a", "iso-b"):
+            routes._mark_cron_done(job_id)
+
+
+def test_isolated_mode_cron_picker_still_offers_default(isolated_mode):
+    assert "default" in routes._available_cron_profile_names()
+
+
+# ── Review fixes: a User imports their own CLI session with all Profiles ─────
+
+def test_a_user_imports_their_own_cli_session_with_all_profiles(srv):
+    import uuid
+
+    sid = _cli_session_in(srv, ALICE, f"alice_cli_{uuid.uuid4().hex[:10]}")
+
+    status, payload, _ = srv.logged_in(ALICE).post(
+        "/api/session/import_cli", {"session_id": sid, "all_profiles": True, "profile": ALICE},
+    )
+
+    assert status == 200, payload
+    assert payload["session"]["profile"] == ALICE
+
+
+# ── Review fixes: a refused Profile-home lookup is "not found", not a 500 ────
+
+def test_a_route_that_looks_up_another_profiles_home_answers_not_found(srv, monkeypatch):
+    import api.profiles as profiles
+
+    real_get = routes.handle_get
+
+    def handle_get(handler, parsed):
+        if parsed.path == "/api/prompts":  # a User route, made to look up Bob's home
+            profiles.get_hermes_home_for_profile(BOB)
+            return routes.j(handler, {"ok": True})
+        return real_get(handler, parsed)
+
+    import server
+    monkeypatch.setattr(server, "handle_get", handle_get)
+
+    status, body, _ = srv.logged_in(ALICE).get("/api/prompts")
+
+    assert status == 404, body
+
+
+# ── Review fixes: dashboard candidates are checked before they are read ─────
+
+def test_a_board_claimed_by_a_folder_outside_the_workspace_keeps_the_users_own(srv, boards):
+    own = _project_folder(srv.profile_home(ALICE) / "workspace", "ALICE-PLAN")
+    status_dir = boards["bob"] / ".ax" / "status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / "active.json").write_text(json.dumps({"board": "shared-board"}))
+    (own / "link-to-bob").symlink_to(boards["bob"], target_is_directory=True)
+
+    body = _dashboard(srv.logged_in(ALICE), "shared-board")
+
+    assert Path(body["repo_root"]).resolve() == own.resolve()
+    assert "BOB-SECRET" not in json.dumps(body)
+
+
+def test_the_cron_working_folder_stored_is_the_one_checked(srv, fake_cron, workspaces):
+    _cron_job(srv, ALICE, "alice-job")
+    link = srv.profile_home(ALICE) / "workspace" / "link-to-project"
+    link.symlink_to(workspaces["alice"], target_is_directory=True)
+
+    status, body, _ = srv.logged_in(ALICE).post("/api/crons/update", {"job_id": "alice-job", "workdir": str(link)})
+
+    assert status == 200, body
+    assert _stored_job(srv, ALICE, "alice-job")["workdir"] == str(workspaces["alice"].resolve())

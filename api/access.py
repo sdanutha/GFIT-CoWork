@@ -284,12 +284,13 @@ def clear_request_admission() -> None:
 
 
 @contextlib.contextmanager
-def view_build_without_admission():
-    """Build a cached view with no caller: the unconfined rule, as on a worker thread.
+def without_request_admission():
+    """Set the request's Admission aside while the block runs, then restore it.
 
-    For caches keyed by the view, not the caller (the session list): what is
-    built must not depend on who built it. The caller's own answer is applied
-    after the cache. The request's Admission is restored on the way out.
+    Inside, the request has no caller, as on a worker thread (the unconfined
+    rule). Only for building a cache keyed by the view, not the caller (the
+    session list), so what is built never depends on who built it; the
+    caller's own answer is applied after the cache.
     """
     saved = (getattr(_request, "admission", None), getattr(_request, "directory_session", False))
     clear_request_admission()

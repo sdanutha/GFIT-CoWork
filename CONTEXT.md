@@ -36,6 +36,10 @@ _Avoid_: authorization, access check
 Said of a User's request: it runs in that User's Profile and may name no other, because the request's Admission says so. The Admin's requests are not bound.
 _Avoid_: pinned, locked
 
+**Profile reach**:
+The Profiles a request may read. A User's reach is their own Profile only; the Admin's is every Profile. A view (the session list, projects, the Profile list) can narrow it further, for example to the active Profile.
+_Avoid_: scope, visibility
+
 **Workspace**:
 A folder the agent works in for a session. Every Workspace lives inside its owner's Profile.
 _Avoid_: project folder, directory

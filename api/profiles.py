@@ -539,6 +539,18 @@ def clear_request_profile() -> None:
     clear_request_admission()
 
 
+class ProfileNotReadable(ValueError):
+    """A Profile-home lookup the request's caller may not make (another User's Profile).
+
+    The request's answer is "not found" (``server.py`` maps it to 404), the same
+    as for a Profile that does not exist.
+    """
+
+    def __init__(self, name):
+        super().__init__(f"Profile {name!r} is not readable by this request")
+        self.name = name
+
+
 def _resolve_profile_home_for_name(name: str) -> Path:
     """Resolve a logical profile name to its Hermes home path.
 
@@ -547,6 +559,12 @@ def _resolve_profile_home_for_name(name: str) -> Path:
     not been created yet; the agent layer may create it on first use.  Invalid
     names fall back to the base home so traversal-shaped cookie values cannot
     influence filesystem paths.
+
+    Upstream's isolated profile mode clamps every lookup to its one Profile.
+    A caller confined to some Profiles (a GFIT-CoWork User) resolves only
+    those: no name is the request's own Profile, and any other name (another
+    Profile, a missing one, an invalid one, ``default``) raises
+    :class:`ProfileNotReadable` instead of falling back.
     """
     # In isolated mode, every logical profile lookup clamps to the configured
     # startup HERMES_HOME so callers cannot resolve a foreign profile path.
@@ -559,18 +577,18 @@ def _resolve_profile_home_for_name(name: str) -> Path:
                 name, isolated_name,
             )
         return isolated_home
-    # A request that may not read every Profile (a GFIT-CoWork User's) resolves
-    # only the Profiles session ownership lets it read; no name means the
+    # A caller who may not read every Profile (a GFIT-CoWork User) resolves
+    # only the Profiles session ownership lets them read; no name means the
     # request's own. Anything else is refused, not quietly retargeted.
-    from api.session_ownership import request_session_ownership
+    from api.session_ownership import request_caller_reach
 
-    reach = request_session_ownership().profile_reach(all_profiles=True)
+    reach = request_caller_reach()
     if not reach.every_profile:
         name = name or get_active_profile_name()
         if not name or not reach.includes(name) or not (
             _is_root_profile(name) or _PROFILE_ID_RE.fullmatch(name)
         ):
-            raise ValueError(f"Profile {name!r} is not readable by this request")
+            raise ProfileNotReadable(name)
     if not name or _is_root_profile(name):
         return _DEFAULT_HERMES_HOME
     if not _PROFILE_ID_RE.fullmatch(name):
@@ -873,7 +891,10 @@ def get_hermes_home_for_profile(name: str) -> Path:
 
     Falls back to _DEFAULT_HERMES_HOME (same as 'default') when *name* is None,
     empty, 'default', or does not match the profile-name format (rejects path
-    traversal such as '../../etc').
+    traversal such as '../../etc'). For a caller confined to some Profiles (a
+    GFIT-CoWork User) there is no fallback: no name is the request's own
+    Profile, and a name outside the caller's reach raises
+    :class:`ProfileNotReadable` (see :func:`_resolve_profile_home_for_name`).
     """
     return _resolve_profile_home_for_name(name)
 
