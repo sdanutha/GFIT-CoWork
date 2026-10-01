@@ -386,12 +386,8 @@ class Handler(BaseHTTPRequestHandler):
         except _CLIENT_DISCONNECT_ERRORS:
             # Expected disconnect path; do not convert it into a misleading server 500.
             return
-        except ProfileNotReadable:
-            # Another User's Profile is "not found" for this caller, not a fault.
-            try:
-                j(self, {'error': 'not found'}, status=404)
-            except _CLIENT_DISCONNECT_ERRORS:
-                pass
+        except ProfileNotReadable:  # another User's Profile is "not found", not a fault
+            j(self, {'error': 'not found'}, status=404)
         except Exception:
             self._safe_webui_print(f'[webui] ERROR {self.command} {self.path}\n' + traceback.format_exc())
             try:
@@ -418,12 +414,8 @@ class Handler(BaseHTTPRequestHandler):
         except _CLIENT_DISCONNECT_ERRORS:
             # Expected disconnect path; do not convert it into a misleading server 500.
             return
-        except ProfileNotReadable:
-            # Another User's Profile is "not found" for this caller, not a fault.
-            try:
-                j(self, {'error': 'not found'}, status=404)
-            except _CLIENT_DISCONNECT_ERRORS:
-                pass
+        except ProfileNotReadable:  # another User's Profile is "not found", not a fault
+            j(self, {'error': 'not found'}, status=404)
         except Exception:
             self._safe_webui_print(f'[webui] ERROR {self.command} {self.path}\n' + traceback.format_exc())
             try:
