@@ -255,7 +255,7 @@ def test_project_rename_rejects_cross_profile():
     assert rename_idx > 0
     next_idx = src.find('"/api/projects/delete"', rename_idx)
     rename_block = src[rename_idx:next_idx]
-    assert '_profiles_match(proj.get("profile"), active_profile)' in rename_block, (
+    assert '.includes(proj.get("profile"))' in rename_block, (
         "Rename must check active-profile ownership"
     )
 
@@ -267,7 +267,7 @@ def test_project_delete_rejects_cross_profile():
     delete_idx = src.find('"/api/projects/delete"')
     assert delete_idx > 0
     delete_block = src[delete_idx:delete_idx + 1500]
-    assert '_profiles_match(proj.get("profile"), active_profile)' in delete_block, (
+    assert '.includes(proj.get("profile"))' in delete_block, (
         "Delete must check active-profile ownership"
     )
 

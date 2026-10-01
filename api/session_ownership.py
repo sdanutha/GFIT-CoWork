@@ -24,8 +24,11 @@ the route has already found, a record or a listed row,
 :meth:`refuse_found_session`; for one the detail load knows only from its
 listed row, :meth:`refuse_listed_session`), is this stream
 id mine (:meth:`refuse_stream`), may this session-list event go to me
-(:meth:`may_receive_event`) and may this listed row go to me
-(:meth:`may_list_row`). A refusal (:class:`Refusal`) writes its own answer:
+(:meth:`may_receive_event`), may this listed row go to me
+(:meth:`may_list_row`), and which Profiles may this request read: in a view,
+which follows Upstream's isolated profile mode (:meth:`profile_reach`), and
+at all, which a caller alone confines (:meth:`caller_reach`). Both answer a
+:class:`ProfileReach`. A refusal (:class:`Refusal`) writes its own answer:
 404 "Session not found", or 409 naming the owning Profile, which only the
 unconfined adapter gives. For a User, another Profile's session and a session
 that does not exist get exactly the same answer.
@@ -78,6 +81,40 @@ class Refusal:
 
 
 NOT_FOUND = Refusal()
+
+
+@dataclass(frozen=True)
+class ProfileReach:
+    """A request's Profile reach: the Profiles it may read (``CONTEXT.md``).
+
+    The answer to :meth:`profile_reach` (a view) and :meth:`caller_reach` (the
+    caller). *every_profile* is true when every Profile may be read; otherwise
+    *profiles* names the ones that may. *counts_other_profiles* says whether an
+    "N from other Profiles" count may be shown. *single_profile* says whether
+    the web app should treat the caller as single-Profile (no Profile picker,
+    no all-Profiles view).
+    """
+
+    every_profile: bool
+    profiles: frozenset = frozenset()
+    counts_other_profiles: bool = False
+    single_profile: bool = False
+
+    def __post_init__(self):
+        if self.every_profile and self.profiles:
+            raise ValueError("a reach of every Profile names no Profiles")
+
+    def includes(self, profile) -> bool:
+        """May the request read data of *profile*? A missing Profile is the root Profile's."""
+        from api.profiles import _profiles_match
+
+        if self.every_profile:
+            return True
+        return any(_profiles_match(profile, readable) for readable in self.profiles)
+
+
+EVERY_PROFILE = ProfileReach(every_profile=True)
+NO_PROFILE = ProfileReach(every_profile=False, single_profile=True)
 
 
 def _names_nothing(session_id) -> bool:
@@ -224,6 +261,14 @@ class UserSessionOwnership:
         """No: a User's request is answered by this adapter alone, never by a route's own rules."""
         return False
 
+    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+        """Exactly the User's own Profile, whatever was asked; other Profiles are never counted."""
+        return self.caller_reach()
+
+    def caller_reach(self) -> ProfileReach:
+        """The User's own Profile."""
+        return ProfileReach(every_profile=False, profiles=frozenset({self.profile}), single_profile=True)
+
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found (a record, or a listed row): the User's own, else 404."""
         from api.profiles import _profiles_match
@@ -255,6 +300,31 @@ class _UnconfinedSessionOwnership:
         """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
         chat start's placeholder retag) on top of this adapter's answers."""
         return True
+
+    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+        """Today's rules: the active Profile, or every Profile when asked for.
+
+        Upstream's isolated profile mode (a process serving one Profile) keeps
+        the request on the active Profile and counts no other.
+        """
+        from api.profiles import _is_isolated_profile_mode, get_active_profile_name
+
+        single = _is_isolated_profile_mode()
+        if all_profiles and not single:
+            return EVERY_PROFILE
+        active = active_profile or get_active_profile_name()
+        return ProfileReach(
+            every_profile=False, profiles=frozenset({active}),
+            counts_other_profiles=not single, single_profile=single,
+        )
+
+    def caller_reach(self) -> ProfileReach:
+        """Every Profile: no caller confines this request, whatever Upstream's posture.
+
+        For reads of stores shared by every Profile (the session index, the
+        running cron jobs, a Profile-home lookup), which Upstream never scoped.
+        """
+        return EVERY_PROFILE
 
     def refuse_session(self, session_id) -> Refusal | None:
         """Another known Profile's session names its owner; an id it cannot find passes."""
@@ -338,6 +408,12 @@ class _RefusingSessionOwnership:
     def keeps_upstream_rules(self) -> bool:
         return False
 
+    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+        return NO_PROFILE
+
+    def caller_reach(self) -> ProfileReach:
+        return NO_PROFILE
+
     def refuse_found_session(self, session_id, found) -> Refusal:
         return NOT_FOUND
 
@@ -378,3 +454,13 @@ def request_session_ownership():
     from api.access import request_admission, request_has_directory_session
 
     return ownership_for(request_admission(), directory_session=request_has_directory_session())
+
+
+def request_profile_reach(active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+    """This request's Profile reach in a view: its active Profile, or all Profiles when asked."""
+    return request_session_ownership().profile_reach(active_profile, all_profiles=all_profiles)
+
+
+def request_caller_reach() -> ProfileReach:
+    """The Profiles this request's caller may read at all, whatever the view."""
+    return request_session_ownership().caller_reach()

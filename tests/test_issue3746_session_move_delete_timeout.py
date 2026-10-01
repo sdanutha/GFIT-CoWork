@@ -121,7 +121,7 @@ def test_delete_guards_each_session_save():
         "projects/delete must guard each per-session update (#3746)"
     )
     # The active-profile ownership guard (#1614) must remain intact.
-    assert '_profiles_match(proj.get("profile"), active_profile)' in block, (
+    assert '.includes(proj.get("profile"))' in block, (
         "projects/delete must keep its cross-profile ownership guard (#1614)"
     )
 
