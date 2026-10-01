@@ -100,6 +100,10 @@ class ProfileReach:
     counts_other_profiles: bool = False
     single_profile: bool = False
 
+    def __post_init__(self):
+        if self.every_profile and self.profiles:
+            raise ValueError("a reach of every Profile names no Profiles")
+
     def includes(self, profile) -> bool:
         """May the request read data of *profile*? A missing Profile is the root Profile's."""
         from api.profiles import _profiles_match

@@ -39,7 +39,7 @@ NOT_WORKSPACE: dict[tuple[str, str, str], str] = {
     ("api/login.py", "attempt_login", ROLE): "login: creates a new User's default Workspace from an explicit Profile",
     ("api/login.py", "session_identity", ASKS): "display name: from the Profile roster for a User",
     ("api/session_ownership.py", "ownership_for", ROLE): "session ownership: the adapter is chosen from the Admission",
-    ("api/routes.py", "handle_get", ROLE): "the app shell: no extension tags for a User",
+    ("api/routes.py", "_app_shell_for_role", ROLE): "the app shell: no extension tags for a User",
 }
 
 # (file, function, question): Workspace callers not yet moved to the policy (none left).

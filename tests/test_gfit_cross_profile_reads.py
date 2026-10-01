@@ -716,3 +716,26 @@ def test_the_cron_working_folder_stored_is_the_one_checked(srv, fake_cron, works
 
     assert status == 200, body
     assert _stored_job(srv, ALICE, "alice-job")["workdir"] == str(workspaces["alice"].resolve())
+
+
+def test_a_routes_bad_input_handling_does_not_turn_the_refusal_into_a_400(srv, monkeypatch):
+    import api.profiles as profiles
+    import server
+
+    real_get = routes.handle_get
+
+    def handle_get(handler, parsed):
+        if parsed.path == "/api/prompts":  # a User route that treats ValueError as bad input
+            try:
+                profiles.get_hermes_home_for_profile(BOB)
+            except ValueError as exc:
+                return routes.bad(handler, str(exc), 400)
+            return routes.j(handler, {"ok": True})
+        return real_get(handler, parsed)
+
+    monkeypatch.setattr(server, "handle_get", handle_get)
+
+    status, body, _ = srv.logged_in(ALICE).get("/api/prompts")
+
+    assert status == 404, body
+    assert BOB not in json.dumps(body)

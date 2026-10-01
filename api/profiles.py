@@ -539,15 +539,17 @@ def clear_request_profile() -> None:
     clear_request_admission()
 
 
-class ProfileNotReadable(ValueError):
+class ProfileNotReadable(LookupError):
     """A Profile-home lookup the request's caller may not make (another User's Profile).
 
     The request's answer is "not found" (``server.py`` maps it to 404), the same
-    as for a Profile that does not exist.
+    as for a Profile that does not exist. Not a ``ValueError``, so a route's
+    own bad-input handling does not turn it into a 400; its message names no
+    Profile, in case a broad handler shows it anyway.
     """
 
     def __init__(self, name):
-        super().__init__(f"Profile {name!r} is not readable by this request")
+        super().__init__("Profile not found")
         self.name = name
 
 

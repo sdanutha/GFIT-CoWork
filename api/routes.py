@@ -11296,6 +11296,21 @@ def _directory_session_role(handler) -> str | None:
     return admission.role if admission is not None else None
 
 
+def _app_shell_for_role(html: str, role) -> str:
+    """The app shell for the caller's role (GFIT-CoWork).
+
+    The stylesheet hides Admin-only menus for Users (cosmetic; the server gate
+    is the source of truth). Extensions are Admin-only, so a User's shell does
+    not load them.
+    """
+    from api.access import ROLE_MEMBER
+    from api.extensions import inject_extension_tags
+
+    if role:
+        html = html.replace("<html ", f'<html data-gfit-role="{role}" ', 1)
+    return html if role == ROLE_MEMBER else inject_extension_tags(html)
+
+
 def _handle_directory_login(handler, body) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
@@ -12342,7 +12357,7 @@ def _project_os_candidate_repo_roots(workspace_root: Path | None) -> list[Path]:
     return candidates
 
 
-def _project_os_resolve_repo_root_for_board(repo_root: Path | None, board_slug: str | None, usable=None) -> Path | None:
+def _project_os_resolve_repo_root_for_board(repo_root: Path | None, board_slug: str | None, usable) -> Path | None:
     """The folder whose project files claim *board_slug*, else *repo_root*.
 
     *usable* (the request's Workspace check) maps a candidate to the path to
@@ -12354,10 +12369,9 @@ def _project_os_resolve_repo_root_for_board(repo_root: Path | None, board_slug: 
     if repo_root and repo_root.exists() and _project_os_repo_matches_board(repo_root, slug):
         return repo_root
     for candidate in _project_os_candidate_repo_roots(repo_root):
-        if usable is not None:
-            candidate = usable(candidate)
-            if candidate is None:
-                continue
+        candidate = usable(candidate)
+        if candidate is None:
+            continue
         if _project_os_repo_matches_board(candidate, slug):
             return candidate
     return repo_root if repo_root and repo_root.exists() else None
@@ -13784,8 +13798,6 @@ def handle_get(handler, parsed) -> bool:
 
     if parsed.path in ("/", "/index.html", "/sessions") or parsed.path.startswith("/session/"):
         try:
-            from api.extensions import inject_extension_tags
-
             csrf_token = ""
             try:
                 from api.auth import csrf_token_for_session, parse_cookie, verify_session
@@ -13804,17 +13816,9 @@ def handle_get(handler, parsed) -> bool:
             html = _render_index_shell_base().replace(
                 "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
             )
-            from api.access import ROLE_MEMBER
-
-            role = _directory_session_role(handler)
-            if role:
-                # GFIT-CoWork: the stylesheet hides Admin-only menus for Users
-                # (cosmetic; the server gate is the source of truth). Extensions
-                # are Admin-only, so a User's shell does not load them.
-                html = html.replace("<html ", f'<html data-gfit-role="{role}" ', 1)
             return t(
                 handler,
-                html if role == ROLE_MEMBER else inject_extension_tags(html),
+                _app_shell_for_role(html, _directory_session_role(handler)),
                 content_type="text/html; charset=utf-8",
             )
         except Exception as exc:

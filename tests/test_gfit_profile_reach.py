@@ -142,7 +142,7 @@ def _in_request(monkeypatch, admission, *, directory_session=True):
 def _lookup(name):
     try:
         return profiles.get_hermes_home_for_profile(name)
-    except ValueError:
+    except profiles.ProfileNotReadable:
         return REFUSED
 
 
@@ -189,3 +189,10 @@ def test_isolated_mode_is_the_process_posture_not_the_caller(world, monkeypatch)
     assert profiles._is_isolated_profile_mode() is False
     assert profiles.get_active_profile_name() == ALICE
     assert profiles.get_active_hermes_home() == world / "profiles" / ALICE
+
+
+def test_a_reach_of_every_profile_names_no_profiles():
+    from api.session_ownership import ProfileReach
+
+    with pytest.raises(ValueError):
+        ProfileReach(every_profile=True, profiles=frozenset({ALICE}))

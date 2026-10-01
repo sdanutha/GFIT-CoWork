@@ -105,6 +105,7 @@ from api.config import HOST, PORT, STATE_DIR, SESSION_DIR, DEFAULT_WORKSPACE
 from api.helpers import (
     j,
     advertise_connection_close,
+    answer_not_found,
     get_profile_cookie,
     _build_csp_report_only_policy,
     _CLIENT_DISCONNECT_ERRORS,
@@ -387,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
             # Expected disconnect path; do not convert it into a misleading server 500.
             return
         except ProfileNotReadable:  # another User's Profile is "not found", not a fault
-            j(self, {'error': 'not found'}, status=404)
+            answer_not_found(self)
         except Exception:
             self._safe_webui_print(f'[webui] ERROR {self.command} {self.path}\n' + traceback.format_exc())
             try:
@@ -415,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
             # Expected disconnect path; do not convert it into a misleading server 500.
             return
         except ProfileNotReadable:  # another User's Profile is "not found", not a fault
-            j(self, {'error': 'not found'}, status=404)
+            answer_not_found(self)
         except Exception:
             self._safe_webui_print(f'[webui] ERROR {self.command} {self.path}\n' + traceback.format_exc())
             try:
