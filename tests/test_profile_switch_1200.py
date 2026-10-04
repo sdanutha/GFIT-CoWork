@@ -577,7 +577,8 @@ def test_get_config_reloads_when_request_profile_changes_even_with_rebound_cfg_o
         assert result["model"]["provider"] == "openrouter"
         assert result["model"]["default"] == "google/gemini-3-flash-preview"
         assert result["custom_providers"]["llamacpp"]["api_key"] == "work-key"
-        assert config.cfg is config._cfg_cache
+        # The request reads its own Profile's config view; the override stays
+        # on the shared cache's Profile, which this request does not read.
     finally:
         profiles.clear_request_profile()
         profiles._DEFAULT_HERMES_HOME = orig_default_home
@@ -649,7 +650,8 @@ def test_get_available_models_reloads_when_request_profile_changes_even_with_reb
         result = config.get_available_models()
         assert result["active_provider"] == "openrouter"
         assert result["default_model"] == "google/gemini-3-flash-preview"
-        assert config.cfg is config._cfg_cache
+        # The request reads its own Profile's config view; the override stays
+        # on the shared cache's Profile, which this request does not read.
     finally:
         profiles.clear_request_profile()
         profiles._DEFAULT_HERMES_HOME = orig_default_home

@@ -461,9 +461,12 @@ def _apply_config_defaults(config_data: dict) -> None:
 def reload_config_if_stale() -> None:
     """Refresh config.yaml once for concurrent stale read paths."""
     global cfg
+    config_path = _get_config_path()
+    if _request_config_view_path(config_path) is not None:
+        _config_view(config_path)
+        return
     with _cfg_lock:
         try:
-            config_path = _get_config_path()
             current_mtime = config_path.stat().st_mtime
         except OSError:
             current_mtime = 0.0
@@ -476,8 +479,14 @@ def reload_config_if_stale() -> None:
 
 
 def get_config() -> dict:
-    """Return the cached config dict, loading from disk if needed."""
+    """Return the cached config dict, loading from disk if needed.
+
+    A request in another Profile than the shared cache's gets its own
+    Profile's config (see ``_cfg_views``).
+    """
     config_path = _get_config_path()
+    if _request_config_view_path(config_path) is not None:
+        return _config_view(config_path)
     try:
         current_mtime = config_path.stat().st_mtime
     except OSError:
@@ -501,8 +510,10 @@ def get_config() -> dict:
 
 def get_config_snapshot() -> dict:
     """Return a request-owned config snapshot captured under the cache lock."""
+    config_path = _get_config_path()
+    if _request_config_view_path(config_path) is not None:
+        return copy.deepcopy(_config_view(config_path))
     with _cfg_lock:
-        config_path = _get_config_path()
         try:
             current_mtime = config_path.stat().st_mtime
         except OSError:
@@ -528,7 +539,7 @@ def get_webui_session_save_mode(config_data: dict | None = None) -> str:
     values fail closed to ``deferred`` so a typo never reintroduces eager disk
     writes unexpectedly.
     """
-    active_cfg = config_data if isinstance(config_data, dict) else cfg
+    active_cfg = config_data if isinstance(config_data, dict) else _active_cfg()
     webui_cfg = active_cfg.get("webui", {}) if isinstance(active_cfg, dict) else {}
     if not isinstance(webui_cfg, dict):
         return _DEFAULT_WEBUI_SESSION_SAVE_MODE
@@ -540,22 +551,13 @@ def get_webui_session_save_mode(config_data: dict | None = None) -> str:
     return _DEFAULT_WEBUI_SESSION_SAVE_MODE
 
 
-def _refresh_config_cache(config_path: Path | None = None) -> None:
-    """Refresh _cfg_cache for ``config_path``.
+def _load_config_from_disk(config_path: Path) -> tuple[dict, float]:
+    """Return a new config dict for ``config_path`` and the file's mtime.
 
-    Callers must hold _cfg_lock when invoking this helper because it mutates
-    shared state.
+    The mtime is 0.0 when the file is missing or does not parse to a dict.
     """
-    global _cfg_mtime, _cfg_path, _cfg_fingerprint
-    if config_path is None:
-        config_path = _get_config_path()
-    _cfg_cache.clear()
-    # Remember the old mtime so we can tell whether config actually changed
-    # vs. first-ever load (mtime == 0.0, e.g. server start or profile switch).
-    _old_cfg_mtime = _cfg_mtime
-    _old_cfg_path = _cfg_path
-    _cfg_path = config_path
-    _cfg_mtime = 0.0
+    data: dict = {}
+    mtime = 0.0
     try:
         if config_path.exists():
             # Route the parse through the mtime-keyed cache (#4652) so an
@@ -568,20 +570,19 @@ def _refresh_config_cache(config_path: Path | None = None) -> None:
             loaded = _load_yaml_config_file_raw(config_path)
             if isinstance(loaded, dict):
                 if loaded:
-                    # The process-global _cfg_cache must reflect PROCESS-env
-                    # expansion, never a profile-scoped block_process_env_fallback
-                    # view — otherwise a reload that fires while a readonly/worker
-                    # scope is active (profile alternation resolves _get_config_path
-                    # to the named profile, #798 TLS) would bake under-expanded
-                    # literal ${VAR}s into the shared cache and starve concurrent
-                    # readers of the module-level `cfg` alias. Expansion re-runs
-                    # per-read elsewhere; here we pin the cache to the unscoped view.
+                    # A cached config must reflect PROCESS-env expansion, never
+                    # a profile-scoped block_process_env_fallback view —
+                    # otherwise a reload that fires while a readonly/worker
+                    # scope is active (#798 TLS) would bake under-expanded
+                    # literal ${VAR}s into the cache and starve concurrent
+                    # readers. Expansion re-runs per-read elsewhere; here we pin
+                    # the cache to the unscoped view.
                     _prev_block = getattr(_thread_ctx, "block_process_env_fallback", False)
                     _prev_env = getattr(_thread_ctx, "env", None)
                     try:
                         _thread_ctx.block_process_env_fallback = False
                         _thread_ctx.env = {}
-                        _cfg_cache.update(_expand_env_vars(loaded))
+                        data.update(_expand_env_vars(loaded))
                     finally:
                         _thread_ctx.block_process_env_fallback = _prev_block
                         if _prev_env is None:
@@ -591,22 +592,97 @@ def _refresh_config_cache(config_path: Path | None = None) -> None:
                                 pass
                         else:
                             _thread_ctx.env = _prev_env
-                # Stamp _cfg_mtime whenever the file parsed to a dict — INCLUDING
-                # an empty {} config. The cache-update above is skipped for {} (it's
-                # a no-op), but _cfg_mtime MUST still be set or get_config()'s
-                # `current_mtime != _cfg_mtime` stale check fires on every call and
-                # spins reload_config() under _cfg_lock forever (a `{}` config from a
-                # freshly created/reset profile is reachable on the switch hot path).
-                # This matches master's pre-#4662 behavior (it entered the block for
-                # {} and set the mtime); the inner `if loaded:` only gates the no-op
-                # cache update, not the mtime stamp.
+                # Stamp the mtime whenever the file parsed to a dict — INCLUDING
+                # an empty {} config — or the `current_mtime != mtime` stale
+                # check fires on every call and spins a reload forever (a `{}`
+                # config from a freshly created/reset profile is reachable on
+                # the switch hot path).
                 try:
-                    _cfg_mtime = Path(config_path).stat().st_mtime
+                    mtime = Path(config_path).stat().st_mtime
                 except OSError:
-                    _cfg_mtime = 0.0
+                    mtime = 0.0
     except Exception:
         logger.debug("Failed to load yaml config from %s", config_path)
-    _apply_config_defaults(_cfg_cache)
+    _apply_config_defaults(data)
+    return data, mtime
+
+
+# Config for a request whose Profile is not the one in ``_cfg_cache``, keyed
+# by config path (GFIT-CoWork: many Profiles are in use at once). Each entry is
+# ``(mtime, dict)``; a reload builds a new dict, so a request keeps reading the
+# config it was handed while another request in another Profile loads its own.
+_cfg_views: dict[Path, tuple[float, dict]] = {}
+
+
+def _request_config_view_path(config_path: Path) -> Path | None:
+    """Return ``config_path`` when this request reads its own config view.
+
+    That is when the thread runs a request in a Profile whose config path is
+    not the one loaded into ``_cfg_cache``. ``HERMES_CONFIG_PATH`` names one
+    config for every Profile, so it never has views.
+    """
+    if os.getenv("HERMES_CONFIG_PATH"):
+        return None
+    try:
+        from api.profiles import request_profile_name
+    except ImportError:
+        return None
+    if request_profile_name() is None:
+        return None
+    if _cfg_path is None or config_path == _cfg_path:
+        return None
+    return config_path
+
+
+def _config_view(config_path: Path, *, force: bool = False) -> dict:
+    """Return this request's config view for ``config_path``, loading it if stale."""
+    try:
+        current_mtime = config_path.stat().st_mtime
+    except OSError:
+        current_mtime = 0.0
+    with _cfg_lock:
+        cached = _cfg_views.get(config_path)
+        if not force and cached is not None and cached[0] == current_mtime:
+            return cached[1]
+        data, mtime = _load_config_from_disk(config_path)
+        _cfg_views[config_path] = (mtime, data)
+    # As for the shared cache: an edit of a config already loaded (not a first
+    # load) makes the Profile's on-disk models cache stale.
+    if cached is not None and cached[0] != 0.0 and cached[0] != mtime:
+        _delete_models_cache_on_disk()
+    return data
+
+
+def _active_cfg() -> dict:
+    """The config this thread reads: its request's Profile view, or ``cfg``.
+
+    Module functions read config through this instead of the ``cfg`` alias,
+    which holds only the shared cache's Profile.
+    """
+    config_path = _get_config_path()
+    if _request_config_view_path(config_path) is not None:
+        return _config_view(config_path)
+    return cfg
+
+
+def _refresh_config_cache(config_path: Path | None = None) -> None:
+    """Refresh _cfg_cache for ``config_path``.
+
+    Callers must hold _cfg_lock when invoking this helper because it mutates
+    shared state.
+    """
+    global _cfg_mtime, _cfg_path, _cfg_fingerprint
+    if config_path is None:
+        config_path = _get_config_path()
+    loaded, loaded_mtime = _load_config_from_disk(config_path)
+    _cfg_cache.clear()
+    # Remember the old mtime so we can tell whether config actually changed
+    # vs. first-ever load (mtime == 0.0, e.g. server start or profile switch).
+    _old_cfg_mtime = _cfg_mtime
+    _old_cfg_path = _cfg_path
+    _cfg_path = config_path
+    _cfg_cache.update(loaded)
+    _cfg_mtime = loaded_mtime
     _cfg_fingerprint = _fingerprint_config(_cfg_cache)
     # Bust the models cache so the next request sees fresh config values.
     # Only delete the disk cache when config has actually changed -- not on
@@ -620,8 +696,12 @@ def _refresh_config_cache(config_path: Path | None = None) -> None:
 
 def reload_config() -> None:
     """Reload config.yaml from the active profile's directory."""
+    config_path = _get_config_path()
+    if _request_config_view_path(config_path) is not None:
+        _config_view(config_path, force=True)
+        return
     with _cfg_lock:
-        _refresh_config_cache(_get_config_path())
+        _refresh_config_cache(config_path)
 
 
 # Memoized parse cache for _load_yaml_config_file, keyed on (resolved path,
@@ -1387,7 +1467,7 @@ def _custom_provider_slug_from_name(name: object) -> str:
 
 
 def _custom_provider_entries(config_obj: dict | None = None) -> list[dict]:
-    source = config_obj if isinstance(config_obj, dict) else cfg
+    source = config_obj if isinstance(config_obj, dict) else _active_cfg()
     entries = source.get("custom_providers", [])
     if not isinstance(entries, list):
         return []
@@ -2546,6 +2626,7 @@ def _model_id_declared_in_config(model_id: str, config_provider: str | None) -> 
     custom providers; returns False for anything not verbatim-declared so the
     caller falls through to the legacy family heuristic.
     """
+    cfg = _active_cfg()
     model = str(model_id or "").strip()
     if not model:
         return False
@@ -2703,6 +2784,7 @@ def _get_provider_base_url(provider_id):
 
     Returns the URL stripped of trailing ``/`` if configured, otherwise None.
     """
+    cfg = _active_cfg()
     prov_cfg = _get_provider_cfg(provider_id)
     explicit = (prov_cfg.get("base_url") or "").strip().rstrip("/")
     if explicit:
@@ -2718,6 +2800,7 @@ def _get_provider_base_url(provider_id):
 
 
 def _get_providers_cfg() -> dict:
+    cfg = _active_cfg()
     providers_cfg = cfg.get("providers")
     return providers_cfg if isinstance(providers_cfg, dict) else {}
 
@@ -2837,6 +2920,7 @@ def resolve_model_provider(model_id: str, *, explicitly_picked: bool = False) ->
     legacy redundant-prefix strip so it keeps routing when cold. Warm provenance
     (endpoint-advertised ids) always takes precedence over this flag.
     """
+    cfg = _active_cfg()
     config_provider = None
     config_base_url = None
     model_cfg = cfg.get("model", {})
@@ -4809,6 +4893,7 @@ def model_with_provider_context(model_id: str, model_provider: str | None = None
     internal disambiguation form, so use it only when the provider context is
     needed to route away from the current default provider.
     """
+    cfg = _active_cfg()
     model = str(model_id or "").strip()
     provider = str(model_provider or "").strip().lower()
     if not model or not provider or provider == "default" or model.startswith("@"):
@@ -4907,7 +4992,7 @@ def canonical_model_provider_lane(model_id: str, model_provider: str | None = No
 
 def get_effective_default_model(config_data: dict | None = None) -> str:
     """Resolve the effective Hermes default model from config, then env overrides."""
-    active_cfg = config_data if config_data is not None else cfg
+    active_cfg = config_data if config_data is not None else _active_cfg()
     default_model = DEFAULT_MODEL
 
     model_cfg = active_cfg.get("model", {})
@@ -5459,6 +5544,7 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def _get_lmstudio_reasoning_probe_api_key() -> str | None:
     """Resolve the LM Studio key for reasoning probes with WebUI precedence."""
+    cfg = _active_cfg()
     config_data = cfg
     model_cfg = config_data.get("model") or {}
     if isinstance(model_cfg, dict):
@@ -5691,6 +5777,7 @@ def _resolve_model_reasoning_efforts_impl(
     base_url: str | None = None,
 ) -> list[str]:
     """Return supported reasoning-effort levels for *model_id*, or [] if none."""
+    cfg = _active_cfg()
     model = str(model_id or "").strip()
     if not model:
         return []
@@ -6474,6 +6561,7 @@ def _aux_task_payload(task_key: str, entry: dict, fallback_label: str = "", fall
 
 def _iter_auxiliary_task_rows() -> list[dict]:
     """Return canonical auxiliary task payload rows."""
+    cfg = _active_cfg()
     aux_cfg = cfg.get("auxiliary", {})
     if not isinstance(aux_cfg, dict):
         aux_cfg = {}
@@ -6503,6 +6591,7 @@ def get_auxiliary_models() -> dict:
     }
     """
     reload_config()
+    cfg = _active_cfg()
     model_cfg = cfg.get("model", {})
     if not isinstance(model_cfg, dict):
         model_cfg = {}
@@ -6874,6 +6963,7 @@ def _configured_model_badges_from_static_catalog(
     active_provider: str | None,
     default_model: str,
 ) -> dict[str, dict[str, str]]:
+    cfg = _active_cfg()
     configured_entries: list[dict[str, str]] = []
     if active_provider and default_model:
         configured_entries.append(
@@ -6991,6 +7081,7 @@ def _configured_model_badges_from_static_catalog(
 
 def _minimal_static_models_catalog() -> dict:
     """Return the emergency one-model fallback for /api/models."""
+    cfg = _active_cfg()
     try:
         active_provider = None
         cfg_base_url = ""
@@ -7052,6 +7143,7 @@ def _minimal_static_models_catalog() -> dict:
 
 def _static_models_catalog_without_live_probes() -> dict:
     """Return a network-free /api/models catalog from local config/auth only."""
+    cfg = _active_cfg()
     try:
         from api.providers import _provider_has_key
 
@@ -8143,6 +8235,7 @@ def _model_aliases_from_config() -> dict[str, str]:
     (live, static, and the stale-disk fallback, which can't read aliases from a
     disk cache that never persisted them).
     """
+    cfg = _active_cfg()
     try:
         raw_aliases = cfg.get("model", {}).get("aliases", {})
         if isinstance(raw_aliases, dict):
@@ -8529,7 +8622,7 @@ def _models_from_live_provider_ids(provider_id: str, live_ids: list[str]) -> lis
 
 def _moa_preset_models_from_config(config_obj: dict | None = None) -> list[dict]:
     """Return enabled MoA presets from local config as picker model entries."""
-    source = config_obj if isinstance(config_obj, dict) else cfg
+    source = config_obj if isinstance(config_obj, dict) else _active_cfg()
     moa_cfg = source.get("moa") if isinstance(source, dict) else None
     if not isinstance(moa_cfg, dict) or not bool(moa_cfg.get("enabled", True)):
         return []
@@ -8637,6 +8730,7 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
     # Extracted so it runs inside _available_models_cache_lock (RLock) to
     # prevent thundering-herd: only one thread rebuilds while others wait.
     def _build_available_models_uncached() -> dict:
+        cfg = _active_cfg()
         active_provider = None
         default_model = get_effective_default_model(cfg)
         groups = []
@@ -9079,6 +9173,7 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                 detected_providers.add(_canonical)
 
         def _configured_provider_for_base_url(base_url: object) -> str:
+            cfg = _active_cfg()
             target = _normalize_base_url_for_match(base_url)
             if not target:
                 return ""
@@ -10137,7 +10232,12 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
         _current_mtime = Path(_get_config_path()).stat().st_mtime
     except OSError:
         _current_mtime = 0.0
-    _cfg_changed = _current_mtime != _cfg_mtime
+    # A request reading its own Profile's config view refreshes the view
+    # itself; the models cache follows it through the source fingerprint.
+    _cfg_changed = (
+        _current_mtime != _cfg_mtime
+        and _request_config_view_path(_get_config_path()) is None
+    )
 
     # Disk load BEFORE lock: ~0.1ms, lets concurrent requests skip entirely.
     # Then acquire lock and check memory cache.  Cold path runs inside the lock
