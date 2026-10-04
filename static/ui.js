@@ -10777,7 +10777,7 @@ function syncReadOnlySessionView(){
 }
 
 function syncTopbar(){
-  syncReadOnlySessionView();
+  if(typeof syncReadOnlySessionView==='function') syncReadOnlySessionView();
   if(!S.session){
     document.title=APP_NAME;
     if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
