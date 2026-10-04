@@ -576,8 +576,9 @@ def test_goal_endpoint_adapter_error_payload_still_controls_http_status(monkeypa
 
 
 def test_routes_register_goal_endpoint_and_kickoff_stream():
-    assert 'if parsed.path == "/api/goal"' in ROUTES_PY
-    assert "return _handle_goal_command(handler, body)" in ROUTES_PY
+    from tests._route_source import route_source
+
+    assert "return _handle_goal_command(handler, body)" in route_source("POST", "/api/goal")
     assert "goal_command_payload" in ROUTES_PY
     assert "kickoff_prompt" in ROUTES_PY
     assert "_start_chat_stream_for_session" in ROUTES_PY

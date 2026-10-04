@@ -76,7 +76,9 @@ class TestCopyFilePathMenuItem:
     def test_endpoint_handler_present(self):
         """Server-side endpoint must exist and route through the dispatcher."""
         src = ROUTES.read_text(encoding="utf-8")
-        assert 'parsed.path == "/api/file/path"' in src
+        from tests._route_source import route_handler
+
+        assert route_handler("POST", "/api/file/path")
         assert "def _handle_file_path(handler, body):" in src
         # Must use resolve_in_workspace to prevent path traversal.
         # Find the handler body and check.

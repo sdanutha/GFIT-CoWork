@@ -80,7 +80,9 @@ def test_recovery_audit_routes_are_registered():
 
     src = Path("api/routes.py").read_text(encoding="utf-8")
 
-    assert 'parsed.path == "/api/session/recovery/audit"' in src
-    assert 'parsed.path == "/api/session/recovery/repair-safe"' in src
+    from tests._route_source import route_handler
+
+    assert route_handler("GET", "/api/session/recovery/audit")
+    assert route_handler("POST", "/api/session/recovery/repair-safe")
     assert "audit_session_recovery" in src
     assert "repair_safe_session_recovery" in src

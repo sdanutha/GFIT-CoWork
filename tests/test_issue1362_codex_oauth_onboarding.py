@@ -20,19 +20,15 @@ NODE = shutil.which("node")
 
 
 def test_onboarding_codex_oauth_routes_use_post_start_cancel_and_get_poll():
-    routes = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-    get_idx = routes.find("def handle_get(")
-    post_idx = routes.find("def handle_post(")
-    assert get_idx != -1 and post_idx != -1
-    get_body = routes[get_idx:post_idx]
-    post_body = routes[post_idx:]
+    from api import route_table
 
-    assert '"/api/onboarding/oauth/poll"' in get_body
-    assert '"/api/onboarding/oauth/start"' not in get_body
+    routes = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
+    assert route_table.match("GET", "/api/onboarding/oauth/poll") is not None
+    assert route_table.match("GET", "/api/onboarding/oauth/start") is None
     assert '"/api/oauth/codex/start"' not in routes
     assert '"/api/oauth/codex/poll"' not in routes
-    assert '"/api/onboarding/oauth/start"' in post_body
-    assert '"/api/onboarding/oauth/cancel"' in post_body
+    assert route_table.match("POST", "/api/onboarding/oauth/start") is not None
+    assert route_table.match("POST", "/api/onboarding/oauth/cancel") is not None
 
 
 def test_onboarding_oauth_rejects_unsupported_providers(monkeypatch):

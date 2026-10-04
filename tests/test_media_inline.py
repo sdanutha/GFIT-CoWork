@@ -275,9 +275,10 @@ class TestMediaEndpointUnit(unittest.TestCase):
 
     def test_api_media_route_registered(self):
         """The GET dispatch must include the /api/media path."""
-        routes_src = (REPO_ROOT / "api" / "routes.py").read_text(encoding="utf-8")
-        self.assertIn('"/api/media"', routes_src,
-                      '/api/media must be registered in the GET route dispatch')
+        from tests._route_source import route_handler
+
+        self.assertTrue(route_handler("GET", "/api/media"),
+                        '/api/media must be registered in the GET route dispatch')
 
     def test_allowed_roots_include_tmp(self):
         """Handler must allow /tmp so screenshot paths work."""

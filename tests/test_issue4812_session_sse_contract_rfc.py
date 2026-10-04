@@ -100,6 +100,7 @@ class TestEndpointDistinction:
         (#5513 gate finding, chronic brittle failure #5542)."""
         text = _rfc()
         routes_src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
+        routes_src += (REPO / "api" / "route_table.py").read_text(encoding="utf-8")
 
         # (RFC-cited symbol, existence probe in api/routes.py source)
         checks = [
@@ -124,6 +125,7 @@ class TestEndpointDistinction:
         chronic brittle failure #5542)."""
         text = _rfc()
         routes_src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
+        routes_src += (REPO / "api" / "route_table.py").read_text(encoding="utf-8")
 
         # (RFC-cited symbol name, existence probe in api/routes.py source)
         checks = [

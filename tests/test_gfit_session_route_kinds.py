@@ -1,7 +1,7 @@
 """GFIT-CoWork: every route that names a session is a read or a write, in one table.
 
 Session ownership classifies each (method, route) that names a session by
-what it does, not its method (``api.session_ownership.SESSION_ROUTE_KINDS``):
+what it does, not its method (each row's ``session`` in ``api.route_table``):
 the Admin may read another Profile's session in place but not write to it.
 This test fails when a session-naming route has no class, or when the table
 names a route that no longer names a session. Session-naming User routes are
@@ -13,7 +13,8 @@ from __future__ import annotations
 import pytest
 
 from api.access import user_may_call
-from api.session_ownership import READ, SESSION_ROUTE_KINDS, WRITE, session_route_kind
+from api.session_ownership import READ, WRITE, session_route_kind
+from tests._route_source import SESSION_ROUTE_KINDS
 from tests.test_gfit_admin_gate_list import dispatched_routes
 from tests.test_gfit_session_route_answers import SESSION_ROUTES
 
@@ -39,7 +40,6 @@ ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
     **{(m, r): "MCP servers" for m, r in (
         ("DELETE", "/api/mcp/servers/"), ("GET", "/api/mcp/servers"), ("GET", "/api/mcp/tools"),
         ("PATCH", "/api/mcp/servers/"), ("PUT", "/api/mcp/servers/"))},
-    ("GET", "/api/"): "the API fallback prefix",
     **{("GET", r): _SERVER for r in (
         "/api/dashboard/config", "/api/dashboard/status", "/api/extensions/status", "/api/logs",
         "/api/provider/cost-history", "/api/provider/quota", "/api/providers")},
@@ -75,7 +75,7 @@ def test_every_admin_only_route_is_placed():
     unplaced = sorted(admin_only - ADMIN_SESSION_ROUTES - set(ADMIN_NAMES_NO_SESSION))
     assert not unplaced, (
         "Place each Admin-only route in ADMIN_SESSION_ROUTES if it names a session "
-        f"(then classify it in SESSION_ROUTE_KINDS), or in ADMIN_NAMES_NO_SESSION with a reason: {unplaced}"
+        f"(then give its route-table row a session kind), or in ADMIN_NAMES_NO_SESSION with a reason: {unplaced}"
     )
     stale = sorted((ADMIN_SESSION_ROUTES | set(ADMIN_NAMES_NO_SESSION)) - admin_only)
     assert not stale, f"Not an Admin-only route any more: {stale}"
@@ -83,7 +83,7 @@ def test_every_admin_only_route_is_placed():
 
 def test_every_session_route_is_a_read_or_a_write():
     missing = sorted((set(SESSION_ROUTES) | ADMIN_SESSION_ROUTES) - set(SESSION_ROUTE_KINDS))
-    assert not missing, f"Classify each as READ or WRITE in SESSION_ROUTE_KINDS: {missing}"
+    assert not missing, f"Give each route-table row session=READ or WRITE: {missing}"
 
 
 def test_the_table_names_only_session_routes():

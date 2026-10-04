@@ -33,10 +33,10 @@ def _install_fake_skill_bundles(monkeypatch, *, bundles=None, resolver=None, bui
 
 
 def test_bundle_routes_are_wired_through_dedicated_endpoints():
-    assert 'if parsed.path == "/api/commands/bundles":' in ROUTES_PY
-    assert 'if parsed.path == "/api/commands/bundles/resolve":' in ROUTES_PY
-    assert 'return j(handler, {"bundles": list_command_bundles()})' in ROUTES_PY
-    assert 'return j(handler, resolve_bundle_command(command))' in ROUTES_PY
+    from tests._route_source import route_source
+
+    assert 'return j(handler, {"bundles": list_command_bundles()})' in route_source("GET", "/api/commands/bundles")
+    assert 'return j(handler, resolve_bundle_command(command))' in route_source("POST", "/api/commands/bundles/resolve")
 
 
 def test_frontend_bundle_dispatch_uses_dedicated_metadata_and_resolve_calls():

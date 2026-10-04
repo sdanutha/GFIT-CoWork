@@ -27,7 +27,6 @@ def _post_session_new(body: dict, monkeypatch):
 
     monkeypatch.setattr(routes, "read_body", lambda _h: body)
     monkeypatch.setattr(routes, "_check_csrf", lambda _h: True)
-    monkeypatch.setattr(routes, "_csrf_exempt_path", lambda _p: False)
     monkeypatch.setattr(routes, "_guard_request_session_visibility", lambda *_a, **_k: True)
     monkeypatch.setattr(routes, "j", _j)
     monkeypatch.setattr(routes, "bad", _bad)

@@ -98,7 +98,7 @@ def test_issue1855_target_routes_are_wired_to_diagnostics():
     assert 'kwargs = {"diag": diag, "include_lineage_metadata": False}' in src
     assert 'kwargs["sidebar_metadata_only"] = True' in src
     assert "return all_sessions(**kwargs)" in src
-    assert 'RequestDiagnostics.maybe_start("POST", parsed.path' in src
+    assert 'RequestDiagnostics.maybe_start(method, parsed.path' in src
     assert "_handle_chat_start(handler, body, diag=diag)" in src
     for stage in (
         "read_body",

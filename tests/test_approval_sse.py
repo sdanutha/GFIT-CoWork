@@ -41,7 +41,9 @@ class TestSSEStaticAnalysis:
 
     def test_sse_route_registered(self):
         """The /api/approval/stream route must be registered."""
-        assert '"/api/approval/stream"' in ROUTES_SRC, \
+        from tests._route_source import route_handler
+
+        assert route_handler("GET", "/api/approval/stream"), \
             "Route /api/approval/stream must be registered in the URL dispatch"
 
     def test_sse_handler_function_exists(self):

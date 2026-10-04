@@ -347,29 +347,19 @@ def test_server_delete_prunes_session_index(cleanup_test_sessions):
     src = (REPO_ROOT / "server.py").read_text()
     routes_src = (REPO_ROOT / "api" / "routes.py").read_text() if (REPO_ROOT / "api" / "routes.py").exists() else ""
     # Find the delete handler in either file
-    for label, text in [("server.py", src), ("api/routes.py", routes_src)]:
-        # Accept both single-quote and double-quote style (formatting varies by contributor)
-        delete_idx = max(
-            text.find("if parsed.path == '/api/session/delete':"),
-            text.find('if parsed.path == "/api/session/delete":'),
-        )
-        if delete_idx >= 0:
-            delete_block = text[delete_idx:delete_idx+2400]
-            assert "prune_session_from_index(sid)" in delete_block, \
-                f"{label} session/delete must prune SESSION_INDEX_FILE"
-            return
-    assert False, "session/delete handler not found in server.py or api/routes.py"
+    from tests._route_source import route_source
+
+    assert src and routes_src
+    delete_block = route_source("POST", "/api/session/delete")
+    assert "prune_session_from_index(sid)" in delete_block, \
+        "api/routes.py session/delete must prune SESSION_INDEX_FILE"
 
 
 def test_server_delete_removes_session_bak_snapshot(cleanup_test_sessions):
     """session/delete must remove sidecar backups so deleted sessions stay deleted."""
-    routes_src = (REPO_ROOT / "api" / "routes.py").read_text()
-    delete_idx = max(
-        routes_src.find("if parsed.path == '/api/session/delete':"),
-        routes_src.find('if parsed.path == "/api/session/delete":'),
-    )
-    assert delete_idx >= 0, "session/delete handler not found in api/routes.py"
-    delete_block = routes_src[delete_idx:delete_idx+2400]
+    from tests._route_source import route_source
+
+    delete_block = route_source("POST", "/api/session/delete")
     assert "with_suffix('.json.bak').unlink" in delete_block or 'with_suffix(".json.bak").unlink' in delete_block, \
         "session/delete must unlink <sid>.json.bak to avoid later orphan-backup recovery"
 

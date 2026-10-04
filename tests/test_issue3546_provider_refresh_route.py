@@ -56,34 +56,35 @@ class TestRefreshRouteExists:
     the same input validation pattern as /api/providers/delete."""
 
     def test_route_branch_present(self):
-        src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-        assert '"/api/models/refresh"' in src, (
+        from tests._route_source import route_handler
+
+        assert route_handler("POST", "/api/models/refresh"), (
             "POST /api/models/refresh route missing from api/routes.py. "
             "Without it, the Refresh Models button 404s (#3546)."
         )
 
     def test_route_validates_provider_param(self):
-        src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-        idx = src.find('"/api/models/refresh"')
-        block = src[idx : idx + 500]
+        from tests._route_source import route_source
+
+        block = route_source("POST", "/api/models/refresh")
         assert "provider" in block and "bad(handler" in block, (
             "/api/models/refresh must validate that 'provider' is present "
             "and return 400 via bad() when missing."
         )
 
     def test_route_calls_invalidate_provider_models_cache(self):
-        src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-        idx = src.find('"/api/models/refresh"')
-        block = src[idx : idx + 500]
+        from tests._route_source import route_source
+
+        block = route_source("POST", "/api/models/refresh")
         assert "invalidate_provider_models_cache" in block, (
             "/api/models/refresh must call invalidate_provider_models_cache "
             "to bust the per-provider TTL cache."
         )
 
     def test_route_returns_ok_with_provider(self):
-        src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-        idx = src.find('"/api/models/refresh"')
-        block = src[idx : idx + 500]
+        from tests._route_source import route_source
+
+        block = route_source("POST", "/api/models/refresh")
         assert '"ok"' in block and '"provider"' in block, (
             "/api/models/refresh must return {ok: true, provider: provider_id} "
             "so the frontend can confirm the operation succeeded."

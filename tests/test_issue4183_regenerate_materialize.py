@@ -12,9 +12,9 @@ ROUTES_PY = (ROOT / "api" / "routes.py").read_text(encoding="utf-8")
 
 
 def test_regenerate_endpoint_uses_materialize_fallback():
-    start = ROUTES_PY.index('"/api/session/title/regenerate"')
-    end = ROUTES_PY.index('"/api/personality/set"', start)
-    block = ROUTES_PY[start:end]
+    from tests._route_source import route_source
+
+    block = route_source("POST", "/api/session/title/regenerate")
     assert "_get_or_materialize_session(sid)" in block, (
         "regenerate handler must use _get_or_materialize_session to find "
         "sessions that only exist in state.db (CLI/TUI sessions)"
@@ -26,9 +26,9 @@ def test_regenerate_endpoint_uses_materialize_fallback():
 
 
 def test_regenerate_endpoint_catches_permission_error():
-    start = ROUTES_PY.index('"/api/session/title/regenerate"')
-    end = ROUTES_PY.index('"/api/personality/set"', start)
-    block = ROUTES_PY[start:end]
+    from tests._route_source import route_source
+
+    block = route_source("POST", "/api/session/title/regenerate")
     assert "except PermissionError:" in block, (
         "regenerate handler must catch PermissionError from "
         "_get_or_materialize_session for read-only imported sessions"

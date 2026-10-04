@@ -24,10 +24,10 @@ def test_branch_endpoint_rejects_non_string_session_id():
     """The handler must reject a non-string session_id with a 400 before
     reaching get_session()."""
     src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-    branch_handler_idx = src.find('parsed.path == "/api/session/branch":')
-    assert branch_handler_idx != -1, "branch handler not found"
-    # Look at the next ~1500 chars
-    block = src[branch_handler_idx : branch_handler_idx + 1500]
+    from tests._route_source import route_source
+
+    assert src
+    block = route_source("POST", "/api/session/branch")
     assert 'isinstance(body["session_id"], str)' in block, (
         "branch handler must isinstance-check session_id before passing to "
         "get_session() — without this, non-string values raise TypeError "
@@ -44,8 +44,10 @@ def test_branch_endpoint_rejects_negative_keep_count():
     slicing would produce a "all but last N" semantic instead of a forward
     prefix, which is confusing fork behavior."""
     src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-    branch_handler_idx = src.find('parsed.path == "/api/session/branch":')
-    block = src[branch_handler_idx : branch_handler_idx + 2000]
+    from tests._route_source import route_source
+
+    assert src
+    block = route_source("POST", "/api/session/branch")
     assert "keep_count < 0" in block, (
         "branch handler must reject negative keep_count — Python's slice "
         "semantics on negative values are 'all but last N', not 'prefix N', "

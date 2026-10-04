@@ -12,8 +12,9 @@ ROUTES = open("api/routes.py", encoding="utf-8").read()
 
 class TestIssue3402WorkspaceTreeMoveApi:
     def test_file_move_route_registered(self):
-        assert 'parsed.path == "/api/file/move"' in ROUTES
-        assert "return _handle_file_move(handler, body)" in ROUTES
+        from tests._route_source import route_source
+
+        assert "return _handle_file_move(handler, body)" in route_source("POST", "/api/file/move")
 
     def test_file_move_handler_requires_dest_dir(self):
         block = ROUTES[ROUTES.index("def _handle_file_move"):ROUTES.index("def _handle_file_move") + 4000]

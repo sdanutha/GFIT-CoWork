@@ -443,7 +443,9 @@ class TestReasoningRoutes:
 
     def test_get_api_reasoning_route_exists(self):
         src = read('api/routes.py')
-        assert 'parsed.path == "/api/reasoning"' in src, (
+        from tests._route_source import route_handler
+
+        assert route_handler("GET", "/api/reasoning"), (
             "GET /api/reasoning route must exist"
         )
         assert 'get_reasoning_status' in src, (

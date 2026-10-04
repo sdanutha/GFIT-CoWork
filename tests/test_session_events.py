@@ -11,7 +11,9 @@ def test_session_events_endpoint_and_bus_are_defined():
     assert "_SESSION_EVENTS_SUBSCRIBERS" in SESSION_EVENTS
     assert "def publish_session_list_changed" in SESSION_EVENTS
     assert "def _handle_session_events_stream" in ROUTES
-    assert "parsed.path == '/api/sessions/events'" in ROUTES
+    from tests._route_source import route_source
+
+    assert "_handle_session_events_stream" in route_source("GET", "/api/sessions/events")
     assert "Content-Type', 'text/event-stream; charset=utf-8'" in ROUTES
 
 
@@ -38,20 +40,20 @@ def test_session_events_publish_for_minimal_sidebar_mutations():
         else:
             assert f'"{reason}",' in ROUTES, reason
 
-    assert 'if worktree_info:\n            publish_session_list_changed(\n                "session_new",' in ROUTES
+    assert 'if worktree_info:\n        publish_session_list_changed(\n            "session_new",' in ROUTES
     assert "was_hidden_empty_session = _is_hidden_empty_session(s)" in ROUTES
     assert 'if was_hidden_empty_session:\n        publish_session_list_changed(\n            "session_new",' in ROUTES
-    assert 'publish_session_list_changed(\n                "session_duplicate",' in ROUTES
-    assert 'publish_session_list_changed(\n            "session_rename",' in ROUTES
+    assert 'publish_session_list_changed(\n            "session_duplicate",' in ROUTES
+    assert 'publish_session_list_changed(\n        "session_rename",' in ROUTES
     assert '_persist_generated_session_title(s, next_title, event_reason="session_title_regenerate")' in ROUTES
     assert "session_id=sid" in ROUTES
     assert 'event_profile = getattr(get_session(sid, metadata_only=True), "profile", None)' in ROUTES
     assert "Failed to resolve profile for deleted session" in ROUTES
     assert '_publish_session_list_changed("session_delete", profile=event_profile)' in ROUTES
-    assert 'publish_session_list_changed(\n                "session_branch",' in ROUTES
-    assert 'publish_session_list_changed(\n            "session_pin",' in ROUTES
-    assert 'publish_session_list_changed(\n            "session_archive",' in ROUTES
-    assert 'publish_session_list_changed(\n            "session_move",' in ROUTES
+    assert 'publish_session_list_changed(\n            "session_branch",' in ROUTES
+    assert 'publish_session_list_changed(\n        "session_pin",' in ROUTES
+    assert 'publish_session_list_changed(\n        "session_archive",' in ROUTES
+    assert 'publish_session_list_changed(\n        "session_move",' in ROUTES
     assert 'session_id=getattr(' in ROUTES
     assert 'publish_session_list_changed("chat_start")' not in ROUTES
     assert '_publish_session_list_changed("cron_complete",' in ROUTES

@@ -222,14 +222,10 @@ def test_clear_route_uses_rename_helper_not_bare_title_assignment():
     apply_session_title_rename (which clears manual_title), not a bare
     `s.title = "Untitled"` that would strand the manual-title lock (#3542)."""
     import pathlib
-    routes_src = (pathlib.Path(__file__).resolve().parent.parent / "api" / "routes.py").read_text(
-        encoding="utf-8"
-    )
-    clear_idx = routes_src.find('if parsed.path == "/api/session/clear"')
-    assert clear_idx != -1, "/api/session/clear handler not found"
-    # Window from the clear handler to the next route branch.
-    next_idx = routes_src.find('if parsed.path == "/api/session/truncate"', clear_idx)
-    clear_block = routes_src[clear_idx:next_idx if next_idx != -1 else clear_idx + 2000]
+    from tests._route_source import route_source
+
+    assert pathlib
+    clear_block = route_source("POST", "/api/session/clear")
     assert "apply_session_title_rename(s, \"Untitled\")" in clear_block, (
         "clear handler must reset the title via apply_session_title_rename to "
         "clear the manual_title lock"

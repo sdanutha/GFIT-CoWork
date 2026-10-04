@@ -167,21 +167,33 @@ def _capture_route(monkeypatch):
     monkeypatch.setattr(routes, "j", _j)
     return cap
 
+class _Block:
+    """The branch route's handler source, shaped like the regex match these tests used."""
+
+    def __init__(self, source):
+        self._source = source
+
+    def group(self, _index=0):
+        return self._source
+
+
+def _branch_block():
+    from tests._route_source import route_source
+
+    return _Block(route_source("POST", "/api/session/branch"))
+
+
 def test_branch_endpoint_exists():
     """Verify the POST /api/session/branch route handler exists."""
     src = _read('api/routes.py')
-    assert '"POST /api/session/branch"' in src or '"/api/session/branch"' in src, \
-        "Missing /api/session/branch route"
+    assert src and _branch_block(), "Missing /api/session/branch route"
 
 
 def test_branch_endpoint_validates_session_id():
     """Verify the branch endpoint requires session_id."""
     src = _read('api/routes.py')
     # Find the branch block
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match, "Could not find /api/session/branch handler block"
     block = branch_match.group(1)
     assert 'require(body, "session_id")' in block, \
@@ -197,10 +209,7 @@ def test_branch_endpoint_consults_foreign_session_guard_on_missing_sidecar():
     provenance logic — not a stale inline copy.
     """
     src = _read('api/routes.py')
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match, "Could not find /api/session/branch handler block"
     block = branch_match.group(1)
     assert '_load_branch_source_or_refuse(handler, body["session_id"])' in block, \
@@ -269,10 +278,7 @@ def test_branch_helper_gates_persisted_read_only_sources_too():
 def test_branch_endpoint_returns_new_session_id():
     """Verify the branch endpoint returns session_id and title."""
     src = _read('api/routes.py')
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match
     block = branch_match.group(1)
     assert '"session_id"' in block, "Branch handler should return session_id"
@@ -284,10 +290,7 @@ def test_branch_endpoint_returns_new_session_id():
 def test_branch_creates_session_with_parent():
     """Verify the branch creates a Session with parent_session_id set."""
     src = _read('api/routes.py')
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match
     block = branch_match.group(1)
     assert 'parent_session_id=source.session_id' in block, \
@@ -297,10 +300,7 @@ def test_branch_creates_session_with_parent():
 def test_branch_marks_explicit_forks_as_fork_sessions():
     """Explicit branches must not be mistaken for compression lineage rows."""
     src = _read('api/routes.py')
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match
     block = branch_match.group(1)
     assert 'session_source="fork"' in block, \
@@ -373,10 +373,7 @@ def test_branch_nested_fork_rows_render_their_own_state_indicator():
 def test_branch_keep_count_support():
     """Verify the branch endpoint supports keep_count parameter."""
     src = _read('api/routes.py')
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match
     block = branch_match.group(1)
     assert 'keep_count' in block, "Branch handler should support keep_count"
@@ -387,10 +384,7 @@ def test_branch_keep_count_support():
 def test_branch_auto_title():
     """Verify fork title defaults to '<original> (fork)'."""
     src = _read('api/routes.py')
-    branch_match = re.search(
-        r'parsed\.path == "/api/session/branch"(.*?)(?=\n    if parsed\.path|$)',
-        src, re.DOTALL
-    )
+    branch_match = _branch_block()
     assert branch_match
     block = branch_match.group(1)
     assert '(fork)' in block, "Branch handler should auto-title as '(fork)'"

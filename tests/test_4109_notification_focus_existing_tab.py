@@ -77,7 +77,8 @@ def test_service_worker_update_delivery_keeps_versioned_no_store_route():
     assert "self.skipWaiting();" in SW_SRC
     assert "self.clients.claim();" in SW_SRC
 
-    route_idx = ROUTES_SRC.index('"/sw.js"')
-    route_block = ROUTES_SRC[route_idx : route_idx + 1200]
-    assert 'replace(\n                "__WEBUI_VERSION__", version_token\n            )' in route_block
+    from tests._route_source import route_source
+
+    route_block = route_source("GET", "/sw.js")
+    assert 'replace(\n            "__WEBUI_VERSION__", version_token\n        )' in route_block
     assert 'handler.send_header("Cache-Control", "no-store")' in route_block

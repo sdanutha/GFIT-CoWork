@@ -840,29 +840,38 @@ Profile loads its own. Code in `api/config.py` reads config through
 
 ## 9. How To Add a New API Endpoint
 
-Follow this exact pattern. Review existing handlers in do_GET/do_POST for reference.
+Every route is one row in the route table (`api/route_table.py`) plus one function in
+`api/routes.py`. The server dispatches every request by looking up its row; there is no
+other place to register a route.
 
-### Backend (server.py -> future: api/handlers.py)
+### Backend (api/route_table.py + api/routes.py)
 
-GET endpoint:
+1. Add the row. It must say who may call it (`USER` or `ADMIN`; Admin-only is the
+   safe choice), and, if the route names a session, whether it reads or writes it:
 
-    # Inside do_GET, before the 404 fallback line:
-    if parsed.path == '/api/your/endpoint':
-        qs = parse_qs(parsed.query)
-        param = qs.get('param', [''])[0]
-        if not param:
-            return j(self, {'error': 'param is required'}, status=400)
-        # do work
-        return j(self, {'result': value})
+        _get("/api/your/endpoint", USER, handler="_get_api_your_endpoint"),
+        _post("/api/your/endpoint", USER, session=WRITE, handler="_post_api_your_endpoint"),
 
-POST endpoint (AFTER /api/upload check, body already parsed):
+2. Add the handler in `api/routes.py`. A GET handler takes `(handler, parsed)`; a POST,
+   PUT, PATCH or DELETE handler takes `(handler, parsed, body, diag)`, with the JSON body
+   already read, CSRF already checked and the session guard already run:
 
-    if parsed.path == '/api/your/endpoint':
-        value = body.get('field', '')
-        if not value:
-            return j(self, {'error': 'field is required'}, status=400)
-        # do work
-        return j(self, {'ok': True, 'data': result})
+        def _get_api_your_endpoint(handler, parsed):
+            qs = parse_qs(parsed.query)
+            param = qs.get('param', [''])[0]
+            if not param:
+                return j(handler, {'error': 'param is required'}, status=400)
+            # do work
+            return j(handler, {'result': value})
+
+        def _post_api_your_endpoint(handler, parsed, body, diag):
+            value = body.get('field', '')
+            if not value:
+                return j(handler, {'error': 'field is required'}, status=400)
+            # do work
+            return j(handler, {'ok': True, 'data': result})
+
+   A handler that must read its own body (multipart upload) sets `body="own"` on its row.
 
 Endpoint requiring a valid session:
 
@@ -1197,10 +1206,18 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   (`profiles.clear_request_profile`) on every exit, before the next keep-alive request.
   `tests/test_gfit_request_admission_guard.py` fails when code outside
   `api/access.py` reads the session role or a pin, or when anything stores a pin again. The
-  module also holds the one list of endpoints a User may call; everything else is Admin-only
-  (fail closed), enforced in `check_auth`. The list names each route and method exactly, with a prefix only for a variable path part (the
-  module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
-  in `api/routes.py` and fails when the list and the handled routes disagree.
+  Admin gate (`user_may_call`, enforced in `check_auth`) answers from the route table: a User
+  may call a route whose row says `USER`; everything else, including a path with no row, is
+  Admin-only (fail closed).
+- `api/route_table.py` — the route table: one row per HTTP route, the one place that says
+  which handler serves it, who may call it (`USER`/`ADMIN`), whether it needs a CSRF token,
+  how its body is read, whether the session guard runs, and whether it reads or writes a
+  session. One matcher (exact path, then `<id>` segments, then the longest prefix) chooses the
+  row; the dispatchers in `api/routes.py`, the Admin gate, session ownership and the CSRF
+  check all read it. A User prefix row needs its reason in `VARIABLE_PATH_PREFIXES`.
+  `tests/test_gfit_route_table.py` checks every row and that each answers as before, with one
+  change on purpose: a session page's static assets and manifest name no session (the old
+  `/session/*` read rule caught them).
 - `api/workspace_policy.py` — the Workspace policy: the one answer to "what may this request
   touch?", as the request's Admission is the one answer to "who is calling?". It is chosen once
   per request from the request's Admission (`request_workspace_policy`, the only mapping): a
@@ -1228,7 +1245,7 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   Admission). The Admin's adapter is the unconfined rules for a Directory Admin who stays in
   `default` (ADR 0004): it never switches Profile, names only `default` as a request's
   `profile` (Profile management names Profiles under `name`), keeps none of Upstream's route
-  exemptions, and another Profile's session is read-only in place. `SESSION_ROUTE_KINDS` classifies every session-naming route as a read or a write
+  exemptions, and another Profile's session is read-only in place. Each session-naming route's route-table row classifies it as a read or a write
   (`tests/test_gfit_session_route_kinds.py` keeps it complete); a read is answered, a write
   gets 403 `session_read_only` naming the owner, and the detail load marks the session
   `read_only` with `read_only_reason: "other_profile"` and `owner_profile`. The request's

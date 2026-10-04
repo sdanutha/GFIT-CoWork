@@ -220,8 +220,9 @@ def test_system_health_cpu_second_procfs_read_fallback_does_not_sleep_twice(monk
 
 
 def test_system_health_route_registered_and_auth_gated(monkeypatch):
-    assert 'parsed.path == "/api/system/health"' in ROUTES_PY
-    assert "build_system_health_payload()" in ROUTES_PY
+    from tests._route_source import route_source
+
+    assert "build_system_health_payload()" in route_source("GET", "/api/system/health")
     assert '"/api/system/health"' not in AUTH_PY, "system metrics must not be public"
 
     monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")

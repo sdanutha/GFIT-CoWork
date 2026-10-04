@@ -20,7 +20,8 @@ import json
 
 import pytest
 
-from api.session_ownership import READ, SESSION_ROUTE_KINDS, WRITE
+from api.session_ownership import READ, WRITE
+from tests._route_source import SESSION_ROUTE_KINDS
 from tests._gfit_server import gfit_server as _gfit_server
 from tests.test_gfit_session_route_answers import (
     SESSION_ROUTES,

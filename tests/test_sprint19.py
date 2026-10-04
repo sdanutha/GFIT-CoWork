@@ -75,8 +75,10 @@ def test_login_route_injects_webui_version_for_login_script():
     """The /login route should replace the login.js version placeholder."""
     from pathlib import Path
 
-    src = Path(__file__).resolve().parents[1].joinpath("api", "routes.py").read_text(encoding="utf-8")
-    login_block = src[src.find('if parsed.path == "/login"'):src.find('if parsed.path == "/api/auth/status"')]
+    from tests._route_source import route_source
+
+    assert Path
+    login_block = route_source("GET", "/login")
     assert "WEBUI_VERSION" in login_block
     assert "{{WEBUI_VERSION}}" in login_block
 
