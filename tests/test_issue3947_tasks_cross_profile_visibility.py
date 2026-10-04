@@ -291,7 +291,7 @@ def test_crons_route_ignores_all_profiles_toggle_in_isolated_mode(monkeypatch):
             return False
 
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "alpha")
-    monkeypatch.setattr(routes, "_is_isolated_profile_mode", lambda: True)
+    monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: True)
     monkeypatch.setattr(profiles, "list_profiles_api", lambda: [{"name": "alpha", "visible": True}])
     monkeypatch.setattr(
         profiles,

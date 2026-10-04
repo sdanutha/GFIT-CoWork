@@ -1840,3 +1840,11 @@ def clear_profile_cookie(handler) -> None:
     cookie[cookie_name]['samesite'] = 'Lax'
     cookie[cookie_name]['max-age'] = '0'
     handler.send_header('Set-Cookie', cookie[cookie_name].OutputString())
+
+
+def answer_not_found(handler) -> None:
+    """Write 404 "not found"; a client already gone is a normal disconnect, not a fault."""
+    try:
+        j(handler, {'error': 'not found'}, status=404)
+    except _CLIENT_DISCONNECT_ERRORS:
+        pass

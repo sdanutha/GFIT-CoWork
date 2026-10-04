@@ -296,12 +296,8 @@ def _is_isolated_profile_mode() -> bool:
     not the current os.environ value. init_profile_state() overwrites HERMES_HOME
     at startup, which would disable detection if we read it here.
     """
-    # A request bound to one Profile (a GFIT-CoWork User's, by the request's
-    # Admission) is an isolated request, whatever the process posture.
-    from api.access import caller_bound_profile
-
-    if caller_bound_profile():
-        return True
+    # This is the process posture only. A GFIT-CoWork User's request is
+    # scoped by the request's Admission (session ownership), not by this.
     # PRIMARY gate: explicit startup opt-in. Default OFF → a normal named-profile
     # launch is never treated as isolated, so profile switching keeps working
     # (#4586). Read the snapshot, not live os.environ, so profile .env reloads
@@ -333,19 +329,12 @@ def _is_isolated_profile_mode() -> bool:
 
 
 def _isolated_profile_name() -> str:
-    """Return the caller's bound Profile, else the directory name from _INITIAL_HERMES_HOME."""
-    from api.access import caller_bound_profile
-
-    return caller_bound_profile() or Path(_INITIAL_HERMES_HOME).expanduser().name
+    """Return the isolated Profile's name: the directory name of the startup HERMES_HOME."""
+    return Path(_INITIAL_HERMES_HOME).expanduser().name
 
 
 def _isolated_profile_home() -> Path:
-    """Return the home of the caller's bound Profile, else the startup HERMES_HOME."""
-    from api.access import caller_bound_profile
-
-    bound = caller_bound_profile()
-    if bound:
-        return _resolve_named_profile_home(bound)
+    """Return the isolated Profile's home: the startup HERMES_HOME."""
     return Path(_INITIAL_HERMES_HOME).expanduser()
 
 
@@ -550,6 +539,20 @@ def clear_request_profile() -> None:
     clear_request_admission()
 
 
+class ProfileNotReadable(LookupError):
+    """A Profile-home lookup the request's caller may not make (another User's Profile).
+
+    The request's answer is "not found" (``server.py`` maps it to 404), the same
+    as for a Profile that does not exist. Not a ``ValueError``, so a route's
+    own bad-input handling does not turn it into a 400; its message names no
+    Profile, in case a broad handler shows it anyway.
+    """
+
+    def __init__(self, name):
+        super().__init__("Profile not found")
+        self.name = name
+
+
 def _resolve_profile_home_for_name(name: str) -> Path:
     """Resolve a logical profile name to its Hermes home path.
 
@@ -558,6 +561,12 @@ def _resolve_profile_home_for_name(name: str) -> Path:
     not been created yet; the agent layer may create it on first use.  Invalid
     names fall back to the base home so traversal-shaped cookie values cannot
     influence filesystem paths.
+
+    Upstream's isolated profile mode clamps every lookup to its one Profile.
+    A caller confined to some Profiles (a GFIT-CoWork User) resolves only
+    those: no name is the request's own Profile, and any other name (another
+    Profile, a missing one, an invalid one, ``default``) raises
+    :class:`ProfileNotReadable` instead of falling back.
     """
     # In isolated mode, every logical profile lookup clamps to the configured
     # startup HERMES_HOME so callers cannot resolve a foreign profile path.
@@ -570,6 +579,18 @@ def _resolve_profile_home_for_name(name: str) -> Path:
                 name, isolated_name,
             )
         return isolated_home
+    # A caller who may not read every Profile (a GFIT-CoWork User) resolves
+    # only the Profiles session ownership lets them read; no name means the
+    # request's own. Anything else is refused, not quietly retargeted.
+    from api.session_ownership import request_caller_reach
+
+    reach = request_caller_reach()
+    if not reach.every_profile:
+        name = name or get_active_profile_name()
+        if not name or not reach.includes(name) or not (
+            _is_root_profile(name) or _PROFILE_ID_RE.fullmatch(name)
+        ):
+            raise ProfileNotReadable(name)
     if not name or _is_root_profile(name):
         return _DEFAULT_HERMES_HOME
     if not _PROFILE_ID_RE.fullmatch(name):
@@ -872,7 +893,10 @@ def get_hermes_home_for_profile(name: str) -> Path:
 
     Falls back to _DEFAULT_HERMES_HOME (same as 'default') when *name* is None,
     empty, 'default', or does not match the profile-name format (rejects path
-    traversal such as '../../etc').
+    traversal such as '../../etc'). For a caller confined to some Profiles (a
+    GFIT-CoWork User) there is no fallback: no name is the request's own
+    Profile, and a name outside the caller's reach raises
+    :class:`ProfileNotReadable` (see :func:`_resolve_profile_home_for_name`).
     """
     return _resolve_profile_home_for_name(name)
 
