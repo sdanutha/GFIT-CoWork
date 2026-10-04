@@ -1262,10 +1262,14 @@ function _renderCronDetail(job){
           <button type="button" class="cron-btn" onclick="copyCurrentCronDiagnostics()">${esc(t('cron_attention_copy_diagnostics'))}</button>
         </div>
       </div>` : '';
+  // A caller who may not switch Profile (a Directory login) only reads it here.
+  const maySwitchProfile = !(_profilesCache && _profilesCache.may_switch_profile === false);
   const readOnlyBanner = isReadOnly ? `
       <div class="detail-alert">
         <div class="detail-alert-title">Read-only from another profile</div>
-        <p>Switch to ${esc(ownerProfileLabel)} to run, edit, or inspect live status and output for this cron job.</p>
+        <p>${maySwitchProfile
+          ? `Switch to ${esc(ownerProfileLabel)} to run, edit, or inspect live status and output for this cron job.`
+          : `This cron job belongs to ${esc(ownerProfileLabel)}. Only its owner can run or edit it.`}</p>
       </div>` : '';
   const toastNotifications = job.toast_notifications !== false;
   const outputTitle = _cronOutputTitle(job);

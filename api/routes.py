@@ -2625,9 +2625,17 @@ def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     ownership = request_session_ownership()
     all_profiles = reach.every_profile
 
+    def for_caller(row):
+        # A row this caller may only read (the Admin's view of another
+        # Profile's session) is marked, on a copy: cached rows never change.
+        reason = ownership.read_only_reason(row)
+        if not reason:
+            return row
+        return {**row, "read_only": True, "read_only_reason": reason, "owner_profile": row.get("profile")}
+
     def keep(rows):
         return [
-            row for row in rows or []
+            for_caller(row) for row in rows or []
             if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
         ]
 
