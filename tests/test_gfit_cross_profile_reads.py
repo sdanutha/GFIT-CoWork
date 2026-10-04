@@ -253,11 +253,13 @@ def test_all_profiles_cli_import_finds_nothing_in_another_users_profile(srv):
         assert status in (403, 404), payload
     assert Session.load(sid) is None
 
+    # The Admin stays in default and never works in a User's Profile (ADR 0004):
+    # importing into Bob's Profile is refused too (request-profile review).
     status, payload, _ = srv.logged_in(ADMIN).post(
         "/api/session/import_cli", {"session_id": sid, "all_profiles": True, "profile": BOB},
     )
-    assert status == 200, payload
-    assert payload["session"]["profile"] == BOB
+    assert status == 403, payload
+    assert Session.load(sid) is None
 
 
 # ── Ticket 03: a cron job's working folder ──────────────────────────────────
@@ -465,14 +467,16 @@ def test_a_user_cannot_point_a_cron_job_at_another_profile(srv, fake_cron, profi
     assert _stored_job(srv, ALICE, "alice-job") == before
 
 
-def test_the_admin_points_a_cron_job_at_any_profile(srv, fake_cron):
+def test_the_admin_points_a_cron_job_only_at_default(srv, fake_cron):
+    """The Admin stays in default and never works in a User's Profile (ADR 0004)."""
     (srv.hermes_home / "cron").mkdir(parents=True, exist_ok=True)
     (srv.hermes_home / "cron" / "jobs.json").write_text(json.dumps([{"id": "admin-job", "name": "a"}]))
     admin = srv.logged_in(ADMIN)
 
-    for profile in (BOB, "default"):
-        status, body, _ = admin.post("/api/crons/update", {"job_id": "admin-job", "profile": profile})
-        assert status == 200, body
+    status, body, _ = admin.post("/api/crons/update", {"job_id": "admin-job", "profile": "default"})
+    assert status == 200, body
+    status, body, _ = admin.post("/api/crons/update", {"job_id": "admin-job", "profile": BOB})
+    assert status == 403, body
 
 
 @pytest.mark.parametrize("profile", ["default", BOB])

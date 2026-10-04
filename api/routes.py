@@ -479,7 +479,6 @@ def _visible_pinned_lineage_ids(session_rows) -> set[str]:
 # module keep resolving without per-call-site refactors.
 from api.profiles import (  # noqa: F401, E402  (re-export)
     _profiles_match,
-    _is_isolated_profile_mode,
     _is_root_profile,
     _SKILLS_STATS_CACHE,
     get_active_profile_name,
@@ -1581,14 +1580,21 @@ def _available_cron_profile_names() -> set[str]:
     """The Profiles a cron job may be set to run in: the ones this request may read."""
     from api import profiles as profiles_api
 
+    # A job runs in its Profile: offer the Profiles this request may read and
+    # may name to work in (the Admin: only default, ADR 0004).
     reach = request_caller_reach()
-    names = {"default"} if reach.includes("default") else set()
+    ownership = request_session_ownership()
+
+    def offered(name) -> bool:
+        return reach.includes(name) and ownership.may_name_profile(name)
+
+    names = {"default"} if offered("default") else set()
     for profile in profiles_api.list_profiles_api():
         try:
             name = str(profile.get("name") or "").strip()
         except AttributeError:
             continue
-        if name and reach.includes(name):
+        if name and offered(name):
             names.add(name)
     return names
 
@@ -2626,9 +2632,17 @@ def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     ownership = request_session_ownership()
     all_profiles = reach.every_profile
 
+    def for_caller(row):
+        # A row this caller may only read (the Admin's view of another
+        # Profile's session) is marked, on a copy: cached rows never change.
+        reason = ownership.read_only_reason(row)
+        if not reason:
+            return row
+        return {**row, "read_only": True, "read_only_reason": reason, "owner_profile": row.get("profile")}
+
     def keep(rows):
         return [
-            row for row in rows or []
+            for_caller(row) for row in rows or []
             if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
         ]
 
@@ -13226,6 +13240,22 @@ def _render_index_shell_base() -> str:
     return base
 
 
+def _mark_read_only_for_caller(session: dict, found) -> None:
+    """Mark a loaded session read-only when session ownership says it is, for
+    this caller (the Admin's view of another Profile's session), with the reason
+    and the owner, so the web app's read-only handling applies before any write."""
+    reason = request_session_ownership().read_only_reason(found)
+    if not reason:
+        return
+    from api import roster
+
+    owner = str(session.get("profile") or "")
+    session["read_only"] = True
+    session["read_only_reason"] = reason
+    session["owner_profile"] = owner
+    session["owner_label"] = roster.view(owner).get("label") if owner else ""
+
+
 def _handle_session_get(handler, parsed) -> bool:
     """GET /api/session — full session payload (messages, tool calls, lineage...). Extracted verbatim from handle_get; every early-return path calls _diag.finish() (see the tier2c note inside)."""
     import time as _time
@@ -13685,6 +13715,7 @@ def _handle_session_get(handler, parsed) -> bool:
         ):
             raw["is_cli_session"] = False
             raw["read_only"] = True
+        _mark_read_only_for_caller(raw, s)
         imported_turn_marker = any(
             isinstance(row, dict) and row.get("_active_turn_token")
             for row in _all_msgs
@@ -13814,6 +13845,7 @@ def _handle_session_get(handler, parsed) -> bool:
         }
         attach_todo_state(sess, msgs)
         sess = _merge_cli_sidebar_metadata(sess, cli_meta)
+        _mark_read_only_for_caller(sess, sess)
         return j(handler, {"session": public_session_projection(sess)})
 
 
@@ -14901,6 +14933,7 @@ def handle_get(handler, parsed) -> bool:
                     "profiles": profiles_payload,
                     "active": active,
                     "single_profile_mode": reach.single_profile,
+                    "may_switch_profile": request_session_ownership().may_switch_profile(),
                 },
             )
         finally:
@@ -16846,17 +16879,13 @@ def handle_post(handler, parsed) -> bool:
         if not name:
             return bad(handler, "name is required")
         try:
-            from api.auth import ensure_request_session
             from api.profiles import switch_profile, _validate_profile_name
             from api.helpers import build_profile_cookie
             if name != 'default':
                 _validate_profile_name(name)
-            session_info = ensure_request_session(handler)
-            if getattr(handler, '_request_session_rejected', False):
-                return bad(handler, 'Authentication required', 401)
-            bound_profile = str((session_info or {}).get("bound_profile") or "").strip() or None
-            if bound_profile and name != bound_profile:
-                return bad(handler, "Profile is bound to the current session", 403)
+            # A Directory session never gets here: the Bound guard refuses the
+            # switch (session ownership's may_switch_profile). Only login off
+            # switches, so the side effects below follow a real switch.
             # process_wide=False: don't mutate the process-global _active_profile.
             # Per-client profile is managed via cookie + thread-local (#798).
             result = switch_profile(name, process_wide=False)

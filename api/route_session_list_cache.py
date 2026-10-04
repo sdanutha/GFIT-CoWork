@@ -106,6 +106,8 @@ _SIDEBAR_SESSION_RESPONSE_FIELDS = {
     # latest bounded routing object is included; routing history stays excluded.
     "read_only",
     "is_read_only",
+    "read_only_reason",  # GFIT-CoWork: the Admin's view of another Profile's session
+    "owner_profile",
     "gateway_routing",
 }
 

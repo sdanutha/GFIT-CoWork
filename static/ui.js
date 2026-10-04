@@ -10754,7 +10754,33 @@ function _topbarMessageMetaText(){
   // branch above surfaces the raw server total, and only as "loaded of total".
   return t('n_messages',loadedCount);
 }
+// GFIT-CoWork: the Admin reads another Profile's session in place, read-only.
+// The detail load says so (read_only_reason "other_profile"); the banner names
+// the owner and the composer is disabled until another session is opened.
+function syncReadOnlySessionView(){
+  const banner=$('sessionReadOnlyBanner');
+  const msg=$('msg');
+  const wrap=$('composerWrap');
+  const session=S.session;
+  const otherProfile=!!(session&&session.read_only_reason==='other_profile');
+  // Pending approvals and clarify questions stay visible, without their answers.
+  if(wrap) wrap.classList.toggle('other-profile-read-only',otherProfile);
+  if(banner){
+    banner.hidden=!otherProfile;
+    banner.textContent=otherProfile?t('session_other_profile_read_only',session.owner_label||session.owner_profile||''):'';
+  }
+  if(!msg) return;
+  if(otherProfile){
+    msg.disabled=true;
+    msg.dataset.otherProfileReadOnly='1';
+  }else if(msg.dataset.otherProfileReadOnly){
+    msg.disabled=false;
+    delete msg.dataset.otherProfileReadOnly;
+  }
+}
+
 function syncTopbar(){
+  if(typeof syncReadOnlySessionView==='function') syncReadOnlySessionView();
   if(!S.session){
     document.title=APP_NAME;
     if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();

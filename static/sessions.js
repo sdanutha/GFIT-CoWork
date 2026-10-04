@@ -3090,6 +3090,8 @@ function _isReadOnlySession(session) {
 
 function _isBranchableReadOnlySession(session) {
   if (!_isReadOnlySession(session)) return false;
+  // Another Profile's session (the Admin's read-only view) is never forked.
+  if (session.read_only_reason === 'other_profile') return false;
   const sources = [
     session && session.source_tag,
     session && session.raw_source,

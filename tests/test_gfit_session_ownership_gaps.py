@@ -325,11 +325,14 @@ def test_the_admin_reads_and_answers_any_profiles_state_session_as_today(srv, pe
     assert _clarify_ids(sid) == []
 
 
-def test_the_admin_on_another_profiles_webui_session_answers_as_today(srv, pending):
+def test_the_admin_reads_another_profiles_pending_approvals_in_place(srv, pending):
+    """The Admin stays in default and reads another Profile's session read-only
+    (request-profile ticket 04): no 409 asking to switch."""
     _alice, _bob, sids, items = pending
     admin = srv.logged_in(ADMIN)
     status, body, _ = admin.get(f"/api/approval/pending?session_id={sids['bob-webui']}")
-    assert status == 409 and body["profile"] == BOB, body
+    assert status == 200, body
+    assert body.get("code") != "session_profile_mismatch"
 
 
 # ── Ticket 03: sessions that belong to no Profile ────────────────────────────
