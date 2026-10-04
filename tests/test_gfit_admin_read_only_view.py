@@ -58,6 +58,7 @@ VIEW_HARNESS = """
 const els = {
   sessionReadOnlyBanner: {hidden: true, textContent: ''},
   msg: {disabled: false, dataset: {}, placeholder: 'Message Hermes…'},
+  composerWrap: {classes: new Set(), classList: {toggle(name, on) { on ? els.composerWrap.classes.add(name) : els.composerWrap.classes.delete(name); }}},
 };
 const $ = id => els[id] || null;
 const t = (key, arg) => key === 'session_other_profile_read_only' ? `Read only: ${arg}'s session` : key;
@@ -67,7 +68,7 @@ function view(session) {
   S.session = session;
   syncReadOnlySessionView();
   return {banner: {hidden: els.sessionReadOnlyBanner.hidden, text: els.sessionReadOnlyBanner.textContent},
-          msgDisabled: els.msg.disabled};
+          msgDisabled: els.msg.disabled, answersHidden: els.composerWrap.classes.has('other-profile-read-only')};
 }
 const out = {
   other: view({read_only: true, read_only_reason: 'other_profile', owner_profile: '%s', owner_label: 'Bob (%s)'}),
@@ -83,11 +84,18 @@ def test_another_profiles_session_shows_the_banner_and_disables_the_composer():
     out = _run_node(VIEW_HARNESS % (_extract_function(UI_JS, "syncReadOnlySessionView"), BOB, BOB))
 
     assert out["other"] == {"banner": {"hidden": False, "text": f"Read only: Bob ({BOB})'s session"},
-                            "msgDisabled": True}
+                            "msgDisabled": True, "answersHidden": True}
     # Leaving it re-enables the composer and hides the banner.
-    assert out["own"] == {"banner": {"hidden": True, "text": ""}, "msgDisabled": False}
+    assert out["own"] == {"banner": {"hidden": True, "text": ""}, "msgDisabled": False, "answersHidden": False}
     # Other read-only sessions keep today's behaviour (no banner, composer as before).
-    assert out["imported"] == {"banner": {"hidden": True, "text": ""}, "msgDisabled": False}
+    assert out["imported"] == {"banner": {"hidden": True, "text": ""}, "msgDisabled": False, "answersHidden": False}
+
+
+def test_pending_approvals_and_clarify_questions_are_not_answerable_there():
+    style = (REPO / "static" / "style.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.other-profile-read-only #approvalBtns[^{]*\{[^}]*\}", style)
+    assert rule and "#clarifyChoices" in rule.group(0) and ".clarify-response" in rule.group(0)
+    assert "display:none" in rule.group(0)
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH")

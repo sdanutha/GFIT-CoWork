@@ -207,6 +207,37 @@ SESSION_ROUTE_KINDS: dict[tuple[str, str], str] = {
     ("POST", "/api/upload"): WRITE,
     ("POST", "/api/upload/extract"): WRITE,
     ("POST", "/api/workspace/upload"): WRITE,
+    # Admin-only routes that name a session (the Admin's view of another
+    # Profile's session must not reach a write through them either).
+    ("GET", "/api/escape/file/raw"): READ,
+    ("GET", "/api/escape/file/read"): READ,
+    ("GET", "/api/escape/list"): READ,
+    ("GET", "/api/terminal/output"): READ,
+    ("GET", "/api/approval/inject_test"): WRITE,
+    ("GET", "/api/clarify/inject_test"): WRITE,
+    ("POST", "/api/escape/authorize"): WRITE,
+    ("POST", "/api/file/open-vscode"): WRITE,
+    ("POST", "/api/file/reveal"): WRITE,
+    ("POST", "/api/git/checkout"): WRITE,
+    ("POST", "/api/git/commit"): WRITE,
+    ("POST", "/api/git/commit-message"): WRITE,  # runs the model
+    ("POST", "/api/git/commit-message-selected"): WRITE,  # runs the model
+    ("POST", "/api/git/commit-selected"): WRITE,
+    ("POST", "/api/git/discard"): WRITE,
+    ("POST", "/api/git/fetch"): WRITE,
+    ("POST", "/api/git/pull"): WRITE,
+    ("POST", "/api/git/push"): WRITE,
+    ("POST", "/api/git/stage"): WRITE,
+    ("POST", "/api/git/stash-checkout"): WRITE,
+    ("POST", "/api/git/unstage"): WRITE,
+    ("POST", "/api/session/worktree/remove"): WRITE,
+    ("POST", "/api/session/yolo"): WRITE,
+    ("POST", "/api/share/create"): WRITE,  # a public link to the session
+    ("POST", "/api/share/revoke"): WRITE,
+    ("POST", "/api/terminal/close"): WRITE,
+    ("POST", "/api/terminal/input"): WRITE,
+    ("POST", "/api/terminal/resize"): WRITE,
+    ("POST", "/api/terminal/start"): WRITE,
 }
 
 
@@ -519,6 +550,21 @@ class _AdminSessionOwnership(_UnconfinedSessionOwnership):
     """
 
     def may_switch_profile(self) -> bool:
+        return False
+
+    def may_name_profile(self, name) -> bool:
+        """Only ``default``: a request never names a User's Profile to work in.
+
+        Managing Profiles names them under ``name``, not ``profile``.
+        """
+        from api.profiles import _profiles_match
+
+        return isinstance(name, str) and bool(name) and _profiles_match(name, "default")
+
+    def keeps_upstream_rules(self) -> bool:
+        """No: Upstream's exemptions (chat start's placeholder retag, the CLI
+        import claim) would let the Admin take over another Profile's session.
+        Every session id the Admin names goes through the generic guard."""
         return False
 
     def refuse_found_session(self, session_id, found) -> Refusal | None:

@@ -24,6 +24,8 @@ from api.session_ownership import READ, SESSION_ROUTE_KINDS, WRITE
 from tests._gfit_server import gfit_server as _gfit_server
 from tests.test_gfit_session_route_answers import (
     SESSION_ROUTES,
+    Body,
+    Query,
     Stream,
     _ask,
     _bob_session,
@@ -99,8 +101,19 @@ READS = sorted(route for route, kind in SESSION_ROUTE_KINDS.items() if kind == R
 WRITES = sorted(route for route, kind in SESSION_ROUTE_KINDS.items() if kind == WRITE)
 
 
+def _as_the_admin(how):
+    """The route's request as the Admin's web app sends it: naming ``default``
+    where the route names a Profile (any other is refused before the session)."""
+    fields = getattr(how, "fields", None)
+    if isinstance(fields, dict) and "profile" in fields:
+        return type(how)({**fields, "profile": "default"})
+    return how
+
+
 def _ask_about_bobs_session(srv, bob, admin, method, entry):
-    how = SESSION_ROUTES[(method, entry)]
+    # Admin-only routes name the session as session_id in the query or body.
+    how = SESSION_ROUTES.get((method, entry)) or (Query() if method == "GET" else Body())
+    how = _as_the_admin(how)
     sid = _bob_session(bob)
     _names_bob_workspace_files(srv)
     named = _bob_stream(sid) if isinstance(how, Stream) else sid
@@ -171,3 +184,55 @@ def test_a_new_session_after_another_profiles_session_does_not_take_its_workspac
     workspace = json.loads(text)["session"]["workspace"]
     assert str(srv.profile_home(BOB)) not in str(workspace)
     assert after == before
+
+
+# ── Review: the Admin never works inside a User's Profile or Workspace ───────
+
+def _bob_empty_session(bob) -> str:
+    status, body, _ = bob.post("/api/session/new", {})
+    assert status == 200, body
+    return body["session"]["session_id"]
+
+
+def test_the_admin_cannot_start_a_chat_in_another_profiles_empty_session(srv, bob, admin):
+    from api.models import get_session
+
+    sid = _bob_empty_session(bob)
+
+    status, body, _ = admin.post("/api/chat/start", {"session_id": sid, "message": "hello", "profile": "default"})
+
+    assert status == 403, body
+    assert body["code"] == "session_read_only"
+    session = get_session(sid)
+    assert session.profile == BOB
+    assert not getattr(session, "active_stream_id", None)
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("POST", "/api/session/new", {"profile": BOB}),
+    ("GET", f"/api/memory?profile={BOB}", None),
+    ("GET", f"/api/sessions?profile={BOB}", None),
+])
+def test_the_admin_cannot_name_a_users_profile_to_work_in(srv, admin, method, path, body):
+    status, payload, _ = admin.request(method, path, body if body is not None else None)
+
+    assert status == 403, payload
+    assert _active(admin) == "default"
+
+
+def test_the_admin_still_names_default(srv, admin):
+    status, body, _ = admin.post("/api/session/new", {"profile": "default"})
+
+    assert status == 200, body
+    assert body["session"]["profile"] in (None, "default")
+
+
+def test_the_admins_cron_profile_picker_offers_only_default(srv, admin, monkeypatch):
+    import api.access as access
+    import api.routes as routes
+    from api.access import ROLE_ADMIN, Admitted
+
+    monkeypatch.setattr(access._request, "admission", Admitted(ROLE_ADMIN, "default"), raising=False)
+    monkeypatch.setattr(access._request, "directory_session", True, raising=False)
+
+    assert routes._available_cron_profile_names() == {"default"}

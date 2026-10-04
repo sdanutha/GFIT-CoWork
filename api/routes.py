@@ -1580,14 +1580,21 @@ def _available_cron_profile_names() -> set[str]:
     """The Profiles a cron job may be set to run in: the ones this request may read."""
     from api import profiles as profiles_api
 
+    # A job runs in its Profile: offer the Profiles this request may read and
+    # may name to work in (the Admin: only default, ADR 0004).
     reach = request_caller_reach()
-    names = {"default"} if reach.includes("default") else set()
+    ownership = request_session_ownership()
+
+    def offered(name) -> bool:
+        return reach.includes(name) and ownership.may_name_profile(name)
+
+    names = {"default"} if offered("default") else set()
     for profile in profiles_api.list_profiles_api():
         try:
             name = str(profile.get("name") or "").strip()
         except AttributeError:
             continue
-        if name and reach.includes(name):
+        if name and offered(name):
             names.add(name)
     return names
 

@@ -21,6 +21,8 @@ ADMISSION_MODULE = "api/access.py"
 
 CALLS = "calls set_request_profile"
 ASSIGNS = "assigns the thread-local profile"
+IMPORTS = "imports set_request_profile"
+SETTER_MODULE = "api/profiles.py"
 
 # (file, function, spelling): why it matches but does not decide a request's Profile.
 NOT_A_REQUEST: dict[tuple[str, str, str], str] = {
@@ -34,9 +36,13 @@ NOT_A_REQUEST: dict[tuple[str, str, str], str] = {
 ALLOWLIST: set[tuple[str, str, str]] = set()
 
 
-def _spellings(tree):
+def _spellings(tree, rel: str = ""):
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
+        if isinstance(node, ast.ImportFrom) and rel != SETTER_MODULE:
+            # An import under any name is a way to call it.
+            if any(alias.name == "set_request_profile" for alias in node.names):
+                yield node.lineno, IMPORTS
+        elif isinstance(node, ast.Call):
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
             if name == "set_request_profile":
@@ -64,7 +70,7 @@ def setters() -> list[tuple[str, int, str, str]]:
         if rel == ADMISSION_MODULE:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
-        for line, spelling in _spellings(tree):
+        for line, spelling in _spellings(tree, rel):
             found.append((rel, line, _outermost_function_at(tree, line), spelling))
     return sorted(found)
 
@@ -92,8 +98,9 @@ def test_each_spelling_is_caught():
         "    set_request_profile(name)\n"
         "    profiles.set_request_profile(name)\n"
         "    _tls.profile = name\n"
+        "    from api.profiles import set_request_profile as pin\n"
     )
-    assert [s for _l, s in sorted(_spellings(ast.parse(source)))] == [CALLS, CALLS, ASSIGNS]
+    assert [s for _l, s in sorted(_spellings(ast.parse(source)))] == [CALLS, CALLS, ASSIGNS, IMPORTS]
 
 
 def test_the_near_misses_are_not_caught():

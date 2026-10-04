@@ -10760,8 +10760,11 @@ function _topbarMessageMetaText(){
 function syncReadOnlySessionView(){
   const banner=$('sessionReadOnlyBanner');
   const msg=$('msg');
+  const wrap=$('composerWrap');
   const session=S.session;
   const otherProfile=!!(session&&session.read_only_reason==='other_profile');
+  // Pending approvals and clarify questions stay visible, without their answers.
+  if(wrap) wrap.classList.toggle('other-profile-read-only',otherProfile);
   if(banner){
     banner.hidden=!otherProfile;
     banner.textContent=otherProfile?t('session_other_profile_read_only',session.owner_label||session.owner_profile||''):'';

@@ -1210,8 +1210,9 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   unconfined adapter (login turned off, worker threads: Upstream's rules, including the 409
   that names the owning Profile) or the refusing answer (a Directory session with no
   Admission). The Admin's adapter is the unconfined rules for a Directory Admin who stays in
-  `default` (ADR 0004): it never switches Profile, and another Profile's session is read-only
-  in place. `SESSION_ROUTE_KINDS` classifies every session-naming route as a read or a write
+  `default` (ADR 0004): it never switches Profile, names only `default` as a request's
+  `profile` (Profile management names Profiles under `name`), keeps none of Upstream's route
+  exemptions, and another Profile's session is read-only in place. `SESSION_ROUTE_KINDS` classifies every session-naming route as a read or a write
   (`tests/test_gfit_session_route_kinds.py` keeps it complete); a read is answered, a write
   gets 403 `session_read_only` naming the owner, and the detail load marks the session
   `read_only` with `read_only_reason: "other_profile"` and `owner_profile`. The request's
