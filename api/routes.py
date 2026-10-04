@@ -7493,9 +7493,8 @@ def _resolve_compatible_session_model_state(
         return _moa_fast_path_model_state(model)
     if model and requested_provider and model.startswith(f"@{requested_provider}:"):
         try:
-            from api.config import cfg as _active_cfg
-
-            providers_cfg = _active_cfg.get("providers") if isinstance(_active_cfg, dict) else {}
+            _request_cfg = profile_config if isinstance(profile_config, dict) else get_config()
+            providers_cfg = _request_cfg.get("providers") if isinstance(_request_cfg, dict) else {}
         except Exception:
             providers_cfg = {}
         if isinstance(providers_cfg, dict) and requested_provider in providers_cfg:

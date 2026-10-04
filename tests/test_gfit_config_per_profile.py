@@ -219,3 +219,133 @@ def test_config_module_functions_read_the_requests_config_not_the_cfg_alias():
 def test_the_guard_finds_a_function_that_reads_the_cfg_alias():
     source = "cfg = {}\n\ndef leaky():\n    return cfg.get('model')\n\ndef fine():\n    cfg = _active_cfg()\n    return cfg\n"
     assert _functions_reading_the_cfg_alias(source) == {"leaky"}
+
+
+# ── Readers outside the config module (architecture review round 6, candidate 3) ──
+
+
+class _CatalogConsulted(Exception):
+    pass
+
+
+def _no_catalog(*_args, **_kwargs):
+    raise _CatalogConsulted()
+
+
+def _write_config(base, profile, text):
+    path = base / "config.yaml" if profile is None else base / "profiles" / profile / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+
+
+def _reload(config):
+    with config._yaml_file_cache_lock:
+        config._yaml_file_cache.clear()
+    config._cfg_views.clear()
+    config.reload_config()
+
+
+def test_a_session_model_on_a_provider_of_the_requests_profile_is_kept(two_profiles, tmp_path, monkeypatch):
+    import api.routes as routes
+
+    config, profiles = two_profiles
+    _write_config(tmp_path / "hermes", "alice", "model:\n  default: alice-model\nproviders:\n  alpha:\n    base_url: http://alpha.invalid/v1\n")
+    _reload(config)
+    monkeypatch.setattr(routes, "get_available_models", _no_catalog)
+
+    profiles.set_request_profile("alice")
+    try:
+        assert routes._resolve_compatible_session_model_state("@alpha:m1", "alpha") == ("@alpha:m1", "alpha", False)
+    finally:
+        profiles.clear_request_profile()
+
+
+def test_a_provider_of_another_profile_is_not_taken_for_the_requests_profile(two_profiles, tmp_path, monkeypatch):
+    import api.routes as routes
+
+    config, profiles = two_profiles
+    # The shared cache's Profile (the root) configures `alpha`; bob does not.
+    _write_config(tmp_path / "hermes", None, "model:\n  default: default-model\nproviders:\n  alpha:\n    base_url: http://alpha.invalid/v1\n")
+    _reload(config)
+    monkeypatch.setattr(routes, "get_available_models", _no_catalog)
+
+    profiles.set_request_profile("bob")
+    try:
+        # Not one of bob's providers: the resolver must ask the catalog.
+        with pytest.raises(_CatalogConsulted):
+            routes._resolve_compatible_session_model_state("@alpha:m1", "alpha")
+    finally:
+        profiles.clear_request_profile()
+
+
+def test_the_goal_turn_budget_follows_the_requests_profile(two_profiles, tmp_path):
+    from api import goals
+
+    config, profiles = two_profiles
+    _write_config(tmp_path / "hermes", "alice", "model:\n  default: alice-model\ngoals:\n  max_turns: 7\n")
+    _write_config(tmp_path / "hermes", None, "model:\n  default: default-model\ngoals:\n  max_turns: 31\n")
+    _reload(config)
+
+    profiles.set_request_profile("alice")
+    try:
+        assert goals._default_max_turns() == 7
+    finally:
+        profiles.clear_request_profile()
+    assert goals._default_max_turns() == 31
+
+
+# ── Guard: no module outside the config module reads the ``cfg`` alias ──────
+
+
+def _modules_reading_the_cfg_alias(sources: dict) -> dict:
+    """{module: [line, ...]} where a module other than the config module reads the alias."""
+    import ast
+
+    found = {}
+    for name, source in sources.items():
+        tree = ast.parse(source)
+        config_names = {"api.config"}
+        hits = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "api.config":
+                hits += [node.lineno for alias in node.names if alias.name == "cfg"]
+            if isinstance(node, ast.ImportFrom) and node.module == "api":
+                config_names |= {alias.asname or alias.name for alias in node.names if alias.name == "config"}
+            if isinstance(node, ast.Import):
+                config_names |= {alias.asname for alias in node.names if alias.name == "api.config" and alias.asname}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == "cfg" and ast.unparse(node.value) in config_names:
+                hits.append(node.lineno)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and ast.unparse(node.args[0]) in config_names
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == "cfg"
+            ):
+                hits.append(node.lineno)
+        if hits:
+            found[name] = sorted(hits)
+    return found
+
+
+def test_no_module_outside_the_config_module_reads_the_cfg_alias():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    files = [p for p in (root / "api").rglob("*.py") if p.name != "config.py" or p.parent != root / "api"]
+    files.append(root / "server.py")
+    sources = {str(p.relative_to(root)): p.read_text(encoding="utf-8") for p in files}
+    assert _modules_reading_the_cfg_alias(sources) == {}
+
+
+def test_the_guard_finds_every_spelling_of_the_cfg_alias():
+    sources = {
+        "a.py": "from api.config import cfg as _active_cfg\n",
+        "b.py": "from api import config as _config\nx = getattr(_config, 'cfg', {})\n",
+        "c.py": "import api.config as c\nx = c.cfg\n",
+        "d.py": "import api.config\nx = api.config.cfg\n",
+        "e.py": "from api import config\nx = config.get_config()\ncfg = {}\n",
+    }
+    assert _modules_reading_the_cfg_alias(sources) == {"a.py": [1], "b.py": [2], "c.py": [2], "d.py": [2]}

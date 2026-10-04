@@ -2954,7 +2954,7 @@ def set_provider_key(provider_id: str, api_key: str | None) -> dict[str, Any]:
 
     # Invalidate the model cache so the dropdown refreshes on next request.
     # Using invalidate_models_cache() instead of reload_config() to avoid
-    # disrupting active streaming sessions that may be reading config.cfg.
+    # disrupting active streaming sessions that may be reading the request's config (get_config()).
     invalidate_models_cache()
     invalidate_account_usage_status_cache(provider_id)
     invalidate_providers_cache()
