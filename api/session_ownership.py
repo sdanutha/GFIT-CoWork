@@ -19,6 +19,9 @@ A User's request is **Bound** to their Profile: besides owning only that
 Profile's sessions, it may name no other Profile (:meth:`may_name_profile`)
 and may not switch Profile (:meth:`may_switch_profile`).
 
+A route loads the session its request names through :func:`load_owned_session`:
+it asks session ownership first and writes the refusal (or the 404) itself.
+
 Callers ask: is this session id mine (:meth:`refuse_session`; for a session
 the route has already found, a record or a listed row,
 :meth:`refuse_found_session`; for one the detail load knows only from its
@@ -554,3 +557,26 @@ def request_profile_reach(active_profile=None, *, all_profiles: bool = False) ->
 def request_caller_reach() -> ProfileReach:
     """The Profiles this request's caller may read at all, whatever the view."""
     return request_session_ownership().caller_reach()
+
+
+def load_owned_session(handler, session_id, *, load=None, not_found: str = NOT_FOUND_MESSAGE, **load_options):
+    """The session the request names, when the request owns it; else None, its answer written.
+
+    Session ownership answers first (as a read or a write, by the request's
+    route): a refusal writes 404 *not_found* (409 naming the owner, or the
+    Admin's read-only 403, for the unconfined and Admin adapters). Then *load*
+    (the plain session loader by default) loads it with *load_options*; a load
+    that raises ``KeyError`` writes 404 *not_found*. Other errors pass to the
+    caller. For a session id the request chose, never one the server chose.
+    """
+    if load is None:
+        from api.models import get_session as load
+    refusal = request_session_ownership().refuse_session(session_id)
+    if refusal is not None:
+        refusal.answer(handler, session_id, not_found=not_found)
+        return None
+    try:
+        return load(session_id, **load_options)
+    except KeyError:
+        bad(handler, not_found, 404)
+        return None
