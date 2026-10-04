@@ -97,7 +97,7 @@ def _session(srv, uid) -> str:
 def test_a_users_page_shell_carries_the_user_role_and_no_extensions(srv):
     status, html, _ = srv.logged_in(USER).get("/")
     assert status == 200
-    assert '<html data-gfit-role="member" ' in html
+    assert '<html data-gfit-role="user" ' in html
     assert EXTENSION_SCRIPT not in html
 
 
@@ -116,7 +116,7 @@ def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(s
     status, body = conn.request("GET", "/api/logs", session=user)
     assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
     status, html = conn.request("GET", "/", session=user)
-    assert 'data-gfit-role="member"' in html
+    assert 'data-gfit-role="user"' in html
 
     status, body = conn.request("GET", "/api/logs", session=admin)
     assert status == 200, body
@@ -192,7 +192,7 @@ def test_the_requests_admission_ends_with_the_request(srv, conn, monkeypatch, me
     assert status == 200
     conn.request("GET", "/api/auth/status")
 
-    assert seen == [(path, ("member", USER)), ("/api/auth/status", None)]
+    assert seen == [(path, ("user", USER)), ("/api/auth/status", None)]
 
 
 # ── Login turned off ─────────────────────────────────────────────────────────

@@ -215,13 +215,13 @@ def policy_for(admission, *, directory_session: bool):
     session (login turned off, a worker thread); a Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
-    from api.access import ROLE_ADMIN, ROLE_MEMBER
+    from api.access import ROLE_ADMIN, ROLE_USER
 
     if admission is None:
         return REFUSING if directory_session else UNCONFINED
     if admission.role == ROLE_ADMIN:
         return UNCONFINED
-    if admission.role == ROLE_MEMBER and admission.profile:
+    if admission.role == ROLE_USER and admission.profile:
         try:
             return UserWorkspacePolicy.for_profile(admission.profile)
         except ValueError:

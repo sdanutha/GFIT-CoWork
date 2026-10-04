@@ -22,8 +22,9 @@ route, or a narrower prefix route, under it needs its own entry.
 ``tests/test_gfit_admin_gate_list.py`` fails when a dispatched route reaches a
 User any other way, so a new route stays Admin-only until someone names it.
 
-The server gate is the source of truth. The frontend hides the matching menus
-for Users, which is cosmetic only.
+The server gate is the source of truth. The web app hides what its caller may
+not use, from :data:`SHELL_FEATURES` (each feature named by its gating route,
+answered from this gate), which is cosmetic only.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ from typing import NamedTuple
 ADMIN_USERS_ENV = "HERMES_WEBUI_ADMIN_USERS"
 
 ROLE_ADMIN = "admin"
-ROLE_MEMBER = "member"
+ROLE_USER = "user"
 
 ADMIN_ONLY_MESSAGE = "This feature is available to your team's Admin only."
 
@@ -216,7 +217,7 @@ def admit(employee_id: str) -> Admitted | Refused:
         return Refused(REFUSED_NO_PROFILE)
     if roster.is_disabled(employee_id):
         return Refused(REFUSED_PROFILE_NOT_ACTIVE)
-    return Admitted(ROLE_MEMBER, employee_id)
+    return Admitted(ROLE_USER, employee_id)
 
 
 # ── The request's Admission ──────────────────────────────────────────────────
@@ -269,7 +270,7 @@ def request_has_directory_session() -> bool:
 def caller_is_user() -> bool:
     """True when this request comes from an admitted User (not the Admin)."""
     admission = request_admission()
-    return admission is not None and admission.role == ROLE_MEMBER
+    return admission is not None and admission.role == ROLE_USER
 
 
 def caller_bound_profile() -> str | None:
@@ -378,3 +379,38 @@ def user_entry(method: str, path: str) -> str | None:
 def user_may_call(method: str, path: str) -> bool:
     """True if a User may call *method* *path*. Unclassified endpoints are refused."""
     return user_entry(method, path) is not None
+
+
+# ── What the web app shows its caller ───────────────────────────────────────
+#
+# Each feature of the web app that the gate may refuse, named by the route that
+# gates it. The app shell carries the features its caller may use
+# (``data-gfit-may`` on ``<html>``); the browser hides the others and does not
+# call them. The list follows the gate, so the two cannot disagree; the gate
+# stays the authority.
+SHELL_FEATURES: dict[str, tuple[str, str]] = {
+    "dashboard": ("GET", "/api/dashboard/status"),
+    "provider_quota": ("GET", "/api/provider/quota"),
+    "mcp_servers": ("GET", "/api/mcp/servers"),
+    "terminal": ("POST", "/api/terminal/start"),
+    "logs": ("GET", "/api/logs"),
+    "kanban": ("GET", "/api/kanban/boards"),
+    "profiles_admin": ("POST", "/api/profile/create"),
+    "settings": ("POST", "/api/settings"),
+    "gateway_restart": ("POST", "/api/gateway/restart"),
+    "yolo": ("POST", "/api/session/yolo"),
+    "share_session": ("POST", "/api/share/create"),
+    "reveal_on_server": ("POST", "/api/file/reveal"),
+    "onboarding": ("GET", "/api/onboarding/status"),
+}
+
+
+def shell_features(role) -> tuple[str, ...]:
+    """The features of :data:`SHELL_FEATURES` a caller with *role* may use.
+
+    A User may use those whose route the gate lets a User call; the Admin, and
+    a request with no caller (login turned off), may use every one.
+    """
+    if role != ROLE_USER:
+        return tuple(SHELL_FEATURES)
+    return tuple(name for name, (method, path) in SHELL_FEATURES.items() if user_may_call(method, path))

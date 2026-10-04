@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 import api.profiles as profiles
-from api.access import ROLE_ADMIN, ROLE_MEMBER, Admitted
+from api.access import ROLE_ADMIN, ROLE_USER, Admitted
 from api.session_ownership import ownership_for
 
 ALICE = "521740"
@@ -44,7 +44,7 @@ def _isolated_mode(monkeypatch, hermes, profile):
 
 
 ADAPTERS = {
-    "user": lambda: ownership_for(Admitted(ROLE_MEMBER, ALICE), directory_session=True),
+    "user": lambda: ownership_for(Admitted(ROLE_USER, ALICE), directory_session=True),
     "admin": lambda: ownership_for(Admitted(ROLE_ADMIN, "default"), directory_session=True),
     "login off": lambda: ownership_for(None, directory_session=False),
     "refusing": lambda: ownership_for(None, directory_session=True),
@@ -156,7 +156,7 @@ def _lookup(name):
     ("../../etc", REFUSED),
 ])
 def test_a_users_profile_home_lookup_resolves_only_their_own(world, monkeypatch, name, expected):
-    _in_request(monkeypatch, Admitted(ROLE_MEMBER, ALICE))
+    _in_request(monkeypatch, Admitted(ROLE_USER, ALICE))
     homes = {"alice": world / "profiles" / ALICE}
 
     assert _lookup(name) == homes.get(expected, expected)
@@ -184,7 +184,7 @@ def test_upstream_isolated_mode_keeps_its_quiet_clamp(world, monkeypatch):
 
 
 def test_isolated_mode_is_the_process_posture_not_the_caller(world, monkeypatch):
-    _in_request(monkeypatch, Admitted(ROLE_MEMBER, ALICE))
+    _in_request(monkeypatch, Admitted(ROLE_USER, ALICE))
 
     assert profiles._is_isolated_profile_mode() is False
     assert profiles.get_active_profile_name() == ALICE

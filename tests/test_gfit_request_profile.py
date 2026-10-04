@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from api.access import ROLE_ADMIN, ROLE_MEMBER, Admitted, profile_for_request
+from api.access import ROLE_ADMIN, ROLE_USER, Admitted, profile_for_request
 from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
@@ -23,8 +23,8 @@ ADMIN = "600001"
 
 
 @pytest.mark.parametrize("admission,directory_session,cookie,expected", [
-    (Admitted(ROLE_MEMBER, ALICE), True, BOB, ALICE),
-    (Admitted(ROLE_MEMBER, ALICE), True, None, ALICE),
+    (Admitted(ROLE_USER, ALICE), True, BOB, ALICE),
+    (Admitted(ROLE_USER, ALICE), True, None, ALICE),
     (Admitted(ROLE_ADMIN, "default"), True, ALICE, "default"),
     (Admitted(ROLE_ADMIN, "default"), True, None, "default"),
     (None, True, ALICE, None),  # a Directory session with no Admission: none

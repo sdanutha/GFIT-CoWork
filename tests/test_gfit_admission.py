@@ -17,7 +17,7 @@ from api.access import (
     REFUSED_NO_PROFILE,
     REFUSED_PROFILE_NOT_ACTIVE,
     ROLE_ADMIN,
-    ROLE_MEMBER,
+    ROLE_USER,
     Admitted,
     Refused,
     admit,
@@ -63,7 +63,7 @@ def deployment(monkeypatch, tmp_path):
 
 def test_an_active_profile_is_admitted_as_a_member_to_that_profile(deployment):
     deployment.profile(MEMBER)
-    assert admit(MEMBER) == Admitted(ROLE_MEMBER, MEMBER)
+    assert admit(MEMBER) == Admitted(ROLE_USER, MEMBER)
 
 
 def test_someone_without_a_profile_is_refused_for_having_no_profile(deployment):
@@ -78,7 +78,7 @@ def test_a_disabled_profile_is_refused_as_not_active(deployment):
 def test_a_profile_without_a_roster_record_is_admitted_as_active(deployment):
     # A Profile made before the Profile roster existed has no record, and stays usable.
     deployment.profile(MEMBER, in_roster=False)
-    assert admit(MEMBER) == Admitted(ROLE_MEMBER, MEMBER)
+    assert admit(MEMBER) == Admitted(ROLE_USER, MEMBER)
 
 
 def test_an_unreadable_roster_refuses_everyone_but_the_admin(deployment):
@@ -101,7 +101,7 @@ def test_the_admin_list_always_wins_and_binds_to_default(deployment, profile):
 def test_with_no_admin_list_nobody_is_admin(deployment, admins):
     deployment.admins(admins)
     deployment.profile(MEMBER)
-    assert admit(MEMBER) == Admitted(ROLE_MEMBER, MEMBER)
+    assert admit(MEMBER) == Admitted(ROLE_USER, MEMBER)
 
 
 def test_admission_changes_nothing_on_disk(deployment, tmp_path):

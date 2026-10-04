@@ -640,14 +640,14 @@ def ownership_for(admission, *, directory_session: bool):
     session (login turned off, a worker thread); a Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
-    from api.access import ROLE_ADMIN, ROLE_MEMBER
+    from api.access import ROLE_ADMIN, ROLE_USER
     from api.profiles import _resolve_named_profile_home
 
     if admission is None:
         return REFUSING if directory_session else UNCONFINED
     if admission.role == ROLE_ADMIN:
         return ADMIN
-    if admission.role == ROLE_MEMBER and admission.profile:
+    if admission.role == ROLE_USER and admission.profile:
         try:
             _resolve_named_profile_home(admission.profile)
         except ValueError:

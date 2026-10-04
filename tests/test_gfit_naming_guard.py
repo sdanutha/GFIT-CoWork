@@ -44,7 +44,6 @@ AVOIDED_WORDS = {"member", "members", "pinned"}
 
 # (file, name): why it keeps the word.
 KEPT: dict[tuple[str, str], str] = {
-    ("api/access.py", "ROLE_MEMBER"): "the User role's constant, kept beside its stored value `member` (the value needs a migration; the spec leaves the name to the implementer)",
     ("api/routes.py", "_visible_pinned_lineage_ids"): "upstream: pinned sessions in the sidebar",
     ("api/routes.py", "_tts_resolve_pinned_addresses"): "upstream: TTS requests pinned to resolved addresses",
     ("api/routes.py", "_tts_resolve_pinned_address"): "upstream: TTS requests pinned to resolved addresses",

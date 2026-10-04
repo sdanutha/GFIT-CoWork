@@ -174,7 +174,7 @@ def attempt_login(username, password, rate_key: str) -> LoginOutcome:
         _record_login_attempt(rate_key)
         return LoginOutcome(401, INCORRECT_MESSAGE)
 
-    from api.access import ROLE_ADMIN, ROLE_MEMBER, Refused, admit
+    from api.access import ROLE_ADMIN, ROLE_USER, Refused, admit
 
     admission = admit(identity.employee_id)
     if isinstance(admission, Refused):
@@ -184,7 +184,7 @@ def attempt_login(username, password, rate_key: str) -> LoginOutcome:
     role, bound_profile = admission
 
     _clear_login_attempts(rate_key)
-    if role == ROLE_MEMBER:
+    if role == ROLE_USER:
         from api import roster
         from api.workspace import ensure_user_workspace
 
