@@ -154,6 +154,12 @@ def dispatched_routes() -> set[DispatchedRoute]:
     regex, a split, another variable) is invisible here until listed there."""
     tree = ast.parse(ROUTES_MODULE.read_text(encoding="utf-8"))
     routes = set(NON_LITERAL_ROUTES)
+    # Routes the server dispatches through the route table.
+    routes.update(
+        DispatchedRoute(row.method, row.pattern[:-1] if row.is_prefix else row.pattern, row.is_prefix)
+        for row in route_table.ROUTES
+        if row.handler
+    )
     for function in tree.body:
         method = DISPATCHERS.get(getattr(function, "name", None))
         if method is None:

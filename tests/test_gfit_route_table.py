@@ -29,7 +29,7 @@ def _intended(method, path, user_may, kind):
     """The one answer the table changes on purpose: a session page's static
     assets and manifest name no session. The old list said READ only because
     its ``/session/*`` prefix also caught them."""
-    if path.startswith("/session/static/") or path.startswith("/session/manifest."):
+    if path.startswith("/session/static/") or path in ("/session/manifest.json", "/session/manifest.webmanifest"):
         return user_may, None
     return user_may, kind
 
@@ -95,3 +95,46 @@ def test_the_table_classifies_reads_writes_and_callers():
     assert route_table.match("POST", "/api/session/rename").session == WRITE
     assert route_table.match("POST", "/api/session/yolo").caller == ADMIN
     assert route_table.match("GET", "/api/session/yolo").caller == USER
+
+
+# ── Dispatch: the table chooses the handler the old if-chains chose ──────────
+
+HANDLERS_BEFORE = json.loads(
+    (Path(__file__).parent / "fixtures" / "gfit_route_handlers_before_the_table.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize(
+    "method,path,handler",
+    [(method, path, name) for method, paths in HANDLERS_BEFORE.items() for path, name in paths.items()],
+)
+def test_the_table_dispatches_where_the_old_chains_did(method, path, handler):
+    import api.routes as routes
+
+    route = route_table.match(method, path)
+    assert route is not None and route.handler == handler
+    assert callable(getattr(routes, handler))
+
+
+def test_every_dispatched_row_names_a_handler_in_the_route_module():
+    import api.routes as routes
+
+    dispatched = set(HANDLERS_BEFORE)
+    missing = [
+        f"{route.method} {route.pattern}"
+        for route in route_table.ROUTES
+        if route.method in dispatched and not callable(getattr(routes, route.handler or "", None))
+    ]
+    assert not missing
+
+
+def test_a_patched_handler_takes_effect(monkeypatch):
+    from types import SimpleNamespace
+    from urllib.parse import urlparse
+
+    import api.routes as routes
+
+    seen = []
+    monkeypatch.setattr(routes, "_get_health", lambda handler, parsed: seen.append(parsed.path) or True)
+    assert routes.handle_get(SimpleNamespace(headers={}), urlparse("/health")) is True
+    assert seen == ["/health"]

@@ -13844,566 +13844,660 @@ def _handle_session_get(handler, parsed) -> bool:
         return j(handler, {"session": public_session_projection(sess)})
 
 
+# A route handler that did not serve the request: dispatch goes on to the
+# GET fallback (a dashboard plugin's page).
+_NOT_HANDLED = object()
+
+
+def _route_handler(route):
+    """The route module's function for *route*, looked up on each request so a
+    patch of the route module takes effect."""
+    return globals()[route.handler]
+
+
 def handle_get(handler, parsed) -> bool:
-    """Handle all GET routes. Returns True if handled, False for 404."""
+    """Handle all GET routes through the route table. Returns True if handled, False for 404."""
     proxy_result = _handle_extension_sidecar_proxy(handler, parsed, "GET")
     if proxy_result is not False:
         return proxy_result
+    route = route_table.match("GET", parsed.path)
+    if route is not None:
+        if route.session_guard and not _guard_request_session_visibility(handler, parsed, method="GET"):
+            return True
+        result = _route_handler(route)(handler, parsed)
+        if result is not _NOT_HANDLED:
+            return result
+    return _get_dashboard_plugin_page(handler, parsed)
 
-    if parsed.path.startswith("/session/static/"):
-        # Strip the leading "/session" so _serve_static() sees a path that
-        # starts with "/static/" (its required prefix). _serve_static enforces
-        # its own path-traversal sandbox via Path.resolve()+relative_to().
-        stripped = parsed._replace(path=parsed.path[len("/session"):])
-        return _serve_static(handler, stripped)
 
-    # Firefox Android resolves <link rel="manifest"> against the page URL
-    # before the dynamic <base href> script runs when installing from
-    # /session/<id>, producing requests like /session/manifest.json.
-    # Without this guard the catch-all below returns index.html instead of
-    # the manifest, and Firefox falls back to a generated letter icon.
-    # See #2226.
-    if parsed.path in ("/session/manifest.json", "/session/manifest.webmanifest"):
-        return _serve_manifest(handler)
+def _get_session_events(handler, parsed):
+    session_id = _session_events_path_session_id(parsed.path)
+    return _handle_session_run_journal_stream_for_session(handler, parsed, session_id)
 
-    if parsed.path in ("/", "/index.html", "/sessions") or parsed.path.startswith("/session/"):
+
+def _get_session_static(handler, parsed):
+    # Strip the leading "/session" so _serve_static() sees a path that
+    # starts with "/static/" (its required prefix). _serve_static enforces
+    # its own path-traversal sandbox via Path.resolve()+relative_to().
+    stripped = parsed._replace(path=parsed.path[len("/session"):])
+    return _serve_static(handler, stripped)
+
+
+# Firefox Android resolves <link rel="manifest"> against the page URL
+# before the dynamic <base href> script runs when installing from
+# /session/<id>, producing requests like /session/manifest.json.
+# Without this guard the catch-all below returns index.html instead of
+# the manifest, and Firefox falls back to a generated letter icon.
+# See #2226.
+def _get_session_manifest_json(handler, parsed):
+    return _serve_manifest(handler)
+
+
+def _get_app_shell(handler, parsed):
+    try:
+        csrf_token = ""
         try:
+            from api.auth import csrf_token_for_session, parse_cookie, verify_session
+            from api.directory import is_directory_enabled
+
+            if is_directory_enabled():
+                cookie_val = parse_cookie(handler)
+                if cookie_val and verify_session(cookie_val):
+                    csrf_token = csrf_token_for_session(cookie_val) or ""
+        except Exception:
             csrf_token = ""
-            try:
-                from api.auth import csrf_token_for_session, parse_cookie, verify_session
-                from api.directory import is_directory_enabled
 
-                if is_directory_enabled():
-                    cookie_val = parse_cookie(handler)
-                    if cookie_val and verify_session(cookie_val):
-                        csrf_token = csrf_token_for_session(cookie_val) or ""
-            except Exception:
-                csrf_token = ""
-
-            # The disk read + process-constant token substitutions are cached;
-            # only the per-session CSRF token and per-request extension tags are
-            # applied here (see _render_index_shell_base).
-            html = _render_index_shell_base().replace(
-                "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
-            )
-            return t(
-                handler,
-                _app_shell_for_role(html, _directory_session_role(handler)),
-                content_type="text/html; charset=utf-8",
-            )
-        except Exception as exc:
-            return _serve_shell_unavailable(handler, exc)
-
-    if parsed.path == "/share" or parsed.path.startswith("/share/"):
-        share_path = (Path(__file__).parent.parent / "static" / "share.html").resolve()
+        # The disk read + process-constant token substitutions are cached;
+        # only the per-session CSRF token and per-request extension tags are
+        # applied here (see _render_index_shell_base).
+        html = _render_index_shell_base().replace(
+            "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
+        )
         return t(
             handler,
-            share_path.read_text(encoding="utf-8"),
+            _app_shell_for_role(html, _directory_session_role(handler)),
             content_type="text/html; charset=utf-8",
-            extra_headers={
-                "X-Robots-Tag": "noindex, nofollow",
-            },
         )
+    except Exception as exc:
+        return _serve_shell_unavailable(handler, exc)
 
-    if parsed.path == "/login":
-        _settings = load_settings()
-        _lang = _settings.get("language", "en")
-        _login_strings = dict(_LOGIN_LOCALE[
-            _resolve_login_locale_key(_lang)
-        ])
+
+def _get_share(handler, parsed):
+    share_path = (Path(__file__).parent.parent / "static" / "share.html").resolve()
+    return t(
+        handler,
+        share_path.read_text(encoding="utf-8"),
+        content_type="text/html; charset=utf-8",
+        extra_headers={
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
+
+
+def _get_login(handler, parsed):
+    _settings = load_settings()
+    _lang = _settings.get("language", "en")
+    _login_strings = dict(_LOGIN_LOCALE[
+        _resolve_login_locale_key(_lang)
+    ])
+    from urllib.parse import quote
+    from api.version import WEBUI_VERSION
+    # GFIT-CoWork: the Directory login (employee ID + password) is the only
+    # way in (ADR 0004), so it is the only form. Locales without Directory
+    # copy yet fall back to English.
+    for _key in ("directory_subtitle", "username_placeholder"):
+        _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
+    _login_strings["subtitle"] = _login_strings["directory_subtitle"]
+    _login_form_html = (
+        '<input type="text" id="username" name="username" '
+        f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
+        'autocomplete="username" '
+        'autocapitalize="none" spellcheck="false" autofocus required>'
+        f'<input type="password" id="pw" name="password" '
+        f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
+        'autocomplete="current-password" required>'
+        f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
+    )
+    version_token = quote(WEBUI_VERSION, safe="")
+    _page = (
+        _LOGIN_PAGE_HTML.replace("{{APP_NAME}}", _html.escape(APP_NAME))
+        .replace("{{APP_NAME_INITIAL}}", _html.escape(APP_NAME[0].upper()))
+        .replace("{{WEBUI_VERSION}}", version_token)
+        .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
+        .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))
+        .replace("{{LOGIN_SUBTITLE}}", _html.escape(_login_strings["subtitle"]))
+        .replace("{{LOGIN_FORM_HTML}}", _login_form_html)
+        .replace("{{LOGIN_INVALID_PW}}", _html.escape(_login_strings["invalid_pw"]))
+        .replace(
+            "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])
+        )
+    )
+    return t(handler, _page, content_type="text/html; charset=utf-8")
+
+
+def _get_api_auth_status(handler, parsed):
+    from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
+    from api.directory import is_directory_enabled
+    logged_in = False
+    session_info = None
+    auth_enabled = is_directory_enabled()
+    if auth_enabled:
+        session_info = ensure_request_session(handler)
+        logged_in = bool(session_info)
+    payload = {
+        "auth_enabled": auth_enabled,
+        "logged_in": logged_in,
+        "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
+    }
+    if auth_enabled:
+        payload["directory_auth_enabled"] = True
+    if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
+        from api.login import session_identity
+
+        payload["auth_type"] = session_info.get("auth_type")
+        payload["user"] = session_info.get("username")
+        payload["bound_profile"] = session_info.get("bound_profile")
+
+        payload["role"] = _directory_session_role(handler)
+        payload.update(session_identity(session_info))
+    return j(handler, payload)
+
+
+def _get_api_share(handler, parsed):
+    token = parsed.path[len("/api/share/"):].strip()
+    share = load_share(token)
+    if not share:
+        return bad(handler, "Shared conversation not found", 404)
+    return j(
+        handler,
+        {"share": share},
+        extra_headers={
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
+
+
+def _get_manifest_json(handler, parsed):
+    return _serve_manifest(handler)
+
+
+def _get_sw_js(handler, parsed):
+    static_root = api_config.get_static_root()
+    sw_path = (static_root / "sw.js").resolve()
+    if sw_path.exists():
+        # Inject the current git-derived version as the cache name so the
+        # service worker cache busts automatically on every new deploy.
         from urllib.parse import quote
         from api.version import WEBUI_VERSION
-        # GFIT-CoWork: the Directory login (employee ID + password) is the only
-        # way in (ADR 0004), so it is the only form. Locales without Directory
-        # copy yet fall back to English.
-        for _key in ("directory_subtitle", "username_placeholder"):
-            _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
-        _login_strings["subtitle"] = _login_strings["directory_subtitle"]
-        _login_form_html = (
-            '<input type="text" id="username" name="username" '
-            f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
-            'autocomplete="username" '
-            'autocapitalize="none" spellcheck="false" autofocus required>'
-            f'<input type="password" id="pw" name="password" '
-            f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
-            'autocomplete="current-password" required>'
-            f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
-        )
         version_token = quote(WEBUI_VERSION, safe="")
-        _page = (
-            _LOGIN_PAGE_HTML.replace("{{APP_NAME}}", _html.escape(APP_NAME))
-            .replace("{{APP_NAME_INITIAL}}", _html.escape(APP_NAME[0].upper()))
-            .replace("{{WEBUI_VERSION}}", version_token)
-            .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
-            .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))
-            .replace("{{LOGIN_SUBTITLE}}", _html.escape(_login_strings["subtitle"]))
-            .replace("{{LOGIN_FORM_HTML}}", _login_form_html)
-            .replace("{{LOGIN_INVALID_PW}}", _html.escape(_login_strings["invalid_pw"]))
-            .replace(
-                "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])
-            )
+        text = sw_path.read_text(encoding="utf-8").replace(
+            "__WEBUI_VERSION__", version_token
         )
-        return t(handler, _page, content_type="text/html; charset=utf-8")
-
-    if parsed.path == "/api/auth/status":
-        from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
-        from api.directory import is_directory_enabled
-        logged_in = False
-        session_info = None
-        auth_enabled = is_directory_enabled()
-        if auth_enabled:
-            session_info = ensure_request_session(handler)
-            logged_in = bool(session_info)
-        payload = {
-            "auth_enabled": auth_enabled,
-            "logged_in": logged_in,
-            "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
-        }
-        if auth_enabled:
-            payload["directory_auth_enabled"] = True
-        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
-            from api.login import session_identity
-
-            payload["auth_type"] = session_info.get("auth_type")
-            payload["user"] = session_info.get("username")
-            payload["bound_profile"] = session_info.get("bound_profile")
-
-            payload["role"] = _directory_session_role(handler)
-            payload.update(session_identity(session_info))
-        return j(handler, payload)
-
-    if parsed.path.startswith("/api/share/"):
-        token = parsed.path[len("/api/share/"):].strip()
-        share = load_share(token)
-        if not share:
-            return bad(handler, "Shared conversation not found", 404)
-        return j(
-            handler,
-            {"share": share},
-            extra_headers={
-                "Cache-Control": "no-store",
-                "X-Robots-Tag": "noindex, nofollow",
-            },
-        )
-
-    if parsed.path in ("/manifest.json", "/manifest.webmanifest"):
-        return _serve_manifest(handler)
-
-    if parsed.path == "/sw.js":
-        static_root = api_config.get_static_root()
-        sw_path = (static_root / "sw.js").resolve()
-        if sw_path.exists():
-            # Inject the current git-derived version as the cache name so the
-            # service worker cache busts automatically on every new deploy.
-            from urllib.parse import quote
-            from api.version import WEBUI_VERSION
-            version_token = quote(WEBUI_VERSION, safe="")
-            text = sw_path.read_text(encoding="utf-8").replace(
-                "__WEBUI_VERSION__", version_token
-            )
-            data = text.encode("utf-8")
-            handler.send_response(200)
-            handler.send_header("Content-Type", "application/javascript; charset=utf-8")
-            handler.send_header("Cache-Control", "no-store")
-            handler.send_header("Service-Worker-Allowed", "/")
-            handler.send_header("Content-Length", str(len(data)))
-            handler.end_headers()
-            handler.wfile.write(data)
-            return True
-        return j(handler, {"error": "not found"}, status=404)
-
-    if parsed.path == "/favicon.ico":
-        static_root = api_config.get_static_root()
-        ico_path = (static_root / "favicon.ico").resolve()
-        if ico_path.exists() and ico_path.is_file():
-            data = ico_path.read_bytes()
-            handler.send_response(200)
-            handler.send_header("Content-Type", "image/x-icon")
-            handler.send_header("Content-Length", str(len(data)))
-            handler.send_header("Cache-Control", "public, max-age=86400")
-            handler.end_headers()
-            handler.wfile.write(data)
-        else:
-            handler.send_response(204)
-            handler.end_headers()
+        data = text.encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/javascript; charset=utf-8")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Service-Worker-Allowed", "/")
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
         return True
+    return j(handler, {"error": "not found"}, status=404)
 
-    if parsed.path.startswith("/api/") and not _guard_request_session_visibility(handler, parsed, method="GET"):
-        return True
 
-    # ── Insights / knowledge status ──
-    if parsed.path == "/api/insights":
-        return _handle_insights(handler, parsed)
-    if parsed.path == "/api/project-os/dashboard":
-        return _handle_project_os_dashboard(handler, parsed)
+def _get_favicon_ico(handler, parsed):
+    static_root = api_config.get_static_root()
+    ico_path = (static_root / "favicon.ico").resolve()
+    if ico_path.exists() and ico_path.is_file():
+        data = ico_path.read_bytes()
+        handler.send_response(200)
+        handler.send_header("Content-Type", "image/x-icon")
+        handler.send_header("Content-Length", str(len(data)))
+        handler.send_header("Cache-Control", "public, max-age=86400")
+        handler.end_headers()
+        handler.wfile.write(data)
+    else:
+        handler.send_response(204)
+        handler.end_headers()
+    return True
 
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_get
 
-        # Only treat an explicit False as "no route matched". None means the
-        # bridge already sent a response via bad()/j() — emitting our own 404
-        # on top of that produces concatenated JSON bodies on the wire.
-        result = handle_kanban_get(handler, parsed)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "GET")
-        return True
-    if parsed.path == "/api/wiki/status":
-        return _handle_llm_wiki_status(handler, parsed)
-    if parsed.path == "/api/wiki/browse":
-        wiki_root, _, _ = _llm_wiki_resolve_path()
-        if not wiki_root or not os.path.isdir(wiki_root):
-            return bad(handler, "Wiki not configured or directory not found", status=404)
-        allowlisted_entries = _llm_wiki_allowlisted_entries(Path(wiki_root))
-        pages = []
-        for rel_path, (fp, identity) in sorted(allowlisted_entries.items(), key=lambda item: item[0].lower()):
-            try:
-                st = fp.stat()
-            except OSError:
-                continue
-            if (st.st_dev, st.st_ino) != identity:
-                continue
-            pages.append({"name": Path(rel_path).name, "path": rel_path, "size": st.st_size, "mtime": int(st.st_mtime)})
-        return j(handler, {"pages": pages})
-    if parsed.path == "/api/wiki/page":
-        wiki_root, _, _ = _llm_wiki_resolve_path()
-        page_path = parse_qs(parsed.query or "").get("path", [""])[0]
-        if not wiki_root or not page_path:
-            return bad(handler, "Wiki not configured or path not provided", status=400)
-        if "\\" in page_path:
-            return bad(handler, "Invalid path", status=400)
-        # Reject a real `..` path SEGMENT (or absolute path), not the bare
-        # substring — a legitimate listed filename like `v1..v2.md` contains
-        # ".." without being traversal. Containment + the resolved-allowlist
-        # membership check below are the actual security boundary.
-        requested_key = page_path.replace("\\", "/")
-        _page_parts = requested_key.split("/")
-        if os.path.isabs(page_path) or any(part == ".." for part in _page_parts):
-            return bad(handler, "Invalid path", status=400)
-        if any(part in ("", ".") for part in _page_parts):
-            return bad(handler, "Invalid path", status=400)
-        full_path = Path(os.path.join(wiki_root, page_path))
-        if not _skill_path_within(Path(wiki_root), full_path):
-            return bad(handler, "Invalid path", status=400)
+# ── Insights / knowledge status ──
+def _get_api_insights(handler, parsed):
+    return _handle_insights(handler, parsed)
+
+
+def _get_api_project_os_dashboard(handler, parsed):
+    return _handle_project_os_dashboard(handler, parsed)
+
+
+def _get_api_kanban(handler, parsed):
+    from api.kanban_bridge import handle_kanban_get
+
+    # Only treat an explicit False as "no route matched". None means the
+    # bridge already sent a response via bad()/j() — emitting our own 404
+    # on top of that produces concatenated JSON bodies on the wire.
+    result = handle_kanban_get(handler, parsed)
+    if result is False:
+        return _kanban_unknown_endpoint(handler, parsed, "GET")
+    return True
+
+
+def _get_api_wiki_status(handler, parsed):
+    return _handle_llm_wiki_status(handler, parsed)
+
+
+def _get_api_wiki_browse(handler, parsed):
+    wiki_root, _, _ = _llm_wiki_resolve_path()
+    if not wiki_root or not os.path.isdir(wiki_root):
+        return bad(handler, "Wiki not configured or directory not found", status=404)
+    allowlisted_entries = _llm_wiki_allowlisted_entries(Path(wiki_root))
+    pages = []
+    for rel_path, (fp, identity) in sorted(allowlisted_entries.items(), key=lambda item: item[0].lower()):
         try:
-            wiki_real = Path(wiki_root).resolve()
+            st = fp.stat()
         except OSError:
-            return bad(handler, "Page not found", status=404)
-        # Only serve files the browse/list path would surface (same allowlist:
-        # *.md under the wiki page-dirs, no dotfiles, forbidden-roots guard).
-        # Without this the read endpoint could return ANY file inside the wiki
-        # root (e.g. .env / .git/config / non-.md), since containment alone
-        # doesn't constrain which files are readable (Opus review finding).
-        # Capture each allowlisted page's STABLE IDENTITY (st_dev, st_ino) so the
-        # post-open fstat below can detect a file/parent-dir swapped in after the
-        # allowlist check (TOCTOU write-race, Codex finding) — a pathname re-open
-        # alone can't, since O_NOFOLLOW only guards the final component, not a
-        # swapped parent directory.
-        allowed_identity = _llm_wiki_allowlisted_entries(wiki_real)
+            continue
+        if (st.st_dev, st.st_ino) != identity:
+            continue
+        pages.append({"name": Path(rel_path).name, "path": rel_path, "size": st.st_size, "mtime": int(st.st_mtime)})
+    return j(handler, {"pages": pages})
+
+
+def _get_api_wiki_page(handler, parsed):
+    wiki_root, _, _ = _llm_wiki_resolve_path()
+    page_path = parse_qs(parsed.query or "").get("path", [""])[0]
+    if not wiki_root or not page_path:
+        return bad(handler, "Wiki not configured or path not provided", status=400)
+    if "\\" in page_path:
+        return bad(handler, "Invalid path", status=400)
+    # Reject a real `..` path SEGMENT (or absolute path), not the bare
+    # substring — a legitimate listed filename like `v1..v2.md` contains
+    # ".." without being traversal. Containment + the resolved-allowlist
+    # membership check below are the actual security boundary.
+    requested_key = page_path.replace("\\", "/")
+    _page_parts = requested_key.split("/")
+    if os.path.isabs(page_path) or any(part == ".." for part in _page_parts):
+        return bad(handler, "Invalid path", status=400)
+    if any(part in ("", ".") for part in _page_parts):
+        return bad(handler, "Invalid path", status=400)
+    full_path = Path(os.path.join(wiki_root, page_path))
+    if not _skill_path_within(Path(wiki_root), full_path):
+        return bad(handler, "Invalid path", status=400)
+    try:
+        wiki_real = Path(wiki_root).resolve()
+    except OSError:
+        return bad(handler, "Page not found", status=404)
+    # Only serve files the browse/list path would surface (same allowlist:
+    # *.md under the wiki page-dirs, no dotfiles, forbidden-roots guard).
+    # Without this the read endpoint could return ANY file inside the wiki
+    # root (e.g. .env / .git/config / non-.md), since containment alone
+    # doesn't constrain which files are readable (Opus review finding).
+    # Capture each allowlisted page's STABLE IDENTITY (st_dev, st_ino) so the
+    # post-open fstat below can detect a file/parent-dir swapped in after the
+    # allowlist check (TOCTOU write-race, Codex finding) — a pathname re-open
+    # alone can't, since O_NOFOLLOW only guards the final component, not a
+    # swapped parent directory.
+    allowed_identity = _llm_wiki_allowlisted_entries(wiki_real)
+    try:
+        resolved_target = full_path.resolve()
+    except OSError:
+        return bad(handler, "Page not found", status=404)
+    requested_entry = allowed_identity.get(requested_key)
+    if requested_entry is None:
+        return bad(handler, "Page not found", status=404)
+    allowlisted_target, allowlisted_identity = requested_entry
+    if resolved_target != allowlisted_target:
+        return bad(handler, "Page not found", status=404)
+    # Read the ALREADY-RESOLVED, allowlisted real path with O_NOFOLLOW so a
+    # symlink swapped in for the final component between the allowlist check
+    # and the read is refused rather than followed. Then fstat the open fd
+    # and require its (st_dev, st_ino) to match the identity captured during
+    # allowlisting — this closes a parent-directory swap that O_NOFOLLOW
+    # would otherwise follow. Any mismatch / vanished / swapped page returns
+    # a clean 404, never a 500.
+    try:
+        fd = os.open(str(resolved_target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
-            resolved_target = full_path.resolve()
-        except OSError:
-            return bad(handler, "Page not found", status=404)
-        requested_entry = allowed_identity.get(requested_key)
-        if requested_entry is None:
-            return bad(handler, "Page not found", status=404)
-        allowlisted_target, allowlisted_identity = requested_entry
-        if resolved_target != allowlisted_target:
-            return bad(handler, "Page not found", status=404)
-        # Read the ALREADY-RESOLVED, allowlisted real path with O_NOFOLLOW so a
-        # symlink swapped in for the final component between the allowlist check
-        # and the read is refused rather than followed. Then fstat the open fd
-        # and require its (st_dev, st_ino) to match the identity captured during
-        # allowlisting — this closes a parent-directory swap that O_NOFOLLOW
-        # would otherwise follow. Any mismatch / vanished / swapped page returns
-        # a clean 404, never a 500.
-        try:
-            fd = os.open(str(resolved_target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            try:
-                st_open = os.fstat(fd)
-                if (st_open.st_dev, st_open.st_ino) != allowlisted_identity:
-                    return bad(handler, "Page not found", status=404)
-                raw = os.read(fd, _LLM_WIKI_MAX_PAGE_BYTES + 1)
-            finally:
-                os.close(fd)
-            if len(raw) > _LLM_WIKI_MAX_PAGE_BYTES:
-                raw = raw[:_LLM_WIKI_MAX_PAGE_BYTES]
-            content = raw.decode("utf-8", errors="replace")
-        except (FileNotFoundError, IsADirectoryError):
-            return bad(handler, "Page not found", status=404)
-        except OSError:
-            # ELOOP (symlink swapped in under O_NOFOLLOW) or any other read
-            # failure → clean 404, never a 500.
-            return bad(handler, "Could not read page", status=404)
-        return j(handler, {"content": content, "path": page_path})
-    if parsed.path == "/api/logs":
-        return _handle_logs(handler, parsed)
-
-    if parsed.path == "/health":
-        return _handle_health(handler, parsed)
-
-    if parsed.path == "/api/health/agent":
-        payload = build_agent_health_payload()
-        payload["gateway_chat"] = gateway_chat_config_status()
-        j(handler, payload)
-        return True
-
-    if parsed.path == "/api/system/health":
-        j(handler, build_system_health_payload())
-        return True
-
-    if parsed.path == "/api/models":
-        # Profile-scoping for non-default profiles (#3957) is handled INSIDE
-        # get_available_models() — it binds the active profile's env + TLS on
-        # the detached rebuild worker (and the legacy synchronous rebuild),
-        # which the request-thread wrapper could not reach. See
-        # api.config.get_available_models cold path + profile_scope_for_detached_worker.
-        freshness = parse_qs(parsed.query or "").get("freshness", [""])[0].strip().lower()
-        diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-        try:
-            diag.stage(f"enter:freshness={freshness or 'default'}") if diag else None
-            if freshness == "session_visit":
-                result = get_available_models_for_session_visit()
-                diag.stage("response_serialize") if diag else None
-                return j(handler, result)
-            if freshness:
-                return bad(handler, f"unknown models freshness: {freshness}", status=400)
-            return j(handler, get_available_models())
+            st_open = os.fstat(fd)
+            if (st_open.st_dev, st_open.st_ino) != allowlisted_identity:
+                return bad(handler, "Page not found", status=404)
+            raw = os.read(fd, _LLM_WIKI_MAX_PAGE_BYTES + 1)
         finally:
-            if diag:
-                diag.finish()
+            os.close(fd)
+        if len(raw) > _LLM_WIKI_MAX_PAGE_BYTES:
+            raw = raw[:_LLM_WIKI_MAX_PAGE_BYTES]
+        content = raw.decode("utf-8", errors="replace")
+    except (FileNotFoundError, IsADirectoryError):
+        return bad(handler, "Page not found", status=404)
+    except OSError:
+        # ELOOP (symlink swapped in under O_NOFOLLOW) or any other read
+        # failure → clean 404, never a 500.
+        return bad(handler, "Could not read page", status=404)
+    return j(handler, {"content": content, "path": page_path})
 
-    if parsed.path == "/api/models/live":
-        from api.profiles import profile_env_for_active_request
-        with profile_env_for_active_request("/api/models/live", logger_override=logger):
-            return _handle_live_models(handler, parsed)
 
-    # ── Auxiliary models (GET/POST) ──
-    if parsed.path == "/api/model/auxiliary":
-        from api.config import get_auxiliary_models
-        return j(handler, get_auxiliary_models())
+def _get_api_logs(handler, parsed):
+    return _handle_logs(handler, parsed)
 
-    if parsed.path == "/api/dashboard/status":
-        from api import dashboard_probe
 
-        j(handler, dashboard_probe.get_dashboard_status())
-        return True
+def _get_health(handler, parsed):
+    return _handle_health(handler, parsed)
 
-    if parsed.path == "/api/dashboard/config":
-        from api import dashboard_probe
 
-        try:
-            j(handler, dashboard_probe.get_dashboard_config())
-        except ValueError as exc:
-            bad(handler, str(exc), status=400)
-        return True
+def _get_api_health_agent(handler, parsed):
+    payload = build_agent_health_payload()
+    payload["gateway_chat"] = gateway_chat_config_status()
+    j(handler, payload)
+    return True
 
-    # ── Providers (GET) ──
-    if parsed.path == "/api/providers":
-        # Apply the active per-request profile's env so provider auth probes
-        # resolve against that profile's credentials, not the process-default
-        # profile's (#3957). Without this, get_auth_status() probes on a
-        # non-default profile resolve the wrong/empty creds and can stall past
-        # the 30s frontend timeout. No-op for the default profile.
-        from api.profiles import profile_env_for_active_request_readonly
-        with profile_env_for_active_request_readonly("/api/providers", logger_override=logger):
-            return j(handler, get_providers())
 
-    # ── Plugins/hooks visibility (read-only, no callback/source internals) ──
-    if parsed.path == "/api/plugins":
-        return _handle_plugins(handler, parsed)
-    if parsed.path == "/api/provider/quota":
-        query = parse_qs(parsed.query)
-        provider_id = (query.get("provider", [""])[0] or None)
-        refresh = (query.get("refresh", [""])[0] or "").strip().lower() in {"1", "true", "yes", "on"}
-        # Bind the active request's profile env (matches /api/providers and
-        # /api/models/live). #4365 added a credential_pool.load_pool() path in
-        # get_provider_quota for all pooled providers; without this wrapper that
-        # read/write runs under the process-default profile, so a multi-profile
-        # client would see (and seed) the default profile's pool instead of its
-        # own (#4247/#4067 profile-isolation class).
-        from api.profiles import profile_env_for_active_request_readonly
-        with profile_env_for_active_request_readonly("/api/provider/quota", logger_override=logger):
-            return j(handler, get_provider_quota(provider_id, refresh=refresh))
+def _get_api_system_health(handler, parsed):
+    j(handler, build_system_health_payload())
+    return True
 
-    if parsed.path == "/api/provider/cost-history":
-        query = parse_qs(parsed.query)
-        provider_id = (query.get("provider", [""])[0] or None)
-        days_raw = (query.get("days", ["7"])[0] or "7").strip()
-        try:
-            days = max(1, min(int(days_raw), 365))
-        except (ValueError, TypeError):
-            days = 7
-        return j(handler, get_provider_cost_history(provider_id, days))
 
-    if parsed.path == "/api/settings":
+def _get_api_models(handler, parsed):
+    # Profile-scoping for non-default profiles (#3957) is handled INSIDE
+    # get_available_models() — it binds the active profile's env + TLS on
+    # the detached rebuild worker (and the legacy synchronous rebuild),
+    # which the request-thread wrapper could not reach. See
+    # api.config.get_available_models cold path + profile_scope_for_detached_worker.
+    freshness = parse_qs(parsed.query or "").get("freshness", [""])[0].strip().lower()
+    diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    try:
+        diag.stage(f"enter:freshness={freshness or 'default'}") if diag else None
+        if freshness == "session_visit":
+            result = get_available_models_for_session_visit()
+            diag.stage("response_serialize") if diag else None
+            return j(handler, result)
+        if freshness:
+            return bad(handler, f"unknown models freshness: {freshness}", status=400)
+        return j(handler, get_available_models())
+    finally:
+        if diag:
+            diag.finish()
+
+
+def _get_api_models_live(handler, parsed):
+    from api.profiles import profile_env_for_active_request
+    with profile_env_for_active_request("/api/models/live", logger_override=logger):
+        return _handle_live_models(handler, parsed)
+
+
+# ── Auxiliary models (GET/POST) ──
+def _get_api_model_auxiliary(handler, parsed):
+    from api.config import get_auxiliary_models
+    return j(handler, get_auxiliary_models())
+
+
+def _get_api_dashboard_status(handler, parsed):
+    from api import dashboard_probe
+
+    j(handler, dashboard_probe.get_dashboard_status())
+    return True
+
+
+def _get_api_dashboard_config(handler, parsed):
+    from api import dashboard_probe
+
+    try:
+        j(handler, dashboard_probe.get_dashboard_config())
+    except ValueError as exc:
+        bad(handler, str(exc), status=400)
+    return True
+
+
+# ── Providers (GET) ──
+def _get_api_providers(handler, parsed):
+    # Apply the active per-request profile's env so provider auth probes
+    # resolve against that profile's credentials, not the process-default
+    # profile's (#3957). Without this, get_auth_status() probes on a
+    # non-default profile resolve the wrong/empty creds and can stall past
+    # the 30s frontend timeout. No-op for the default profile.
+    from api.profiles import profile_env_for_active_request_readonly
+    with profile_env_for_active_request_readonly("/api/providers", logger_override=logger):
+        return j(handler, get_providers())
+
+
+# ── Plugins/hooks visibility (read-only, no callback/source internals) ──
+def _get_api_plugins(handler, parsed):
+    return _handle_plugins(handler, parsed)
+
+
+def _get_api_provider_quota(handler, parsed):
+    query = parse_qs(parsed.query)
+    provider_id = (query.get("provider", [""])[0] or None)
+    refresh = (query.get("refresh", [""])[0] or "").strip().lower() in {"1", "true", "yes", "on"}
+    # Bind the active request's profile env (matches /api/providers and
+    # /api/models/live). #4365 added a credential_pool.load_pool() path in
+    # get_provider_quota for all pooled providers; without this wrapper that
+    # read/write runs under the process-default profile, so a multi-profile
+    # client would see (and seed) the default profile's pool instead of its
+    # own (#4247/#4067 profile-isolation class).
+    from api.profiles import profile_env_for_active_request_readonly
+    with profile_env_for_active_request_readonly("/api/provider/quota", logger_override=logger):
+        return j(handler, get_provider_quota(provider_id, refresh=refresh))
+
+
+def _get_api_provider_cost_history(handler, parsed):
+    query = parse_qs(parsed.query)
+    provider_id = (query.get("provider", [""])[0] or None)
+    days_raw = (query.get("days", ["7"])[0] or "7").strip()
+    try:
+        days = max(1, min(int(days_raw), 365))
+    except (ValueError, TypeError):
+        days = 7
+    return j(handler, get_provider_cost_history(provider_id, days))
+
+
+def _get_api_settings(handler, parsed):
+    settings = load_settings()
+    settings["persisted_speech_keys"] = persisted_speech_settings_keys()
+    # A password hash stored by the Upstream password login is left on disk
+    # and ignored; never send it to a client.
+    settings.pop("password_hash", None)
+    settings.setdefault("max_tokens", None)
+    settings.setdefault("max_tokens_effective", None)
+    settings.setdefault("max_tokens_fallback", None)
+    try:
+        from api.config import get_max_tokens_status
+        settings.update(get_max_tokens_status())
+    except Exception:
+        settings["max_tokens"] = None
+        settings["max_tokens_effective"] = None
+        settings["max_tokens_fallback"] = None
+    # Auth-state field for the frontend's unauthenticated warning
+    from api.directory import is_directory_enabled
+    settings["auth_enabled"] = is_directory_enabled()
+    # Inject the running version so the UI badge stays in sync with git tags
+    # without any manual release step.
+    try:
+        from api.version import AGENT_VERSION, WEBUI_VERSION
+        settings["webui_version"] = WEBUI_VERSION
+        settings["agent_version"] = AGENT_VERSION
+    except Exception:
+        pass
+    return j(handler, settings)
+
+
+def _get_api_transcribe_capability(handler, parsed):
+    return handle_transcribe_capability(handler)
+
+
+def _get_api_reasoning(handler, parsed):
+    # Current reasoning config (shared source of truth with the CLI —
+    # reads display.show_reasoning and agent.reasoning_effort from
+    # the active profile's config.yaml).
+    query = parse_qs(parsed.query)
+    model_id = (query.get("model", [""])[0] or "").strip() or None
+    provider_id = (query.get("provider", [""])[0] or "").strip() or None
+    base_url = (query.get("base_url", [""])[0] or "").strip() or None
+    return j(
+        handler,
+        get_reasoning_status(
+            model_id=model_id,
+            provider_id=provider_id,
+            base_url=base_url,
+        ),
+    )
+
+
+def _get_api_onboarding_status(handler, parsed):
+    return j(handler, get_onboarding_status())
+
+
+def _get_api_extensions_status(handler, parsed):
+    from api.extensions import get_extension_status
+
+    return j(handler, get_extension_status())
+
+
+def _get_extensions(handler, parsed):
+    from api.extensions import serve_extension_static
+
+    return serve_extension_static(handler, parsed)
+
+
+def _get_static(handler, parsed):
+    return _serve_static(handler, parsed)
+
+
+def _get_api_session_worktree_status(handler, parsed):
+    query = parse_qs(parsed.query)
+    sid = query.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required", status=400)
+    try:
+        s = get_session(sid, metadata_only=True)
+    except KeyError:
+        return bad(handler, "Session not found", status=404)
+    try:
+        from api.worktrees import worktree_status_for_session
+
+        return j(handler, {"status": worktree_status_for_session(s)})
+    except ValueError as exc:
+        return bad(handler, str(exc), status=400)
+    except Exception as exc:
+        logger.exception("failed to read worktree status for session %s", sid)
+        return bad(handler, _sanitize_error(exc), status=500)
+
+
+def _get_api_session_compress_status(handler, parsed):
+    query = parse_qs(parsed.query)
+    _handle_session_compress_status(handler, query.get("session_id", [""])[0])
+    return True
+
+
+def _get_api_session(handler, parsed):
+    return _handle_session_get(handler, parsed)
+
+
+def _get_api_session_lineage_report(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id required", 400)
+    report = read_session_lineage_report(_active_state_db_path(), sid)
+    if not report.get("found"):
+        return bad(handler, "Session not found", 404)
+    return j(handler, report)
+
+
+def _get_api_session_recovery_audit(handler, parsed):
+    from api.session_recovery import audit_session_recovery
+    return j(handler, audit_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path()))
+
+
+def _get_api_session_status(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    try:
+        from api.session_ops import session_status
+        _clear_stale_stream_state(get_session(sid, metadata_only=True))
+        return j(handler, session_status(sid))
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+
+
+def _get_api_session_yolo(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    return j(handler, {"yolo_enabled": is_session_yolo_enabled(sid)})
+
+
+def _get_api_session_usage(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    try:
+        from api.session_ops import session_usage
+        return j(handler, session_usage(sid))
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+
+
+def _get_api_background_status(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    from api.background import get_results
+    return j(handler, {"results": get_results(sid)})
+
+
+def _get_api_sessions(handler, parsed):
+    diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    try:
+        from api import profiles as profiles_api
+
+        diag.stage("load_settings")
         settings = load_settings()
-        settings["persisted_speech_keys"] = persisted_speech_settings_keys()
-        # A password hash stored by the Upstream password login is left on disk
-        # and ignored; never send it to a client.
-        settings.pop("password_hash", None)
-        settings.setdefault("max_tokens", None)
-        settings.setdefault("max_tokens_effective", None)
-        settings.setdefault("max_tokens_fallback", None)
-        try:
-            from api.config import get_max_tokens_status
-            settings.update(get_max_tokens_status())
-        except Exception:
-            settings["max_tokens"] = None
-            settings["max_tokens_effective"] = None
-            settings["max_tokens_fallback"] = None
-        # Auth-state field for the frontend's unauthenticated warning
-        from api.directory import is_directory_enabled
-        settings["auth_enabled"] = is_directory_enabled()
-        # Inject the running version so the UI badge stays in sync with git tags
-        # without any manual release step.
-        try:
-            from api.version import AGENT_VERSION, WEBUI_VERSION
-            settings["webui_version"] = WEBUI_VERSION
-            settings["agent_version"] = AGENT_VERSION
-        except Exception:
-            pass
-        return j(handler, settings)
-
-    if parsed.path == "/api/transcribe/capability":
-        return handle_transcribe_capability(handler)
-
-    if parsed.path == "/api/reasoning":
-        # Current reasoning config (shared source of truth with the CLI —
-        # reads display.show_reasoning and agent.reasoning_effort from
-        # the active profile's config.yaml).
-        query = parse_qs(parsed.query)
-        model_id = (query.get("model", [""])[0] or "").strip() or None
-        provider_id = (query.get("provider", [""])[0] or "").strip() or None
-        base_url = (query.get("base_url", [""])[0] or "").strip() or None
-        return j(
-            handler,
-            get_reasoning_status(
-                model_id=model_id,
-                provider_id=provider_id,
-                base_url=base_url,
-            ),
+        show_cli_sessions = bool(settings.get("show_cli_sessions"))
+        show_claude_code_sessions = bool(settings.get("show_claude_code_sessions"))
+        show_previous_messaging_sessions = bool(
+            settings.get("show_previous_messaging_sessions")
         )
-
-    if parsed.path == "/api/onboarding/status":
-        return j(handler, get_onboarding_status())
-
-    if parsed.path == "/api/extensions/status":
-        from api.extensions import get_extension_status
-
-        return j(handler, get_extension_status())
-
-    if parsed.path.startswith("/extensions/"):
-        from api.extensions import serve_extension_static
-
-        return serve_extension_static(handler, parsed)
-
-    if parsed.path.startswith("/static/"):
-        return _serve_static(handler, parsed)
-
-
-    if parsed.path == "/api/session/worktree/status":
-        query = parse_qs(parsed.query)
-        sid = query.get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "session_id is required", status=400)
-        try:
-            s = get_session(sid, metadata_only=True)
-        except KeyError:
-            return bad(handler, "Session not found", status=404)
-        try:
-            from api.worktrees import worktree_status_for_session
-
-            return j(handler, {"status": worktree_status_for_session(s)})
-        except ValueError as exc:
-            return bad(handler, str(exc), status=400)
-        except Exception as exc:
-            logger.exception("failed to read worktree status for session %s", sid)
-            return bad(handler, _sanitize_error(exc), status=500)
-
-    if parsed.path == "/api/session/compress/status":
-        query = parse_qs(parsed.query)
-        _handle_session_compress_status(handler, query.get("session_id", [""])[0])
-        return True
-
-    if parsed.path == "/api/session":
-        return _handle_session_get(handler, parsed)
-
-    if parsed.path == "/api/session/lineage/report":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "session_id required", 400)
-        report = read_session_lineage_report(_active_state_db_path(), sid)
-        if not report.get("found"):
-            return bad(handler, "Session not found", 404)
-        return j(handler, report)
-
-    if parsed.path == "/api/session/recovery/audit":
-        from api.session_recovery import audit_session_recovery
-        return j(handler, audit_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path()))
-
-    if parsed.path == "/api/session/status":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        try:
-            from api.session_ops import session_status
-            _clear_stale_stream_state(get_session(sid, metadata_only=True))
-            return j(handler, session_status(sid))
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-
-    if parsed.path == "/api/session/yolo":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        return j(handler, {"yolo_enabled": is_session_yolo_enabled(sid)})
-
-    if parsed.path == "/api/session/usage":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        try:
-            from api.session_ops import session_usage
-            return j(handler, session_usage(sid))
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-
-    if parsed.path == "/api/background/status":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        from api.background import get_results
-        return j(handler, {"results": get_results(sid)})
-
-    if parsed.path == "/api/sessions":
-        diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-        try:
-            from api import profiles as profiles_api
-
-            diag.stage("load_settings")
-            settings = load_settings()
-            show_cli_sessions = bool(settings.get("show_cli_sessions"))
-            show_claude_code_sessions = bool(settings.get("show_claude_code_sessions"))
-            show_previous_messaging_sessions = bool(
-                settings.get("show_previous_messaging_sessions")
-            )
-            show_cron_sessions = bool(settings.get("show_cron_sessions"))
-            show_webhook_sessions = bool(settings.get("show_webhook_sessions"))
-            show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
-            agent_session_source_filter = settings.get("agent_session_source_filter")
-            active_profile = profiles_api.get_active_profile_name()
-            reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-            all_profiles = reach.every_profile
-            include_archived = _query_flag(parsed, "include_archived")
-            exclude_hidden = _query_flag(parsed, "exclude_hidden")
-            archived_limit = _query_positive_int(parsed, "archived_limit", default=None, maximum=2000)
-            archived_offset = _query_positive_int(parsed, "archived_offset", default=0, maximum=200000)
-            sidebar_source = parse_qs(parsed.query).get("sidebar_source", [""])[0].strip().lower() or None
-            if sidebar_source not in ("webui", "cli"):
-                sidebar_source = None
-            # /api/sessions is the default sidebar contract, so keep the route-owned
-            # visible-row filter in the shared cache builder for both cache hits and misses.
-            key = _session_list_cache_key(
+        show_cron_sessions = bool(settings.get("show_cron_sessions"))
+        show_webhook_sessions = bool(settings.get("show_webhook_sessions"))
+        show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
+        agent_session_source_filter = settings.get("agent_session_source_filter")
+        active_profile = profiles_api.get_active_profile_name()
+        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
+        all_profiles = reach.every_profile
+        include_archived = _query_flag(parsed, "include_archived")
+        exclude_hidden = _query_flag(parsed, "exclude_hidden")
+        archived_limit = _query_positive_int(parsed, "archived_limit", default=None, maximum=2000)
+        archived_offset = _query_positive_int(parsed, "archived_offset", default=0, maximum=200000)
+        sidebar_source = parse_qs(parsed.query).get("sidebar_source", [""])[0].strip().lower() or None
+        if sidebar_source not in ("webui", "cli"):
+            sidebar_source = None
+        # /api/sessions is the default sidebar contract, so keep the route-owned
+        # visible-row filter in the shared cache builder for both cache hits and misses.
+        key = _session_list_cache_key(
+            active_profile=active_profile,
+            all_profiles=all_profiles,
+            show_cli_sessions=show_cli_sessions,
+            show_claude_code_sessions=show_claude_code_sessions,
+            show_previous_messaging_sessions=show_previous_messaging_sessions,
+            show_cron_sessions=show_cron_sessions,
+            include_archived=include_archived,
+            exclude_hidden=exclude_hidden,
+            visible_only=True,
+            show_webhook_sessions=show_webhook_sessions,
+            show_kanban_sessions=show_kanban_sessions,
+            source_filter=agent_session_source_filter,
+            sidebar_source=sidebar_source,
+            archived_limit=archived_limit,
+            archived_offset=archived_offset,
+        )
+        # Keep the visible /api/sessions contract unchanged even though the
+        # heavy lifting now lives in the cache builder: the view's profile
+        # scoping still happens before `_keep_latest_messaging_session_per_source(`.
+        payload = _get_cached_session_list_payload(
+            key=key,
+            builder=lambda: _build_session_list_view(
                 active_profile=active_profile,
                 all_profiles=all_profiles,
                 show_cli_sessions=show_cli_sessions,
@@ -14419,662 +14513,701 @@ def handle_get(handler, parsed) -> bool:
                 sidebar_source=sidebar_source,
                 archived_limit=archived_limit,
                 archived_offset=archived_offset,
-            )
-            # Keep the visible /api/sessions contract unchanged even though the
-            # heavy lifting now lives in the cache builder: the view's profile
-            # scoping still happens before `_keep_latest_messaging_session_per_source(`.
-            payload = _get_cached_session_list_payload(
-                key=key,
-                builder=lambda: _build_session_list_view(
-                    active_profile=active_profile,
-                    all_profiles=all_profiles,
-                    show_cli_sessions=show_cli_sessions,
-                    show_claude_code_sessions=show_claude_code_sessions,
-                    show_previous_messaging_sessions=show_previous_messaging_sessions,
-                    show_cron_sessions=show_cron_sessions,
-                    include_archived=include_archived,
-                    exclude_hidden=exclude_hidden,
-                    visible_only=True,
-                    show_webhook_sessions=show_webhook_sessions,
-                    show_kanban_sessions=show_kanban_sessions,
-                    source_filter=agent_session_source_filter,
-                    sidebar_source=sidebar_source,
-                    archived_limit=archived_limit,
-                    archived_offset=archived_offset,
-                    diag=diag,
-                ),
                 diag=diag,
-            )
-            payload = _session_list_rows_for_caller(payload, active_profile, reach)
-            diag.stage("response_write")
-            return j(handler, _session_list_payload_to_response(payload), pretty=False)
-        finally:
-            diag.finish()
-
-    if parsed.path == "/api/projects":
-        # ── Profile scoping (#1614) ────────────────────────────────────────
-        # Default: filter to the active profile. ?all_profiles=1 returns the
-        # aggregate list so settings/admin UIs can still see everything.
-        from api import profiles as profiles_api
-
-        active_profile = profiles_api.get_active_profile_name()
-        all_projects = load_projects()
-        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-        all_profiles = reach.every_profile
-        scoped = [p for p in all_projects if reach.includes(p.get("profile"))]
-        other_profile_count = len(all_projects) - len(scoped) if reach.counts_other_profiles else 0
-        return j(handler, {
-            "projects": scoped,
-            "all_profiles": all_profiles,
-            "active_profile": active_profile,
-            "other_profile_count": other_profile_count,
-        })
-
-    if parsed.path == "/api/prompts":
-        return j(handler, {"prompts": _load_saved_prompts()})
-
-    if parsed.path == "/api/session/export":
-        return _handle_session_export(handler, parsed)
-
-    if parsed.path == "/api/workspaces":
-        from api.profiles import get_active_profile_name
-        active_profile = get_active_profile_name()
-        try:
-            wss = load_workspaces(profile=active_profile)
-        except TypeError:
-            wss = load_workspaces()
-        try:
-            lw = get_last_workspace(profile=active_profile)
-        except TypeError:
-            lw = get_last_workspace()
-        return j(
-            handler,
-            {
-                "workspaces": wss,
-                "last": lw,
-                "terminal_remote_backend": _terminal_remote_backend_enabled(),
-            },
+            ),
+            diag=diag,
         )
+        payload = _session_list_rows_for_caller(payload, active_profile, reach)
+        diag.stage("response_write")
+        return j(handler, _session_list_payload_to_response(payload), pretty=False)
+    finally:
+        diag.finish()
 
-    if parsed.path == "/api/workspaces/suggest":
-        from api.profiles import get_active_profile_name
 
-        qs = parse_qs(parsed.query)
-        prefix = qs.get("prefix", [""])[0]
-        active_profile = get_active_profile_name()
-        try:
-            suggestions = list_workspace_suggestions(prefix, profile=active_profile)
-        except TypeError:
-            suggestions = list_workspace_suggestions(prefix)
-        return j(
-            handler,
-            {
-                "suggestions": suggestions,
-                "prefix": prefix,
-            },
-        )
+def _get_api_projects(handler, parsed):
+    # ── Profile scoping (#1614) ────────────────────────────────────────
+    # Default: filter to the active profile. ?all_profiles=1 returns the
+    # aggregate list so settings/admin UIs can still see everything.
+    from api import profiles as profiles_api
 
-    if parsed.path == "/api/sessions/search":
-        return _handle_sessions_search(handler, parsed)
+    active_profile = profiles_api.get_active_profile_name()
+    all_projects = load_projects()
+    reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
+    all_profiles = reach.every_profile
+    scoped = [p for p in all_projects if reach.includes(p.get("profile"))]
+    other_profile_count = len(all_projects) - len(scoped) if reach.counts_other_profiles else 0
+    return j(handler, {
+        "projects": scoped,
+        "all_profiles": all_profiles,
+        "active_profile": active_profile,
+        "other_profile_count": other_profile_count,
+    })
 
-    if parsed.path == "/api/list":
-        return _handle_list_dir(handler, parsed)
 
-    if parsed.path == "/api/escape/list":
-        return _handle_escape_list_dir(handler, parsed)
+def _get_api_prompts(handler, parsed):
+    return j(handler, {"prompts": _load_saved_prompts()})
 
-    if parsed.path == "/api/git/status":
-        return _handle_git_status(handler, parsed)
 
-    if parsed.path == "/api/git/branches":
-        return _handle_git_branches(handler, parsed)
+def _get_api_session_export(handler, parsed):
+    return _handle_session_export(handler, parsed)
 
-    if parsed.path == "/api/git/diff":
-        return _handle_git_diff(handler, parsed)
 
-    if parsed.path == "/api/personalities":
-        # Read personalities from config.yaml agent.personalities section
-        # (matches hermes-agent CLI behavior, not filesystem SOUL.md approach)
-        from api.config import reload_config as _reload_cfg
+def _get_api_workspaces(handler, parsed):
+    from api.profiles import get_active_profile_name
+    active_profile = get_active_profile_name()
+    try:
+        wss = load_workspaces(profile=active_profile)
+    except TypeError:
+        wss = load_workspaces()
+    try:
+        lw = get_last_workspace(profile=active_profile)
+    except TypeError:
+        lw = get_last_workspace()
+    return j(
+        handler,
+        {
+            "workspaces": wss,
+            "last": lw,
+            "terminal_remote_backend": _terminal_remote_backend_enabled(),
+        },
+    )
 
-        _reload_cfg()  # pick up config.yaml changes without server restart
-        from api.config import get_config as _get_cfg
 
-        _cfg = _get_cfg()
-        agent_cfg = _cfg.get("agent", {})
-        raw_personalities = agent_cfg.get("personalities", {})
-        personalities = []
-        if isinstance(raw_personalities, dict):
-            for name, value in raw_personalities.items():
-                desc = ""
-                if isinstance(value, dict):
-                    desc = value.get("description", "")
-                elif isinstance(value, str):
-                    desc = value[:80] + ("..." if len(value) > 80 else "")
-                personalities.append({"name": name, "description": desc})
-        return j(handler, {"personalities": personalities})
+def _get_api_workspaces_suggest(handler, parsed):
+    from api.profiles import get_active_profile_name
 
-    if parsed.path == "/api/git-info":
-        qs = parse_qs(parsed.query)
-        sid = qs.get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "session_id required")
-        try:
-            workspace = get_session(sid).workspace
-        except KeyError:
-            # state.db-only sessions (CLI, delegated subagents): same fallback as /api/list.
-            cli_meta = _lookup_cli_session_metadata(sid)
-            if not cli_meta:
-                return bad(handler, "Session not found", 404)
-            if not cli_meta.get("workspace"):
-                return j(handler, {"git": None})
-            try:
-                workspace = resolve_trusted_workspace(cli_meta["workspace"])
-            except (FileNotFoundError, ValueError):
-                return j(handler, {"git": None})
-        from api.workspace_git import GitWorkspaceError, git_status
-        from api.workspace_policy import request_workspace_policy
+    qs = parse_qs(parsed.query)
+    prefix = qs.get("prefix", [""])[0]
+    active_profile = get_active_profile_name()
+    try:
+        suggestions = list_workspace_suggestions(prefix, profile=active_profile)
+    except TypeError:
+        suggestions = list_workspace_suggestions(prefix)
+    return j(
+        handler,
+        {
+            "suggestions": suggestions,
+            "prefix": prefix,
+        },
+    )
 
-        try:
-            workspace = request_workspace_policy().confine(Path(workspace))
-        except ValueError:
+
+def _get_api_sessions_search(handler, parsed):
+    return _handle_sessions_search(handler, parsed)
+
+
+def _get_api_list(handler, parsed):
+    return _handle_list_dir(handler, parsed)
+
+
+def _get_api_escape_list(handler, parsed):
+    return _handle_escape_list_dir(handler, parsed)
+
+
+def _get_api_git_status(handler, parsed):
+    return _handle_git_status(handler, parsed)
+
+
+def _get_api_git_branches(handler, parsed):
+    return _handle_git_branches(handler, parsed)
+
+
+def _get_api_git_diff(handler, parsed):
+    return _handle_git_diff(handler, parsed)
+
+
+def _get_api_personalities(handler, parsed):
+    # Read personalities from config.yaml agent.personalities section
+    # (matches hermes-agent CLI behavior, not filesystem SOUL.md approach)
+    from api.config import reload_config as _reload_cfg
+
+    _reload_cfg()  # pick up config.yaml changes without server restart
+    from api.config import get_config as _get_cfg
+
+    _cfg = _get_cfg()
+    agent_cfg = _cfg.get("agent", {})
+    raw_personalities = agent_cfg.get("personalities", {})
+    personalities = []
+    if isinstance(raw_personalities, dict):
+        for name, value in raw_personalities.items():
+            desc = ""
+            if isinstance(value, dict):
+                desc = value.get("description", "")
+            elif isinstance(value, str):
+                desc = value[:80] + ("..." if len(value) > 80 else "")
+            personalities.append({"name": name, "description": desc})
+    return j(handler, {"personalities": personalities})
+
+
+def _get_api_git_info(handler, parsed):
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id required")
+    try:
+        workspace = get_session(sid).workspace
+    except KeyError:
+        # state.db-only sessions (CLI, delegated subagents): same fallback as /api/list.
+        cli_meta = _lookup_cli_session_metadata(sid)
+        if not cli_meta:
+            return bad(handler, "Session not found", 404)
+        if not cli_meta.get("workspace"):
             return j(handler, {"git": None})
         try:
-            status = git_status(Path(workspace))
-        except GitWorkspaceError as e:
-            return _git_bad(handler, e)
-        totals = status.get("totals") or {}
-        info = None if not status.get("is_git") else {
-            "branch": status.get("branch"),
-            "dirty": totals.get("changed", 0),
-            "modified": (totals.get("staged", 0) or 0) + (totals.get("unstaged", 0) or 0),
-            "untracked": totals.get("untracked", 0),
-            "ahead": status.get("ahead", 0),
-            "behind": status.get("behind", 0),
-            "is_git": True,
-        }
-        return j(handler, {"git": info})
+            workspace = resolve_trusted_workspace(cli_meta["workspace"])
+        except (FileNotFoundError, ValueError):
+            return j(handler, {"git": None})
+    from api.workspace_git import GitWorkspaceError, git_status
+    from api.workspace_policy import request_workspace_policy
 
-    if parsed.path == "/api/commands":
-        from api.commands import list_commands
-        return j(handler, {"commands": list_commands()})
+    try:
+        workspace = request_workspace_policy().confine(Path(workspace))
+    except ValueError:
+        return j(handler, {"git": None})
+    try:
+        status = git_status(Path(workspace))
+    except GitWorkspaceError as e:
+        return _git_bad(handler, e)
+    totals = status.get("totals") or {}
+    info = None if not status.get("is_git") else {
+        "branch": status.get("branch"),
+        "dirty": totals.get("changed", 0),
+        "modified": (totals.get("staged", 0) or 0) + (totals.get("unstaged", 0) or 0),
+        "untracked": totals.get("untracked", 0),
+        "ahead": status.get("ahead", 0),
+        "behind": status.get("behind", 0),
+        "is_git": True,
+    }
+    return j(handler, {"git": info})
 
-    if parsed.path == "/api/commands/bundles":
-        from api.commands import list_command_bundles
-        return j(handler, {"bundles": list_command_bundles()})
 
-    if parsed.path == "/api/commands/moa/resolve":
-        from api.commands import resolve_moa_config
-        try:
-            return j(handler, resolve_moa_config())
-        except RuntimeError as e:
-            return bad(handler, str(e), 503)
+def _get_api_commands(handler, parsed):
+    from api.commands import list_commands
+    return j(handler, {"commands": list_commands()})
 
-    if parsed.path == "/api/chat/stream/status":
-        stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
-        if not _stream_id_visible_to_request_profile(handler, stream_id):
-            return True
-        active = stream_id in STREAMS
-        payload = {"active": active, "stream_id": stream_id, "replay_available": False}
-        try:
-            journal = find_run_summary(stream_id) if stream_id else None
-        except Exception:
-            journal = None
-        if journal:
-            payload["replay_available"] = True
-            payload["journal"] = _run_journal_status_payload(journal, active=active)
-        return j(handler, payload)
 
-    if parsed.path == "/api/chat/cancel":
-        stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
-        if not stream_id:
-            return bad(handler, "stream_id required")
-        if not _stream_id_visible_to_request_profile(handler, stream_id):
-            return True
-        gateway_stop_blocked = False
-        try:
-            from api.gateway_chat import (
-                GATEWAY_RUN_ID_WAIT_TIMEOUT,
-                stop_gateway_run,
-                wait_for_gateway_run_id,
-            )
+def _get_api_commands_bundles(handler, parsed):
+    from api.commands import list_command_bundles
+    return j(handler, {"bundles": list_command_bundles()})
 
-            structured_gateway, run_id = wait_for_gateway_run_id(stream_id, GATEWAY_RUN_ID_WAIT_TIMEOUT)
-            if not run_id and structured_gateway:
-                gateway_stop_blocked = True
-            if run_id:
-                if stop_gateway_run(run_id):
-                    owner_sid = stream_owner_session_id(stream_id)
-                    if owner_sid:
-                        settle_gateway_pending_run(
-                            owner_sid,
-                            run_id,
-                            reason="Gateway run was cancelled before approval resolution",
-                        )
-                else:
-                    gateway_stop_blocked = True
-        except Exception:
-            logger.debug("Failed to stop gateway run during chat cancellation", exc_info=True)
+
+def _get_api_commands_moa_resolve(handler, parsed):
+    from api.commands import resolve_moa_config
+    try:
+        return j(handler, resolve_moa_config())
+    except RuntimeError as e:
+        return bad(handler, str(e), 503)
+
+
+def _get_api_chat_stream_status(handler, parsed):
+    stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
+    if not _stream_id_visible_to_request_profile(handler, stream_id):
+        return True
+    active = stream_id in STREAMS
+    payload = {"active": active, "stream_id": stream_id, "replay_available": False}
+    try:
+        journal = find_run_summary(stream_id) if stream_id else None
+    except Exception:
+        journal = None
+    if journal:
+        payload["replay_available"] = True
+        payload["journal"] = _run_journal_status_payload(journal, active=active)
+    return j(handler, payload)
+
+
+def _get_api_chat_cancel(handler, parsed):
+    stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
+    if not stream_id:
+        return bad(handler, "stream_id required")
+    if not _stream_id_visible_to_request_profile(handler, stream_id):
+        return True
+    gateway_stop_blocked = False
+    try:
+        from api.gateway_chat import (
+            GATEWAY_RUN_ID_WAIT_TIMEOUT,
+            stop_gateway_run,
+            wait_for_gateway_run_id,
+        )
+
+        structured_gateway, run_id = wait_for_gateway_run_id(stream_id, GATEWAY_RUN_ID_WAIT_TIMEOUT)
+        if not run_id and structured_gateway:
             gateway_stop_blocked = True
-        if gateway_stop_blocked:
-            return j(
-                handler,
-                {
-                    "ok": False,
-                    "cancelled": False,
-                    "stream_id": stream_id,
-                    "error": "Gateway stop failed",
-                },
-                status=502,
-            )
-
-        from api.runtime_adapter import LegacyJournalRuntimeAdapter, runtime_adapter_enabled
-
-        if runtime_adapter_enabled():
-            adapter = LegacyJournalRuntimeAdapter(cancel_delegate=cancel_stream)
-            cancelled = adapter.cancel_run(stream_id).accepted
-        else:
-            cancelled = cancel_stream(stream_id)
-        return j(handler, {"ok": True, "cancelled": cancelled, "stream_id": stream_id})
-
-    if parsed.path == "/api/chat/stream":
-        return _handle_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/terminal/output":
-        return _handle_terminal_output(handler, parsed)
-
-    if parsed.path == '/api/sessions/gateway/stream':
-        return _handle_gateway_sse_stream(handler, parsed)
-
-    if parsed.path == '/api/sessions/events':
-        return _handle_session_events_stream(handler)
-
-    session_events_session_id = _session_events_path_session_id(parsed.path)
-    if session_events_session_id is not None:
-        return _handle_session_run_journal_stream_for_session(handler, parsed, session_events_session_id)
-
-    if parsed.path == "/api/media":
-        return _handle_media(handler, parsed)
-
-    if parsed.path == "/api/file/raw":
-        return _handle_file_raw(handler, parsed)
-
-    if parsed.path == "/api/escape/file/raw":
-        return _handle_escape_file_raw(handler, parsed)
-
-    if parsed.path == "/api/folder/download":
-        return _handle_folder_download(handler, parsed)
-
-    if parsed.path == "/api/file":
-        return _handle_file_read(handler, parsed)
-
-    if parsed.path == "/api/escape/file/read":
-        return _handle_escape_file_read(handler, parsed)
-
-    if parsed.path == "/api/approval/pending":
-        return _handle_approval_pending(handler, parsed)
-
-    if parsed.path == "/api/approval/stream":
-        return _handle_approval_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/approval/inject_test":
-        # Loopback-only: used by automated tests; blocked from any remote client
-        if handler.client_address[0] != "127.0.0.1":
-            return j(handler, {"error": "not found"}, status=404)
-        return _handle_approval_inject(handler, parsed)
-
-    if parsed.path == "/api/clarify/pending":
-        return _handle_clarify_pending(handler, parsed)
-
-    if parsed.path == "/api/clarify/stream":
-        return _handle_clarify_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/session/stream":
-        return _handle_session_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/clarify/inject_test":
-        # Loopback-only: used by automated tests; blocked from any remote client
-        if handler.client_address[0] != "127.0.0.1":
-            return j(handler, {"error": "not found"}, status=404)
-        return _handle_clarify_inject(handler, parsed)
-
-    if parsed.path == "/api/onboarding/oauth/poll":
-        qs = parse_qs(parsed.query)
-        flow_id = qs.get("flow_id", [""])[0]
-        try:
-            return j(
-                handler,
-                poll_onboarding_oauth_flow(flow_id),
-                extra_headers={"Cache-Control": "no-store"},
-            )
-        except ValueError as e:
-            return bad(handler, str(e))
-        except KeyError as e:
-            return bad(handler, str(e), 404)
-
-    # ── Cron API (GET) ──
-    # Cron reads are active-profile-scoped by default. The list route now
-    # aggregates per visible profile home so the UI can surface hidden-row
-    # counts and, when opted in, read-only foreign rows.
-    if parsed.path == "/api/crons":
-        # #4768: in split-container / minimal Docker deployments the WebUI image may
-        # not ship the agent's `cron` package on its import path. Degrade gracefully
-        # (empty list + cron_unavailable flag) instead of 500ing the whole Task tab.
-        # Only treat a genuinely-absent cron package as "unavailable"; a
-        # ModuleNotFoundError whose missing module is an internal dependency of an
-        # existing cron/jobs.py is a real bug and must still surface.
-        _ensure_agent_cron_import_path()
-        active_profile = _get_active_profile_name() or "default"
-        try:
-            active_jobs, other_jobs = _cron_jobs_cross_profile(active_profile)
-        except ModuleNotFoundError as exc:
-            if exc.name in ("cron", "cron.jobs"):
-                return j(handler, {"jobs": [], "cron_unavailable": True})
-            raise
-        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-        all_profiles = reach.every_profile
-        jobs = active_jobs + other_jobs if all_profiles else active_jobs
-        hidden_other_count = len(other_jobs) if reach.counts_other_profiles else 0
-        return j(handler, {
-            "jobs": jobs,
-            "all_profiles": all_profiles,
-            "active_profile": active_profile,
-            "other_profile_count": hidden_other_count,
-        })
-
-    if parsed.path == "/api/crons/output":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_output(handler, parsed)
-
-    if parsed.path == "/api/crons/history":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_history(handler, parsed)
-
-    if parsed.path == "/api/crons/run":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_run_detail(handler, parsed)
-
-    if parsed.path == "/api/crons/recent":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_recent(handler, parsed)
-
-    if parsed.path == "/api/crons/status":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            return _handle_cron_status(handler, parsed)
-
-    if parsed.path == "/api/crons/delivery-options":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_delivery_options(handler)
-
-    # ── Skills API (GET) ──
-    if parsed.path == "/api/skills":
-        qs = parse_qs(parsed.query)
-        category = qs.get("category", [None])[0]
-        data = _skills_list_from_dir(_active_skills_dir(), category=category)
-        return j(handler, {"skills": data.get("skills", [])})
-
-    if parsed.path == "/api/skills/usage":
-        from api.skill_usage import read_skill_usage
-        raw = read_skill_usage(_active_skills_dir())
-        # Pass through agent's format as-is; defensive coercion for fields
-        usage = {}
-        if isinstance(raw, dict):
-            for k, v in raw.items():
-                if not isinstance(v, dict):
-                    usage[k] = {"use_count": 0, "view_count": 0, "patch_count": 0}
-                    continue
-                usage[k] = {
-                    "use_count": (int(v["use_count"]) if v.get("use_count") is not None else 0),
-                    "view_count": (int(v["view_count"]) if v.get("view_count") is not None else 0),
-                    "patch_count": (int(v["patch_count"]) if v.get("patch_count") is not None else 0),
-                }
-                # Preserve agent's metadata (timestamps, state, etc.)
-                for meta_key in v:
-                    if meta_key not in usage[k]:
-                        usage[k][meta_key] = v[meta_key]
-        skills_data = _skills_list_from_dir(_active_skills_dir()).get("skills", [])
-        skill_names = sorted({s["name"] for s in skills_data})
-        total = sum(
-            e.get("use_count", 0) + e.get("view_count", 0) + e.get("patch_count", 0)
-            for e in usage.values()
-        )
-        unique = sum(
-            1 for e in usage.values()
-            if e.get("use_count", 0) > 0 or e.get("view_count", 0) > 0 or e.get("patch_count", 0) > 0
-        )
-        return j(handler, {
-            "usage": usage,
-            "skill_names": skill_names,
-            "total_invocations": total,
-            "unique_skills_used": unique,
-        })
-
-    if parsed.path == "/api/skills/content":
-        qs = parse_qs(parsed.query)
-        name = qs.get("name", [""])[0]
-        if not name:
-            return j(handler, {"error": "name required"}, status=400)
-        file_path = qs.get("file", [""])[0]
-        if file_path:
-            # Serve a linked file from the skill directory
-            import re as _re
-
-            if _re.search(r"[*?\[\]]", name):
-                return bad(handler, "Invalid skill name", 400)
-            skills_dir = _active_skills_dir()
-            skill_dir, _skill_md = _find_skill_in_dirs(
-                name, _active_skill_search_dirs(skills_dir)
-            )
-            if not skill_dir:
-                return bad(handler, "Skill not found", 404)
-            target = (skill_dir / file_path).resolve()
-            try:
-                target.relative_to(skill_dir.resolve())
-            except ValueError:
-                return bad(handler, "Invalid file path", 400)
-            if not target.exists() or not target.is_file():
-                return bad(handler, "File not found", 404)
-            return j(
-                handler,
-                {"content": target.read_text(encoding="utf-8"), "path": file_path},
-            )
-        data = _skill_view_from_active_dir(name)
-        if not isinstance(data.get("linked_files"), dict):
-            data["linked_files"] = {}
-        return j(handler, data)
-
-    # ── Memory API (GET) ──
-    if parsed.path == "/api/memory":
-        return _handle_memory_read(handler, parsed)
-
-    # ── Profile API (GET) ──
-    if parsed.path == "/api/profiles":
-        from api import profiles as profiles_api
-        diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-        try:
-            diag.stage("list_profiles_api") if diag else None
-            from api import roster
-
-            diag.stage("active_profile_lookup") if diag else None
-            active = profiles_api.get_active_profile_name()
-            diag.stage("isolated_mode_check") if diag else None
-            # The Profile list is an all-Profiles view: the cached rows are
-            # everyone's, and this request's reach picks the ones it may see.
-            reach = request_profile_reach(active, all_profiles=True)
-            profiles_payload = roster.label_rows([
-                row for row in profiles_api.list_profiles_api()
-                if isinstance(row, dict) and reach.includes(row.get("name"))
-            ])
-            return j(
-                handler,
-                {
-                    "profiles": profiles_payload,
-                    "active": active,
-                    "single_profile_mode": reach.single_profile,
-                    "may_switch_profile": request_session_ownership().may_switch_profile(),
-                },
-            )
-        finally:
-            if diag:
-                diag.finish()
-
-    if parsed.path == "/api/profile/active":
-        from api import profiles as profiles_api
-
-        active_profile_name = profiles_api.get_active_profile_name()
-        # Resolve the ACTIVE PROFILE's configured workspace so a cold boot with a
-        # profile cookie shows the right composer workspace chip on a blank
-        # new-chat page (#5169). Use get_profile_default_workspace() (NOT
-        # get_last_workspace) so a named profile without its own last_workspace.txt
-        # resolves to its config.yaml workspace/terminal.cwd rather than leaking the
-        # GLOBAL last-workspace file (the #5169 regression Codex flagged). It is
-        # profile-scoped via the per-request hermes_profile cookie set in server.py.
-        # Fail open: a resolution error must never 500 this boot-critical endpoint.
-        try:
-            try:
-                _profile_default_workspace = get_profile_default_workspace(profile=active_profile_name)
-            except TypeError:
-                _profile_default_workspace = get_profile_default_workspace()
-        except Exception:
-            logger.debug("Failed to resolve profile default workspace for /api/profile/active", exc_info=True)
-            _profile_default_workspace = None
+        if run_id:
+            if stop_gateway_run(run_id):
+                owner_sid = stream_owner_session_id(stream_id)
+                if owner_sid:
+                    settle_gateway_pending_run(
+                        owner_sid,
+                        run_id,
+                        reason="Gateway run was cancelled before approval resolution",
+                    )
+            else:
+                gateway_stop_blocked = True
+    except Exception:
+        logger.debug("Failed to stop gateway run during chat cancellation", exc_info=True)
+        gateway_stop_blocked = True
+    if gateway_stop_blocked:
         return j(
             handler,
             {
-                "name": active_profile_name,
-                "path": str(profiles_api.get_active_hermes_home()),
-                "is_default": profiles_api._is_root_profile(active_profile_name),
-                "default_workspace": _profile_default_workspace,
+                "ok": False,
+                "cancelled": False,
+                "stream_id": stream_id,
+                "error": "Gateway stop failed",
             },
+            status=502,
         )
 
-    # ── Gateway Status (GET) ──
-    if parsed.path == "/api/gateway/status":
-        return j(handler, _gateway_status_payload())
+    from api.runtime_adapter import LegacyJournalRuntimeAdapter, runtime_adapter_enabled
 
-    # ── MCP Servers (GET) ──
-    if parsed.path == "/api/mcp/servers":
-        return _handle_mcp_servers_list(handler)
+    if runtime_adapter_enabled():
+        adapter = LegacyJournalRuntimeAdapter(cancel_delegate=cancel_stream)
+        cancelled = adapter.cancel_run(stream_id).accepted
+    else:
+        cancelled = cancel_stream(stream_id)
+    return j(handler, {"ok": True, "cancelled": cancelled, "stream_id": stream_id})
 
-    # ── MCP Tools (GET) ──
-    if parsed.path == "/api/mcp/tools":
-        return _handle_mcp_tools_list(handler)
 
-    if parsed.path == "/api/notes/sources":
-        return _handle_notes_sources_list(handler)
-    if parsed.path == "/api/notes/search":
-        return _handle_notes_search(handler, parsed)
-    if parsed.path == "/api/notes/item":
-        return _handle_notes_item(handler, parsed)
+def _get_api_chat_stream(handler, parsed):
+    return _handle_sse_stream(handler, parsed)
 
-    # ── Checkpoints / Rollback (GET) ──
-    if parsed.path == "/api/rollback/list":
-        qs = parse_qs(parsed.query)
-        workspace = qs.get("workspace", [""])[0]
-        if not workspace:
-            return bad(handler, "workspace query parameter is required")
+
+def _get_api_terminal_output(handler, parsed):
+    return _handle_terminal_output(handler, parsed)
+
+
+def _get_api_sessions_gateway_stream(handler, parsed):
+    return _handle_gateway_sse_stream(handler, parsed)
+
+
+def _get_api_sessions_events(handler, parsed):
+    return _handle_session_events_stream(handler)
+
+
+def _get_api_media(handler, parsed):
+    return _handle_media(handler, parsed)
+
+
+def _get_api_file_raw(handler, parsed):
+    return _handle_file_raw(handler, parsed)
+
+
+def _get_api_escape_file_raw(handler, parsed):
+    return _handle_escape_file_raw(handler, parsed)
+
+
+def _get_api_folder_download(handler, parsed):
+    return _handle_folder_download(handler, parsed)
+
+
+def _get_api_file(handler, parsed):
+    return _handle_file_read(handler, parsed)
+
+
+def _get_api_escape_file_read(handler, parsed):
+    return _handle_escape_file_read(handler, parsed)
+
+
+def _get_api_approval_pending(handler, parsed):
+    return _handle_approval_pending(handler, parsed)
+
+
+def _get_api_approval_stream(handler, parsed):
+    return _handle_approval_sse_stream(handler, parsed)
+
+
+def _get_api_approval_inject_test(handler, parsed):
+    # Loopback-only: used by automated tests; blocked from any remote client
+    if handler.client_address[0] != "127.0.0.1":
+        return j(handler, {"error": "not found"}, status=404)
+    return _handle_approval_inject(handler, parsed)
+
+
+def _get_api_clarify_pending(handler, parsed):
+    return _handle_clarify_pending(handler, parsed)
+
+
+def _get_api_clarify_stream(handler, parsed):
+    return _handle_clarify_sse_stream(handler, parsed)
+
+
+def _get_api_session_stream(handler, parsed):
+    return _handle_session_sse_stream(handler, parsed)
+
+
+def _get_api_clarify_inject_test(handler, parsed):
+    # Loopback-only: used by automated tests; blocked from any remote client
+    if handler.client_address[0] != "127.0.0.1":
+        return j(handler, {"error": "not found"}, status=404)
+    return _handle_clarify_inject(handler, parsed)
+
+
+def _get_api_onboarding_oauth_poll(handler, parsed):
+    qs = parse_qs(parsed.query)
+    flow_id = qs.get("flow_id", [""])[0]
+    try:
+        return j(
+            handler,
+            poll_onboarding_oauth_flow(flow_id),
+            extra_headers={"Cache-Control": "no-store"},
+        )
+    except ValueError as e:
+        return bad(handler, str(e))
+    except KeyError as e:
+        return bad(handler, str(e), 404)
+
+
+# ── Cron API (GET) ──
+# Cron reads are active-profile-scoped by default. The list route now
+# aggregates per visible profile home so the UI can surface hidden-row
+# counts and, when opted in, read-only foreign rows.
+def _get_api_crons(handler, parsed):
+    # #4768: in split-container / minimal Docker deployments the WebUI image may
+    # not ship the agent's `cron` package on its import path. Degrade gracefully
+    # (empty list + cron_unavailable flag) instead of 500ing the whole Task tab.
+    # Only treat a genuinely-absent cron package as "unavailable"; a
+    # ModuleNotFoundError whose missing module is an internal dependency of an
+    # existing cron/jobs.py is a real bug and must still surface.
+    _ensure_agent_cron_import_path()
+    active_profile = _get_active_profile_name() or "default"
+    try:
+        active_jobs, other_jobs = _cron_jobs_cross_profile(active_profile)
+    except ModuleNotFoundError as exc:
+        if exc.name in ("cron", "cron.jobs"):
+            return j(handler, {"jobs": [], "cron_unavailable": True})
+        raise
+    reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
+    all_profiles = reach.every_profile
+    jobs = active_jobs + other_jobs if all_profiles else active_jobs
+    hidden_other_count = len(other_jobs) if reach.counts_other_profiles else 0
+    return j(handler, {
+        "jobs": jobs,
+        "all_profiles": all_profiles,
+        "active_profile": active_profile,
+        "other_profile_count": hidden_other_count,
+    })
+
+
+def _get_api_crons_output(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_output(handler, parsed)
+
+
+def _get_api_crons_history(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_history(handler, parsed)
+
+
+def _get_api_crons_run(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_run_detail(handler, parsed)
+
+
+def _get_api_crons_recent(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_recent(handler, parsed)
+
+
+def _get_api_crons_status(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        return _handle_cron_status(handler, parsed)
+
+
+def _get_api_crons_delivery_options(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_delivery_options(handler)
+
+
+# ── Skills API (GET) ──
+def _get_api_skills(handler, parsed):
+    qs = parse_qs(parsed.query)
+    category = qs.get("category", [None])[0]
+    data = _skills_list_from_dir(_active_skills_dir(), category=category)
+    return j(handler, {"skills": data.get("skills", [])})
+
+
+def _get_api_skills_usage(handler, parsed):
+    from api.skill_usage import read_skill_usage
+    raw = read_skill_usage(_active_skills_dir())
+    # Pass through agent's format as-is; defensive coercion for fields
+    usage = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if not isinstance(v, dict):
+                usage[k] = {"use_count": 0, "view_count": 0, "patch_count": 0}
+                continue
+            usage[k] = {
+                "use_count": (int(v["use_count"]) if v.get("use_count") is not None else 0),
+                "view_count": (int(v["view_count"]) if v.get("view_count") is not None else 0),
+                "patch_count": (int(v["patch_count"]) if v.get("patch_count") is not None else 0),
+            }
+            # Preserve agent's metadata (timestamps, state, etc.)
+            for meta_key in v:
+                if meta_key not in usage[k]:
+                    usage[k][meta_key] = v[meta_key]
+    skills_data = _skills_list_from_dir(_active_skills_dir()).get("skills", [])
+    skill_names = sorted({s["name"] for s in skills_data})
+    total = sum(
+        e.get("use_count", 0) + e.get("view_count", 0) + e.get("patch_count", 0)
+        for e in usage.values()
+    )
+    unique = sum(
+        1 for e in usage.values()
+        if e.get("use_count", 0) > 0 or e.get("view_count", 0) > 0 or e.get("patch_count", 0) > 0
+    )
+    return j(handler, {
+        "usage": usage,
+        "skill_names": skill_names,
+        "total_invocations": total,
+        "unique_skills_used": unique,
+    })
+
+
+def _get_api_skills_content(handler, parsed):
+    qs = parse_qs(parsed.query)
+    name = qs.get("name", [""])[0]
+    if not name:
+        return j(handler, {"error": "name required"}, status=400)
+    file_path = qs.get("file", [""])[0]
+    if file_path:
+        # Serve a linked file from the skill directory
+        import re as _re
+
+        if _re.search(r"[*?\[\]]", name):
+            return bad(handler, "Invalid skill name", 400)
+        skills_dir = _active_skills_dir()
+        skill_dir, _skill_md = _find_skill_in_dirs(
+            name, _active_skill_search_dirs(skills_dir)
+        )
+        if not skill_dir:
+            return bad(handler, "Skill not found", 404)
+        target = (skill_dir / file_path).resolve()
         try:
-            from api.rollback import list_checkpoints
-            return j(handler, list_checkpoints(workspace))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except Exception as e:
-            logger.exception("rollback/list failed")
-            return bad(handler, str(e), status=500)
-
-    if parsed.path == "/api/rollback/diff":
-        qs = parse_qs(parsed.query)
-        workspace = qs.get("workspace", [""])[0]
-        checkpoint = qs.get("checkpoint", [""])[0]
-        if not workspace or not checkpoint:
-            return bad(handler, "workspace and checkpoint query parameters are required")
-        try:
-            from api.rollback import get_checkpoint_diff
-            return j(handler, get_checkpoint_diff(workspace, checkpoint))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except Exception as e:
-            logger.exception("rollback/diff failed")
-            return bad(handler, str(e), status=500)
-
-    # ── Plugin shared assets (e.g. /plugins/plugin.css) ──
-    # Restricted to shared plugin assets only — no cross-plugin file access.
-    if parsed.path.startswith("/plugins/"):
-        from api.plugins import _get_plugin_base
-        plugin_base = _get_plugin_base()
-        rel = parsed.path[len("/plugins/"):]
-        allowed = {"plugin.css"}
-        if rel not in allowed:
-            return False  # 404
-        safe = (plugin_base / rel).resolve()
-        try:
-            safe.relative_to(plugin_base.resolve())
+            target.relative_to(skill_dir.resolve())
         except ValueError:
-            return False  # path traversal — 404
-        if safe.is_file():
-            import os as _os
-            data = safe.read_bytes()
-            ext = _os.path.splitext(rel.lower())[1]
-            ct = {
-                ".css": "text/css; charset=utf-8",
-                ".js": "application/javascript; charset=utf-8",
-                ".json": "application/json; charset=utf-8",
-                ".png": "image/png",
-                ".svg": "image/svg+xml",
-            }.get(ext, "application/octet-stream")
+            return bad(handler, "Invalid file path", 400)
+        if not target.exists() or not target.is_file():
+            return bad(handler, "File not found", 404)
+        return j(
+            handler,
+            {"content": target.read_text(encoding="utf-8"), "path": file_path},
+        )
+    data = _skill_view_from_active_dir(name)
+    if not isinstance(data.get("linked_files"), dict):
+        data["linked_files"] = {}
+    return j(handler, data)
+
+
+# ── Memory API (GET) ──
+def _get_api_memory(handler, parsed):
+    return _handle_memory_read(handler, parsed)
+
+
+# ── Profile API (GET) ──
+def _get_api_profiles(handler, parsed):
+    from api import profiles as profiles_api
+    diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    try:
+        diag.stage("list_profiles_api") if diag else None
+        from api import roster
+
+        diag.stage("active_profile_lookup") if diag else None
+        active = profiles_api.get_active_profile_name()
+        diag.stage("isolated_mode_check") if diag else None
+        # The Profile list is an all-Profiles view: the cached rows are
+        # everyone's, and this request's reach picks the ones it may see.
+        reach = request_profile_reach(active, all_profiles=True)
+        profiles_payload = roster.label_rows([
+            row for row in profiles_api.list_profiles_api()
+            if isinstance(row, dict) and reach.includes(row.get("name"))
+        ])
+        return j(
+            handler,
+            {
+                "profiles": profiles_payload,
+                "active": active,
+                "single_profile_mode": reach.single_profile,
+                "may_switch_profile": request_session_ownership().may_switch_profile(),
+            },
+        )
+    finally:
+        if diag:
+            diag.finish()
+
+
+def _get_api_profile_active(handler, parsed):
+    from api import profiles as profiles_api
+
+    active_profile_name = profiles_api.get_active_profile_name()
+    # Resolve the ACTIVE PROFILE's configured workspace so a cold boot with a
+    # profile cookie shows the right composer workspace chip on a blank
+    # new-chat page (#5169). Use get_profile_default_workspace() (NOT
+    # get_last_workspace) so a named profile without its own last_workspace.txt
+    # resolves to its config.yaml workspace/terminal.cwd rather than leaking the
+    # GLOBAL last-workspace file (the #5169 regression Codex flagged). It is
+    # profile-scoped via the per-request hermes_profile cookie set in server.py.
+    # Fail open: a resolution error must never 500 this boot-critical endpoint.
+    try:
+        try:
+            _profile_default_workspace = get_profile_default_workspace(profile=active_profile_name)
+        except TypeError:
+            _profile_default_workspace = get_profile_default_workspace()
+    except Exception:
+        logger.debug("Failed to resolve profile default workspace for /api/profile/active", exc_info=True)
+        _profile_default_workspace = None
+    return j(
+        handler,
+        {
+            "name": active_profile_name,
+            "path": str(profiles_api.get_active_hermes_home()),
+            "is_default": profiles_api._is_root_profile(active_profile_name),
+            "default_workspace": _profile_default_workspace,
+        },
+    )
+
+
+# ── Gateway Status (GET) ──
+def _get_api_gateway_status(handler, parsed):
+    return j(handler, _gateway_status_payload())
+
+
+# ── MCP Servers (GET) ──
+def _get_api_mcp_servers(handler, parsed):
+    return _handle_mcp_servers_list(handler)
+
+
+# ── MCP Tools (GET) ──
+def _get_api_mcp_tools(handler, parsed):
+    return _handle_mcp_tools_list(handler)
+
+
+def _get_api_notes_sources(handler, parsed):
+    return _handle_notes_sources_list(handler)
+
+
+def _get_api_notes_search(handler, parsed):
+    return _handle_notes_search(handler, parsed)
+
+
+def _get_api_notes_item(handler, parsed):
+    return _handle_notes_item(handler, parsed)
+
+
+# ── Checkpoints / Rollback (GET) ──
+def _get_api_rollback_list(handler, parsed):
+    qs = parse_qs(parsed.query)
+    workspace = qs.get("workspace", [""])[0]
+    if not workspace:
+        return bad(handler, "workspace query parameter is required")
+    try:
+        from api.rollback import list_checkpoints
+        return j(handler, list_checkpoints(workspace))
+    except ValueError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        logger.exception("rollback/list failed")
+        return bad(handler, str(e), status=500)
+
+
+def _get_api_rollback_diff(handler, parsed):
+    qs = parse_qs(parsed.query)
+    workspace = qs.get("workspace", [""])[0]
+    checkpoint = qs.get("checkpoint", [""])[0]
+    if not workspace or not checkpoint:
+        return bad(handler, "workspace and checkpoint query parameters are required")
+    try:
+        from api.rollback import get_checkpoint_diff
+        return j(handler, get_checkpoint_diff(workspace, checkpoint))
+    except ValueError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        logger.exception("rollback/diff failed")
+        return bad(handler, str(e), status=500)
+
+
+# ── Plugin shared assets (e.g. /plugins/plugin.css) ──
+# Restricted to shared plugin assets only — no cross-plugin file access.
+def _get_plugins(handler, parsed):
+    from api.plugins import _get_plugin_base
+    plugin_base = _get_plugin_base()
+    rel = parsed.path[len("/plugins/"):]
+    allowed = {"plugin.css"}
+    if rel not in allowed:
+        return False  # 404
+    safe = (plugin_base / rel).resolve()
+    try:
+        safe.relative_to(plugin_base.resolve())
+    except ValueError:
+        return False  # path traversal — 404
+    if safe.is_file():
+        import os as _os
+        data = safe.read_bytes()
+        ext = _os.path.splitext(rel.lower())[1]
+        ct = {
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".png": "image/png",
+            ".svg": "image/svg+xml",
+        }.get(ext, "application/octet-stream")
+        handler.send_response(200)
+        handler.send_header("Content-Type", ct)
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
+        return True
+    return _NOT_HANDLED
+
+
+# ── Plugin static assets ──
+def _get_dashboard_plugins(handler, parsed):
+    parts = parsed.path.split("/", 3)
+    if len(parts) >= 3:
+        plugin_name = parts[2]
+        rel_path = parts[3] if len(parts) > 3 else ""
+        # Server-side enable-gate: a plugin disabled in Settings must have its
+        # entire URL surface shut off, not merely hidden in the UI.
+        if not _dashboard_plugin_enabled(plugin_name):
+            return False  # 404 — disabled plugins serve nothing
+        from api.plugins import serve_plugin_static
+        result = serve_plugin_static(plugin_name, rel_path)
+        if result:
+            data, content_type = result
             handler.send_response(200)
-            handler.send_header("Content-Type", ct)
+            handler.send_header("Content-Type", content_type)
+            # Defense-in-depth: plugin-controlled assets are served from the
+            # WebUI's own origin. Sandbox them (null origin) so a plugin's
+            # .html/.svg can't run privileged same-origin script if navigated
+            # to directly (the in-panel iframe sandbox doesn't cover direct
+            # navigation). nosniff prevents content-type confusion.
+            handler.send_header("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups")
+            handler.send_header("X-Content-Type-Options", "nosniff")
             handler.send_header("Content-Length", str(len(data)))
             handler.end_headers()
             handler.wfile.write(data)
             return True
+    return _NOT_HANDLED
 
-    # ── Plugin static assets ──
-    if parsed.path.startswith("/dashboard-plugins/"):
-        parts = parsed.path.split("/", 3)
-        if len(parts) >= 3:
-            plugin_name = parts[2]
-            rel_path = parts[3] if len(parts) > 3 else ""
-            # Server-side enable-gate: a plugin disabled in Settings must have its
-            # entire URL surface shut off, not merely hidden in the UI.
-            if not _dashboard_plugin_enabled(plugin_name):
-                return False  # 404 — disabled plugins serve nothing
-            from api.plugins import serve_plugin_static
-            result = serve_plugin_static(plugin_name, rel_path)
-            if result:
-                data, content_type = result
-                handler.send_response(200)
-                handler.send_header("Content-Type", content_type)
-                # Defense-in-depth: plugin-controlled assets are served from the
-                # WebUI's own origin. Sandbox them (null origin) so a plugin's
-                # .html/.svg can't run privileged same-origin script if navigated
-                # to directly (the in-panel iframe sandbox doesn't cover direct
-                # navigation). nosniff prevents content-type confusion.
-                handler.send_header("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups")
-                handler.send_header("X-Content-Type-Options", "nosniff")
-                handler.send_header("Content-Length", str(len(data)))
-                handler.end_headers()
-                handler.wfile.write(data)
-                return True
 
-    # ── Plugin pages (HTML shell) ──
+def _get_dashboard_plugin_page(handler, parsed):
+    """A dashboard plugin's page, at the tab path its manifest names; else 404."""
     from api.plugins import PLUGIN_MANIFESTS, _PLUGIN_STATIC_ROOTS
     for name, manifest in PLUGIN_MANIFESTS.items():
         tab = manifest.get("tab", {})
@@ -15139,6 +15272,7 @@ def handle_get(handler, parsed) -> bool:
                     return True
 
     return False  # 404
+
 
 
 # ── POST auth helpers

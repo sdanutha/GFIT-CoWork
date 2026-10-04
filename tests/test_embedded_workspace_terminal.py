@@ -204,15 +204,16 @@ def test_terminal_restart_ignores_stale_sse_events():
 
 
 def test_terminal_routes_are_registered():
-    routes = _read("api/routes.py")
-    for path in (
-        "/api/terminal/start",
-        "/api/terminal/input",
-        "/api/terminal/output",
-        "/api/terminal/resize",
-        "/api/terminal/close",
+    from api import route_table
+
+    for method, path in (
+        ("POST", "/api/terminal/start"),
+        ("POST", "/api/terminal/input"),
+        ("GET", "/api/terminal/output"),
+        ("POST", "/api/terminal/resize"),
+        ("POST", "/api/terminal/close"),
     ):
-        assert path in routes
+        assert route_table.match(method, path) is not None
 
 
 def test_terminal_process_does_not_mutate_global_terminal_cwd(tmp_path, monkeypatch):

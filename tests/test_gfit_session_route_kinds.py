@@ -43,7 +43,6 @@ ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
     **{(m, r): "MCP servers" for m, r in (
         ("DELETE", "/api/mcp/servers/"), ("GET", "/api/mcp/servers"), ("GET", "/api/mcp/tools"),
         ("PATCH", "/api/mcp/servers/"), ("PUT", "/api/mcp/servers/"))},
-    ("GET", "/api/"): "the API fallback prefix",
     **{("GET", r): _SERVER for r in (
         "/api/dashboard/config", "/api/dashboard/status", "/api/extensions/status", "/api/logs",
         "/api/provider/cost-history", "/api/provider/quota", "/api/providers")},

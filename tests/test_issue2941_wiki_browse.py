@@ -41,21 +41,25 @@ class _FakeHandler:
 
 
 def test_wiki_browse_route_exists_in_routes():
-    src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-    assert '"/api/wiki/browse"' in src, "GET /api/wiki/browse route not found in routes.py"
+    from tests._route_source import route_handler
+
+    assert route_handler("GET", "/api/wiki/browse"), "GET /api/wiki/browse route not found"
 
 
 def test_wiki_page_route_exists_in_routes():
-    src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
-    assert '"/api/wiki/page"' in src, "GET /api/wiki/page route not found in routes.py"
+    from tests._route_source import route_handler
+
+    assert route_handler("GET", "/api/wiki/page"), "GET /api/wiki/page route not found"
 
 
 def test_wiki_page_path_traversal_rejection():
-    src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
+    from tests._route_source import route_source
+
+    src = route_source("GET", "/api/wiki/page")
     # Traversal is rejected by a real `..` path SEGMENT check (not the bare
     # substring, which would also reject a legit filename like `v1..v2.md`).
     assert 'part == ".."' in src, "Segment-based path-traversal check not found in wiki page handler"
-    assert "_skill_path_within" in src.split("/api/wiki/page")[1].split("/api/")[0], (
+    assert "_skill_path_within" in src, (
         "Symlink-safe _skill_path_within guard not found in /api/wiki/page handler"
     )
 
