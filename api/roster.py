@@ -18,10 +18,13 @@ steps run in an order where a failure part way leaves the Profile shut, never
 open: create writes the record disabled before the Hermes Profile and makes it
 active only once the Profile exists, and delete disables the Profile before the
 Hermes Profile is deleted. Disabling a Profile
-ends its sessions straight away; its data stays.
+stops its work straight away: its logins end, its running turns stop and its
+scheduled jobs pause (re-enabling resumes the ones it paused); its data stays.
 """
 from __future__ import annotations
 
+import contextlib
+import importlib
 import json
 import logging
 import os
@@ -340,29 +343,122 @@ def _end_sessions(name: str) -> None:
     invalidate_sessions_for_profile(name)
 
 
-def disable(name: str) -> None:
-    """Mark Profile *name*'s record disabled and end its sessions now, with no guards."""
-    _set(name, status=STATUS_DISABLED)
+# The reason a disable gives the jobs it pauses; enable resumes only jobs still
+# paused for it, so a job someone paused for their own reason stays paused.
+PAUSED_BY_DISABLE = "Profile disabled"
+
+
+@contextlib.contextmanager
+def _profile_cron_jobs(name: str):
+    """The Agent's ``cron.jobs``, working in Profile *name*'s own cron store."""
+    from api.profiles import cron_profile_context_for_home, get_hermes_home_for_profile
+    from api.routes import _ensure_agent_cron_import_path
+
+    _ensure_agent_cron_import_path()
+    jobs = importlib.import_module("cron.jobs")
+    with cron_profile_context_for_home(get_hermes_home_for_profile(name)):
+        yield jobs
+
+
+def _pause_jobs(name: str) -> None:
+    """Pause Profile *name*'s enabled scheduled jobs, recording which ones."""
+    try:
+        with _profile_cron_jobs(name) as jobs:
+            ids = [
+                job["id"] for job in jobs.list_jobs(include_disabled=True)
+                if isinstance(job, dict) and job.get("id") and job.get("enabled", True)
+            ]
+            if not ids:
+                return
+            # Recorded before pausing, so a failure part way still resumes what was paused.
+            _set(name, paused_jobs=sorted(set(_paused_jobs(name)) | set(ids)))
+            for job_id in ids:
+                jobs.pause_job(job_id, reason=PAUSED_BY_DISABLE)
+    except Exception:
+        logger.warning("The scheduled jobs of Profile %s could not all be paused", name, exc_info=True)
+
+
+def _paused_jobs(name: str) -> list:
+    record = _record(name) or {}
+    paused = record.get("paused_jobs")
+    return [job_id for job_id in paused if isinstance(job_id, str)] if isinstance(paused, list) else []
+
+
+def _resume_jobs(name: str) -> None:
+    """Resume the jobs Profile *name*'s disable paused that are still paused for it."""
+    ids = _paused_jobs(name)
+    if not ids:
+        return
+    try:
+        with _profile_cron_jobs(name) as jobs:
+            for job in jobs.list_jobs(include_disabled=True):
+                if (
+                    isinstance(job, dict) and job.get("id") in ids
+                    and not job.get("enabled", True)
+                    and job.get("paused_reason") == PAUSED_BY_DISABLE
+                ):
+                    jobs.resume_job(job["id"])
+        _set(name, paused_jobs=[])
+    except Exception:
+        logger.warning("The scheduled jobs of Profile %s could not all be resumed", name, exc_info=True)
+
+
+def _cancel_runs(name: str) -> None:
+    """Stop Profile *name*'s running turns through the Stop path."""
+    from api.config import ACTIVE_RUNS, ACTIVE_RUNS_LOCK, STREAMS, STREAMS_LOCK
+    from api.session_ownership import UserSessionOwnership
+    from api.streaming import cancel_stream
+
+    with STREAMS_LOCK:
+        stream_ids = set(STREAMS)
+    with ACTIVE_RUNS_LOCK:
+        stream_ids |= set(ACTIVE_RUNS)
+    owner = UserSessionOwnership(name)
+    for stream_id in sorted(stream_ids):
+        try:
+            if owner.refuse_stream(stream_id) is None:
+                cancel_stream(stream_id)
+        except Exception:
+            logger.warning("Run %s of Profile %s could not be stopped", stream_id, name, exc_info=True)
+
+
+def _stop_work(name: str) -> None:
+    """End Profile *name*'s logins, stop its running turns and pause its scheduled jobs.
+
+    A failure to stop work is logged and never undoes the disable.
+    """
     _end_sessions(name)
+    _cancel_runs(name)
+    _pause_jobs(name)
+
+
+def disable(name: str) -> None:
+    """Mark Profile *name*'s record disabled and stop its work now, with no guards."""
+    _set(name, status=STATUS_DISABLED)
+    _stop_work(name)
 
 
 def enable(name: str) -> None:
-    """Mark Profile *name*'s record active, with no guards."""
+    """Mark Profile *name*'s record active and resume its paused jobs, with no guards."""
     _set(name, status=STATUS_ACTIVE)
+    _resume_jobs(name)
 
 
 def disable_profile(name: str) -> dict:
-    """The Admin disables Profile *name*: its sessions end now and its data stays."""
+    """The Admin disables Profile *name*: its logins end, its running turns stop and
+    its scheduled jobs pause now; its data stays."""
     _check_existing_user_profile(name)
     _set_status(name, STATUS_DISABLED)
-    _end_sessions(name)
+    _stop_work(name)
     return view(name)
 
 
 def enable_profile(name: str) -> dict:
-    """The Admin re-enables Profile *name*, so its User can log in again."""
+    """The Admin re-enables Profile *name*, so its User can log in again and the jobs
+    the disable paused run again."""
     _check_existing_user_profile(name)
     _set_status(name, STATUS_ACTIVE)
+    _resume_jobs(name)
     return view(name)
 
 
@@ -381,7 +477,7 @@ def delete_profile(name: str) -> dict:
     if not profiles.named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' does not exist.")
     _set_status(name, STATUS_DISABLED, "deleted")
-    _end_sessions(name)
+    _stop_work(name)
     try:
         result = profiles.delete_profile_api(name)
     except Exception as exc:
