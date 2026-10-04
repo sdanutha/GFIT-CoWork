@@ -14,12 +14,9 @@ from typing import NamedTuple
 
 import pytest
 
-from api.access import (
-    USER_ENDPOINTS,
-    VARIABLE_PATH_PREFIXES,
-    user_entry,
-    user_may_call,
-)
+from api import route_table
+from api.access import user_entry, user_may_call
+from api.route_table import VARIABLE_PATH_PREFIXES
 
 ALLOWED = True
 REFUSED = False
@@ -204,22 +201,27 @@ def test_every_route_a_user_can_reach_is_named_exactly():
             continue
         unnamed.append(
             f"{method} {route}{'*' if prefix else ''} reaches Users through the prefix "
-            f"{entry}: add it to the User list (USER_ENDPOINTS) as an exact route "
-            "(a prefix route also needs its reason in VARIABLE_PATH_PREFIXES), "
-            "or leave it Admin-only (off the User list, or carved out in "
-            "ADMIN_ONLY_ENDPOINTS)"
+            f"{entry}: give it its own route-table row "
+            "(a User prefix row also needs its reason in VARIABLE_PATH_PREFIXES)"
         )
     assert not unnamed, "\n".join(unnamed)
 
 
-def test_every_exact_user_entry_is_a_route_the_server_handles():
-    handled = {(r.method, r.route) for r in dispatched_routes() if not r.prefix}
-    dead = [
-        f"{method} {route} is on the User list but the server does not handle it: "
-        "remove it from USER_ENDPOINTS"
-        for methods, route in USER_ENDPOINTS
-        if not route.endswith("*")
-        for method in sorted(methods)
-        if (method, route) not in handled
-    ]
-    assert not dead, "\n".join(dead)
+def test_every_dispatched_route_has_its_own_row():
+    unrowed = []
+    for method, route, prefix in sorted(dispatched_routes()):
+        if (method, route, prefix) == ("GET", "/api/", True):
+            continue  # the session guard for every API GET, not a route
+        pattern = route + "*" if prefix else route
+        row = route_table.match(method, route + "x" if prefix else route.replace("<id>", "abc"))
+        if row is None or row.pattern != pattern:
+            unrowed.append(f"{method} {pattern}")
+    assert not unrowed, "Give each dispatched route a route-table row: " + ", ".join(unrowed)
+
+
+def test_every_row_is_a_route_the_server_handles():
+    handled = {(r.method, r.route + "*" if r.prefix else r.route) for r in dispatched_routes()}
+    dead = sorted(
+        f"{route.method} {route.pattern}" for route in route_table.ROUTES if (route.method, route.pattern) not in handled
+    )
+    assert not dead, "The server does not handle these rows: " + ", ".join(dead)

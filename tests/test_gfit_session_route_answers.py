@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from api.access import USER_ENDPOINTS
+from api.route_table import ROUTES as _ROUTES, USER as _USER
 from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
@@ -190,7 +190,7 @@ NAMES_NO_SESSION: dict[tuple[str, str], str] = {
 
 
 def _user_entries() -> set[tuple[str, str]]:
-    return {(method, path) for methods, path in USER_ENDPOINTS for method in methods}
+    return {(r.method, r.pattern) for r in _ROUTES if r.caller == _USER}
 
 
 def test_every_user_route_is_placed_as_naming_a_session_or_not():

@@ -10,17 +10,10 @@ to which Profile (:func:`admit`, Admission), and what a User may call.
 Admission runs again on every request from a Directory session, and its answer
 is kept as the request's Admission (:func:`request_admission`): the one answer
 to "who is calling?" for the rest of that request.
-:func:`user_may_call` classifies a request by method and path against
-:data:`USER_ENDPOINTS`; anything not listed there is refused, including
-endpoints added later (fail closed). :data:`ADMIN_ONLY_ENDPOINTS` names the
-server-level features on purpose so the intent is readable, but a User is
-refused them simply because they are not User endpoints. A User entry names
-a route exactly, with the methods it handles. A prefix is allowed only where the
-path has a variable part (:data:`VARIABLE_PATH_PREFIXES`, each with its reason),
-and it covers only the one prefix route the server dispatches on: a literal
-route, or a narrower prefix route, under it needs its own entry.
-``tests/test_gfit_admin_gate_list.py`` fails when a dispatched route reaches a
-User any other way, so a new route stays Admin-only until someone names it.
+:func:`user_may_call` answers from the route table (``api.route_table``): a User
+may call a route whose row says ``USER``; a route whose row says ``ADMIN``, and
+any path with no row, including routes added later without one, is refused
+(fail closed).
 
 The server gate is the source of truth. The web app hides what its caller may
 not use, from :data:`SHELL_FEATURES` (each feature named by its gating route,
@@ -39,146 +32,6 @@ ROLE_ADMIN = "admin"
 ROLE_USER = "user"
 
 ADMIN_ONLY_MESSAGE = "This feature is available to your team's Admin only."
-
-_READ = frozenset({"GET"})
-_WRITE = frozenset({"POST"})
-_ANY = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
-
-# (methods, path) a User may call. A path ending in ``*`` is a prefix; a
-# ``<name>`` segment matches exactly one non-empty path segment (an id).
-# Longest match wins, so a narrower Admin-only entry can carve a hole in a
-# User prefix.
-USER_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
-    # The app shell and its assets
-    (_READ, "/"), (_READ, "/index.html"), (_READ, "/sessions"),
-    (_READ, "/session/*"), (_READ, "/session/static/*"), (_READ, "/static/*"),
-    (_READ, "/manifest.json"), (_READ, "/manifest.webmanifest"),
-    (_READ, "/session/manifest.json"), (_READ, "/session/manifest.webmanifest"),
-    (_READ, "/sw.js"), (_READ, "/favicon.ico"),
-    (_READ, "/health"), (_READ, "/plugins/*"), (_READ, "/dashboard-plugins/*"),
-    # Sign in and out
-    (_READ, "/api/auth/status"), (_WRITE, "/api/auth/login"), (_WRITE, "/api/auth/logout"),
-    # Sessions, each acted on by id inside the User's bound Profile
-    (_READ, "/api/session"), (_READ, "/api/session/compress/status"),
-    (_READ, "/api/session/export"), (_READ, "/api/session/lineage/report"),
-    (_READ, "/api/session/status"), (_READ, "/api/session/stream"),
-    (_READ, "/api/session/usage"), (_READ, "/api/session/worktree/status"),
-    (_READ, "/api/session/yolo"),
-    (_WRITE, "/api/session/anchor-scene"), (_WRITE, "/api/session/archive"),
-    (_WRITE, "/api/session/branch"), (_WRITE, "/api/session/clear"),
-    (_WRITE, "/api/session/compress"), (_WRITE, "/api/session/compress/start"),
-    (_WRITE, "/api/session/compression-recovery/start"),
-    (_WRITE, "/api/session/conversation-rounds"), (_WRITE, "/api/session/delete"),
-    (_WRITE, "/api/session/draft"), (_WRITE, "/api/session/duplicate"),
-    (_WRITE, "/api/session/handoff-summary"), (_WRITE, "/api/session/import"),
-    (_WRITE, "/api/session/import_cli"), (_WRITE, "/api/session/move"),
-    (_WRITE, "/api/session/new"), (_WRITE, "/api/session/pin"),
-    (_WRITE, "/api/session/rename"), (_WRITE, "/api/session/retry"),
-    (_WRITE, "/api/session/title/regenerate"), (_WRITE, "/api/session/toolsets"),
-    (_WRITE, "/api/session/truncate"), (_WRITE, "/api/session/undo"),
-    (_WRITE, "/api/session/update"),
-    (_READ, "/api/sessions"), (_READ, "/api/sessions/search"),
-    (_READ, "/api/sessions/events"), (_READ, "/api/sessions/gateway/stream"),
-    (_READ, "/api/sessions/<id>/events"),
-    # Chat
-    (_WRITE, "/api/chat"), (_WRITE, "/api/chat/start"), (_WRITE, "/api/chat/steer"),
-    (_READ, "/api/chat/stream"), (_READ, "/api/chat/stream/status"),
-    (_READ, "/api/chat/cancel"),
-    (_WRITE, "/api/btw"), (_WRITE, "/api/background"), (_READ, "/api/background/status"),
-    (_WRITE, "/api/goal"), (_WRITE, "/api/process-complete-ack"),
-    (_WRITE, "/api/bg-task-complete-ack"),
-    (_READ, "/api/approval/pending"), (_READ, "/api/approval/stream"),
-    (_WRITE, "/api/approval/respond"),
-    (_READ, "/api/clarify/pending"), (_READ, "/api/clarify/stream"),
-    (_WRITE, "/api/clarify/respond"),
-    (_READ, "/api/projects"), (_WRITE, "/api/projects/create"),
-    (_WRITE, "/api/projects/rename"), (_WRITE, "/api/projects/delete"),
-    (_READ, "/api/prompts"), (_WRITE, "/api/prompts"), (frozenset({"DELETE"}), "/api/prompts"),
-    (_READ, "/api/commands"), (_READ, "/api/commands/bundles"),
-    (_READ, "/api/commands/moa/resolve"), (_WRITE, "/api/commands/bundles/resolve"),
-    (_READ, "/api/personalities"), (_WRITE, "/api/personality/set"),
-    (_READ, "/api/reasoning"), (_READ, "/api/media"),
-    (_WRITE, "/api/upload"), (_WRITE, "/api/upload/extract"),
-    (_WRITE, "/api/transcribe"), (_READ, "/api/transcribe/capability"), (_WRITE, "/api/tts"),
-    (_WRITE, "/api/client-events/log"),
-    # Models the Admin configured for this Profile
-    (_READ, "/api/models"), (_READ, "/api/models/live"), (_READ, "/api/model/auxiliary"),
-    # The User's own Profile: memory, skills, cron jobs
-    (_READ, "/api/profiles"), (_READ, "/api/profile/active"),
-    (_READ, "/api/memory"), (_WRITE, "/api/memory/write"),
-    (_READ, "/api/skills"), (_READ, "/api/skills/content"), (_READ, "/api/skills/usage"),
-    (_WRITE, "/api/skills/save"), (_WRITE, "/api/skills/delete"), (_WRITE, "/api/skills/toggle"),
-    (_READ, "/api/crons"), (_READ, "/api/crons/status"), (_READ, "/api/crons/recent"),
-    (_READ, "/api/crons/history"), (_READ, "/api/crons/output"), (_READ, "/api/crons/run"),
-    (_READ, "/api/crons/delivery-options"),
-    (_WRITE, "/api/crons/create"), (_WRITE, "/api/crons/update"), (_WRITE, "/api/crons/delete"),
-    (_WRITE, "/api/crons/pause"), (_WRITE, "/api/crons/resume"), (_WRITE, "/api/crons/run"),
-    # Workspaces and files, confined to the Profile (see api.workspace)
-    (_READ, "/api/workspaces"), (_READ, "/api/workspaces/suggest"),
-    (_WRITE, "/api/workspaces/add"), (_WRITE, "/api/workspaces/remove"),
-    (_WRITE, "/api/workspaces/rename"), (_WRITE, "/api/workspaces/reorder"),
-    (_WRITE, "/api/workspace/upload"),
-    (_READ, "/api/list"), (_READ, "/api/file"), (_READ, "/api/file/raw"),
-    (_READ, "/api/folder/download"),
-    (_WRITE, "/api/file/save"), (_WRITE, "/api/file/office-save"),
-    (_WRITE, "/api/file/create"), (_WRITE, "/api/file/create-dir"),
-    (_WRITE, "/api/file/rename"), (_WRITE, "/api/file/move"),
-    (_WRITE, "/api/file/delete"), (_WRITE, "/api/file/path"),
-    (_READ, "/api/rollback/list"), (_READ, "/api/rollback/diff"),
-    (_WRITE, "/api/rollback/restore"),
-    # Read-only workspace git
-    (_READ, "/api/git/status"), (_READ, "/api/git/branches"), (_READ, "/api/git/diff"),
-    (_READ, "/api/git-info"),
-    # Read-only views
-    (_READ, "/api/settings"), (_READ, "/api/insights"), (_READ, "/api/project-os/dashboard"),
-    (_READ, "/api/wiki/status"), (_READ, "/api/wiki/browse"), (_READ, "/api/wiki/page"),
-    (_READ, "/api/notes/sources"), (_READ, "/api/notes/search"), (_READ, "/api/notes/item"),
-    (_READ, "/api/plugins"),
-    (_READ, "/api/gateway/status"),
-    (_READ, "/api/health/agent"), (_READ, "/api/system/health"),
-)
-
-# A User prefix entry is allowed only where the route has a variable part that
-# cannot be listed. Each one says why, and covers only the prefix route it names
-# (see the module docstring).
-VARIABLE_PATH_PREFIXES: dict[str, str] = {
-    "/session/*": "session pages by session id",
-    "/session/static/*": "static assets requested relative to a session page",
-    "/static/*": "static assets by file name",
-    "/plugins/*": "plugin assets by plugin name and file",
-    "/dashboard-plugins/*": "dashboard plugin assets by plugin name and file",
-}
-
-# Server-level features, refused for Users. Listed so the intent is explicit:
-# none of them is among the User endpoints, so they are refused anyway. An entry here
-# carves a hole only if it falls under a variable-path prefix above.
-ADMIN_ONLY_ENDPOINTS: tuple[tuple[frozenset, str], ...] = (
-    (_ANY, "/api/terminal/*"),                       # terminal
-    (_ANY, "/api/git/*"),                            # mutating workspace git
-    (_ANY, "/api/session/worktree/remove"),
-    (_ANY, "/api/extensions/*"), (_ANY, "/extensions/*"),  # extensions
-    (_ANY, "/api/shutdown"), (_ANY, "/api/health/restart"), (_ANY, "/api/admin/reload"),
-    (_ANY, "/api/logs"),                             # server logs
-    (_WRITE, "/api/session/yolo"),                   # YOLO mode
-    (_ANY, "/api/providers"), (_ANY, "/api/providers/*"), (_ANY, "/api/provider/*"),
-    (_ANY, "/api/model/set"), (_ANY, "/api/default-model"), (_ANY, "/api/models/refresh"),
-    (_WRITE, "/api/reasoning"), (_ANY, "/api/mcp/*"),
-    (_WRITE, "/api/settings"),                       # Deployment-wide settings
-    (_ANY, "/api/onboarding/*"),                     # onboarding
-    (_ANY, "/api/gateway/*"),                        # gateway control
-    (_ANY, "/api/profile/*"),                        # profile management
-    (_ANY, "/api/share/create"), (_ANY, "/api/share/revoke"),  # public share links
-    (_ANY, "/api/escape/*"),                         # files outside the Workspace
-    (_ANY, "/api/file/open-vscode"), (_ANY, "/api/file/reveal"),  # the server machine
-    (_ANY, "/api/commands/exec"),                    # server-side agent commands
-    (_ANY, "/api/dashboard/*"),                      # Hermes dashboard control
-    (_ANY, "/api/kanban/*"),                         # one board for every Profile
-    (_ANY, "/api/approval/inject_test"), (_ANY, "/api/clarify/inject_test"),
-    # The session store every Profile shares
-    (_ANY, "/api/sessions/cleanup"), (_ANY, "/api/sessions/cleanup_zero_message"),
-    (_ANY, "/api/session/recovery/audit"), (_ANY, "/api/session/recovery/repair-safe"),
-)
-
 
 def admin_users() -> frozenset[str]:
     """Return the normalised employee IDs named in ``HERMES_WEBUI_ADMIN_USERS``."""
@@ -341,39 +194,12 @@ def without_request_admission():
         _request.admission, _request.directory_session = saved
 
 
-def _segments_match(pattern: str, path: str) -> bool:
-    """True if *path* matches *pattern* segment by segment, a ``<name>`` segment
-    standing for any one non-empty segment."""
-    pattern_parts, path_parts = pattern.split("/"), path.split("/")
-    return len(pattern_parts) == len(path_parts) and all(
-        (want.startswith("<") and want.endswith(">") and got) or want == got
-        for want, got in zip(pattern_parts, path_parts, strict=True)
-    )
-
-
-def _best_match(entries, method: str, path: str) -> tuple[int, str | None]:
-    """(length, pattern) of the longest entry matching (method, path), or (-1, None)."""
-    best = (-1, None)
-    for methods, pattern in entries:
-        if method not in methods:
-            continue
-        if pattern.endswith("*"):
-            if path.startswith(pattern[:-1]):
-                best = max(best, (len(pattern) - 1, pattern))
-        elif _segments_match(pattern, path):
-            # A match of the whole path, placeholders included, beats any prefix.
-            best = max(best, (len(path) + 1, pattern))
-    return best
-
-
 def user_entry(method: str, path: str) -> str | None:
-    """The User entry that lets a User call *method* *path*, or None if refused."""
-    method = str(method or "").upper()
-    path = str(path or "")
-    allowed, pattern = _best_match(USER_ENDPOINTS, method, path)
-    if allowed >= 0 and allowed > _best_match(ADMIN_ONLY_ENDPOINTS, method, path)[0]:
-        return pattern
-    return None
+    """The route-table pattern that lets a User call *method* *path*, or None if refused."""
+    from api.route_table import USER, match
+
+    route = match(method, path)
+    return route.pattern if route is not None and route.caller == USER else None
 
 
 def user_may_call(method: str, path: str) -> bool:

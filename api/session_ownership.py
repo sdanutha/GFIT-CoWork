@@ -46,6 +46,7 @@ import logging
 from dataclasses import dataclass
 
 from api.helpers import bad, j
+from api.route_table import READ, WRITE
 
 logger = logging.getLogger(__name__)
 
@@ -129,118 +130,6 @@ EVERY_PROFILE = ProfileReach(every_profile=True)
 NO_PROFILE = ProfileReach(every_profile=False, single_profile=True)
 
 
-READ = "read"
-WRITE = "write"
-
-# Every (method, route) that names a session, by what it does (not its method).
-# A route whose class is unclear (it reads and records something, or runs the
-# session's model) is a WRITE: unknown is not allowed.
-SESSION_ROUTE_KINDS: dict[tuple[str, str], str] = {
-    ("GET", "/api/approval/pending"): READ,
-    ("GET", "/api/approval/stream"): READ,
-    ("GET", "/api/background/status"): READ,
-    ("GET", "/api/chat/stream"): READ,
-    ("GET", "/api/chat/stream/status"): READ,
-    ("GET", "/api/clarify/pending"): READ,
-    ("GET", "/api/clarify/stream"): READ,
-    ("GET", "/api/file"): READ,
-    ("GET", "/api/file/raw"): READ,
-    ("GET", "/api/folder/download"): READ,
-    ("GET", "/api/git-info"): READ,
-    ("GET", "/api/git/branches"): READ,
-    ("GET", "/api/git/diff"): READ,
-    ("GET", "/api/git/status"): READ,
-    ("GET", "/api/list"): READ,
-    ("GET", "/api/session"): READ,
-    ("GET", "/api/session/compress/status"): READ,
-    ("GET", "/api/session/export"): READ,
-    ("GET", "/api/session/lineage/report"): READ,
-    ("GET", "/api/session/status"): READ,
-    ("GET", "/api/session/stream"): READ,
-    ("GET", "/api/session/usage"): READ,
-    ("GET", "/api/session/worktree/status"): READ,
-    ("GET", "/api/session/yolo"): READ,
-    ("GET", "/api/sessions/<id>/events"): READ,
-    ("GET", "/session/*"): READ,
-    ("POST", "/api/file/path"): READ,  # resolves a Workspace path
-    ("POST", "/api/session/conversation-rounds"): READ,  # counts rounds
-    ("GET", "/api/chat/cancel"): WRITE,  # stops a run
-    ("POST", "/api/approval/respond"): WRITE,
-    ("POST", "/api/background"): WRITE,
-    ("POST", "/api/bg-task-complete-ack"): WRITE,
-    ("POST", "/api/btw"): WRITE,
-    ("POST", "/api/chat"): WRITE,
-    ("POST", "/api/chat/start"): WRITE,
-    ("POST", "/api/chat/steer"): WRITE,
-    ("POST", "/api/clarify/respond"): WRITE,
-    ("POST", "/api/file/create"): WRITE,
-    ("POST", "/api/file/create-dir"): WRITE,
-    ("POST", "/api/file/delete"): WRITE,
-    ("POST", "/api/file/move"): WRITE,
-    ("POST", "/api/file/office-save"): WRITE,
-    ("POST", "/api/file/rename"): WRITE,
-    ("POST", "/api/file/save"): WRITE,
-    ("POST", "/api/goal"): WRITE,
-    ("POST", "/api/personality/set"): WRITE,
-    ("POST", "/api/session/anchor-scene"): WRITE,  # persists onto the session
-    ("POST", "/api/session/archive"): WRITE,
-    ("POST", "/api/session/branch"): WRITE,
-    ("POST", "/api/session/clear"): WRITE,
-    ("POST", "/api/session/compress"): WRITE,
-    ("POST", "/api/session/compress/start"): WRITE,
-    ("POST", "/api/session/compression-recovery/start"): WRITE,
-    ("POST", "/api/session/delete"): WRITE,
-    ("POST", "/api/session/draft"): WRITE,
-    ("POST", "/api/session/duplicate"): WRITE,
-    ("POST", "/api/session/handoff-summary"): WRITE,  # runs the session's model
-    ("POST", "/api/session/import_cli"): WRITE,
-    ("POST", "/api/session/move"): WRITE,
-    ("POST", "/api/session/new"): WRITE,
-    ("POST", "/api/session/pin"): WRITE,
-    ("POST", "/api/session/rename"): WRITE,
-    ("POST", "/api/session/retry"): WRITE,
-    ("POST", "/api/session/title/regenerate"): WRITE,
-    ("POST", "/api/session/toolsets"): WRITE,
-    ("POST", "/api/session/truncate"): WRITE,
-    ("POST", "/api/session/undo"): WRITE,
-    ("POST", "/api/session/update"): WRITE,
-    ("POST", "/api/upload"): WRITE,
-    ("POST", "/api/upload/extract"): WRITE,
-    ("POST", "/api/workspace/upload"): WRITE,
-    # Admin-only routes that name a session (the Admin's view of another
-    # Profile's session must not reach a write through them either).
-    ("GET", "/api/escape/file/raw"): READ,
-    ("GET", "/api/escape/file/read"): READ,
-    ("GET", "/api/escape/list"): READ,
-    ("GET", "/api/terminal/output"): READ,
-    ("GET", "/api/approval/inject_test"): WRITE,
-    ("GET", "/api/clarify/inject_test"): WRITE,
-    ("POST", "/api/escape/authorize"): WRITE,
-    ("POST", "/api/file/open-vscode"): WRITE,
-    ("POST", "/api/file/reveal"): WRITE,
-    ("POST", "/api/git/checkout"): WRITE,
-    ("POST", "/api/git/commit"): WRITE,
-    ("POST", "/api/git/commit-message"): WRITE,  # runs the model
-    ("POST", "/api/git/commit-message-selected"): WRITE,  # runs the model
-    ("POST", "/api/git/commit-selected"): WRITE,
-    ("POST", "/api/git/discard"): WRITE,
-    ("POST", "/api/git/fetch"): WRITE,
-    ("POST", "/api/git/pull"): WRITE,
-    ("POST", "/api/git/push"): WRITE,
-    ("POST", "/api/git/stage"): WRITE,
-    ("POST", "/api/git/stash-checkout"): WRITE,
-    ("POST", "/api/git/unstage"): WRITE,
-    ("POST", "/api/session/worktree/remove"): WRITE,
-    ("POST", "/api/session/yolo"): WRITE,
-    ("POST", "/api/share/create"): WRITE,  # a public link to the session
-    ("POST", "/api/share/revoke"): WRITE,
-    ("POST", "/api/terminal/close"): WRITE,
-    ("POST", "/api/terminal/input"): WRITE,
-    ("POST", "/api/terminal/resize"): WRITE,
-    ("POST", "/api/terminal/start"): WRITE,
-}
-
-
 def _request_is_a_read() -> bool:
     """Is this request a read, by the read/write table? Unknown is not."""
     from api.access import request_route
@@ -249,24 +138,20 @@ def _request_is_a_read() -> bool:
     return route is not None and session_route_kind(*route) == READ
 
 
-def _route_matches(pattern: str, path: str) -> bool:
-    from api.access import _segments_match
-
-    return path.startswith(pattern[:-1]) if pattern.endswith("*") else _segments_match(pattern, path)
-
-
 def session_route_kind(method: str, path: str) -> str | None:
     """READ or WRITE for a request to a route that names a session; None for any other route.
 
-    A session route under a method the table does not name is a WRITE.
+    The answer is the route table's. A session route under a method it has no
+    row for is a WRITE.
     """
-    named = False
-    for (route_method, pattern), kind in SESSION_ROUTE_KINDS.items():
-        if _route_matches(pattern, path):
-            if route_method == method:
-                return kind
-            named = True
-    return WRITE if named else None
+    from api.route_table import match, routes_at
+
+    route = match(method, path)
+    if route is not None and route.session is not None:
+        return route.session
+    if any(other.session is not None for other in routes_at(path)):
+        return WRITE
+    return None
 
 
 def _names_nothing(session_id) -> bool:

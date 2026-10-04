@@ -2969,6 +2969,7 @@ from api.config import (
     _parse_provider_qualified_model_id,
 )
 from api import config as api_config
+from api import route_table
 from api.helpers import (
     require,
     bad,
@@ -5880,14 +5881,6 @@ def apply_cors_preflight_headers(handler) -> None:
     handler.send_header("Vary", "Origin")
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
     handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-
-def _csrf_exempt_path(path: str) -> bool:
-    """Paths that cannot or must not carry a session CSRF token."""
-    return path in {
-        "/api/auth/login",
-        "/api/csp-report",
-    }
 
 
 _CSRF_FAILURE_ATTR = "_hermes_csrf_failure_reason"
@@ -15265,7 +15258,7 @@ def handle_post(handler, parsed) -> bool:
     # is intentionally unauthenticated for browser-generated violation reports.
     if diag:
         diag.stage("csrf")
-    if not _csrf_exempt_path(parsed.path) and not _check_csrf(handler):
+    if not route_table.csrf_exempt("POST", parsed.path) and not _check_csrf(handler):
         try:
             return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
         finally:

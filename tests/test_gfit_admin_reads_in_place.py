@@ -20,7 +20,11 @@ import json
 
 import pytest
 
-from api.session_ownership import READ, SESSION_ROUTE_KINDS, WRITE
+from api.session_ownership import READ, WRITE
+from api.route_table import ROUTES as _ROUTES
+
+# The route table's session routes, as (method, pattern) -> READ or WRITE.
+SESSION_ROUTE_KINDS = {(r.method, r.pattern): r.session for r in _ROUTES if r.session is not None}
 from tests._gfit_server import gfit_server as _gfit_server
 from tests.test_gfit_session_route_answers import (
     SESSION_ROUTES,

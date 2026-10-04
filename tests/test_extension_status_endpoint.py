@@ -1249,7 +1249,7 @@ def test_extension_toggle_route_uses_csrf_gate(monkeypatch):
     assert result is None
     assert handler.status == 403
     assert json.loads(handler.body.decode("utf-8"))["error"] == "Session expired - reload the page"
-    assert routes._csrf_exempt_path("/api/extensions/toggle") is False
+    assert routes.route_table.csrf_exempt("POST", "/api/extensions/toggle") is False
 
 
 def test_extension_toggle_route_requires_webui_auth(monkeypatch):

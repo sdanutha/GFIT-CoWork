@@ -741,7 +741,7 @@ class TestAuxiliaryModelsBackend:
 
         seen = []
 
-        monkeypatch.setattr(routes, "_csrf_exempt_path", lambda _path: True)
+        monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
         monkeypatch.setattr(routes, "j", lambda _handler, payload, **_kwargs: payload)
 
         def fake_set_default_model(model, provider=None, advanced=None):
