@@ -277,6 +277,36 @@ def caller_bound_profile() -> str | None:
     return request_admission().profile if caller_is_user() else None
 
 
+def profile_for_request(admission, *, directory_session: bool, cookie_profile) -> str | None:
+    """The Profile a request runs in: the one answer, from its Admission.
+
+    A Directory session runs in its Admission's Profile (a User's own,
+    ``default`` for the Admin), whatever cookie the browser sends; one with no
+    Admission runs in none. With no Directory session (login turned off) the
+    authenticated profile cookie picks it, as Upstream did. None means the
+    process's Profile.
+    """
+    if admission is not None:
+        return admission.profile or None
+    if directory_session:
+        return None
+    return cookie_profile or None
+
+
+def settle_request_profile(handler) -> None:
+    """Set this request's Profile, once, after its Admission is known (the only setter)."""
+    from api.helpers import get_profile_cookie
+    from api.profiles import set_request_profile
+
+    profile = profile_for_request(
+        request_admission(),
+        directory_session=request_has_directory_session(),
+        cookie_profile=get_profile_cookie(handler),
+    )
+    if profile:
+        set_request_profile(profile)
+
+
 def clear_request_admission() -> None:
     """Forget this request's Admission and Directory session. Safe to call when none was recorded."""
     _request.admission = None

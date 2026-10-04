@@ -364,17 +364,6 @@ def _build_profile_cookie_header(name: str, session_cookie_value: str | None) ->
     return build_profile_cookie(name, session_cookie_value=session_cookie_value)
 
 
-def _request_profile_matches_bound(bound_profile: str | None) -> bool:
-    if not bound_profile:
-        return True
-    try:
-        from api.profiles import get_active_profile_name, _profiles_match
-
-        return _profiles_match(bound_profile, get_active_profile_name())
-    except Exception:
-        return False
-
-
 def get_session_info(cookie_value: str) -> dict | None:
     if not verify_session(cookie_value):
         return None
@@ -428,13 +417,13 @@ def reset_request_auth_state(handler) -> None:
             pass
 
 
-def _apply_session_profile(handler, bound_profile: str | None, cookie_value: str) -> None:
+def _sync_profile_cookie(handler, bound_profile: str | None, cookie_value: str) -> None:
+    """Keep the browser's profile cookie on the Admission's Profile (the request's
+    Profile itself is set by :func:`api.access.settle_request_profile`)."""
     if bound_profile is None:
         return
     from api.helpers import get_profile_cookie
-    from api.profiles import set_request_profile
 
-    set_request_profile(bound_profile)
     if get_profile_cookie(handler) != bound_profile:
         _queue_pending_cookie(handler, _build_profile_cookie_header(bound_profile, cookie_value))
 
@@ -477,7 +466,7 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
         invalidate_session(cookie_value)
         handler._request_session_rejected = True
         return _remember_request_session(handler, None)
-    _apply_session_profile(handler, admission.profile, cookie_value)
+    _sync_profile_cookie(handler, admission.profile, cookie_value)
     return _remember_request_session(handler, info)
 
 
@@ -512,12 +501,6 @@ def _send_forbidden(handler, parsed, message: str) -> None:
     handler.send_header('Content-Length', str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
-
-
-def session_allows_active_profile(info: dict | None) -> bool:
-    if not info:
-        return True
-    return _request_profile_matches_bound(str(info.get('bound_profile') or '') or None)
 
 
 def _session_token_from_cookie_value(cookie_value: str) -> str | None:
@@ -709,19 +692,6 @@ def check_auth(handler, parsed) -> bool:
     session_info = ensure_request_session(handler)
     if session_info:
         if _refuse_admin_only_for_user(handler, parsed, session_info):
-            return False
-        if not session_allows_active_profile(session_info):
-            if parsed.path.startswith('/api/'):
-                body = b'{"error":"Profile access forbidden"}'
-                handler.send_response(403)
-                handler.send_header('Content-Type', 'application/json')
-            else:
-                body = b'Profile access forbidden'
-                handler.send_response(403)
-                handler.send_header('Content-Type', 'text/plain; charset=utf-8')
-            handler.send_header('Content-Length', str(len(body)))
-            handler.end_headers()
-            handler.wfile.write(body)
             return False
         return True
     # Not authorized
