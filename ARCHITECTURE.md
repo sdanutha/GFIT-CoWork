@@ -826,6 +826,16 @@ Default toolset list (hardcoded fallback):
 The web UI always runs with the full CLI toolset. There is no per-session toolset
 restriction from the UI yet.
 
+Many Profiles are in use at once, so a request reads its own Profile's config.
+`api/config.py` keeps the shared cache (`cfg`, `_cfg_cache`) for the process
+Profile. A request whose Profile is another one reads its own config view,
+keyed by config path (`_cfg_views`): `get_config()`, `get_config_snapshot()`
+and the module's config readers (through `_active_cfg()`) answer from it. A
+view is rebuilt as a new dict when its file changes, never refilled in place,
+so a request keeps reading the config it was handed while a request in another
+Profile loads its own. Code in `api/config.py` reads config through
+`_active_cfg()`, not the `cfg` alias.
+
 ---
 
 ## 9. How To Add a New API Endpoint

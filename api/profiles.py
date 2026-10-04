@@ -515,6 +515,11 @@ def get_active_profile_name() -> str:
     return _active_profile
 
 
+def request_profile_name() -> str | None:
+    """Return the Profile set for this thread's request, or None outside a request."""
+    return getattr(_tls, 'profile', None)
+
+
 def set_request_profile(name: str) -> None:
     """Set the per-request profile context for this thread.
 
