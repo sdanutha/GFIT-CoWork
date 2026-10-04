@@ -13889,7 +13889,7 @@ def _get_session_static(handler, parsed):
 # Without this guard the catch-all below returns index.html instead of
 # the manifest, and Firefox falls back to a generated letter icon.
 # See #2226.
-def _get_session_manifest_json(handler, parsed):
+def _get_session_manifest(handler, parsed):
     return _serve_manifest(handler)
 
 
@@ -13922,7 +13922,7 @@ def _get_app_shell(handler, parsed):
         return _serve_shell_unavailable(handler, exc)
 
 
-def _get_share(handler, parsed):
+def _get_share_page(handler, parsed):
     share_path = (Path(__file__).parent.parent / "static" / "share.html").resolve()
     return t(
         handler,
@@ -14018,7 +14018,7 @@ def _get_api_share(handler, parsed):
     )
 
 
-def _get_manifest_json(handler, parsed):
+def _get_manifest(handler, parsed):
     return _serve_manifest(handler)
 
 
@@ -15368,9 +15368,8 @@ def _dispatch_write(handler, parsed, method: str) -> bool:
     if method == "POST":
         diag = RequestDiagnostics.maybe_start(method, parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
     route = route_table.match(method, parsed.path)
-    # CSRF: reject cross-origin or tokenless authenticated browser requests.
-    # Login has no authenticated session token yet, and CSP reports are
-    # intentionally unauthenticated browser-generated violation reports.
+    # CSRF: reject cross-origin or tokenless authenticated browser requests,
+    # unless the row is exempt (see api.route_table).
     if route is None or route.csrf:
         if diag:
             diag.stage("csrf")
@@ -17140,7 +17139,7 @@ def _post_api_memory_write(handler, parsed, body, diag):
     return _handle_memory_write(handler, body)
 
 
-def _post_api_gateway_start(handler, parsed, body, diag):
+def _post_api_gateway_control(handler, parsed, body, diag):
     return _handle_gateway_lifecycle(handler, parsed.path.rsplit("/", 1)[-1], body)
 
 
@@ -17216,7 +17215,7 @@ def _post_api_profile_create(handler, parsed, body, diag):
     return j(handler, {"ok": True, "profile": profile})
 
 
-def _post_api_profile_disable(handler, parsed, body, diag):
+def _post_api_profile_enable_or_disable(handler, parsed, body, diag):
     name = body.get("name", "").strip()
     if not name:
         return bad(handler, "name is required")

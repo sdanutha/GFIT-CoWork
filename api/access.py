@@ -26,6 +26,8 @@ import os
 import threading
 from typing import NamedTuple
 
+from api import route_table
+
 ADMIN_USERS_ENV = "HERMES_WEBUI_ADMIN_USERS"
 
 ROLE_ADMIN = "admin"
@@ -196,10 +198,8 @@ def without_request_admission():
 
 def user_entry(method: str, path: str) -> str | None:
     """The route-table pattern that lets a User call *method* *path*, or None if refused."""
-    from api.route_table import USER, match
-
-    route = match(method, path)
-    return route.pattern if route is not None and route.caller == USER else None
+    route = route_table.match(method, path)
+    return route.pattern if route is not None and route.caller == route_table.USER else None
 
 
 def user_may_call(method: str, path: str) -> bool:

@@ -14,10 +14,7 @@ import pytest
 
 from api.access import user_may_call
 from api.session_ownership import READ, WRITE, session_route_kind
-from api.route_table import ROUTES as _ROUTES
-
-# The route table's session routes, as (method, pattern) -> READ or WRITE.
-SESSION_ROUTE_KINDS = {(r.method, r.pattern): r.session for r in _ROUTES if r.session is not None}
+from tests._route_source import SESSION_ROUTE_KINDS
 from tests.test_gfit_admin_gate_list import dispatched_routes
 from tests.test_gfit_session_route_answers import SESSION_ROUTES
 

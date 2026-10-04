@@ -1215,7 +1215,9 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   session. One matcher (exact path, then `<id>` segments, then the longest prefix) chooses the
   row; the dispatchers in `api/routes.py`, the Admin gate, session ownership and the CSRF
   check all read it. A User prefix row needs its reason in `VARIABLE_PATH_PREFIXES`.
-  `tests/test_gfit_route_table.py` checks every row and that each answers as before.
+  `tests/test_gfit_route_table.py` checks every row and that each answers as before, with one
+  change on purpose: a session page's static assets and manifest name no session (the old
+  `/session/*` read rule caught them).
 - `api/workspace_policy.py` — the Workspace policy: the one answer to "what may this request
   touch?", as the request's Admission is the one answer to "who is calling?". It is chosen once
   per request from the request's Admission (`request_workspace_policy`, the only mapping): a

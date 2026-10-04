@@ -46,7 +46,7 @@ import logging
 from dataclasses import dataclass
 
 from api.helpers import bad, j
-from api.route_table import READ, WRITE
+from api.route_table import READ, WRITE, match, routes_at
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +144,6 @@ def session_route_kind(method: str, path: str) -> str | None:
     The answer is the route table's. A session route under a method it has no
     row for is a WRITE.
     """
-    from api.route_table import match, routes_at
-
     route = match(method, path)
     if route is not None and route.session is not None:
         return route.session

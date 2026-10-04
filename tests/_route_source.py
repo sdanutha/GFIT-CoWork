@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import inspect
 
+from api.route_table import ROUTES
+
+# The route table's session routes, as (method, pattern) -> READ or WRITE.
+SESSION_ROUTE_KINDS = {(route.method, route.pattern): route.session for route in ROUTES if route.session is not None}
+
 
 def route_handler(method: str, path: str):
     """The route module's function that serves *method* *path* (AssertionError if none)."""

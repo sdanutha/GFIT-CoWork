@@ -1,10 +1,9 @@
 """GFIT-CoWork: the Admin gate's list of what a User may call.
 
 Tested at the gate's check interface (method + route -> may a User call it),
-with no server. The table states what a User may call; the completeness test
-reads the route table the server dispatches through and fails when a route a
-User can reach is not named by its own row (ADR 0002: a User reaches only
-their own Profile, server-level features are for the Admin).
+with no server (ADR 0002: a User reaches only their own Profile, server-level
+features are for the Admin). Completeness (every dispatched route has a row
+that says who may call it) is in ``tests/test_gfit_route_table.py``.
 """
 from __future__ import annotations
 
@@ -13,8 +12,7 @@ from typing import NamedTuple
 import pytest
 
 from api import route_table
-from api.access import user_entry, user_may_call
-from api.route_table import VARIABLE_PATH_PREFIXES
+from api.access import user_may_call
 
 ALLOWED = True
 REFUSED = False
@@ -128,21 +126,3 @@ def test_the_dispatched_routes_are_found():
     assert DispatchedRoute("GET", "/static/", True) in routes
     assert DispatchedRoute("DELETE", "/api/prompts", False) in routes
     assert DispatchedRoute("GET", "/api/sessions/<id>/events", False) in routes
-
-
-def test_every_route_a_user_can_reach_is_named_exactly():
-    unnamed = []
-    for method, route, prefix in sorted(dispatched_routes()):
-        # A prefix route stands for the routes under it: probe one of them.
-        entry = user_entry(method, route + "x" if prefix else route)
-        if entry is None or not entry.endswith("*"):
-            continue
-        # A prefix route may use only its own variable-path entry.
-        if prefix and entry == route + "*" and entry in VARIABLE_PATH_PREFIXES:
-            continue
-        unnamed.append(
-            f"{method} {route}{'*' if prefix else ''} reaches Users through the prefix "
-            f"{entry}: give it its own route-table row "
-            "(a User prefix row also needs its reason in VARIABLE_PATH_PREFIXES)"
-        )
-    assert not unnamed, "\n".join(unnamed)

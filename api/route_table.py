@@ -11,7 +11,9 @@ runs:
   route whose class is unclear (it reads and records something, or runs the
   session's model) is a ``WRITE``: unknown is not allowed;
 - **csrf**: whether an unsafe request to it must carry the session's CSRF
-  token. Only login (no session yet) and the browser's CSP reports are exempt;
+  token. Only login (no session yet), the browser's CSP reports and the
+  deprecated process-complete ack (answered 410 Gone to a stale tab that has
+  no token) are exempt;
 - **handler**: the name of the route module's function that serves it. The
   server dispatches every request by looking up its row;
 - **session_guard**: whether session ownership checks the session ids the
@@ -105,19 +107,19 @@ _get, _post, _put, _patch, _delete = (_route(m) for m in METHODS)
 ROUTES: tuple[Route, ...] = (
     # ── GET ──
     _get("/session/static/*", USER, handler="_get_session_static", session_guard=False),
-    _get("/session/manifest.json", USER, handler="_get_session_manifest_json", session_guard=False),
-    _get("/session/manifest.webmanifest", USER, handler="_get_session_manifest_json", session_guard=False),
+    _get("/session/manifest.json", USER, handler="_get_session_manifest", session_guard=False),
+    _get("/session/manifest.webmanifest", USER, handler="_get_session_manifest", session_guard=False),
     _get("/", USER, handler="_get_app_shell", session_guard=False),
     _get("/index.html", USER, handler="_get_app_shell", session_guard=False),
     _get("/session/*", USER, session=READ, handler="_get_app_shell", session_guard=False),
     _get("/sessions", USER, handler="_get_app_shell", session_guard=False),
-    _get("/share", ADMIN, handler="_get_share", session_guard=False),
-    _get("/share/*", ADMIN, handler="_get_share", session_guard=False),
+    _get("/share", ADMIN, handler="_get_share_page", session_guard=False),
+    _get("/share/*", ADMIN, handler="_get_share_page", session_guard=False),
     _get("/login", ADMIN, handler="_get_login", session_guard=False),
     _get("/api/auth/status", USER, handler="_get_api_auth_status", session_guard=False),
     _get("/api/share/*", ADMIN, handler="_get_api_share", session_guard=False),
-    _get("/manifest.json", USER, handler="_get_manifest_json", session_guard=False),
-    _get("/manifest.webmanifest", USER, handler="_get_manifest_json", session_guard=False),
+    _get("/manifest.json", USER, handler="_get_manifest", session_guard=False),
+    _get("/manifest.webmanifest", USER, handler="_get_manifest", session_guard=False),
     _get("/sw.js", USER, handler="_get_sw_js", session_guard=False),
     _get("/favicon.ico", USER, handler="_get_favicon_ico", session_guard=False),
     _get("/api/insights", USER, handler="_get_api_insights"),
@@ -319,13 +321,13 @@ ROUTES: tuple[Route, ...] = (
     _post("/api/skills/delete", USER, handler="_post_api_skills_delete"),
     _post("/api/skills/toggle", USER, handler="_post_api_skills_toggle"),
     _post("/api/memory/write", USER, handler="_post_api_memory_write"),
-    _post("/api/gateway/restart", ADMIN, handler="_post_api_gateway_start"),
-    _post("/api/gateway/start", ADMIN, handler="_post_api_gateway_start"),
-    _post("/api/gateway/stop", ADMIN, handler="_post_api_gateway_start"),
+    _post("/api/gateway/restart", ADMIN, handler="_post_api_gateway_control"),
+    _post("/api/gateway/start", ADMIN, handler="_post_api_gateway_control"),
+    _post("/api/gateway/stop", ADMIN, handler="_post_api_gateway_control"),
     _post("/api/profile/switch", ADMIN, handler="_post_api_profile_switch"),
     _post("/api/profile/create", ADMIN, handler="_post_api_profile_create"),
-    _post("/api/profile/disable", ADMIN, handler="_post_api_profile_disable"),
-    _post("/api/profile/enable", ADMIN, handler="_post_api_profile_disable"),
+    _post("/api/profile/disable", ADMIN, handler="_post_api_profile_enable_or_disable"),
+    _post("/api/profile/enable", ADMIN, handler="_post_api_profile_enable_or_disable"),
     _post("/api/profile/delete", ADMIN, handler="_post_api_profile_delete"),
     _post("/api/settings", ADMIN, handler="_post_api_settings"),
     _post("/api/onboarding/oauth/start", ADMIN, handler="_post_api_onboarding_oauth_start"),
@@ -390,9 +392,3 @@ def routes_at(path: str) -> tuple[Route, ...]:
     """The rows *path* is, one per method that has one."""
     found = (match(method, path) for method in METHODS)
     return tuple(route for route in found if route is not None)
-
-
-def csrf_exempt(method: str, path: str) -> bool:
-    """True when an unsafe request to *method* *path* need not carry a CSRF token."""
-    route = match(method, path)
-    return route is not None and not route.csrf

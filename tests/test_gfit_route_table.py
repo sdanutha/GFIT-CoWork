@@ -1,8 +1,8 @@
-"""GFIT-CoWork: the route table answers what the five lists it replaced answered.
+"""GFIT-CoWork: the route table answers what the lists it replaced answered, and
+the server dispatches every request through it.
 
-Architecture review round 6, candidate 1. The table was built from the Admin
-gate's User and Admin-only lists, session ownership's read/write list and the
-CSRF exemption. Their answers for every route and probe path were captured
+The table was built from the Admin gate's User and Admin-only lists, session
+ownership's read/write list and the CSRF exemption. Their answers for every route and probe path were captured
 before they were removed (``fixtures/gfit_route_answers_before_the_table.json``);
 the table must give the same answers.
 """
@@ -75,9 +75,7 @@ def test_only_login_csp_reports_and_the_gone_ack_are_csrf_exempt():
     exempt = {(route.method, route.pattern) for route in route_table.ROUTES if not route.csrf}
     # The deprecated ack answers 410 Gone to a stale tab that carries no token.
     assert exempt == {("POST", "/api/auth/login"), ("POST", "/api/csp-report"), ("POST", "/api/process-complete-ack")}
-    assert route_table.csrf_exempt("POST", "/api/auth/login")
-    assert not route_table.csrf_exempt("POST", "/api/session/new")
-    assert not route_table.csrf_exempt("POST", "/api/not-a-route")
+    assert route_table.match("POST", "/api/session/new").csrf
 
 
 @pytest.mark.parametrize(
@@ -182,5 +180,19 @@ def test_a_cross_site_put_is_refused_with_the_same_message_as_a_post(monkeypatch
         handler.command = method
         dispatch(handler, SimpleNamespace(path="/api/mcp/servers/demo", query=""))
         answers[method] = (handler.status, json.loads(bytes(handler.body))["error"])
+    assert answers["PUT"] == answers["POST"] == answers["PATCH"] == answers["DELETE"]
+    assert answers["PUT"][0] == 403
+
+
+def test_over_http_a_cross_site_put_gets_the_same_answer_as_a_cross_site_post(monkeypatch, tmp_path):
+    from tests._gfit_server import gfit_server
+
+    with gfit_server(monkeypatch, tmp_path, users={"admin1": "Admin"}, admins="admin1") as server:
+        admin = server.logged_in("admin1")
+        cross_site = {"Origin": "http://elsewhere.example"}
+        answers = {
+            method: admin.request(method, "/api/mcp/servers/demo", {}, headers=cross_site)[:2]
+            for method in ("POST", "PUT", "PATCH", "DELETE")
+        }
     assert answers["PUT"] == answers["POST"] == answers["PATCH"] == answers["DELETE"]
     assert answers["PUT"][0] == 403
