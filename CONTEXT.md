@@ -25,7 +25,7 @@ A Hermes Agent profile: one agent identity with its own config, memory, skills, 
 _Avoid_: bot, persona
 
 **Profile roster**:
-GFIT-CoWork's own record of each Profile: the User's display name, whether the Profile is active or disabled, and the last login. It is kept apart from the Hermes Profile config. A disabled Profile keeps its data, but its User cannot log in.
+GFIT-CoWork's own record of each Profile: the User's display name, whether the Profile is active or disabled, and the last login. It is kept apart from the Hermes Profile config. A disabled Profile keeps its data, but its User cannot log in and it does no work: its running turns stop and its scheduled jobs pause until it is enabled again.
 _Avoid_: user list, member table
 
 **Admission**:

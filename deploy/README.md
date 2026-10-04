@@ -143,7 +143,10 @@ Profile: a person can log in only after an Admin has created their Profile.
    `GFIT\600001` or `600001@gfit.co.th` all work) and their AD password.
 
 To shut someone out, **Disable** their Profile. This ends their sessions at
-once and keeps their data. **Enable** lets them back in. **Delete** removes the
+once, stops any turn still running and pauses their scheduled jobs, so nothing
+of theirs runs on the Team's API key; their data stays. **Enable** lets them
+back in and resumes the jobs the disable paused (a job they had paused
+themselves stays paused). **Delete** removes the
 Profile and its data for good, after you type its name to confirm.
 
 A person who has a Profile in one Team's Deployment cannot log in to another

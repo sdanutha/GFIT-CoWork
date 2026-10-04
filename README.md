@@ -78,8 +78,10 @@ and the web UI hides their menus.
 The Admin adds a colleague in the Profiles panel by creating a Profile named
 after their employee ID, with an optional display name. Each Profile is listed
 as "name (ID)" (or just the ID) with its status and last login. The Admin can
-**disable** a Profile — the person is signed out at once and later logins are
-told their access is suspended, but their data stays — **enable** it again, or
+**disable** a Profile — the person is signed out at once, later logins are
+told their access is suspended, their running turns stop and their scheduled
+jobs pause, but their data stays — **enable** it again (the jobs the disable
+paused run again), or
 **delete** it permanently (the Profile and its record) after confirming.
 
 Display name, status and last login live in the **Profile roster**
