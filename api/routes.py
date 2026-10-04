@@ -13182,6 +13182,22 @@ def _render_index_shell_base() -> str:
     return base
 
 
+def _mark_read_only_for_caller(session: dict, found) -> None:
+    """Mark a loaded session read-only when session ownership says it is, for
+    this caller (the Admin's view of another Profile's session), with the reason
+    and the owner, so the web app's read-only handling applies before any write."""
+    reason = request_session_ownership().read_only_reason(found)
+    if not reason:
+        return
+    from api import roster
+
+    owner = str(session.get("profile") or "")
+    session["read_only"] = True
+    session["read_only_reason"] = reason
+    session["owner_profile"] = owner
+    session["owner_label"] = roster.view(owner).get("label") if owner else ""
+
+
 def _handle_session_get(handler, parsed) -> bool:
     """GET /api/session — full session payload (messages, tool calls, lineage...). Extracted verbatim from handle_get; every early-return path calls _diag.finish() (see the tier2c note inside)."""
     import time as _time
@@ -13641,6 +13657,7 @@ def _handle_session_get(handler, parsed) -> bool:
         ):
             raw["is_cli_session"] = False
             raw["read_only"] = True
+        _mark_read_only_for_caller(raw, s)
         imported_turn_marker = any(
             isinstance(row, dict) and row.get("_active_turn_token")
             for row in _all_msgs
@@ -13770,6 +13787,7 @@ def _handle_session_get(handler, parsed) -> bool:
         }
         attach_todo_state(sess, msgs)
         sess = _merge_cli_sidebar_metadata(sess, cli_meta)
+        _mark_read_only_for_caller(sess, sess)
         return j(handler, {"session": public_session_projection(sess)})
 
 

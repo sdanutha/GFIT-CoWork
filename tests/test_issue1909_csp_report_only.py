@@ -146,7 +146,7 @@ def test_server_bypasses_auth_for_csp_report(monkeypatch):
 
     monkeypatch.setattr("server.check_auth_or_close", fail_auth)
     monkeypatch.setattr("server.clear_request_profile", lambda: None)
-    monkeypatch.setattr("server.settle_request_profile", lambda _handler: None)
+    monkeypatch.setattr("server.settle_request", lambda _handler: None)
 
     Handler._handle_write(handler, fake_route)
 

@@ -109,7 +109,7 @@ from api.helpers import (
     _build_csp_report_only_policy,
     _CLIENT_DISCONNECT_ERRORS,
 )
-from api.access import settle_request_profile
+from api.access import settle_request
 from api.profiles import ProfileNotReadable, clear_request_profile
 from api.routes import handle_delete, handle_get, handle_patch, handle_post, handle_put, apply_cors_preflight_headers
 from api.startup import auto_install_agent_deps, fix_credential_permissions
@@ -378,7 +378,7 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             # Body-pending-aware: a body-bearing GET failing auth would poison reuse (#7550).
             if not check_auth_or_close(self, parsed): return
-            settle_request_profile(self)
+            settle_request(self)
             result = handle_get(self, parsed)
             if result is False:
                 return j(self, {'error': 'not found'}, status=404)
@@ -404,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             _is_csp_report_post = parsed.path == "/api/csp-report" and self.command == "POST"
             if not _is_csp_report_post and not check_auth_or_close(self, parsed): return
-            settle_request_profile(self)
+            settle_request(self)
             result = route_func(self, parsed)
             if result is False:
                 return j(self, {'error': 'not found'}, status=404)

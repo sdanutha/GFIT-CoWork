@@ -76,7 +76,7 @@ def test_only_the_admission_module_sets_the_requests_profile():
         if (rel, func, spelling) not in NOT_A_REQUEST and (rel, func, spelling) not in ALLOWLIST
     ]
     assert not offenders, (
-        "The request's Profile is decided in api.access (settle_request_profile):\n  " + "\n  ".join(offenders)
+        "The request's Profile is decided in api.access (settle_request):\n  " + "\n  ".join(offenders)
     )
 
 

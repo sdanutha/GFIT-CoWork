@@ -419,7 +419,7 @@ def reset_request_auth_state(handler) -> None:
 
 def _sync_profile_cookie(handler, bound_profile: str | None, cookie_value: str) -> None:
     """Keep the browser's profile cookie on the Admission's Profile (the request's
-    Profile itself is set by :func:`api.access.settle_request_profile`)."""
+    Profile itself is set by :func:`api.access.settle_request`)."""
     if bound_profile is None:
         return
     from api.helpers import get_profile_cookie

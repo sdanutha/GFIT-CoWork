@@ -63,9 +63,18 @@ class Refusal:
 
     owner: str | None = None
     session_id: str | None = None
+    read_only: bool = False
 
     def answer(self, handler, session_id=None, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write this refusal's answer: 409 with the owner, else 404 with *not_found*."""
+        """Write this refusal's answer: 403 for a read-only session, 409 with the
+        owner, else 404 with *not_found*."""
+        if self.read_only:
+            return j(handler, {
+                "error": "This session is read-only: it belongs to another Profile",
+                "code": "session_read_only",
+                "session_id": session_id if session_id is not None else self.session_id,
+                "profile": self.owner,
+            }, status=403)
         if self.owner:
             return j(handler, {
                 "error": "Session belongs to a different profile",
@@ -76,7 +85,10 @@ class Refusal:
         return self.answer_not_found(handler, not_found=not_found)
 
     def answer_not_found(self, handler, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write 404, for a route whose answer never names an owner."""
+        """Write 404, for a route whose answer never names an owner (a read-only
+        refusal still answers 403: the Admin knows the session exists)."""
+        if self.read_only:
+            return self.answer(handler)
         return bad(handler, not_found, 404)
 
 
@@ -196,6 +208,14 @@ SESSION_ROUTE_KINDS: dict[tuple[str, str], str] = {
     ("POST", "/api/upload/extract"): WRITE,
     ("POST", "/api/workspace/upload"): WRITE,
 }
+
+
+def _request_is_a_read() -> bool:
+    """Is this request a read, by the read/write table? Unknown is not."""
+    from api.access import request_route
+
+    route = request_route()
+    return route is not None and session_route_kind(*route) == READ
 
 
 def _route_matches(pattern: str, path: str) -> bool:
@@ -319,6 +339,10 @@ class UserSessionOwnership:
         """Never: Claude Code rows come from the server account's home."""
         return False
 
+    def read_only_reason(self, found) -> str | None:
+        """Why a session the caller may open is read-only to them: never, for a User."""
+        return None
+
     def refuse_session(self, session_id) -> Refusal | None:
         """None when *session_id* names nothing or a session of the User's Profile, else 404."""
         if _names_nothing(session_id) or self._owns(session_id):
@@ -396,6 +420,9 @@ class _UnconfinedSessionOwnership:
     def sees_profile_less_sessions(self) -> bool:
         """Claude Code rows, under the setting that shows them."""
         return True
+
+    def read_only_reason(self, found) -> str | None:
+        return None
 
     def keeps_upstream_rules(self) -> bool:
         """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
@@ -486,10 +513,29 @@ class _AdminSessionOwnership(_UnconfinedSessionOwnership):
     """The Admin's Directory session: the unconfined rules, in ``default`` for good.
 
     The Admin stays in the ``default`` Profile and never switches (ADR 0004).
+    Another Profile's session is read-only in place: a request the read/write
+    table calls a read is answered as for the Admin's own session (no 409, no
+    switch); anything else is refused read-only (403, naming the owner).
     """
 
     def may_switch_profile(self) -> bool:
         return False
+
+    def refuse_found_session(self, session_id, found) -> Refusal | None:
+        refusal = super().refuse_found_session(session_id, found)
+        if refusal is None or not refusal.owner:
+            return refusal
+        if _request_is_a_read():
+            return None
+        return Refusal(owner=refusal.owner, session_id=refusal.session_id, read_only=True)
+
+    def read_only_reason(self, found) -> str | None:
+        from api.profiles import _profiles_match, get_active_profile_name
+
+        profile = _profile_of(found)
+        if profile and not _profiles_match(profile, get_active_profile_name()):
+            return "other_profile"
+        return None
 
 
 class _RefusingSessionOwnership:
@@ -503,6 +549,9 @@ class _RefusingSessionOwnership:
 
     def sees_profile_less_sessions(self) -> bool:
         return False
+
+    def read_only_reason(self, found) -> str | None:
+        return None
 
     def refuse_session(self, session_id) -> Refusal:
         return NOT_FOUND
