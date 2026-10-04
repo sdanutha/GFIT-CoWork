@@ -186,9 +186,10 @@ def attempt_login(username, password, rate_key: str) -> LoginOutcome:
     _clear_login_attempts(rate_key)
     if role == ROLE_MEMBER:
         from api import roster
-        from api.workspace import ensure_user_workspace
+        from api.workspace import ensure_user_wiki, ensure_user_workspace
 
         ensure_user_workspace(bound_profile)
+        ensure_user_wiki(bound_profile)
         roster.record_login(bound_profile, identity.display_name)
     cookie = auth.create_session(
         auth_type=auth.DIRECTORY_AUTH_TYPE,

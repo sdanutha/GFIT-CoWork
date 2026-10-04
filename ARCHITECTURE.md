@@ -1204,6 +1204,12 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   Profile wins. Login is the one place that makes a User's Workspace from an explicit
   Profile (`workspace.ensure_user_workspace`), because it runs before the request has an
   Admission.
+  A User's wiki lives in their Workspace: `<Profile>/workspace/wiki` by default, or their own
+  Profile's `WIKI_PATH`/`wiki.path` when the policy lets them use it (otherwise no wiki). The
+  process environment and the server account's `~/wiki` are never a User's wiki. Login also
+  records the default as `WIKI_PATH` in the Profile's `.env` when it has none
+  (`workspace.ensure_user_wiki`, without touching `os.environ`), so the Agent's llm-wiki skill
+  writes where the WebUI reads.
 - `api/session_ownership.py` — session ownership: the one answer to "whose session is
   this?". Like the Workspace policy, one adapter is chosen per request from the request's
   Admission (`request_session_ownership`): a User's adapter, the unconfined adapter (the Admin,

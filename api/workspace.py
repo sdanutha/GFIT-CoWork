@@ -976,6 +976,34 @@ def user_workspace_root(profile: str) -> Path:
     return _safe_resolve(_resolve_named_profile_home(profile) / USER_WORKSPACE_DIRNAME)
 
 
+USER_WIKI_DIRNAME = 'wiki'
+
+
+def user_wiki_root(profile: str) -> Path:
+    """User *profile*'s default wiki folder: inside their Workspace."""
+    return user_workspace_root(profile) / USER_WIKI_DIRNAME
+
+
+def ensure_user_wiki(profile: str) -> Path:
+    """Create User *profile*'s default wiki folder and record it for the Agent.
+
+    The Agent's llm-wiki skill reads ``WIKI_PATH`` from the Profile's ``.env``
+    and otherwise uses ``~/wiki`` (the server account's, shared by every
+    User). When the Profile's ``.env`` has no ``WIKI_PATH``, it gets this
+    folder; an existing value is kept. The process environment is not
+    changed. Used at login, like :func:`ensure_user_workspace`.
+    """
+    from api.profiles import _resolve_named_profile_home
+    from api.providers import _load_env_file, _write_env_file
+
+    wiki = user_wiki_root(profile)
+    wiki.mkdir(parents=True, exist_ok=True)
+    env_path = _resolve_named_profile_home(profile) / '.env'
+    if 'WIKI_PATH' not in _load_env_file(env_path):
+        _write_env_file(env_path, {'WIKI_PATH': str(wiki)}, set_process_env=False)
+    return wiki
+
+
 def ensure_user_workspace(profile: str) -> Path:
     """Create User *profile*'s default Workspace if missing and return it.
 

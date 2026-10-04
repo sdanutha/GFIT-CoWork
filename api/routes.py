@@ -11491,8 +11491,51 @@ _wiki_allowlist_cache: dict[str, dict[str, object]] = {}
 _wiki_allowlist_cache_lock = threading.Lock()
 
 
-def _llm_wiki_resolve_path() -> tuple[Path, str, bool]:
+def _llm_wiki_resolve_confined_path(hermes_home: Path) -> tuple[Path | None, str, bool]:
+    """A confined caller's wiki (a GFIT-CoWork User): inside their own Workspace, or none.
+
+    Only the caller's own Profile is read (its ``.env`` ``WIKI_PATH``, then its
+    ``wiki.path``): never the process environment, which may hold another
+    Profile's ``WIKI_PATH``, and never the server account's ``~/wiki``. The
+    default is the ``wiki`` folder of the caller's Workspace. A configured
+    path the Workspace policy refuses is no wiki (None).
+    """
+    from api.config import get_config_for_profile_home
+    from api.workspace import USER_WIKI_DIRNAME
+    from api.workspace_policy import request_workspace_policy
+
+    policy = request_workspace_policy()
+    raw = _llm_wiki_env_file_path(hermes_home)
+    source = "WIKI_PATH" if raw else "default"
+    if not raw:
+        try:
+            cfg = get_config_for_profile_home(hermes_home)
+        except Exception:
+            cfg = {}
+        raw = (
+            _llm_wiki_get_config_path_value(cfg, "skills.config.wiki.path")
+            or _llm_wiki_get_config_path_value(cfg, "wiki.path")
+        )
+        if raw:
+            source = "skills.config.wiki.path"
+    if not raw:
+        return Path(policy.default_workspace()) / USER_WIKI_DIRNAME, "default", False
+    try:
+        return Path(policy.confine(Path(os.path.expandvars(raw)).expanduser())), source, True
+    except ValueError:
+        return None, source, True
+
+
+def _llm_wiki_resolve_path() -> tuple[Path | None, str, bool]:
+    """The request's wiki folder, how it was found, and whether it was configured.
+
+    None means the caller has no wiki (a configured path outside their Workspace).
+    """
+    from api.session_ownership import request_caller_reach
+
     hermes_home = _llm_wiki_active_hermes_home()
+    if not request_caller_reach().every_profile:
+        return _llm_wiki_resolve_confined_path(hermes_home)
     raw = os.getenv("WIKI_PATH") or _llm_wiki_env_file_path(hermes_home)
     source = "WIKI_PATH" if raw else "default"
     configured = bool(raw)
@@ -11887,7 +11930,7 @@ def _build_llm_wiki_status() -> dict:
             "toggle_reason": "Hermes Agent exposes WIKI_PATH/wiki.path for location, but no stable on/off config flag is currently available.",
             "docs_url": _LLM_WIKI_DOCS_URL,
         }
-        if not wiki_path.exists():
+        if wiki_path is None or not wiki_path.exists():
             return base
         if not wiki_path.is_dir():
             base["status"] = "not_directory"
