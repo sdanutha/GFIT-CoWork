@@ -24,6 +24,7 @@ import api.profiles as profiles
 from api.access import ROLE_ADMIN, ROLE_MEMBER, Admitted
 from api.config import ACTIVE_RUNS, ACTIVE_RUNS_LOCK
 from api.session_ownership import (
+    ADMIN,
     REFUSING,
     UNCONFINED,
     Refusal,
@@ -290,7 +291,7 @@ def test_a_refusal_writes_its_own_answer():
 CHOICE_TABLE = [
     # (admission, has a Directory session, adapter)
     (Admitted(ROLE_MEMBER, ALICE), True, "user"),
-    (Admitted(ROLE_ADMIN, "default"), True, "unconfined"),
+    (Admitted(ROLE_ADMIN, "default"), True, "admin"),
     (None, False, "unconfined"),
     (None, True, "refusing"),
     (Admitted("superuser", ALICE), True, "refusing"),
@@ -303,7 +304,7 @@ def _kind(adapter) -> str:
     if isinstance(adapter, UserSessionOwnership):
         assert adapter.profile == ALICE
         return "user"
-    return {id(UNCONFINED): "unconfined", id(REFUSING): "refusing"}[id(adapter)]
+    return {id(UNCONFINED): "unconfined", id(ADMIN): "admin", id(REFUSING): "refusing"}[id(adapter)]
 
 
 @pytest.mark.parametrize("admission,directory_session,expected", CHOICE_TABLE)

@@ -6856,7 +6856,9 @@ function _setProfileHeaderButtons(mode, p, activeName){
     const isActive = p && p.name === activeName;
     const isDefault = !!(p && p.is_default);
     const singleProfileMode = !!(_profilesCache && _profilesCache.single_profile_mode);
-    if (isActive || singleProfileMode) hide(actBtn); else show(actBtn);
+    // The server says whether this caller may switch (never with a Directory login).
+    const maySwitch = !(_profilesCache && _profilesCache.may_switch_profile === false);
+    if (isActive || singleProfileMode || !maySwitch) hide(actBtn); else show(actBtn);
     if (isDefault || singleProfileMode) hide(delBtn); else show(delBtn);
     hide(cancelBtn); hide(saveBtn);
   } else if (mode === 'create') {

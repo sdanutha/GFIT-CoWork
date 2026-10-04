@@ -10,7 +10,7 @@ def test_profiles_route_returns_active_profile(monkeypatch):
 
     monkeypatch.setattr(profiles, "list_profiles_api", lambda: expected_profiles)
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
-    monkeypatch.setattr(routes, "_is_isolated_profile_mode", lambda: False)
+    monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: False)
     monkeypatch.setattr(
         routes,
         "j",
@@ -25,5 +25,6 @@ def test_profiles_route_returns_active_profile(monkeypatch):
             "profiles": expected_profiles,
             "active": "default",
             "single_profile_mode": False,
+            "may_switch_profile": True,
         },
     }

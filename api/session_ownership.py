@@ -482,6 +482,16 @@ class _UnconfinedSessionOwnership:
         return self.refuse_found_session(session_id, row)
 
 
+class _AdminSessionOwnership(_UnconfinedSessionOwnership):
+    """The Admin's Directory session: the unconfined rules, in ``default`` for good.
+
+    The Admin stays in the ``default`` Profile and never switches (ADR 0004).
+    """
+
+    def may_switch_profile(self) -> bool:
+        return False
+
+
 class _RefusingSessionOwnership:
     """The refusing answer: owns nothing."""
 
@@ -523,6 +533,7 @@ class _RefusingSessionOwnership:
 
 
 UNCONFINED = _UnconfinedSessionOwnership()
+ADMIN = _AdminSessionOwnership()
 REFUSING = _RefusingSessionOwnership()
 
 
@@ -530,7 +541,7 @@ def ownership_for(admission, *, directory_session: bool):
     """The session ownership adapter for *admission*: the one mapping from Admission to adapter.
 
     A User's Admission gives that User's adapter, the Admin's gives the
-    unconfined one. No Admission is unconfined only when there is no Directory
+    Admin's (the unconfined rules, never switching Profile). No Admission is unconfined only when there is no Directory
     session (login turned off, a worker thread); a Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
@@ -540,7 +551,7 @@ def ownership_for(admission, *, directory_session: bool):
     if admission is None:
         return REFUSING if directory_session else UNCONFINED
     if admission.role == ROLE_ADMIN:
-        return UNCONFINED
+        return ADMIN
     if admission.role == ROLE_MEMBER and admission.profile:
         try:
             _resolve_named_profile_home(admission.profile)

@@ -479,7 +479,6 @@ def _visible_pinned_lineage_ids(session_rows) -> set[str]:
 # module keep resolving without per-call-site refactors.
 from api.profiles import (  # noqa: F401, E402  (re-export)
     _profiles_match,
-    _is_isolated_profile_mode,
     _is_root_profile,
     _SKILLS_STATS_CACHE,
     get_active_profile_name,
@@ -14858,6 +14857,7 @@ def handle_get(handler, parsed) -> bool:
                     "profiles": profiles_payload,
                     "active": active,
                     "single_profile_mode": reach.single_profile,
+                    "may_switch_profile": request_session_ownership().may_switch_profile(),
                 },
             )
         finally:
@@ -16803,17 +16803,13 @@ def handle_post(handler, parsed) -> bool:
         if not name:
             return bad(handler, "name is required")
         try:
-            from api.auth import ensure_request_session
             from api.profiles import switch_profile, _validate_profile_name
             from api.helpers import build_profile_cookie
             if name != 'default':
                 _validate_profile_name(name)
-            session_info = ensure_request_session(handler)
-            if getattr(handler, '_request_session_rejected', False):
-                return bad(handler, 'Authentication required', 401)
-            bound_profile = str((session_info or {}).get("bound_profile") or "").strip() or None
-            if bound_profile and name != bound_profile:
-                return bad(handler, "Profile is bound to the current session", 403)
+            # A Directory session never gets here: the Bound guard refuses the
+            # switch (session ownership's may_switch_profile). Only login off
+            # switches, so the side effects below follow a real switch.
             # process_wide=False: don't mutate the process-global _active_profile.
             # Per-client profile is managed via cookie + thread-local (#798).
             result = switch_profile(name, process_wide=False)
