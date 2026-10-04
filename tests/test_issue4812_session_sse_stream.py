@@ -71,7 +71,7 @@ def test_session_route_and_global_route_stay_separate(monkeypatch):
     )
     monkeypatch.setattr(
         routes,
-        "_handle_session_sse_stream_for_session",
+        "_handle_session_run_journal_stream_for_session",
         lambda *_args, **_kwargs: calls.__setitem__("session", calls["session"] + 1) or True,
     )
 
@@ -292,14 +292,14 @@ def test_session_route_prefers_last_event_id_then_query_fallback(monkeypatch):
 
     handler = _FakeHandler()
     handler.headers["Last-Event-ID"] = "run_a:2"
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_b:1"),
         "session_1",
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_b:1"),
         "session_1",
@@ -320,7 +320,7 @@ def test_session_route_arms_deadline_immediately_after_headers(monkeypatch):
     monkeypatch.setattr(routes, "end_sse_headers", lambda _handler: calls.append("headers"))
     monkeypatch.setattr(routes, "_sse_set_write_deadline", lambda _handler: calls.append("deadline"))
 
-    routes._handle_session_sse_stream_for_session(_FakeHandler(), urlparse("/api/sessions/session_1/events"), "session_1")
+    routes._handle_session_run_journal_stream_for_session(_FakeHandler(), urlparse("/api/sessions/session_1/events"), "session_1")
 
     assert calls[:2] == ["headers", "deadline"]
     assert stop["count"] == 1
@@ -347,7 +347,7 @@ def test_session_route_emits_snapshot_without_id_for_missing_cursor_and_keepaliv
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_missing:1"),
         "session_1",
@@ -387,7 +387,7 @@ def test_session_route_resyncs_when_run_completes_inside_idle_wait(monkeypatch):
     monkeypatch.setattr(routes, "session_journal_fingerprint", lambda *_a, **_k: next(fps, (1, 123.0, 42)))
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events"),
         "session_1",
@@ -435,7 +435,7 @@ def test_session_route_baselines_journal_before_first_attach(monkeypatch):
     monkeypatch.setattr(routes, "session_journal_fingerprint", _fp)
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events"),
         "session_1",
@@ -474,7 +474,7 @@ def test_session_route_no_resync_when_idle_journal_unchanged(monkeypatch):
     monkeypatch.setattr(routes, "session_journal_fingerprint", lambda *_a, **_k: (2, 99.0, 77))
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events"),
         "session_1",
@@ -583,7 +583,7 @@ def test_session_route_live_delivery_skips_replayed_active_run_items(monkeypatch
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_prev:0"),
         "session_1",
@@ -641,7 +641,7 @@ def test_session_route_replay_skips_metering_rows(monkeypatch):
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_prev:0"),
         "session_1",
@@ -712,7 +712,7 @@ def test_session_route_breaks_on_terminal_even_when_reconciliation_replayed_it(m
     # If the fix regresses, the loop never breaks and blocks on subscriber.get();
     # the _stop_after_first_heartbeat safety turns an unexpected wait into a failure.
     _stop_after_first_heartbeat(monkeypatch)
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_active:0"),
         "session_1",
@@ -780,7 +780,7 @@ def test_session_route_unsubscribes_when_replay_disconnects(monkeypatch):
 
     handler = _FakeHandler()
     handler.wfile = _DisconnectingWfile()
-    assert routes._handle_session_sse_stream_for_session(
+    assert routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_prev:0"),
         "session_1",
@@ -825,7 +825,7 @@ def test_session_route_live_delivery_without_cursor_keeps_buffered_active_items(
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events"),
         "session_1",
@@ -874,7 +874,7 @@ def test_session_route_reconciles_late_attach_cutoff_once(monkeypatch):
     monkeypatch.setattr(routes.time, "sleep", lambda _seconds: available.__setitem__("value", True))
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(handler, urlparse("/api/sessions/session_1/events?after_event_id=run_active:5"), "session_1")
+    routes._handle_session_run_journal_stream_for_session(handler, urlparse("/api/sessions/session_1/events?after_event_id=run_active:5"), "session_1")
 
     body = handler.wfile.getvalue().decode("utf-8")
     assert body.count("id: run_active:6\n") == 1
@@ -927,7 +927,7 @@ def test_session_route_emits_snapshot_when_reconciliation_fails(monkeypatch):
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(
+    routes._handle_session_run_journal_stream_for_session(
         handler,
         urlparse("/api/sessions/session_1/events?after_event_id=run_prev:0"),
         "session_1",
@@ -969,7 +969,7 @@ def test_session_route_bounds_sent_event_id_deduplication(monkeypatch):
     )
 
     handler = _FakeHandler()
-    routes._handle_session_sse_stream_for_session(handler, urlparse("/api/sessions/session_1/events"), "session_1")
+    routes._handle_session_run_journal_stream_for_session(handler, urlparse("/api/sessions/session_1/events"), "session_1")
 
     body = handler.wfile.getvalue().decode("utf-8")
     assert body.count("id: run_active:1\n") == 2
