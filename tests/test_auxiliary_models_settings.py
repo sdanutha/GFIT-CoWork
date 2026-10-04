@@ -726,13 +726,17 @@ class TestAuxiliaryModelsBackend:
 
     def test_model_auxiliary_route_exists(self):
         """/api/model/auxiliary route must be registered in routes.py."""
-        assert '"/api/model/auxiliary"' in self.ROUTES_PY, (
+        from tests._route_source import route_handler
+
+        assert route_handler("GET", "/api/model/auxiliary"), (
             "Missing /api/model/auxiliary route in routes.py"
         )
 
     def test_model_set_route_exists(self):
         """/api/model/set route must be registered in routes.py."""
-        assert '"/api/model/set"' in self.ROUTES_PY, (
+        from tests._route_source import route_handler
+
+        assert route_handler("POST", "/api/model/set"), (
             "Missing /api/model/set route in routes.py"
         )
 

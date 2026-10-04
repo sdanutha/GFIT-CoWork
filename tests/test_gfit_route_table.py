@@ -64,9 +64,10 @@ def test_a_user_prefix_route_has_a_reason():
     assert prefixes == set(route_table.VARIABLE_PATH_PREFIXES)
 
 
-def test_only_login_and_csp_reports_are_csrf_exempt():
+def test_only_login_csp_reports_and_the_gone_ack_are_csrf_exempt():
     exempt = {(route.method, route.pattern) for route in route_table.ROUTES if not route.csrf}
-    assert exempt == {("POST", "/api/auth/login"), ("POST", "/api/csp-report")}
+    # The deprecated ack answers 410 Gone to a stale tab that carries no token.
+    assert exempt == {("POST", "/api/auth/login"), ("POST", "/api/csp-report"), ("POST", "/api/process-complete-ack")}
     assert route_table.csrf_exempt("POST", "/api/auth/login")
     assert not route_table.csrf_exempt("POST", "/api/session/new")
     assert not route_table.csrf_exempt("POST", "/api/not-a-route")

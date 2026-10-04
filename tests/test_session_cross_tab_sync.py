@@ -62,7 +62,9 @@ def test_long_lived_stream_urls_resolve_against_document_base():
 
 
 def test_session_url_route_serves_index_and_base_href_handles_session_path():
-    assert 'parsed.path.startswith("/session/")' in ROUTES_PY
+    from api import route_table
+
+    assert route_table.match("GET", "/session/20260927_abc").handler == "_get_app_shell"
     assert "marker='/session/'" in INDEX_HTML
     assert "path.slice(0,i+1)" in INDEX_HTML
 

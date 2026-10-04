@@ -2,8 +2,9 @@ import pathlib
 
 
 def test_workspace_suggest_endpoint_is_wired():
-    src = pathlib.Path("api/routes.py").read_text(encoding="utf-8")
-    assert '"/api/workspaces/suggest"' in src
+    from tests._route_source import route_handler
+
+    assert route_handler("GET", "/api/workspaces/suggest")
 
 
 def test_spaces_panel_uses_workspace_suggest_autocomplete():

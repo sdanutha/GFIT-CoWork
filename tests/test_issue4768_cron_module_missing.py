@@ -15,10 +15,9 @@ ROUTES = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
 
 def _api_crons_branch() -> str:
     """Return the source of the `if parsed.path == "/api/crons":` GET branch."""
-    marker = ROUTES.index('if parsed.path == "/api/crons":')
-    # Stop at the next sibling branch so we only inspect this handler.
-    nxt = ROUTES.index('if parsed.path == "/api/crons/output":', marker)
-    return ROUTES[marker:nxt]
+    from tests._route_source import route_source
+
+    return route_source("GET", "/api/crons")
 
 
 def _cross_profile_helper() -> str:
@@ -45,7 +44,7 @@ def test_api_crons_guards_missing_cron_module():
         "dependency ImportError of an existing cron/jobs.py must still surface."
     )
     # ...and re-raises everything else (a real cron bug is not swallowed).
-    assert "\n            raise" in branch
+    assert "\n        raise" in branch
     # The try in the branch guards the cron helper call.
     assert "try:" in branch
 

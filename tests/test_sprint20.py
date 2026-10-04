@@ -385,14 +385,16 @@ def test_boot_js_keeps_explicit_server_stt_preference_on_transcribe_failure():
 
 def test_routes_define_transcribe_endpoint():
     """Server routes must expose /api/transcribe for MediaRecorder fallback uploads."""
-    routes = pathlib.Path(__file__).parent.parent.joinpath("api/routes.py").read_text(encoding="utf-8")
-    assert '"/api/transcribe"' in routes
+    from tests._route_source import route_handler
+
+    assert route_handler("POST", "/api/transcribe")
 
 
 def test_routes_define_transcribe_capability_endpoint():
     """Server routes must expose a cheap STT capability probe before defaulting to MediaRecorder."""
-    routes = pathlib.Path(__file__).parent.parent.joinpath("api/routes.py").read_text(encoding="utf-8")
-    assert '"/api/transcribe/capability"' in routes
+    from tests._route_source import route_handler
+
+    assert route_handler("GET", "/api/transcribe/capability")
 
 
 def test_boot_js_shows_mic_button_when_any_voice_path_is_supported():

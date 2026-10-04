@@ -18,9 +18,9 @@ def test_folder_download_handler_defined():
 
 
 def test_folder_download_dispatch_registered():
-    src = ROUTES_PY.read_text(encoding="utf-8")
-    assert 'parsed.path == "/api/folder/download"' in src
-    assert "_handle_folder_download(handler, parsed)" in src
+    from tests._route_source import route_source
+
+    assert "_handle_folder_download(handler, parsed)" in route_source("GET", "/api/folder/download")
 
 
 def test_folder_download_uses_resolve_in_workspace():
