@@ -7,6 +7,16 @@
 // See api/todo_state.py for the wire contract.
 const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null,_pendingSessionToolsets:null};
 
+// GFIT-CoWork: may the caller use this feature of the web app? The server
+// stamps the features its caller may use on <html data-gfit-may="...">, from
+// the Admin gate (api/access.py SHELL_FEATURES). With no stamp (login off)
+// every feature may be used. Ask before calling a feature's route, so a User's
+// web app does not call routes the gate refuses.
+function gfitMay(feature){
+  const may=document.documentElement.dataset.gfitMay;
+  return may===undefined||may.split(' ').includes(feature);
+}
+
 // The web app's own name for page chrome (tab title). The assistant keeps its own name.
 const APP_NAME='GFIT-CoWork';
 function assistantDisplayName(){
@@ -2041,6 +2051,11 @@ async function refreshDashboardStatus(force=false){
     _applyDashboardStatus(_dashboardStatusCache);
     return _dashboardStatusCache;
   }
+  if(typeof gfitMay==='function'&&!gfitMay('dashboard')){
+    _dashboardStatusCache={running:false};
+    _applyDashboardStatus(_dashboardStatusCache);
+    return _dashboardStatusCache;
+  }
   try{
     const status=await api('/api/dashboard/status',{timeoutToast:false});
     _dashboardStatusCache=status||{running:false};
@@ -2099,6 +2114,7 @@ function openHermesDashboard(event){
   return false;
 }
 function _initDashboardLinkProbe(){
+  if(typeof gfitMay==='function'&&!gfitMay('dashboard')) return;
   loadDashboardSettings();
   refreshDashboardStatus(true);
   setInterval(refreshDashboardStatus,DASHBOARD_STATUS_TTL_MS);
@@ -3068,8 +3084,8 @@ function renderProviderQuotaIndicator(status){
 }
 async function refreshProviderQuotaIndicator(){
   // Short-circuit before the fetch when the chip is disabled — no point asking
-  // the server for quota data the UI will throw away.
-  if(window._showQuotaChip!==true){
+  // the server for quota data the UI will throw away, or that the caller may not read.
+  if(window._showQuotaChip!==true||(typeof gfitMay==='function'&&!gfitMay('provider_quota'))){
     const chip=$('providerQuotaChip');
     if(chip){chip.hidden=true;chip.removeAttribute('title');}
     const mobileAction=$('composerMobileQuotaAction');
@@ -5758,6 +5774,7 @@ function _normalizeToolsetsCatalog(payload) {
 
 function _loadToolsetsCatalog() {
   if (Array.isArray(_toolsetsCatalog)) return Promise.resolve(_toolsetsCatalog);
+  if (typeof gfitMay==='function'&&!gfitMay('mcp_servers')) return Promise.resolve([]);
   return api('/api/mcp/servers')
     .then(function(payload) {
       _toolsetsCatalog = _normalizeToolsetsCatalog(payload);
@@ -20947,7 +20964,7 @@ function _showWorkspaceRootContextMenu(e){
     try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
     catch(err){showToast(t('reveal_failed')+(err.message||err));}
   });
-  revealRoot.dataset.gfitAdminOnly='';  // acts on the server machine; Admin-only (api/access.py)
+  revealRoot.dataset.gfitFeature='reveal_on_server';  // acts on the server machine (api/access.py SHELL_FEATURES)
   menu.appendChild(revealRoot);
 
   const vscodeRoot=_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
@@ -20955,7 +20972,7 @@ function _showWorkspaceRootContextMenu(e){
     try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
     catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}
   });
-  vscodeRoot.dataset.gfitAdminOnly='';
+  vscodeRoot.dataset.gfitFeature='reveal_on_server';
   menu.appendChild(vscodeRoot);
 
   menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
@@ -21467,7 +21484,7 @@ function _showFileContextMenu(e, item){
     revealItem.onmouseenter=()=>revealItem.style.background='var(--hover-bg)';
     revealItem.onmouseleave=()=>revealItem.style.background='';
     revealItem.onclick=async()=>{menu.remove();try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('reveal_failed')+(err.message||err));}};
-    revealItem.dataset.gfitAdminOnly='';  // acts on the server machine; Admin-only (api/access.py)
+    revealItem.dataset.gfitFeature='reveal_on_server';  // acts on the server machine (api/access.py SHELL_FEATURES)
     menu.appendChild(revealItem);
 
     // Open in VS Code (#2735)
@@ -21477,7 +21494,7 @@ function _showFileContextMenu(e, item){
     vscodeItem.onmouseenter=()=>vscodeItem.style.background='var(--hover-bg)';
     vscodeItem.onmouseleave=()=>vscodeItem.style.background='';
     vscodeItem.onclick=async()=>{menu.remove();try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}};
-    vscodeItem.dataset.gfitAdminOnly='';
+    vscodeItem.dataset.gfitFeature='reveal_on_server';
     menu.appendChild(vscodeItem);
 
     // Copy file path — resolves the absolute on-disk path on the server (so the

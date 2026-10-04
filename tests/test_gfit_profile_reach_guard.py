@@ -7,7 +7,10 @@ policy modules decides that on its own:
 
 - asks the Admission helpers whether the caller is a User
   (``caller_is_user()``, ``caller_bound_profile()``), or compares a role with
-  ``ROLE_MEMBER`` (``admission.role == ROLE_MEMBER``, ``role != "member"``);
+  ``ROLE_USER`` (``admission.role == ROLE_USER``, ``role != "member"``, the
+  stored value from before the rename, or ``request_admission().role == "user"``;
+  a bare ``"user"`` is also a chat message's role, so it counts only against an
+  Admission's role);
 - reads Upstream's isolated profile mode (``_is_isolated_profile_mode()``);
 - filters rows by comparing a row's Profile with the active Profile
   (``_profiles_match(<row>.get("profile"), <active>)`` or ``<row>["profile"]``).
@@ -86,11 +89,33 @@ def _is_active(node) -> bool:
     return isinstance(node, ast.Name) and node.id in ACTIVE_NAMES
 
 
-def _names_role_member(node) -> bool:
+def _names_role_user(node) -> bool:
+    """``ROLE_USER``, or the stored value from before the rename (``"member"``)."""
     return (
-        (isinstance(node, ast.Name) and node.id == "ROLE_MEMBER")
-        or (isinstance(node, ast.Attribute) and node.attr == "ROLE_MEMBER")
+        (isinstance(node, ast.Name) and node.id == "ROLE_USER")
+        or (isinstance(node, ast.Attribute) and node.attr == "ROLE_USER")
         or (isinstance(node, ast.Constant) and node.value == "member")
+    )
+
+
+def _is_admission_role(node) -> bool:
+    """``<admission>.role`` or ``request_admission().role``: never a chat message's role."""
+    if not (isinstance(node, ast.Attribute) and node.attr == "role"):
+        return False
+    owner = node.value
+    if isinstance(owner, ast.Call):
+        func = owner.func
+        return (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)) == "request_admission"
+    return isinstance(owner, ast.Name) and "admission" in owner.id
+
+
+def _compares_with_the_user_role(operands) -> bool:
+    """A role compared with the User role. The literal ``"user"`` is also a chat
+    message's role, so it counts only against an Admission's role."""
+    if any(_names_role_user(o) for o in operands):
+        return any(_names_role(o) for o in operands)
+    return any(isinstance(o, ast.Constant) and o.value == "user" for o in operands) and any(
+        _is_admission_role(o) for o in operands
     )
 
 
@@ -103,7 +128,7 @@ def _spellings(tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare) and isinstance(node.ops[0], (ast.Eq, ast.NotEq)):
             operands = [node.left, *node.comparators]
-            if any(_names_role_member(o) for o in operands) and any(_names_role(o) for o in operands):
+            if _compares_with_the_user_role(operands):
                 yield node.lineno, ASKS_USER
             continue
         if not isinstance(node, ast.Call):
@@ -178,12 +203,14 @@ def test_each_spelling_is_caught():
         "    e = [r for r in rows if _profiles_match(r.get('profile'), active_profile)]\n"
         "    g = _profiles_match(p['profile'], get_active_profile_name())\n"
         "    h = _profiles_match(active, p.get('profile'))\n"
-        "    i = admission.role == ROLE_MEMBER\n"
-        "    k = role != access.ROLE_MEMBER\n"
+        "    i = admission.role == ROLE_USER\n"
+        "    k = role != access.ROLE_USER\n"
         "    m = 'member' == request_admission().role\n"
+        "    n = request_admission().role == 'user'\n"
     )
     assert _caught(source) == [ASKS_USER, ASKS_USER, READS_POSTURE, READS_POSTURE,
-                               FILTERS_ROWS, FILTERS_ROWS, FILTERS_ROWS, ASKS_USER, ASKS_USER, ASKS_USER]
+                               FILTERS_ROWS, FILTERS_ROWS, FILTERS_ROWS, ASKS_USER, ASKS_USER, ASKS_USER,
+                               ASKS_USER]
 
 
 def test_the_near_misses_are_not_caught():
@@ -193,5 +220,7 @@ def test_the_near_misses_are_not_caught():
         "    b = _profiles_match(name, active_profile)\n"
         "    c = reach.includes(meta.get('profile'))\n"
         "    d = admission.role == ROLE_ADMIN\n"
+        "    e = message['role'] == 'user'\n"
+        "    f = role == 'user'\n"
     )
     assert _caught(source) == []

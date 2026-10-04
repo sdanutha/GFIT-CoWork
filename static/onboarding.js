@@ -426,6 +426,8 @@ function syncOnboardingProvider(value){
 }
 
 async function loadOnboardingWizard(){
+  // Onboarding sets up the Deployment; a caller who may not run it never sees it.
+  if(typeof gfitMay==='function'&&!gfitMay('onboarding')) return false;
   try{
     const status=await api('/api/onboarding/status');
     ONBOARDING.status=status;

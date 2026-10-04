@@ -1265,8 +1265,16 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
 - Naming: GFIT-CoWork code uses `CONTEXT.md`'s words, "User" (not Member) and "bound" (a
   User's request is bound to their Profile; not pinned). `tests/test_gfit_naming_guard.py`
   reads GFIT-CoWork's modules and fails on a module, function, class, parameter or
-  module-level name that says "member" or "pinned", apart from the names it keeps on purpose
-  (the role constant, whose value is the stored `member` role, and upstream's pinned names).
+  module-level name that says "member" or "pinned", apart from upstream's pinned names it
+  keeps on purpose. The User role is stored as `user`; a login stored with the old value
+  `member` is read as `user` (`api/auth.py`).
+- What the web app shows: `api/access.py` `SHELL_FEATURES` names each Admin-gated feature of
+  the web app by its route, and `shell_features(role)` answers which ones the caller may use
+  from the same gate. The app shell carries them on `<html data-gfit-may="...">` (none with
+  login off, meaning all); `static/style.css` hides each feature's controls by feature, and
+  `gfitMay(feature)` in `static/ui.js` keeps polls and pickers off routes the caller may not
+  call. `tests/test_gfit_shell_features.py` checks the list against the gate and that the
+  browser names features, not the role.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
   state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
   (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function

@@ -112,6 +112,9 @@ def _session_expiry(record) -> float | None:
     return expiry_f
 
 
+_ROLE_USER_BEFORE_RENAME = 'member'
+
+
 def _load_sessions() -> dict[str, float | dict]:
     """Load persisted sessions from STATE_DIR, pruning expired entries.
 
@@ -160,6 +163,12 @@ def _load_sessions() -> dict[str, float | dict]:
         if isinstance(record, dict):
             normalized = dict(record)
             normalized['expiry'] = expiry
+            # GFIT-CoWork: the User role was stored as "member" before it was
+            # named "user"; such a login stays signed in.
+            if normalized.get('role') == _ROLE_USER_BEFORE_RENAME:
+                from api.access import ROLE_USER
+
+                normalized['role'] = ROLE_USER
             sessions[token] = normalized
         else:
             sessions[token] = expiry

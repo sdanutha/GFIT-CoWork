@@ -70,8 +70,9 @@ terminal, changing workspace git, extensions, shutdown and reload,
 server logs, YOLO mode, providers, models and MCP servers, Settings (they are
 shared by the whole Deployment), onboarding, gateway control, Profile
 management and public share links. The server refuses these to Users with
-403 (`api/access.py` lists what a User may call; anything else is refused),
-and the web UI hides their menus.
+403 (`api/access.py` lists what a User may call; anything else is refused).
+The server also tells the web app which of these features its caller may use,
+so a User's web app hides their menus and does not call them.
 
 ### Managing Profiles
 

@@ -7275,25 +7275,26 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .settings-field-highlight { animation: settings-field-pulse 1.6s ease-out; }
 @keyframes settings-field-pulse { 0% { box-shadow: 0 0 0 0 var(--focus-ring); } 35% { box-shadow: 0 0 0 4px var(--focus-ring); } 100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); } }
 
-/* GFIT-CoWork: a User does not see Admin-only menus. The server stamps
-   data-gfit-role on <html> and refuses these features anyway (api/access.py);
-   hiding them is cosmetic. Settings are Deployment-wide, so the whole panel is
-   the Admin's. */
-html[data-gfit-role="member"] [data-panel="logs"],
-html[data-gfit-role="member"] [data-panel="kanban"],
-html[data-gfit-role="member"] [data-panel="profiles"],
-html[data-gfit-role="member"] [data-panel="settings"],
-html[data-gfit-role="member"] #dashboardRailBtn,
-html[data-gfit-role="member"] #dashboardMobileBtn,
-html[data-gfit-role="member"] #btnRestartGateway,
-html[data-gfit-role="member"] #btnTerminalToggle,
-html[data-gfit-role="member"] #composerTerminalPanel,
-html[data-gfit-role="member"] #composerTerminalDock,
-html[data-gfit-role="member"] #yoloPill,
-html[data-gfit-role="member"] #approvalSkipAll,
-html[data-gfit-role="member"] #providerQuotaChip,
-html[data-gfit-role="member"] #composerMobileQuotaAction,
-html[data-gfit-role="member"] #btnShareSession,
-html[data-gfit-role="member"] [data-gfit-admin-only] {
+/* GFIT-CoWork: the web app shows only the features its caller may use. The
+   server stamps them on <html data-gfit-may="..."> from the Admin gate
+   (api/access.py SHELL_FEATURES) and refuses the others anyway; hiding them is
+   cosmetic. With login off there is no stamp and everything shows. Settings
+   are Deployment-wide, so the whole panel is the Admin's. */
+html[data-gfit-may]:not([data-gfit-may~="logs"]) [data-panel="logs"],
+html[data-gfit-may]:not([data-gfit-may~="kanban"]) [data-panel="kanban"],
+html[data-gfit-may]:not([data-gfit-may~="profiles_admin"]) [data-panel="profiles"],
+html[data-gfit-may]:not([data-gfit-may~="settings"]) [data-panel="settings"],
+html[data-gfit-may]:not([data-gfit-may~="dashboard"]) #dashboardRailBtn,
+html[data-gfit-may]:not([data-gfit-may~="dashboard"]) #dashboardMobileBtn,
+html[data-gfit-may]:not([data-gfit-may~="gateway_restart"]) #btnRestartGateway,
+html[data-gfit-may]:not([data-gfit-may~="terminal"]) #btnTerminalToggle,
+html[data-gfit-may]:not([data-gfit-may~="terminal"]) #composerTerminalPanel,
+html[data-gfit-may]:not([data-gfit-may~="terminal"]) #composerTerminalDock,
+html[data-gfit-may]:not([data-gfit-may~="yolo"]) #yoloPill,
+html[data-gfit-may]:not([data-gfit-may~="yolo"]) #approvalSkipAll,
+html[data-gfit-may]:not([data-gfit-may~="provider_quota"]) #providerQuotaChip,
+html[data-gfit-may]:not([data-gfit-may~="provider_quota"]) #composerMobileQuotaAction,
+html[data-gfit-may]:not([data-gfit-may~="share_session"]) #btnShareSession,
+html[data-gfit-may]:not([data-gfit-may~="reveal_on_server"]) [data-gfit-feature="reveal_on_server"] {
   display: none !important;
 }

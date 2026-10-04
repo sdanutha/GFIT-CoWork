@@ -21,7 +21,7 @@ import pytest
 import api.access as access
 import api.models as models
 import api.profiles as profiles
-from api.access import ROLE_ADMIN, ROLE_MEMBER, Admitted
+from api.access import ROLE_ADMIN, ROLE_USER, Admitted
 from api.config import ACTIVE_RUNS, ACTIVE_RUNS_LOCK
 from api.session_ownership import (
     ADMIN,
@@ -290,13 +290,13 @@ def test_a_refusal_writes_its_own_answer():
 
 CHOICE_TABLE = [
     # (admission, has a Directory session, adapter)
-    (Admitted(ROLE_MEMBER, ALICE), True, "user"),
+    (Admitted(ROLE_USER, ALICE), True, "user"),
     (Admitted(ROLE_ADMIN, "default"), True, "admin"),
     (None, False, "unconfined"),
     (None, True, "refusing"),
     (Admitted("superuser", ALICE), True, "refusing"),
-    (Admitted(ROLE_MEMBER, ""), True, "refusing"),
-    (Admitted(ROLE_MEMBER, "../escape"), True, "refusing"),
+    (Admitted(ROLE_USER, ""), True, "refusing"),
+    (Admitted(ROLE_USER, "../escape"), True, "refusing"),
 ]
 
 
@@ -313,7 +313,7 @@ def test_the_adapter_is_chosen_from_the_admission(world, admission, directory_se
 
 
 def test_the_request_asks_with_its_own_admission(world, monkeypatch):
-    monkeypatch.setattr(access._request, "admission", Admitted(ROLE_MEMBER, ALICE), raising=False)
+    monkeypatch.setattr(access._request, "admission", Admitted(ROLE_USER, ALICE), raising=False)
     monkeypatch.setattr(access._request, "directory_session", True, raising=False)
     assert _kind(request_session_ownership()) == "user"
     access.clear_request_admission()

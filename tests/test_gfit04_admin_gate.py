@@ -155,7 +155,7 @@ def test_admin_lands_in_default_without_a_profile_of_their_own(srv, uid):
 
 def test_member_is_reported_as_member(member):
     status, body, _ = member.get("/api/auth/status")
-    assert body["role"] == "member"
+    assert body["role"] == "user"
 
 
 def test_admin_sees_every_profile(admin):
@@ -200,7 +200,7 @@ def test_member_allowed_path_with_unlisted_method_is_refused(member):
 def test_member_index_marks_the_role_and_admin_index_does_not(member, admin):
     status, html, _ = member.get("/")
     assert status == 200
-    assert 'data-gfit-role="member"' in html
+    assert 'data-gfit-role="user"' in html
     status, html, _ = admin.get("/")
     assert 'data-gfit-role="admin"' in html
 
@@ -233,7 +233,7 @@ def test_admin_with_a_profile_of_their_own_is_signed_out_when_removed_from_the_l
 
     again = srv.logged_in(ADMIN)
     status, body, _ = again.get("/api/auth/status")
-    assert body["role"] == "member"
+    assert body["role"] == "user"
     assert body["bound_profile"] == ADMIN
 
 

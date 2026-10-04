@@ -11296,7 +11296,7 @@ button:hover{background:rgba(124,185,255,.25)}
 
 
 def _directory_session_role(handler) -> str | None:
-    """The GFIT-CoWork role (``admin``/``member``) of this request's Directory session, if any.
+    """The GFIT-CoWork role (``admin``/``user``) of this request's Directory session, if any.
 
     The role is the request's Admission: a session with none has no role.
     """
@@ -11313,16 +11313,19 @@ def _directory_session_role(handler) -> str | None:
 def _app_shell_for_role(html: str, role) -> str:
     """The app shell for the caller's role (GFIT-CoWork).
 
-    The stylesheet hides Admin-only menus for Users (cosmetic; the server gate
-    is the source of truth). Extensions are Admin-only, so a User's shell does
-    not load them.
+    ``<html>`` carries the role and the features the caller may use
+    (``data-gfit-may``, from :func:`api.access.shell_features`): the stylesheet
+    hides the others and the scripts do not call them (cosmetic; the server
+    gate is the source of truth). Extensions are Admin-only, so a User's shell
+    does not load them.
     """
-    from api.access import ROLE_MEMBER
+    from api.access import ROLE_USER, shell_features
     from api.extensions import inject_extension_tags
 
     if role:
-        html = html.replace("<html ", f'<html data-gfit-role="{role}" ', 1)
-    return html if role == ROLE_MEMBER else inject_extension_tags(html)
+        may = " ".join(shell_features(role))
+        html = html.replace("<html ", f'<html data-gfit-role="{role}" data-gfit-may="{may}" ', 1)
+    return html if role == ROLE_USER else inject_extension_tags(html)
 
 
 def _handle_directory_login(handler, body) -> bool:

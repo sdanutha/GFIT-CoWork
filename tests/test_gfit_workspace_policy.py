@@ -18,7 +18,7 @@ import pytest
 
 import api.access as access
 import api.profiles as profiles
-from api.access import ROLE_ADMIN, ROLE_MEMBER, Admitted
+from api.access import ROLE_ADMIN, ROLE_USER, Admitted
 from api.workspace import OUTSIDE_WORKSPACE_MESSAGE
 from api.workspace_policy import (
     REFUSING,
@@ -270,13 +270,13 @@ def profiles_root(monkeypatch, homes):
 
 
 @pytest.mark.parametrize("admission,directory_session,chosen", [
-    (Admitted(ROLE_MEMBER, ALICE), True, "user"),
+    (Admitted(ROLE_USER, ALICE), True, "user"),
     (Admitted(ROLE_ADMIN, "default"), True, "unconfined"),
     (None, False, "unconfined"),                          # login turned off
     (None, True, "refusing"),                             # unknown is not allowed
     (Admitted("owner", ALICE), True, "refusing"),         # an unknown role
-    (Admitted(ROLE_MEMBER, ""), True, "refusing"),        # a User with no Profile
-    (Admitted(ROLE_MEMBER, "../escape"), True, "refusing"),  # not a Profile name
+    (Admitted(ROLE_USER, ""), True, "refusing"),        # a User with no Profile
+    (Admitted(ROLE_USER, "../escape"), True, "refusing"),  # not a Profile name
 ])
 def test_the_request_policy_is_chosen_from_the_admission(homes, profiles_root, admission, directory_session, chosen):
     policy = policy_for(admission, directory_session=directory_session)
@@ -295,10 +295,10 @@ def no_request_admission():
 
 
 @pytest.mark.parametrize("session,admission,chosen", [
-    ({"username": ALICE, "role": ROLE_MEMBER, "bound_profile": ALICE}, Admitted(ROLE_MEMBER, ALICE), "user"),
+    ({"username": ALICE, "role": ROLE_USER, "bound_profile": ALICE}, Admitted(ROLE_USER, ALICE), "user"),
     ({"username": "600001", "role": ROLE_ADMIN, "bound_profile": "default"}, Admitted(ROLE_ADMIN, "default"), "unconfined"),
     # Admission no longer gives the session's role: the Directory session has no Admission.
-    ({"username": ALICE, "role": ROLE_ADMIN, "bound_profile": "default"}, Admitted(ROLE_MEMBER, ALICE), "refusing"),
+    ({"username": ALICE, "role": ROLE_ADMIN, "bound_profile": "default"}, Admitted(ROLE_USER, ALICE), "refusing"),
 ])
 def test_the_request_policy_follows_the_requests_admission(
     monkeypatch, homes, profiles_root, no_request_admission, session, admission, chosen,
@@ -318,8 +318,8 @@ def test_the_request_policy_follows_the_requests_admission(
 def test_worker_threads_carry_no_admission_and_are_unconfined(no_request_admission, monkeypatch, homes, profiles_root):
     import threading
 
-    monkeypatch.setattr(access, "admit", lambda employee_id: Admitted(ROLE_MEMBER, ALICE))
-    access.admit_request({"username": ALICE, "role": ROLE_MEMBER, "bound_profile": ALICE})
+    monkeypatch.setattr(access, "admit", lambda employee_id: Admitted(ROLE_USER, ALICE))
+    access.admit_request({"username": ALICE, "role": ROLE_USER, "bound_profile": ALICE})
     seen = []
     worker = threading.Thread(target=lambda: seen.append(request_workspace_policy()))
     worker.start()

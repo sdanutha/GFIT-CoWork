@@ -6,7 +6,9 @@ application source and fails when code outside the Workspace policy and
 Admission modules asks "is the caller a User?" itself:
 
 - calls ``caller_is_user()`` or ``caller_bound_profile()``;
-- compares a role with ``ROLE_MEMBER`` (or the literal ``"member"``);
+- compares a role with ``ROLE_USER`` (or the stored value from before the
+  rename, ``"member"``; or ``"user"`` compared with an Admission's role, since
+  ``"user"`` is also a chat message's role);
 - confines at the call site with ``confine_to_member_workspace()``.
 
 Some callers ask for a reason that is not Workspace confinement (which Profile
@@ -32,7 +34,7 @@ POLICY_MODULES = {"api/access.py", "api/workspace_policy.py"}
 ASKS = "asks caller_is_user()"
 BOUND = "asks caller_bound_profile()"
 CONFINES = "confines at the call site"
-ROLE = "compares a role with ROLE_MEMBER"
+ROLE = "compares a role with ROLE_USER"
 
 # (file, function, question): why it asks, when that is not Workspace confinement.
 NOT_WORKSPACE: dict[tuple[str, str, str], str] = {
@@ -70,12 +72,38 @@ def _outermost_function_at(functions, line: int) -> str:
 QUESTIONS = {"caller_is_user": ASKS, "caller_bound_profile": BOUND, "confine_to_member_workspace": CONFINES}
 
 
-def _names_role_member(node) -> bool:
+def _names_role_user(node) -> bool:
+    """``ROLE_USER``, or the stored value from before the rename (``"member"``)."""
     return (
-        (isinstance(node, ast.Name) and node.id == "ROLE_MEMBER")
-        or (isinstance(node, ast.Attribute) and node.attr == "ROLE_MEMBER")
+        (isinstance(node, ast.Name) and node.id == "ROLE_USER")
+        or (isinstance(node, ast.Attribute) and node.attr == "ROLE_USER")
         or (isinstance(node, ast.Constant) and node.value == "member")
     )
+
+
+def _is_admission_role(node) -> bool:
+    """``<admission>.role`` or ``request_admission().role``: never a chat message's role."""
+    if not (isinstance(node, ast.Attribute) and node.attr == "role"):
+        return False
+    owner = node.value
+    if isinstance(owner, ast.Call):
+        func = owner.func
+        return (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)) == "request_admission"
+    return isinstance(owner, ast.Name) and "admission" in owner.id
+
+
+def _compares_with_the_user_role(operands) -> bool:
+    """A role compared with the User role. The literal ``"user"`` is also a chat
+    message's role, so it counts only against an Admission's role."""
+    if any(_names_role_user(o) for o in operands):
+        return any(_names_role(o) for o in operands)
+    return any(isinstance(o, ast.Constant) and o.value == "user" for o in operands) and any(
+        _is_admission_role(o) for o in operands
+    )
+
+
+def _names_role(node) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr == "role") or (isinstance(node, ast.Name) and node.id == "role")
 
 
 def _questions(tree):
@@ -88,10 +116,7 @@ def _questions(tree):
                 yield node.lineno, QUESTIONS[name]
         elif isinstance(node, ast.Compare) and isinstance(node.ops[0], (ast.Eq, ast.NotEq)):
             operands = [node.left, *node.comparators]
-            if any(_names_role_member(o) for o in operands) and any(
-                isinstance(o, ast.Attribute) and o.attr == "role" or isinstance(o, ast.Name) and o.id == "role"
-                for o in operands
-            ):
+            if _compares_with_the_user_role(operands):
                 yield node.lineno, ROLE
 
 
@@ -136,20 +161,23 @@ def test_the_guard_catches_each_spelling():
         "    a = caller_is_user()\n"
         "    b = access.caller_bound_profile()\n"
         "    c = confine_to_member_workspace(path)\n"
-        "    d = admission.role == ROLE_MEMBER\n"
-        "    e = role != access.ROLE_MEMBER\n"
+        "    d = admission.role == ROLE_USER\n"
+        "    e = role != access.ROLE_USER\n"
         "    f = 'member' == admission.role\n"
         "    g = admission.role == ROLE_ADMIN\n"        # the Admin gate, not a User question
         "    h = message['role'] == 'user'\n"            # a chat message
+        "    i = role == 'user'\n"                       # a chat message's role
+        "    j = admission.role == 'user'\n"
         "    return name == 'member'\n"                  # not a role
     )
     assert sorted(_questions(ast.parse(source))) == [
         (2, "asks caller_is_user()"),
         (3, "asks caller_bound_profile()"),
         (4, "confines at the call site"),
-        (5, "compares a role with ROLE_MEMBER"),
-        (6, "compares a role with ROLE_MEMBER"),
-        (7, "compares a role with ROLE_MEMBER"),
+        (5, "compares a role with ROLE_USER"),
+        (6, "compares a role with ROLE_USER"),
+        (7, "compares a role with ROLE_USER"),
+        (11, "compares a role with ROLE_USER"),
     ]
 
 
