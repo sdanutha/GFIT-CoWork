@@ -1168,10 +1168,14 @@ def _provider_has_shadowed_codex_oauth_value(provider_id: str) -> bool:
     return any(_looks_like_codex_oauth_token(str(value or "")) for value in values)
 
 
-def _write_env_file(env_path: Path, updates: dict[str, str | None]) -> None:
+def _write_env_file(env_path: Path, updates: dict[str, str | None], *, set_process_env: bool = True) -> None:
     """Write key=value pairs to the .env file.
 
     Values of ``None`` cause the key to be removed.
+
+    With *set_process_env* false, ``os.environ`` is left alone: for writing a
+    Profile's ``.env`` that is not the active one (another Profile's value must
+    never become this process's).
 
     Preserves comments, blank lines, and original key order (#1164).
     New keys are appended at the end of the file with a blank-line separator.
@@ -1207,7 +1211,8 @@ def _write_env_file(env_path: Path, updates: dict[str, str | None]) -> None:
         for key, value in updates.items():
             if value is None:
                 # Mark the line for removal (None sentinel) and clear env.
-                os.environ.pop(key, None)
+                if set_process_env:
+                    os.environ.pop(key, None)
                 if key in existing_key_indices:
                     output_lines[existing_key_indices[key]] = None  # type: ignore[assignment]
                 continue
@@ -1217,7 +1222,8 @@ def _write_env_file(env_path: Path, updates: dict[str, str | None]) -> None:
             # Reject embedded newlines/carriage returns to prevent .env injection
             if "\n" in clean or "\r" in clean:
                 raise ValueError("API key must not contain newline characters.")
-            os.environ[key] = clean
+            if set_process_env:
+                os.environ[key] = clean
 
             if key in existing_key_indices:
                 output_lines[existing_key_indices[key]] = f"{key}={clean}"
