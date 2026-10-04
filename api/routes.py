@@ -15341,8 +15341,33 @@ def _profile_refused(handler, refusal):
 
 def handle_post(handler, parsed) -> bool:
     """Handle all POST routes through the route table. Returns True if handled, False for 404."""
-    diag = RequestDiagnostics.maybe_start("POST", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-    route = route_table.match("POST", parsed.path)
+    return _dispatch_write(handler, parsed, "POST")
+
+
+def handle_put(handler, parsed) -> bool:
+    """Handle all PUT routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "PUT")
+
+
+def handle_patch(handler, parsed) -> bool:
+    """Handle all PATCH routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "PATCH")
+
+
+def handle_delete(handler, parsed) -> bool:
+    """Handle all DELETE routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "DELETE")
+
+
+def _dispatch_write(handler, parsed, method: str) -> bool:
+    """One preamble for every unsafe method, driven by the request's route-table row:
+    CSRF (unless the row is exempt), the extension proxy, then the handler at
+    once when it reads its own body, else the JSON body, the session guard and
+    the handler. A path with no row has its body read and guarded before the 404."""
+    diag = None
+    if method == "POST":
+        diag = RequestDiagnostics.maybe_start(method, parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    route = route_table.match(method, parsed.path)
     # CSRF: reject cross-origin or tokenless authenticated browser requests.
     # Login has no authenticated session token yet, and CSP reports are
     # intentionally unauthenticated browser-generated violation reports.
@@ -15358,7 +15383,7 @@ def handle_post(handler, parsed) -> bool:
     proxy_result = _handle_extension_sidecar_proxy(
         handler,
         parsed,
-        "POST",
+        method,
         read_request_body=True,
     )
     if proxy_result is not False:
@@ -15382,7 +15407,7 @@ def handle_post(handler, parsed) -> bool:
         if diag:
             diag.finish()
         raise
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="POST"):
+    if not _guard_request_session_visibility(handler, parsed, body=body, method=method):
         if diag:
             diag.finish()
         return True
@@ -17758,101 +17783,46 @@ def _post_api_rollback_restore(handler, parsed, body, diag):
         return bad(handler, str(e), status=500)
 
 
-def handle_patch(handler, parsed) -> bool:
-    """Handle all PATCH routes. Returns True if handled, False for 404."""
-    if not _check_csrf(handler):
-        return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "PATCH",
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        return proxy_result
-    try:
-        body = read_body(handler)
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="PATCH"):
-        return True
-    if parsed.path.startswith("/api/mcp/servers/"):
-        name = parsed.path[len("/api/mcp/servers/"):]
-        return _handle_mcp_server_toggle(handler, name, body)
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_patch
-
-        result = handle_kanban_patch(handler, parsed, body)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "PATCH")
-        return True
-    return False
+def _put_api_mcp_servers(handler, parsed, body, diag):
+    name = parsed.path[len("/api/mcp/servers/"):]
+    return _handle_mcp_server_update(handler, name, body)
 
 
-def handle_delete(handler, parsed) -> bool:
-    """Handle all DELETE routes. Returns True if handled, False for 404."""
-    if not _check_csrf(handler):
-        return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "DELETE",
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        return proxy_result
-    try:
-        body = read_body(handler)
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="DELETE"):
-        return True
-    if parsed.path.startswith("/api/mcp/servers/"):
-        name = parsed.path[len("/api/mcp/servers/"):]
-        return _handle_mcp_server_delete(handler, name)
-    if parsed.path == "/api/prompts":
-        pid = str(body.get("id") or "").strip()
-        if not pid:
-            return bad(handler, "id is required")
-        prompts = [p for p in _load_saved_prompts() if p.get("id") != pid]
-        _save_saved_prompts(prompts)
-        return j(handler, {"ok": True})
-
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_delete
-
-        result = handle_kanban_delete(handler, parsed, body)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "DELETE")
-        return True
-    return False
+def _patch_api_mcp_servers(handler, parsed, body, diag):
+    name = parsed.path[len("/api/mcp/servers/"):]
+    return _handle_mcp_server_toggle(handler, name, body)
 
 
-def handle_put(handler, parsed) -> bool:
-    """Handle all PUT routes. Returns True if handled, False for 404."""
-    if not _check_csrf(handler):
-        return j(handler, {"error": "Cross-origin request rejected"}, status=403)
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "PUT",
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        return proxy_result
-    try:
-        body = read_body(handler)
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="PUT"):
-        return True
-    if parsed.path.startswith("/api/mcp/servers/"):
-        name = parsed.path[len("/api/mcp/servers/"):]
-        return _handle_mcp_server_update(handler, name, body)
-    return False
+def _patch_api_kanban(handler, parsed, body, diag):
+    from api.kanban_bridge import handle_kanban_patch
+
+    result = handle_kanban_patch(handler, parsed, body)
+    if result is False:
+        return _kanban_unknown_endpoint(handler, parsed, "PATCH")
+    return True
+
+
+def _delete_api_mcp_servers(handler, parsed, body, diag):
+    name = parsed.path[len("/api/mcp/servers/"):]
+    return _handle_mcp_server_delete(handler, name)
+
+
+def _delete_api_prompts(handler, parsed, body, diag):
+    pid = str(body.get("id") or "").strip()
+    if not pid:
+        return bad(handler, "id is required")
+    prompts = [p for p in _load_saved_prompts() if p.get("id") != pid]
+    _save_saved_prompts(prompts)
+    return j(handler, {"ok": True})
+
+
+def _delete_api_kanban(handler, parsed, body, diag):
+    from api.kanban_bridge import handle_kanban_delete
+
+    result = handle_kanban_delete(handler, parsed, body)
+    if result is False:
+        return _kanban_unknown_endpoint(handler, parsed, "DELETE")
+    return True
 
 # ── GET route helpers ─────────────────────────────────────────────────────────
 

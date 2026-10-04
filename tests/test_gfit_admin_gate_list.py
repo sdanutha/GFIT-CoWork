@@ -2,14 +2,12 @@
 
 Tested at the gate's check interface (method + route -> may a User call it),
 with no server. The table states what a User may call; the completeness test
-reads the routes the server dispatches on and fails when a route a User can
-reach is not named exactly on the list (ADR 0002: a User reaches only their own
-Profile, server-level features are for the Admin).
+reads the route table the server dispatches through and fails when a route a
+User can reach is not named by its own row (ADR 0002: a User reaches only
+their own Profile, server-level features are for the Admin).
 """
 from __future__ import annotations
 
-import ast
-from pathlib import Path
 from typing import NamedTuple
 
 import pytest
@@ -104,86 +102,22 @@ def test_what_a_user_may_call(method, route, expected):
     assert user_may_call(method, route) is expected
 
 
-# The completeness test. The routes module dispatches each HTTP method in one
-# function, comparing ``parsed.path`` against literal routes.
-ROUTES_MODULE = Path(__file__).resolve().parent.parent / "api" / "routes.py"
-DISPATCHERS = {
-    "handle_get": "GET",
-    "handle_post": "POST",
-    "handle_put": "PUT",
-    "handle_patch": "PATCH",
-    "handle_delete": "DELETE",
-}
+# The completeness test. The server dispatches every request through the route
+# table, so the table's rows are the routes it handles.
 
 
 class DispatchedRoute(NamedTuple):
     method: str
     route: str
-    prefix: bool  # dispatched with ``startswith``: every route under it
-
-
-def _is_request_path(node) -> bool:
-    return (
-        isinstance(node, ast.Attribute)
-        and node.attr == "path"
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "parsed"
-    )
-
-
-def _string_literals(node) -> list[str]:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return [node.value]
-    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return [value for element in node.elts for value in _string_literals(element)]
-    return []
-
-
-# Routes a dispatcher matches without a literal, so the scan below cannot see
-# them. A variable part is written as <id>.
-NON_LITERAL_ROUTES = {
-    # handle_get -> _session_events_path_session_id splits the path
-    DispatchedRoute("GET", "/api/sessions/<id>/events", False),
-}
+    prefix: bool  # a prefix row: every route under it
 
 
 def dispatched_routes() -> set[DispatchedRoute]:
-    """Every route the dispatchers handle: the literal routes they compare the
-    request path against (equality, membership in a literal set, literal prefix
-    checks), plus NON_LITERAL_ROUTES. A new route matched some other way (a
-    regex, a split, another variable) is invisible here until listed there."""
-    tree = ast.parse(ROUTES_MODULE.read_text(encoding="utf-8"))
-    routes = set(NON_LITERAL_ROUTES)
-    # Routes the server dispatches through the route table.
-    routes.update(
+    """Every route the server dispatches: the route table's rows."""
+    return {
         DispatchedRoute(row.method, row.pattern[:-1] if row.is_prefix else row.pattern, row.is_prefix)
         for row in route_table.ROUTES
-        if row.handler
-    )
-    for function in tree.body:
-        method = DISPATCHERS.get(getattr(function, "name", None))
-        if method is None:
-            continue
-        for node in ast.walk(function):
-            if isinstance(node, ast.Compare) and _is_request_path(node.left):
-                for op, comparator in zip(node.ops, node.comparators, strict=True):
-                    if isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)):
-                        routes.update(
-                            DispatchedRoute(method, route, False)
-                            for route in _string_literals(comparator)
-                        )
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "startswith"
-                and _is_request_path(node.func.value)
-            ):
-                routes.update(
-                    DispatchedRoute(method, route, True)
-                    for argument in node.args
-                    for route in _string_literals(argument)
-                )
-    return routes
+    }
 
 
 def test_the_dispatched_routes_are_found():
@@ -193,6 +127,7 @@ def test_the_dispatched_routes_are_found():
     assert DispatchedRoute("GET", "/session/manifest.json", False) in routes  # literal set
     assert DispatchedRoute("GET", "/static/", True) in routes
     assert DispatchedRoute("DELETE", "/api/prompts", False) in routes
+    assert DispatchedRoute("GET", "/api/sessions/<id>/events", False) in routes
 
 
 def test_every_route_a_user_can_reach_is_named_exactly():
@@ -211,23 +146,3 @@ def test_every_route_a_user_can_reach_is_named_exactly():
             "(a User prefix row also needs its reason in VARIABLE_PATH_PREFIXES)"
         )
     assert not unnamed, "\n".join(unnamed)
-
-
-def test_every_dispatched_route_has_its_own_row():
-    unrowed = []
-    for method, route, prefix in sorted(dispatched_routes()):
-        if (method, route, prefix) == ("GET", "/api/", True):
-            continue  # the session guard for every API GET, not a route
-        pattern = route + "*" if prefix else route
-        row = route_table.match(method, route + "x" if prefix else route.replace("<id>", "abc"))
-        if row is None or row.pattern != pattern:
-            unrowed.append(f"{method} {pattern}")
-    assert not unrowed, "Give each dispatched route a route-table row: " + ", ".join(unrowed)
-
-
-def test_every_row_is_a_route_the_server_handles():
-    handled = {(r.method, r.route + "*" if r.prefix else r.route) for r in dispatched_routes()}
-    dead = sorted(
-        f"{route.method} {route.pattern}" for route in route_table.ROUTES if (route.method, route.pattern) not in handled
-    )
-    assert not dead, "The server does not handle these rows: " + ", ".join(dead)

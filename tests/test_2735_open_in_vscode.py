@@ -43,8 +43,9 @@ from conftest import TEST_BASE  # noqa: E402
 class TestOpenInVsCodeBackendWiring:
     def test_route_dispatch_entry_present(self):
         """Dispatcher must route /api/file/open-vscode to the handler."""
-        src = ROUTES.read_text(encoding="utf-8")
-        assert 'parsed.path == "/api/file/open-vscode"' in src
+        from tests._route_source import route_handler
+
+        assert route_handler("POST", "/api/file/open-vscode")
 
     def test_handler_function_defined(self):
         src = ROUTES.read_text(encoding="utf-8")

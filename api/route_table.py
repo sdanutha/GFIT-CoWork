@@ -63,6 +63,8 @@ class Route:
             raise ValueError(f"{self.pattern}: unknown method {self.method!r}")
         if self.caller not in (USER, ADMIN):
             raise ValueError(f"{self.method} {self.pattern}: say who may call it (USER or ADMIN)")
+        if not self.handler:
+            raise ValueError(f"{self.method} {self.pattern}: name the route module's function that serves it")
         if self.body not in ("json", "own"):
             raise ValueError(f"{self.method} {self.pattern}: body is 'json' or 'own'")
         if self.session not in (None, READ, WRITE):
@@ -343,14 +345,14 @@ ROUTES: tuple[Route, ...] = (
     _post("/api/auth/logout", USER, handler="_post_api_auth_logout"),
     _post("/api/rollback/restore", USER, handler="_post_api_rollback_restore"),
     # ── PUT ──
-    _put("/api/mcp/servers/*", ADMIN),
+    _put("/api/mcp/servers/*", ADMIN, handler="_put_api_mcp_servers"),
     # ── PATCH ──
-    _patch("/api/mcp/servers/*", ADMIN),
-    _patch("/api/kanban/*", ADMIN),
+    _patch("/api/mcp/servers/*", ADMIN, handler="_patch_api_mcp_servers"),
+    _patch("/api/kanban/*", ADMIN, handler="_patch_api_kanban"),
     # ── DELETE ──
-    _delete("/api/mcp/servers/*", ADMIN),
-    _delete("/api/prompts", USER),
-    _delete("/api/kanban/*", ADMIN),
+    _delete("/api/mcp/servers/*", ADMIN, handler="_delete_api_mcp_servers"),
+    _delete("/api/prompts", USER, handler="_delete_api_prompts"),
+    _delete("/api/kanban/*", ADMIN, handler="_delete_api_kanban"),
 )
 
 # A User prefix row is allowed only for a variable part that cannot be listed.

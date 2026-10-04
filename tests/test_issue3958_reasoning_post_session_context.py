@@ -60,9 +60,11 @@ def test_ui_posts_reasoning_context_with_effort():
 
 
 def test_reasoning_post_route_threads_model_context():
-    src = read("api/routes.py")
+    from tests._route_source import route_source
+
+    src = route_source("POST", "/api/reasoning")
     match = re.search(
-        r"if parsed\.path == \"/api/reasoning\":(.*?)return bad\(handler, \"reasoning: must supply 'display' or 'effort'\"\)",
+        r"def _post_api_reasoning\(.*?\):(.*?)return bad\(handler, \"reasoning: must supply 'display' or 'effort'\"\)",
         src,
         re.DOTALL,
     )

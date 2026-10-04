@@ -44,14 +44,21 @@ def test_a_row_must_say_who_may_call_it():
     with pytest.raises(TypeError):
         Route("GET", "/api/new")  # type: ignore[call-arg]
     with pytest.raises(ValueError):
-        Route("GET", "/api/new", "anyone")
+        Route("GET", "/api/new", "anyone", handler="_get_new")
 
 
-def test_a_row_names_a_known_method_and_session_kind():
+def test_a_row_must_name_its_handler():
     with pytest.raises(ValueError):
-        Route("HEAD", "/api/new", USER)
+        Route("GET", "/api/new", USER)
+
+
+def test_a_row_names_a_known_method_session_kind_and_body():
     with pytest.raises(ValueError):
-        Route("GET", "/api/new", USER, session="maybe")
+        Route("HEAD", "/api/new", USER, handler="_get_new")
+    with pytest.raises(ValueError):
+        Route("GET", "/api/new", USER, session="maybe", handler="_get_new")
+    with pytest.raises(ValueError):
+        Route("POST", "/api/new", USER, body="form", handler="_post_new")
 
 
 def test_every_route_appears_once():
@@ -117,14 +124,13 @@ def test_the_table_dispatches_where_the_old_chains_did(method, path, handler):
     assert callable(getattr(routes, handler))
 
 
-def test_every_dispatched_row_names_a_handler_in_the_route_module():
+def test_every_row_names_a_handler_in_the_route_module():
     import api.routes as routes
 
-    dispatched = set(HANDLERS_BEFORE)
     missing = [
         f"{route.method} {route.pattern}"
         for route in route_table.ROUTES
-        if route.method in dispatched and not callable(getattr(routes, route.handler or "", None))
+        if not callable(getattr(routes, route.handler, None))
     ]
     assert not missing
 
@@ -139,3 +145,42 @@ def test_a_patched_handler_takes_effect(monkeypatch):
     monkeypatch.setattr(routes, "_get_health", lambda handler, parsed: seen.append(parsed.path) or True)
     assert routes.handle_get(SimpleNamespace(headers={}), urlparse("/health")) is True
     assert seen == ["/health"]
+
+
+class _Handler:
+    """Just enough of a request handler for the write preamble's CSRF refusal."""
+
+    def __init__(self, headers):
+        self.headers = headers
+        self.status = None
+        self.body = bytearray()
+        self.wfile = self
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, name, value):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def write(self, data):
+        self.body.extend(data)
+
+
+def test_a_cross_site_put_is_refused_with_the_same_message_as_a_post(monkeypatch):
+    from types import SimpleNamespace
+
+    import api.routes as routes
+
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
+    answers = {}
+    for method, dispatch in (("POST", routes.handle_post), ("PUT", routes.handle_put),
+                             ("PATCH", routes.handle_patch), ("DELETE", routes.handle_delete)):
+        handler = _Handler({"Origin": "http://example.com", "Host": "example.com", "Content-Length": "2"})
+        handler.command = method
+        dispatch(handler, SimpleNamespace(path="/api/mcp/servers/demo", query=""))
+        answers[method] = (handler.status, json.loads(bytes(handler.body))["error"])
+    assert answers["PUT"] == answers["POST"] == answers["PATCH"] == answers["DELETE"]
+    assert answers["PUT"][0] == 403
