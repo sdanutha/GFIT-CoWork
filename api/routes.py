@@ -14699,7 +14699,7 @@ def handle_get(handler, parsed) -> bool:
 
     session_events_session_id = _session_events_path_session_id(parsed.path)
     if session_events_session_id is not None:
-        return _handle_session_sse_stream_for_session(handler, parsed, session_events_session_id)
+        return _handle_session_run_journal_stream_for_session(handler, parsed, session_events_session_id)
 
     if parsed.path == "/api/media":
         return _handle_media(handler, parsed)
@@ -18940,9 +18940,6 @@ def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
             except Exception:
                 pass
     return True
-
-
-_handle_session_sse_stream_for_session = _handle_session_run_journal_stream_for_session
 
 
 def _terminal_session_lookup(body_or_query):
