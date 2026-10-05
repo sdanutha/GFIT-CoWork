@@ -354,6 +354,7 @@ def _load_as(monkeypatch, adapter, session_id, *, reading=True, **kwargs):
     monkeypatch.setattr(ownership, "request_session_ownership", lambda: adapter)
     monkeypatch.setattr(ownership, "_request_is_a_read", lambda: reading)
     handler = _AnswerHandler()
+    kwargs.setdefault("load", models.get_session)
     return ownership.load_owned_session(handler, session_id, **kwargs), handler
 
 

@@ -16,6 +16,7 @@ from api.helpers import (
     unsupported_transfer_encoding,
 )
 from api.models import get_session
+from api.session_ownership import load_owned_session
 from api.workspace import (
     resolve_in_workspace,
     resolve_trusted_workspace,
@@ -205,7 +206,7 @@ def _attachment_root() -> Path:
     allowing operators to move the inbox with HERMES_WEBUI_ATTACHMENT_DIR.
 
     Attachments are outside Workspace confinement on purpose: they belong to a
-    session, and session ownership (``_refuse_unowned_session``) decides who
+    session, and session ownership (``load_owned_session``) decides who
     may reach them. Resolve paths inside them with the unconfined primitive
     :func:`api.helpers.resolve_inside`, never a Workspace check.
     """
@@ -240,21 +241,6 @@ def _session_attachment_dir(session_id: str, *, root: Path | None = None) -> Pat
     if not dest_dir.is_relative_to(root):
         raise ValueError('Invalid attachment directory')
     return dest_dir
-
-
-def _refuse_unowned_session(handler, session_id, session) -> bool:
-    """Answer 404 and return True unless the request owns *session*, already loaded.
-
-    Session ownership decides (:mod:`api.session_ownership`). An upload's
-    answer never names another Profile, so every refusal is "Session not found".
-    """
-    from api.session_ownership import request_session_ownership
-
-    refusal = request_session_ownership().refuse_found_session(session_id, session)
-    if refusal is None:
-        return False
-    refusal.answer_not_found(handler)
-    return True
 
 
 def _write_office_upload_sidecar(workspace: Path, dest: Path, file_bytes: bytes) -> dict | None:
@@ -309,11 +295,8 @@ def handle_upload(handler):
         filename, file_bytes = files['file']
         if not filename:
             return j(handler, {'error': 'No filename in upload'}, status=400)
-        try:
-            s = get_session(session_id)
-        except KeyError:
-            return j(handler, {'error': 'Session not found'}, status=404)
-        if _refuse_unowned_session(handler, session_id, s):
+        s = load_owned_session(handler, session_id, load=get_session, names_owner=False)
+        if s is None:
             return True
         safe_name = _sanitize_upload_name(filename)
         dest_dir = _session_attachment_dir(session_id)
@@ -503,11 +486,8 @@ def handle_upload_extract(handler):
         filename, file_bytes = files['file']
         if not filename:
             return j(handler, {'error': 'No filename in upload'}, status=400)
-        try:
-            s = get_session(session_id)
-        except KeyError:
-            return j(handler, {'error': 'Session not found'}, status=404)
-        if _refuse_unowned_session(handler, session_id, s):
+        s = load_owned_session(handler, session_id, load=get_session, names_owner=False)
+        if s is None:
             return True
         session_dir = _session_attachment_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -721,11 +701,8 @@ def handle_workspace_upload(handler):
             return j(handler, {'error': 'No file field in request'}, status=400)
 
         # Validate session
-        try:
-            session = get_session(session_id)
-        except KeyError:
-            return j(handler, {'error': 'Session not found'}, status=404)
-        if _refuse_unowned_session(handler, session_id, session):
+        session = load_owned_session(handler, session_id, load=get_session, names_owner=False)
+        if session is None:
             return True
 
         # Resolve workspace root using the session profile, not the ambient request profile.

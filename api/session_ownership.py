@@ -559,21 +559,26 @@ def request_caller_reach() -> ProfileReach:
     return request_session_ownership().caller_reach()
 
 
-def load_owned_session(handler, session_id, *, load=None, not_found: str = NOT_FOUND_MESSAGE, **load_options):
+def load_owned_session(
+    handler, session_id, *, load, not_found: str = NOT_FOUND_MESSAGE, names_owner: bool = True, **load_options
+):
     """The session the request names, when the request owns it; else None, its answer written.
 
     Session ownership answers first (as a read or a write, by the request's
     route): a refusal writes 404 *not_found* (409 naming the owner, or the
     Admin's read-only 403, for the unconfined and Admin adapters). Then *load*
-    (the plain session loader by default) loads it with *load_options*; a load
+    (the caller's session loader) loads it with *load_options*; a load
     that raises ``KeyError`` writes 404 *not_found*. Other errors pass to the
-    caller. For a session id the request chose, never one the server chose.
+    caller. With *names_owner* false a refusal never names the owner (always
+    404, the Admin's read-only 403 aside). For a session id the request chose,
+    never one the server chose.
     """
-    if load is None:
-        from api.models import get_session as load
     refusal = request_session_ownership().refuse_session(session_id)
     if refusal is not None:
-        refusal.answer(handler, session_id, not_found=not_found)
+        if names_owner:
+            refusal.answer(handler, session_id, not_found=not_found)
+        else:
+            refusal.answer_not_found(handler, not_found=not_found)
         return None
     try:
         return load(session_id, **load_options)

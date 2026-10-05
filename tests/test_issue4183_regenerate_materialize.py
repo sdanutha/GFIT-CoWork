@@ -15,7 +15,7 @@ def test_regenerate_endpoint_uses_materialize_fallback():
     from tests._route_source import route_source
 
     block = route_source("POST", "/api/session/title/regenerate")
-    assert "_get_or_materialize_session(sid)" in block, (
+    assert "load=_get_or_materialize_session" in block, (
         "regenerate handler must use _get_or_materialize_session to find "
         "sessions that only exist in state.db (CLI/TUI sessions)"
     )
