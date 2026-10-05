@@ -2958,7 +2958,7 @@ from api.config import (
 from api import config as api_config
 from api import profiles as api_profiles
 from api import route_table
-from api.turn_builder import _AGENT_BUNDLE_SIDE_FIELDS, webui_agent
+from api.turn_builder import AGENT_BUNDLE_SIDE_FIELDS, webui_agent
 from api.helpers import (
     require,
     bad,
@@ -3011,8 +3011,8 @@ def _resolve_agent_connection_bundle(
     """Return the COMPLETE constructor-routing bundle for a non-streaming send.
 
     Keys: ``provider``, ``base_url``, ``api_key`` plus every field in
-    :data:`_AGENT_BUNDLE_SIDE_FIELDS`. Pass the whole dict to the constructor
-    via :func:`_agent_bundle_kwargs` — the endpoint/credential and the
+    :data:`AGENT_BUNDLE_SIDE_FIELDS`. Pass the whole dict to the constructor
+    via :func:`api.turn_builder.agent_bundle_kwargs` — the endpoint/credential and the
     transport/protocol/pool fields are ONE authority.
 
     ``runtime_provider`` is the dict ``resolve_runtime_provider`` returned. It
@@ -3057,9 +3057,9 @@ def _auxiliary_main_runtime(bundle, model):
 
     When the auxiliary client answers, AIAgent is never built, so this dict is
     the ONLY place the resolved authority reaches the wire. It therefore carries
-    the same whole bundle :func:`_agent_bundle_kwargs` hands the constructor —
+    the same whole bundle :func:`api.turn_builder.agent_bundle_kwargs` hands the constructor —
     endpoint and credential plus every field in
-    :data:`_AGENT_BUNDLE_SIDE_FIELDS`. Sending only provider/model/base_url/
+    :data:`AGENT_BUNDLE_SIDE_FIELDS`. Sending only provider/model/base_url/
     api_key silently downgraded an exact row's ``api_mode``
     (``anthropic_messages`` fell back to chat completions) and dropped the
     credential pool/ACP transport that belong to the same record.
@@ -3070,7 +3070,7 @@ def _auxiliary_main_runtime(bundle, model):
         "base_url": bundle["base_url"],
         "api_key": bundle["api_key"],
     }
-    for field in _AGENT_BUNDLE_SIDE_FIELDS:
+    for field in AGENT_BUNDLE_SIDE_FIELDS:
         runtime[field] = bundle[field]
     return runtime
 
@@ -24871,9 +24871,6 @@ def _handle_chat_sync(handler, body):
                 AIAgent,
                 _bundle,
                 model=_model,
-                provider=_provider,
-                base_url=_base_url,
-                api_key=_api_key,
                 session_id=s.session_id,
                 toolsets=_resolve_cli_toolsets(),
             )
@@ -24893,7 +24890,16 @@ def _handle_chat_sync(handler, body):
             )
             from api.turn_builder import turn_prompts
 
-            _prompts = turn_prompts(s, session_id=s.session_id, config_data=get_config())
+            # The session's own Profile config, as the streaming turn reads it (#3294).
+            try:
+                from api.profiles import get_hermes_home_for_profile
+
+                _session_cfg = api_config.get_config_for_profile_home(
+                    get_hermes_home_for_profile(getattr(s, "profile", None) or "default")
+                )
+            except Exception:
+                _session_cfg = get_config()
+            _prompts = turn_prompts(s, session_id=s.session_id, config_data=_session_cfg)
             agent.ephemeral_system_prompt = _prompts.ephemeral_system_prompt
             workspace_ctx = _prompts.user_prefix
             workspace_system_msg = _prompts.system_message
@@ -25561,9 +25567,6 @@ def _llm_git_commit_message(system_prompt: str, user_prompt: str, session=None) 
             AIAgent,
             _bundle,
             model=_main_model,
-            provider=_main_provider,
-            base_url=_main_base_url,
-            api_key=_main_api_key,
             session_id=f"git-commit-message-{uuid.uuid4().hex[:8]}",
             toolsets=[],
         )
@@ -27614,9 +27617,6 @@ def _handle_session_compress(handler, body, *, worker_session=None):
             AIAgent,
             _bundle,
             model=resolved_model,
-            provider=resolved_provider,
-            base_url=resolved_base_url,
-            api_key=resolved_api_key,
             session_id=sid,
             toolsets=_resolve_cli_toolsets(),
         )
@@ -28307,9 +28307,6 @@ def _handle_handoff_summary(handler, body):
             AIAgent,
             _bundle,
             model=resolved_model,
-            provider=resolved_provider,
-            base_url=resolved_base_url,
-            api_key=resolved_api_key,
             session_id=sid,
             toolsets=[],
         )

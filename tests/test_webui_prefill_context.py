@@ -268,13 +268,13 @@ def test_webui_session_context_adds_gateway_like_metadata(monkeypatch, tmp_path)
     # `user` message (which broke strict chat templates with two consecutive
     # user turns) and INTO the ephemeral system prompt. _prefill_messages_with_webui_context
     # now returns only recall prefill; the metadata is asserted on
-    # _webui_ephemeral_system_prompt instead. The invariants preserved here:
+    # ephemeral_system_prompt instead. The invariants preserved here:
     # paused platforms excluded, connected platforms shown, home-channel name
     # shown, and the chat_id never leaks.
     from api.streaming import (
         _prefill_messages_with_webui_context,
     )
-    from api.turn_builder import _webui_ephemeral_system_prompt
+    from api.turn_builder import ephemeral_system_prompt
 
     gateway_state = tmp_path / "gateway_state.json"
     gateway_state.write_text(
@@ -321,7 +321,7 @@ def test_webui_session_context_adds_gateway_like_metadata(monkeypatch, tmp_path)
     ), "session context must NOT be appended as a prefill user message anymore (#3324)"
 
     # The same gateway-like metadata is now carried in the ephemeral system prompt.
-    prompt = _webui_ephemeral_system_prompt(
+    prompt = ephemeral_system_prompt(
         None,
         surface_context={"source": "webui"},
         config_data=config_data,

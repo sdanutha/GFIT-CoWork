@@ -1269,7 +1269,7 @@ def _run_gateway_chat_streaming(
                 _normalize_prefill_messages_before_user_turn,
                 _public_prefill_context_status,
             )
-            from api.turn_builder import _webui_ephemeral_system_prompt
+            from api.turn_builder import ephemeral_system_prompt
 
             prefill_context = _load_webui_prefill_context(cfg)
             # #3324: the WebUI session/delivery context (connected platforms,
@@ -1277,7 +1277,7 @@ def _run_gateway_chat_streaming(
             # the ephemeral system prompt rather than a prefill `user` message.
             # The gateway-backed path must build the SAME system prompt so that
             # context is not silently dropped on Gateway-routed WebUI chats.
-            _gateway_system_prompt = _webui_ephemeral_system_prompt(
+            _gateway_system_prompt = ephemeral_system_prompt(
                 None,
                 surface_context={
                     "source": "webui",

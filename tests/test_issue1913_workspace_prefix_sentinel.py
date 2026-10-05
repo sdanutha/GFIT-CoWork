@@ -2,7 +2,7 @@ from api.streaming import (
     _fallback_title_from_exchange,
     _strip_workspace_prefix,
 )
-from api.turn_builder import _workspace_context_prefix
+from api.turn_builder import workspace_prefix
 
 
 def test_workspace_prefix_strips_only_versioned_sentinel():
@@ -11,7 +11,7 @@ def test_workspace_prefix_strips_only_versioned_sentinel():
 
 
 def test_workspace_prefix_escapes_paths_with_closing_brackets():
-    prefix = _workspace_context_prefix("/tmp/proj-[wip]/src")
+    prefix = workspace_prefix("/tmp/proj-[wip]/src")
 
     assert prefix == "[Workspace::v1: /tmp/proj-[wip\\]/src]\n"
     assert _strip_workspace_prefix(f"{prefix}Continue") == "Continue"

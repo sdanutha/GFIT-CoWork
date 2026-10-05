@@ -1371,7 +1371,7 @@ def _prefill_messages_with_webui_context(prefill_context: dict, config_data: Opt
     """Combine recall prefill with WebUI session context.
 
     The session context (connected platforms, delivery hints) is injected
-    via ``_webui_ephemeral_system_prompt`` / ``ephemeral_system_prompt``
+    via ``api.turn_builder.ephemeral_system_prompt`` / the agent's ``ephemeral_system_prompt``
     instead of as a prefill ``user`` message.  Adding it as a user message
     creates two consecutive user turns (prefill + actual) which strict chat
     templates (Mistral, Gemma) reject with a Jinja 500.

@@ -1,9 +1,10 @@
 """GFIT-CoWork -- the turn builder: what a WebUI Hermes Agent turn is told, and how a WebUI agent is made.
 
-Every place that drives Hermes Agent (the streaming chat turn, the
-non-streaming chat route, manual compression, the handoff summary, the git
-commit-message helper) asks this module instead of writing its own prompts or
-agent arguments:
+The streaming chat turn and the non-streaming chat route take their prompts
+from here; the agents the route module makes (non-streaming chat, manual
+compression, the handoff summary, the git commit-message helper) are made
+here. The streaming turn still builds its own agent arguments: its self-heal
+and provider-retry paths mutate and reuse them.
 
 - :func:`turn_prompts` -- a chat turn's system message (it names the Workspace
   the session was created in, so a Workspace switch never rewrites the first
@@ -23,7 +24,7 @@ from typing import Optional
 from api.config import get_config
 
 
-_WEBUI_PROGRESS_PROMPT = """
+PROGRESS_PROMPT = """
 WebUI progress guidance:
 - Match the normal Hermes messaging style, but do not let long tool-running WebUI turns appear silent.
 - For long multi-step work that uses tools, emit brief user-visible progress updates as normal assistant content, not only as hidden reasoning.
@@ -41,7 +42,7 @@ WebUI progress guidance:
 """.strip()
 
 
-def _webui_surface_context_prompt(surface_context: Optional[dict]) -> str:
+def surface_context_prompt(surface_context: Optional[dict]) -> str:
     """Return safe WebUI session metadata for the agent's ephemeral context.
 
     Messaging gateways inject platform/channel context before each run. Browser
@@ -74,7 +75,7 @@ def _webui_surface_context_prompt(surface_context: Optional[dict]) -> str:
     return "\n".join(lines)
 
 
-def _webui_delivery_context_prompt(config_data: Optional[dict] = None) -> str:
+def delivery_context_prompt(config_data: Optional[dict] = None) -> str:
     """Return platform/delivery context for the ephemeral system prompt.
 
     Connected platforms, home channels, and scheduled-task delivery hints
@@ -84,8 +85,8 @@ def _webui_delivery_context_prompt(config_data: Optional[dict] = None) -> str:
 
     NOTE: This function only covers platform/delivery info.  The session
     framing (\"Source: WebUI\", \"Session ID\", \"Profile\", \"Workspace\") is
-    emitted by ``_webui_surface_context_prompt()``, which is called from
-    ``_webui_ephemeral_system_prompt()`` before this helper.  If you
+    emitted by ``surface_context_prompt()``, which is called from
+    ``ephemeral_system_prompt()`` before this helper.  If you
     refactor this area, keep that surface call in place — the two helpers
     together produce the full session context block.
     """
@@ -152,7 +153,7 @@ def _webui_delivery_context_prompt(config_data: Optional[dict] = None) -> str:
     return "\n".join(lines)
 
 
-def _webui_ephemeral_system_prompt(
+def ephemeral_system_prompt(
     personality_prompt: Optional[str],
     surface_context: Optional[dict] = None,
     config_data: Optional[dict] = None,
@@ -161,11 +162,11 @@ def _webui_ephemeral_system_prompt(
     parts = []
     if personality_prompt:
         parts.append(str(personality_prompt).strip())
-    surface_prompt = _webui_surface_context_prompt(surface_context)
+    surface_prompt = surface_context_prompt(surface_context)
     if surface_prompt:
         parts.append(surface_prompt)
-    parts.append(_WEBUI_PROGRESS_PROMPT)
-    delivery_prompt = _webui_delivery_context_prompt(config_data)
+    parts.append(PROGRESS_PROMPT)
+    delivery_prompt = delivery_context_prompt(config_data)
     if delivery_prompt:
         parts.append(delivery_prompt)
     return "\n\n".join(part for part in parts if part)
@@ -175,7 +176,7 @@ def _escape_workspace_prefix_path(path: str) -> str:
     return str(path or '').replace('\\', '\\\\').replace(']', '\\]')
 
 
-def _workspace_context_prefix(path: str) -> str:
+def workspace_prefix(path: str) -> str:
     return f"[Workspace::v1: {_escape_workspace_prefix_path(path)}]\n"
 
 
@@ -237,7 +238,7 @@ def turn_prompts(session, *, session_id: str, config_data: Optional[dict]) -> Tu
     frozen_workspace = getattr(session, "created_workspace", None) or live_workspace
     return TurnPrompts(
         system_message=workspace_system_message(frozen_workspace),
-        ephemeral_system_prompt=_webui_ephemeral_system_prompt(
+        ephemeral_system_prompt=ephemeral_system_prompt(
             personality_prompt(getattr(session, "personality", None), config_data),
             surface_context={
                 "source": "webui",
@@ -247,35 +248,34 @@ def turn_prompts(session, *, session_id: str, config_data: Optional[dict]) -> Tu
             },
             config_data=config_data,
         ),
-        user_prefix=_workspace_context_prefix(live_workspace),
+        user_prefix=workspace_prefix(live_workspace),
     )
 
 
-def webui_agent(agent_class, bundle, *, model, provider, base_url, api_key, session_id, toolsets, **extra):
+def webui_agent(agent_class, bundle, *, model, session_id, toolsets):
     """A WebUI agent: the WebUI platform (so Hermes Agent adds no CLI guidance),
-    quiet mode, *toolsets*, and the resolved provider *bundle*'s extra arguments
-    the agent class accepts. *extra* carries a streaming turn's callbacks and limits."""
+    quiet mode, *toolsets*, and the resolved provider *bundle* -- its provider,
+    base URL and key, plus the extra arguments the agent class accepts."""
     return agent_class(
         model=model,
-        provider=provider,
-        base_url=base_url,
-        api_key=api_key,
+        provider=bundle["provider"],
+        base_url=bundle["base_url"],
+        api_key=bundle["api_key"],
         platform="webui",
         quiet_mode=True,
         enabled_toolsets=toolsets,
         session_id=session_id,
-        **_agent_bundle_kwargs(agent_class, bundle),
-        **extra,
+        **agent_bundle_kwargs(agent_class, bundle),
     )
 
 
 # The constructor-routing fields that travel with provider/base_url/api_key as
 # one authority. Mirrors ``api.streaming._RUNTIME_BUNDLE_FIELDS`` and
 # ``api.config.CUSTOM_CONNECTION_SIDE_FIELDS``.
-_AGENT_BUNDLE_SIDE_FIELDS = ("api_mode", "acp_command", "acp_args", "credential_pool")
+AGENT_BUNDLE_SIDE_FIELDS = ("api_mode", "acp_command", "acp_args", "credential_pool")
 
 
-def _agent_bundle_kwargs(agent_cls, bundle):
+def agent_bundle_kwargs(agent_cls, bundle):
     """Return the bundle's side-field kwargs supported by ``agent_cls``.
 
     ``api_mode``/``acp_command``/``acp_args``/``credential_pool`` were added to
@@ -293,6 +293,6 @@ def _agent_bundle_kwargs(agent_cls, bundle):
         return {}
     return {
         field: bundle[field]
-        for field in _AGENT_BUNDLE_SIDE_FIELDS
+        for field in AGENT_BUNDLE_SIDE_FIELDS
         if field in params
     }

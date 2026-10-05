@@ -71,12 +71,12 @@ def test_webui_agent_is_made_with_the_webui_platform_quiet_and_the_bundle():
             self.kwargs.pop("self")
 
     bundle = {"api_mode": "chat", "acp_command": "x", "acp_args": [], "credential_pool": None}
-    agent = webui_agent(Agent, bundle, model="m", provider="p", base_url="u", api_key="k",
-                        session_id="s1", toolsets=["files"], callback="cb")
+    bundle.update(provider="p", base_url="u", api_key="k")
+    agent = webui_agent(Agent, bundle, model="m", session_id="s1", toolsets=["files"])
     assert agent.kwargs == {
         "model": "m", "provider": "p", "base_url": "u", "api_key": "k", "platform": "webui",
         "quiet_mode": True, "enabled_toolsets": ["files"], "session_id": "s1",
-        "api_mode": "chat", "callback": "cb",
+        "api_mode": "chat", "callback": None,
     }
 
 
@@ -93,6 +93,7 @@ def test_the_non_streaming_chat_route_gets_the_builders_prompts(monkeypatch, tmp
     monkeypatch.setattr(routes, "get_session", models.get_session)
     monkeypatch.setattr(config, "get_config", lambda: cfg)
     monkeypatch.setattr(routes, "get_config", lambda: cfg)
+    monkeypatch.setattr(config, "get_config_for_profile_home", lambda _home: cfg)
     monkeypatch.setattr(routes, "resolve_trusted_workspace", lambda value, **_kw: tmp_path)
     monkeypatch.setattr(routes, "load_settings", lambda: {})
     monkeypatch.setattr(routes, "_resolve_cli_toolsets", lambda: [])

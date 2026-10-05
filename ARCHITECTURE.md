@@ -790,7 +790,8 @@ made: `turn_prompts()` (the system message naming the session-creation Workspace
 ephemeral prompt with personality, surface context, progress and delivery guidance, and
 the `[Workspace::v1: ...]` prefix for the live Workspace) for the streaming turn and the
 non-streaming chat route, and `webui_agent()` for the agents the route module makes
-(non-streaming chat, compression, handoff summary, commit messages).
+(non-streaming chat, compression, handoff summary, commit messages). The streaming turn
+still builds its own agent arguments (its self-heal and provider-retry paths reuse them).
 
 AIAgent constructor parameters used:
 
