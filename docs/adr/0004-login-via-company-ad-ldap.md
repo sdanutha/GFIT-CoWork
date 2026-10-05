@@ -1,5 +1,7 @@
 # Login with the company AD over LDAP, using the Profile name as the username
 
+> Superseded in part by [ADR 0006](0006-no-admin-in-the-web-app.md): there is no Admin in the web app; the Operator does that work on the server.
+
 GFIT-CoWork does not store Users' passwords itself. It checks the username and password against the company's Active Directory over LDAP instead. A login succeeds only when AD confirms the password is correct **and** a Profile with a name matching that username already exists, because the Admin creates Profiles in advance. AD answers "who is this person", and the existence of a Profile answers "may this person use this Deployment". We chose this over storing passwords ourselves or using SSO/OIDC because the company already has AD, Users keep their existing password, and when IT disables the AD account of someone who has left, that person is locked out at once without the Admin doing anything.
 
 ## Consequences

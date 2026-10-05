@@ -1,5 +1,7 @@
 # One User per Profile in one shared Hermes Agent
 
+> Superseded in part by [ADR 0006](0006-no-admin-in-the-web-app.md): there is no Admin in the web app; the Operator does that work on the server.
+
 Each Team has its own Deployment (1 Hermes Agent + 1 GFIT-CoWork + 1 API key), which serves 30–50 Users. Each User logs in with their own Profile name as their username and is locked to that Profile only (building on the existing `bound_profile` mechanism). We chose this over a separate container per User because it is much easier to run and it uses the Profile structure Hermes already has.
 
 ## Consequences
