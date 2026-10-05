@@ -47,8 +47,6 @@ ADMIN_ONLY = [
     ("POST", "/api/providers", {}),
     ("POST", "/api/providers/delete", {}),
     ("GET", "/api/provider/quota", None),
-    ("POST", "/api/model/set", {}),
-    ("POST", "/api/default-model", {}),
     ("POST", "/api/models/refresh", {}),
     ("GET", "/api/mcp/servers", None),
     ("PUT", "/api/mcp/servers/x", {}),

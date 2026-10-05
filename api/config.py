@@ -6447,6 +6447,12 @@ def set_hermes_default_model(model_id: str, provider: str | None = None, advance
         raise ValueError("model is required")
 
     config_path = _get_config_path()
+    # Resolve before taking _cfg_lock: resolving reads config, and for a
+    # request in a Profile other than the shared cache's that read takes the
+    # non-reentrant _cfg_lock (its config view), which would self-deadlock.
+    resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(
+        selected_model
+    )
     # Hold _cfg_lock only around the read-modify-write of the YAML file.
     # reload_config() acquires _cfg_lock internally (it's not reentrant) so
     # it must be called AFTER releasing the lock to avoid deadlock.
@@ -6458,9 +6464,6 @@ def set_hermes_default_model(model_id: str, provider: str | None = None, advance
 
         previous_provider = str(model_cfg.get("provider") or "").strip()
         requested_provider = str(provider or "").strip()
-        resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(
-            selected_model
-        )
         # Persist the resolved bare/slash form, NOT the `@provider:` prefix. The
         # prefix is a WebUI-internal routing hint that the hermes-agent CLI does
         # not understand — if we wrote `@nous:anthropic/claude-opus-4.6` to
@@ -6664,6 +6667,19 @@ def set_auxiliary_model(task: str, provider: str, model: str, advanced: dict | N
     provider = str(provider or "").strip() or "auto"
     model = str(model or "").strip()
     config_path = _get_config_path()
+    # The unnamed-custom fallback below resolves the model against config.
+    # Do it before taking _cfg_lock: for a request in a Profile other than the
+    # shared cache's, that read takes the non-reentrant _cfg_lock itself. A
+    # genuine ambiguity is kept and raised only where the fallback is used.
+    fallback_base_url = None
+    fallback_ambiguity = None
+    if task != "__reset__" and (provider == "custom" or provider.startswith("custom:")):
+        try:
+            _, _, fallback_base_url = resolve_model_provider(_provider_native_auxiliary_model(provider, model))
+        except AmbiguousCustomProviderError as exc:
+            fallback_ambiguity = exc
+        except Exception:
+            fallback_base_url = None
     with _cfg_lock:
         config_data = _load_yaml_config_file(config_path)
         if task != "__reset__" and task not in AUX_TASK_SLOTS:
@@ -6737,14 +6753,12 @@ def set_auxiliary_model(task: str, provider: str, model: str, advanced: dict | N
                         resolved_base_url = str(_cp_match.get("base_url") or "").strip() or None
                 if not resolved_base_url:
                     # Best-effort fallback for the unnamed `custom` case (no own
-                    # entry). Keep it non-fatal for unexpected errors, but let a
-                    # genuine ambiguity propagate so the save fails closed.
-                    try:
-                        _, _, resolved_base_url = resolve_model_provider(model)
-                    except AmbiguousCustomProviderError:
-                        raise
-                    except Exception:
-                        resolved_base_url = None
+                    # entry), resolved before the lock. Keep it non-fatal for
+                    # unexpected errors, but let a genuine ambiguity propagate
+                    # so the save fails closed.
+                    if fallback_ambiguity is not None:
+                        raise fallback_ambiguity
+                    resolved_base_url = fallback_base_url
                 if resolved_base_url:
                     slot_cfg["base_url"] = str(resolved_base_url).strip().rstrip("/")
             if advanced is not None:

@@ -15866,9 +15866,25 @@ def _post_api_session_duplicate(handler, parsed, body, diag):
         return bad(handler, str(e))
 
 
+# A User chooses their own Profile's models (ADR 0006), but a model's
+# endpoint and key are provider setup, which is the Operator's.
+_OPERATOR_MODEL_OPTIONS = ("base_url", "api_key", "api_key_clear")
+
+
+def _refuse_operator_model_options(handler, advanced):
+    """Answer 403 when *advanced* sets a model's endpoint or key; else None."""
+    named = sorted(k for k in _OPERATOR_MODEL_OPTIONS if isinstance(advanced, dict) and k in advanced)
+    if not named:
+        return None
+    return bad(handler, "A model's endpoint and API key are set by the Deployment's Operator: " + ", ".join(named), 403)
+
+
 def _post_api_default_model(handler, parsed, body, diag):
     try:
         advanced = body.get("advanced") if isinstance(body, dict) else None
+        refused = _refuse_operator_model_options(handler, advanced)
+        if refused is not None:
+            return refused
         provider = body.get("provider") if isinstance(body, dict) else None
         if str(provider or "").strip().lower() == "auto":
             provider = None
@@ -15886,6 +15902,9 @@ def _post_api_model_set(handler, parsed, body, diag):
     provider = str(body.get("provider") or "auto").strip()
     model = str(body.get("model") or "").strip()
     advanced = body.get("advanced") if isinstance(body, dict) else None
+    refused = _refuse_operator_model_options(handler, advanced)
+    if refused is not None:
+        return refused
     if scope == "auxiliary":
         from api.config import set_auxiliary_model
         try:

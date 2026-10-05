@@ -26,7 +26,9 @@ CAPTURED = json.loads(
 
 
 # Routes ADR 0006 opened to Users on purpose (they act in the User's own Profile).
-_OPENED_TO_USERS = {("POST", "/api/settings")}
+_OPENED_TO_USERS = {
+    ("POST", "/api/settings"), ("POST", "/api/default-model"), ("POST", "/api/model/set"), ("POST", "/api/reasoning"),
+}
 
 
 def _intended(method, path, user_may, kind):

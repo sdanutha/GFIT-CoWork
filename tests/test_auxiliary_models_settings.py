@@ -185,13 +185,10 @@ console.log(JSON.stringify({
             "Object.prototype.hasOwnProperty.call(auxData,'main')",
             "_mainAdvancedConfig=null;",
             "auxAdvancedOverlay",
-            "auxAdvancedBaseUrl",
             "auxAdvancedTimeout",
             "auxAdvancedDownloadTimeout",
             "auxAdvancedMaxConcurrency",
             "auxAdvancedExtraBody",
-            "auxAdvancedApiKey",
-            "api_key_clear",
             "Object.keys(cfg.extra_body).length",
         ):
             assert marker in PANELS_JS
@@ -214,7 +211,9 @@ console.log(JSON.stringify({
         modal_body = PANELS_JS[open_idx:open_idx + 4600]
         assert "const timingFields=isMain?'':(" in modal_body
         assert "auxAdvancedExtraBody" in modal_body
-        assert "auxAdvancedBaseUrl" in modal_body
+        # A model's endpoint and key are the Operator's (ADR 0006): no fields for them.
+        assert "auxAdvancedBaseUrl" not in modal_body
+        assert "auxAdvancedApiKey" not in modal_body
 
     def test_main_advanced_modal_exposes_service_tier_selector(self):
         """Main-model advanced modal should expose service-tier control."""
@@ -281,15 +280,8 @@ console.log(JSON.stringify({
         assert 'autocomplete="off"' in input_helper
         assert 'data-lpignore="true"' in input_helper
         assert 'data-1p-ignore="true"' in input_helper
-        assert "aux-manual-override-value" in input_helper
         assert "aux-${id}" not in input_helper
         assert "autocompleteAttr" in input_helper
-        api_key_idx = PANELS_JS.find("_auxAdvancedInputHtml('auxAdvancedApiKey'")
-        assert api_key_idx >= 0
-        api_key_call = PANELS_JS[api_key_idx:api_key_idx + 450]
-        assert "'password'" not in api_key_call
-        assert 'autocomplete="one-time-code"' in api_key_call
-        assert "-webkit-text-security:disc" in api_key_call
 
     def test_calls_model_auxiliary_api(self):
         """_loadAuxiliaryModels must call /api/model/auxiliary."""
@@ -646,8 +638,6 @@ class TestAuxiliaryModelsI18n:
         "settings_aux_advanced_title",
         "settings_aux_advanced_subtitle",
         "settings_aux_advanced_save",
-        "settings_aux_advanced_base_url",
-        "settings_aux_advanced_base_url_desc",
         "settings_aux_advanced_timeout",
         "settings_aux_advanced_timeout_desc",
         "settings_aux_advanced_download_timeout",
@@ -656,10 +646,6 @@ class TestAuxiliaryModelsI18n:
         "settings_aux_advanced_max_concurrency_desc",
         "settings_aux_advanced_extra_body",
         "settings_aux_advanced_extra_body_desc",
-        "settings_aux_advanced_api_key",
-        "settings_aux_advanced_api_key_set_hint",
-        "settings_aux_advanced_api_key_empty_hint",
-        "settings_aux_advanced_api_key_clear",
         "settings_aux_advanced_extra_body_invalid_json",
         "settings_aux_advanced_extra_body_object_required",
         "settings_aux_advanced_saved",
@@ -762,13 +748,13 @@ class TestAuxiliaryModelsBackend:
             "/api/default-model": {
                 "model": "gpt-5.5",
                 "provider": "auto",
-                "advanced": {"base_url": "https://example.invalid/v1"},
+                "advanced": {"extra_body": {"seed": 1}},
             },
             "/api/model/set": {
                 "scope": "main",
                 "model": "gpt-5.5",
                 "provider": "auto",
-                "advanced": {"base_url": "https://example.invalid/v1"},
+                "advanced": {"extra_body": {"seed": 1}},
             },
         }
 
@@ -780,12 +766,12 @@ class TestAuxiliaryModelsBackend:
             {
                 "model": "gpt-5.5",
                 "provider": None,
-                "advanced": {"base_url": "https://example.invalid/v1"},
+                "advanced": {"extra_body": {"seed": 1}},
             },
             {
                 "model": "gpt-5.5",
                 "provider": None,
-                "advanced": {"base_url": "https://example.invalid/v1"},
+                "advanced": {"extra_body": {"seed": 1}},
             },
         ]
 
