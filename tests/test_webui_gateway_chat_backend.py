@@ -355,7 +355,7 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
     assert payload["reasoning_effort"] == "high"
     # #3324: the gateway path's first system message is now the full WebUI
     # ephemeral system prompt (progress prompt + session/delivery context),
-    # NOT the bare _WEBUI_PROGRESS_PROMPT — otherwise the delivery/session
+    # NOT the bare PROGRESS_PROMPT — otherwise the delivery/session
     # context is silently dropped on Gateway-routed WebUI chats.
     system_msg = payload["messages"][0]
     assert system_msg["role"] == "system"

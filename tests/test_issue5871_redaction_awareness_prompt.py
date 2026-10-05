@@ -2,12 +2,12 @@
 
 import re
 
-from api.streaming import _WEBUI_PROGRESS_PROMPT, _webui_ephemeral_system_prompt
+from api.turn_builder import PROGRESS_PROMPT, ephemeral_system_prompt
 
 
 def _redaction_guidance() -> str:
     return next(
-        line for line in _WEBUI_PROGRESS_PROMPT.splitlines()
+        line for line in PROGRESS_PROMPT.splitlines()
         if "automatically redacted" in line
     )
 
@@ -23,7 +23,7 @@ def test_progress_prompt_explains_intentional_credential_redaction():
 
 
 def test_redaction_guidance_flows_into_ephemeral_system_prompt():
-    prompt = _webui_ephemeral_system_prompt(
+    prompt = ephemeral_system_prompt(
         "Use a concise tone.",
         surface_context={"source": "webui"},
     )
@@ -35,7 +35,7 @@ def test_progress_prompt_retains_secret_leak_prevention_guidance():
     assert (
         "Do not reveal hidden reasoning, chain-of-thought, private scratchpads, "
         "secrets, raw logs, or long tool output."
-    ) in _WEBUI_PROGRESS_PROMPT
+    ) in PROGRESS_PROMPT
 
 
 def test_redaction_guidance_does_not_teach_concrete_key_or_mask_formats():

@@ -1950,7 +1950,7 @@ def test_auxiliary_routes_hand_the_complete_bundle_to_the_auxiliary_client(
     ), f"{label}: the ambient credential pool reached the auxiliary client"
 
     for field in ("provider", "model", "base_url", "api_key") + tuple(
-        routes._AGENT_BUNDLE_SIDE_FIELDS
+        routes.AGENT_BUNDLE_SIDE_FIELDS
     ):
         assert recorded_main_runtime.get(field) == init_kwargs[field], (
             f"{label}: aux {field} disagrees with the fallback constructor, so "
@@ -2003,7 +2003,7 @@ def test_capturing_route_agent_exposes_every_runtime_constructor_field(monkeypat
     agent_cls = routes.require_ai_agent_class()
     params = set(inspect.signature(agent_cls.__init__).parameters)
 
-    for field in routes._AGENT_BUNDLE_SIDE_FIELDS:
+    for field in routes.AGENT_BUNDLE_SIDE_FIELDS:
         assert field in params, (
             f"the route double hides {field} behind **kwargs, so the "
             "signature gate would filter it out and the assertions would be vacuous"
