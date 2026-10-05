@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import threading
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def stream_id():
-    sid = "gfit-run-registry-stream"
+    sid = f"gfit-run-registry-{uuid.uuid4().hex[:8]}"
     yield sid
     run_registry.close_stream(sid)
 
@@ -65,19 +66,22 @@ def test_closing_removes_the_stream_its_owner_and_its_goal_mark(stream_id):
     assert run_registry.close_stream(stream_id) is False
 
 
-def test_closing_a_replaced_channel_leaves_the_new_one(stream_id):
-    old = run_registry.open_stream("session-a", stream_id)
-    run_registry.close_stream(stream_id)
-    new = run_registry.open_stream("session-a", stream_id)
-    assert run_registry.close_stream(stream_id, channel=old) is False
-    assert config.STREAMS[stream_id] is new
-
-
-def test_readers_see_live_streams_by_owning_session(stream_id):
+def test_detaching_keeps_the_owner_until_the_active_run_is_unregistered(stream_id):
+    """Stop's detach and a worker's teardown remove the stream while the run may
+    still be unwinding: Stop and session ownership must keep finding its owner."""
     run_registry.open_stream("session-a", stream_id)
-    assert run_registry.stream_is_live(stream_id)
+    config.register_active_run(stream_id, session_id="session-a")
+    with config.STREAMS_LOCK:
+        assert run_registry.detach_stream_locked(stream_id) is True
+    assert stream_id not in config.STREAMS
+    assert config.stream_owner_session_id(stream_id) == "session-a"
+    config.unregister_active_run(stream_id)
+    assert config.stream_owner_session_id(stream_id) is None
+
+
+def test_readers_see_live_stream_ids(stream_id):
+    run_registry.open_stream("session-a", stream_id)
     assert stream_id in run_registry.live_stream_ids()
-    assert run_registry.live_streams_of_sessions({"session-a", "other"}) == {stream_id: "session-a"}
 
 
 def test_a_resumed_gateway_turn_is_owned_before_it_is_visible(monkeypatch, stream_id):
@@ -123,19 +127,31 @@ def test_a_reader_never_sees_a_stream_without_its_owner(stream_id):
 # ── Guard: only the registry writes the stream map and the owner record ─────
 
 def stream_writes(source: str) -> list[int]:
-    """Lines that write the stream map or the owner record outside the registry."""
+    """Lines that write the stream map or the owner record outside the registry,
+    directly or through a local name bound to the stream map."""
+    tree = ast.parse(source)
+    aliases = {"STREAMS"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and ast.unparse(node.value).split(".")[-1] == "STREAMS":
+            aliases |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+
+    def is_streams(expr) -> bool:
+        return ast.unparse(expr).split(".")[-1] in aliases
+
     found = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AugAssign, ast.Delete)):
             targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
-            for target in targets:
-                if isinstance(target, ast.Subscript) and ast.unparse(target.value).split(".")[-1] == "STREAMS":
-                    found.append(node.lineno)
+            found += [node.lineno for t in targets if isinstance(t, ast.Subscript) and is_streams(t.value)]
         if isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name)):
-            name = ast.unparse(node.func)
-            if name.split(".")[-1] in ("register_stream_owner", "unregister_stream_owner"):
+            name = ast.unparse(node.func).split(".")[-1]
+            if name in ("register_stream_owner", "unregister_stream_owner"):
                 found.append(node.lineno)
-            if name.endswith(("STREAMS.pop", "STREAMS.clear", "STREAMS.update", "STREAMS.setdefault")):
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("pop", "clear", "update", "setdefault", "popitem")
+                and is_streams(node.func.value)
+            ):
                 found.append(node.lineno)
     return sorted(found)
 
@@ -157,5 +173,26 @@ def test_the_stream_guard_finds_each_write():
         "config.unregister_stream_owner(s)\n"
         "del STREAMS[s]\n"
         "x = STREAMS.get(s)\n"
+        "streams = _live_config.STREAMS\n"
+        "streams.pop(s, None)\n"
     )
-    assert stream_writes(source) == [1, 2, 3, 4, 5]
+    assert stream_writes(source) == [1, 2, 3, 4, 5, 8]
+
+
+# ── Behaviour over HTTP: only the owner may watch or stop a live stream ───────
+
+def test_only_the_owner_may_watch_or_stop_a_live_stream(monkeypatch, tmp_path, stream_id):
+    from tests._gfit_server import gfit_server
+
+    alice, bob = "521740", "671278"
+    with gfit_server(monkeypatch, tmp_path, users={alice: "Alice", bob: "Bob"}, profile_names=[alice, bob]) as server:
+        owner = server.logged_in(alice)
+        status, payload, _ = owner.post("/api/session/new", {})
+        assert status == 200, payload
+        run_registry.open_stream(payload["session"]["session_id"], stream_id)
+        other = server.logged_in(bob)
+        assert other.get(f"/api/chat/stream/status?stream_id={stream_id}")[0] == 404
+        assert other.get(f"/api/chat/cancel?stream_id={stream_id}")[0] == 404
+        assert stream_id in config.STREAMS
+        assert owner.get(f"/api/chat/stream/status?stream_id={stream_id}")[1]["active"] is True
+        assert owner.get(f"/api/chat/cancel?stream_id={stream_id}")[0] == 200

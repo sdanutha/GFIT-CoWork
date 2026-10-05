@@ -312,6 +312,14 @@ Queue registry:
     STREAMS = {}               dict: stream_id -> queue.Queue
     STREAMS_LOCK = threading.Lock()
 
+`api/run_registry.py` is the only module that writes the stream map and the stream-owner
+record (both defined in `api/config.py`). `open_stream()` records the owning session and
+publishes the channel in one critical section, so whoever sees a stream also sees its
+owner (session ownership decides who may watch or stop it by that owner). A worker's
+teardown and Stop's eager detach remove the stream with `detach_stream_locked()` and keep
+the owner until the active run is unregistered; a failed launch uses `close_stream()`.
+`tests/test_gfit_run_registry.py` guards the single writer.
+
 SSE event types and their data shapes:
 
     token       {"text": "..."}                         LLM token delta
@@ -329,8 +337,8 @@ The SSE handler loop:
     - On 'done' or 'error' event: breaks the loop and returns
     - Catches BrokenPipeError and ConnectionResetError silently (browser disconnected)
 
-Stream cleanup: _run_agent_streaming() pops its stream_id from STREAMS in a finally
-block. If the browser disconnects mid-stream, the daemon thread runs to completion and
+Stream cleanup: _run_agent_streaming() detaches its stream_id from STREAMS in a finally
+block (run_registry.detach_stream_locked). If the browser disconnects mid-stream, the daemon thread runs to completion and
 then cleans up. The queue fills and the put_nowait() calls fail silently (queue.Full
 is caught).
 

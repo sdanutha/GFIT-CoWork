@@ -136,10 +136,9 @@ def _locked_by_stream(session) -> bool:
     if not stream_id:
         return False
     try:
-        from api.config import STREAMS, STREAMS_LOCK
+        from api import run_registry
 
-        with STREAMS_LOCK:
-            return stream_id in STREAMS
+        return stream_id in run_registry.live_stream_ids()
     except Exception:
         return False
 

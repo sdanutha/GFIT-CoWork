@@ -12589,6 +12589,7 @@ def _streams_lock_health(timeout_seconds: float = 0.5) -> dict:
     try:
         return {
             "status": "ok",
+            # This probe holds STREAMS_LOCK to time it, so it counts directly.
             "active_streams": len(STREAMS),
             "ms": elapsed_ms,
         }

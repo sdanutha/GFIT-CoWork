@@ -1695,8 +1695,8 @@ def _session_has_active_turn(session_id: str) -> bool:
         return True
 
     # Pre-ACTIVE_RUNS publication window (#6959 gate): the agent worker
-    # publishes its stream — register_stream_owner() first, then the live
-    # STREAMS channel — BEFORE it registers in ACTIVE_RUNS. In that window a
+    # publishes its stream (api.run_registry.open_stream: owner first, then the
+    # live STREAMS channel) BEFORE it registers in ACTIVE_RUNS. In that window a
     # same-session live STREAMS entry means a turn is already (or about to be)
     # active, so it must count here: otherwise a sibling async-delegation
     # completion would pass the busy pre-check, reserve the per-origin

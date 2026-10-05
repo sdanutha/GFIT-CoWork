@@ -1170,7 +1170,7 @@ def _run_gateway_chat_streaming(
         _clear_gateway_run_starting(stream_id)
         # Cancelled before the worker started; release the owner entry the route
         # layer registered so STREAM_SESSION_OWNERS does not leak (no teardown finally runs).
-        run_registry.close_stream(stream_id)
+        run_registry.forget_owner(stream_id)
         # Also release the writeback-owner entry the route layer registered, so
         # SESSION_WRITEBACK_OWNERS does not leak on this pre-start cancellation
         # path (the teardown finally below never runs when we early-return here).
@@ -1784,12 +1784,13 @@ def _run_gateway_chat_streaming(
             STREAM_REASONING_TEXT.pop(stream_id, None)
             STREAM_LIVE_TOOL_CALLS.pop(stream_id, None)
             STREAM_LAST_EVENT_ID.pop(stream_id, None)
-            run_registry.close_stream_locked(stream_id)
+            run_registry.detach_stream_locked(stream_id)
         if runs_api_pending_marked and gateway_run_id_pending(stream_id):
             _finish_gateway_run_starting(stream_id)
         _clear_gateway_run_starting(stream_id)
         with _STREAM_RUN_STARTING_CONDITION:
             _STREAM_ENDPOINTS.pop(stream_id, None)
+        # Unregistering the active run also forgets the stream owner.
         unregister_active_run(stream_id)
         # Release the writeback-owner entry the route layer registered for this
         # Gateway run so SESSION_WRITEBACK_OWNERS does not grow unbounded across
