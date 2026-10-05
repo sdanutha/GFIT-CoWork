@@ -18228,7 +18228,7 @@ def _handle_escape_authorize(handler, parsed, body: dict | None = None):
         return bad(handler, "session_id is required")
     if not rel:
         return bad(handler, "path is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -18246,7 +18246,7 @@ def _handle_escape_list_dir(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     rel_path = qs.get("path", ["."])[0]
@@ -18270,7 +18270,7 @@ def _handle_escape_file_read(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -18296,7 +18296,7 @@ def _handle_escape_file_raw(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -21016,7 +21016,7 @@ def _handle_folder_download(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
 
@@ -21101,7 +21101,7 @@ def _handle_file_raw(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -21140,7 +21140,7 @@ def _handle_file_read(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -25867,7 +25867,7 @@ def _handle_file_delete(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -25898,7 +25898,7 @@ def _handle_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -25928,7 +25928,7 @@ def _handle_office_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -25962,7 +25962,7 @@ def _handle_file_create(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -25988,7 +25988,7 @@ def _handle_file_rename(handler, body):
         require(body, "session_id", "path", "new_name")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -26022,7 +26022,7 @@ def _handle_file_move(handler, body):
         require(body, "session_id", "path", "dest_dir")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -26119,7 +26119,7 @@ def _handle_create_dir(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -26140,7 +26140,7 @@ def _handle_file_reveal(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -26200,7 +26200,7 @@ def _handle_file_path(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
@@ -26229,7 +26229,7 @@ def _handle_file_open_vscode(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
     if s is None:
         return True
     try:
