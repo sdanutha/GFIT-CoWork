@@ -33,9 +33,8 @@ import pytest
 def isolated_session_env():
     """Isolate all SESSIONS-cache global state onto a throwaway temp dir.
 
-    ``api.models`` imports ``SESSION_DIR`` / ``SESSION_INDEX_FILE`` at module
-    load, so both ``api.config`` and ``api.models`` copies must be redirected.
-    Everything is restored on teardown (even on exception).
+    Every module reads the session paths from ``api.config``. Everything is
+    restored on teardown (even on exception).
     """
     from api import config as _cfg
     from api import models as _models
@@ -46,9 +45,7 @@ def isolated_session_env():
 
     old = {
         "cfg_SESSION_DIR": _cfg.SESSION_DIR,
-        "models_SESSION_DIR": getattr(_models, "SESSION_DIR", None),
         "cfg_SESSION_INDEX_FILE": _cfg.SESSION_INDEX_FILE,
-        "models_SESSION_INDEX_FILE": getattr(_models, "SESSION_INDEX_FILE", None),
         "SESSIONS": _cfg.SESSIONS,
         "LOCK": _cfg.LOCK,
         "SESSIONS_MAX": _cfg.SESSIONS_MAX,
@@ -57,9 +54,7 @@ def isolated_session_env():
 
     index_file = sessions_dir / "_index.json"
     _cfg.SESSION_DIR = sessions_dir
-    _models.SESSION_DIR = sessions_dir
     _cfg.SESSION_INDEX_FILE = index_file
-    _models.SESSION_INDEX_FILE = index_file
     _cfg.LOCK = threading.Lock()
     _models.LOCK = _cfg.LOCK
     _cfg.SESSIONS = collections.OrderedDict()
@@ -69,11 +64,7 @@ def isolated_session_env():
         yield sessions_dir
     finally:
         _cfg.SESSION_DIR = old["cfg_SESSION_DIR"]
-        if old["models_SESSION_DIR"] is not None:
-            _models.SESSION_DIR = old["models_SESSION_DIR"]
         _cfg.SESSION_INDEX_FILE = old["cfg_SESSION_INDEX_FILE"]
-        if old["models_SESSION_INDEX_FILE"] is not None:
-            _models.SESSION_INDEX_FILE = old["models_SESSION_INDEX_FILE"]
         _cfg.SESSIONS = old["SESSIONS"]
         _models.SESSIONS = old["SESSIONS"]
         _cfg.LOCK = old["LOCK"]

@@ -32,8 +32,8 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from api import config as _config
 
-from api.config import STATE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class ProfileRefused(Exception):
 
 
 def _path() -> Path:
-    return Path(STATE_DIR) / ROSTER_FILENAME
+    return Path(_config.STATE_DIR) / ROSTER_FILENAME
 
 
 def _load() -> dict[str, dict]:

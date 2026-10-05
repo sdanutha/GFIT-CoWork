@@ -79,8 +79,8 @@ class TestCancelStreamPreservesPartial:
         import api.models as _models
         monkeypatch.setattr(config, 'SESSION_DIR', session_dir)
         monkeypatch.setattr(config, 'SESSION_INDEX_FILE', session_dir / '_index.json')
-        monkeypatch.setattr(_models, 'SESSION_DIR', session_dir)
-        monkeypatch.setattr(_models, 'SESSION_INDEX_FILE', session_dir / '_index.json')
+        monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+        monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / '_index.json')
         config.SESSIONS.clear()
         _models.SESSIONS.clear()
 
@@ -142,8 +142,8 @@ class TestCancelStreamPreservesPartial:
         import api.models as _models
         monkeypatch.setattr(config, 'SESSION_DIR', session_dir)
         monkeypatch.setattr(config, 'SESSION_INDEX_FILE', session_dir / '_index.json')
-        monkeypatch.setattr(_models, 'SESSION_DIR', session_dir)
-        monkeypatch.setattr(_models, 'SESSION_INDEX_FILE', session_dir / '_index.json')
+        monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+        monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / '_index.json')
         config.SESSIONS.clear()
         _models.SESSIONS.clear()
 
@@ -186,8 +186,8 @@ class TestCancelStreamPreservesPartial:
         import api.models as _models
         monkeypatch.setattr(config, 'SESSION_DIR', session_dir)
         monkeypatch.setattr(config, 'SESSION_INDEX_FILE', session_dir / '_index.json')
-        monkeypatch.setattr(_models, 'SESSION_DIR', session_dir)
-        monkeypatch.setattr(_models, 'SESSION_INDEX_FILE', session_dir / '_index.json')
+        monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+        monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / '_index.json')
         config.SESSIONS.clear()
         _models.SESSIONS.clear()
 
@@ -232,8 +232,8 @@ class TestCancelStreamPreservesPartial:
         import api.models as _models
         monkeypatch.setattr(config, 'SESSION_DIR', session_dir)
         monkeypatch.setattr(config, 'SESSION_INDEX_FILE', session_dir / '_index.json')
-        monkeypatch.setattr(_models, 'SESSION_DIR', session_dir)
-        monkeypatch.setattr(_models, 'SESSION_INDEX_FILE', session_dir / '_index.json')
+        monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+        monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / '_index.json')
         config.SESSIONS.clear()
         _models.SESSIONS.clear()
 

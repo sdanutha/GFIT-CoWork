@@ -158,8 +158,8 @@ def two_profile_message_homes(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "STATE_DIR", tmp_path / "webui-state", raising=False)
     monkeypatch.setattr(config, "SESSION_DIR", session_dir, raising=False)
     monkeypatch.setattr(config, "SESSION_INDEX_FILE", session_dir / "_index.json", raising=False)
-    monkeypatch.setattr(models_mod, "SESSION_DIR", session_dir, raising=False)
-    monkeypatch.setattr(models_mod, "SESSION_INDEX_FILE", session_dir / "_index.json", raising=False)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir, raising=False)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json", raising=False)
     monkeypatch.setattr(routes_mod, "_active_state_db_path", lambda: hiyuki_home / "state.db", raising=False)
 
     return {"sid": sid, "hiyuki": hiyuki_home, "maiko": maiko_home, "session_dir": session_dir}

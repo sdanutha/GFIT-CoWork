@@ -188,8 +188,8 @@ def test_writable_imported_session_accepts_only_a_marked_final_user_turn(monkeyp
     session.active_stream_id = None
     session.pending_started_at = None
     session.messages[-2]["_active_turn_token"] = token
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     session.save(touch_updated_at=False)
     session = Session.load(session.session_id)
     revision = regeneration_authority(session)

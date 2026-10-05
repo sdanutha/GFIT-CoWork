@@ -6,7 +6,6 @@ the watermark is set based on the copied messages' timestamps.
 On next load, merge with state.db may filter out messages incorrectly.
 """
 import copy
-import os
 import tempfile
 import threading
 import time
@@ -19,7 +18,6 @@ import pytest
 def isolated_session_env():
     """Isolate session state for testing duplicate + edit scenario."""
     from api import config as _cfg
-    from api import models as _models
     from pathlib import Path
     import collections
 
@@ -28,11 +26,8 @@ def isolated_session_env():
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
     # Snapshot config BEFORE any mutation so we always restore the real state.
-    # Note: api.models imports SESSION_DIR at module level, so we must update
-    # BOTH api.config.SESSION_DIR and api.models.SESSION_DIR.
     old_values = {
         'cfg_SESSION_DIR': _cfg.SESSION_DIR,
-        'models_SESSION_DIR': getattr(_models, 'SESSION_DIR', None),
         'SESSIONS': _cfg.SESSIONS,
         'LOCK': _cfg.LOCK,
         'SESSION_INDEX_FILE': _cfg.SESSION_INDEX_FILE,
@@ -42,7 +37,6 @@ def isolated_session_env():
     }
 
     _cfg.SESSION_DIR = sessions_dir
-    _models.SESSION_DIR = sessions_dir
     _cfg.SESSION_INDEX_FILE = sessions_dir / 'index.json'
     _cfg.LOCK = threading.Lock()
     _cfg.SESSIONS = collections.OrderedDict()
@@ -55,8 +49,6 @@ def isolated_session_env():
     finally:
         # Always restore, even on exception
         _cfg.SESSION_DIR = old_values['cfg_SESSION_DIR']
-        if old_values['models_SESSION_DIR'] is not None:
-            _models.SESSION_DIR = old_values['models_SESSION_DIR']
         _cfg.SESSIONS = old_values['SESSIONS']
         _cfg.LOCK = old_values['LOCK']
         _cfg.SESSION_INDEX_FILE = old_values['SESSION_INDEX_FILE']

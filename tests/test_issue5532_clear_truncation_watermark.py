@@ -27,6 +27,7 @@ cleared transcript) and pass with the fix.
 """
 from __future__ import annotations
 
+import api.config
 import json
 from io import BytesIO
 from types import SimpleNamespace
@@ -42,8 +43,8 @@ def _seed_session_dir(monkeypatch, tmp_path):
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
     return models
 
@@ -331,7 +332,7 @@ def test_clear_survives_startup_recovery(monkeypatch, tmp_path):
     # route so the .bak-drop path is exercised end to end.
     _call_clear(monkeypatch, "issue5532recover")
 
-    session_dir = models.SESSION_DIR
+    session_dir = api.config.SESSION_DIR
     live_path = session_dir / "issue5532recover.json"
     # The stale pre-clear backup must be gone (so recovery can't undo the clear).
     assert not live_path.with_suffix(".json.bak").exists(), (

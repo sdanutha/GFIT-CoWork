@@ -1,4 +1,5 @@
 """A gateway-owned run must survive a WebUI restart instead of being marked interrupted."""
+import api.config
 from collections import OrderedDict
 import io
 import json
@@ -21,8 +22,8 @@ from api.models import new_session
 def isolated_sessions(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
     monkeypatch.setenv("HERMES_WEBUI_CHAT_BACKEND", "gateway")
     monkeypatch.setenv("HERMES_WEBUI_GATEWAY_USE_RUNS_API", "1")
@@ -59,7 +60,7 @@ def _orphaned_gateway_turn(run_id="run_survivor", stream_id="stream-before-resta
 
 
 def _saved(session_id):
-    return json.loads((models.SESSION_DIR / f"{session_id}.json").read_text())
+    return json.loads((api.config.SESSION_DIR / f"{session_id}.json").read_text())
 
 
 def _wait_for_reattach_threads(timeout=10.0):

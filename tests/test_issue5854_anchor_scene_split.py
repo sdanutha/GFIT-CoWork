@@ -27,7 +27,7 @@ import api.models as M
 @pytest.fixture
 def session_store(tmp_path, monkeypatch):
     sdir = tmp_path / "sessions"
-    monkeypatch.setattr(M, "SESSION_DIR", sdir)
+    monkeypatch.setattr("api.config.SESSION_DIR", sdir)
     sdir.mkdir(parents=True, exist_ok=True)
     return sdir
 

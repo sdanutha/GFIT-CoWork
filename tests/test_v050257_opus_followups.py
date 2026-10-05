@@ -31,6 +31,7 @@ new shape.
 
 from __future__ import annotations
 
+import api.config
 import os
 import stat
 import sys
@@ -186,8 +187,8 @@ def test_session_load_metadata_only_returns_instance_not_dict():
         import json as _json
         sid = "test1234abcd"
         from api import models
-        original = models.SESSION_DIR
-        models.SESSION_DIR = Path(tmpd)
+        original = api.config.SESSION_DIR
+        api.config.SESSION_DIR = Path(tmpd)
         try:
             session_file = Path(tmpd) / f"{sid}.json"
             session_file.write_text(_json.dumps({
@@ -201,7 +202,7 @@ def test_session_load_metadata_only_returns_instance_not_dict():
             }))
             result = Session.load_metadata_only(sid)
         finally:
-            models.SESSION_DIR = original
+            api.config.SESSION_DIR = original
 
     # Result must be a Session instance — not None and not a dict.
     assert result is not None, "load_metadata_only returned None for valid session"

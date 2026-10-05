@@ -56,8 +56,8 @@ def test_session_load_collapses_adjacent_duplicate_partials(tmp_path, monkeypatc
     sid = "abc123"
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
 
     payload = {
         "session_id": sid,

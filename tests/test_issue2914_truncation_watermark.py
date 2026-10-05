@@ -53,8 +53,8 @@ def test_undo_persists_truncation_watermark_at_new_tail(monkeypatch, tmp_path):
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     session = Session(
@@ -93,8 +93,8 @@ def test_truncate_endpoint_also_truncates_context_messages(monkeypatch, tmp_path
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     session = Session(
@@ -153,8 +153,8 @@ def test_truncate_endpoint_compaction_leading_context_row(monkeypatch, tmp_path)
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
     monkeypatch.setattr(
         "api.config._evict_session_agent",
@@ -212,8 +212,8 @@ def test_truncate_without_context_messages_truncation_leaks_to_agent(monkeypatch
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     session = Session(
@@ -274,8 +274,8 @@ def test_edit_then_new_turn_then_undo_leaks_original_via_state_db(monkeypatch, t
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     # Step 1: Initial message "triangle"
@@ -393,8 +393,8 @@ def test_save_does_not_auto_clear_truncation_watermark(monkeypatch, tmp_path):
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     session = Session(
@@ -443,8 +443,8 @@ def test_streaming_finalize_preserves_new_turns_after_edit(monkeypatch, tmp_path
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     # Pre-Edit context (after Edit, watermark = 101.0)
@@ -535,8 +535,8 @@ def test_streaming_finalize_does_not_leak_original_after_edit(monkeypatch, tmp_p
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     # Pre-Edit context (after Edit, watermark = 101.0)
@@ -624,8 +624,8 @@ def test_edit_does_not_leak_original_message_into_context_via_reconcile(monkeypa
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     # After Edit + new turn, sidecar has:

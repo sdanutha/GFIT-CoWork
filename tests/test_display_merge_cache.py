@@ -29,8 +29,7 @@ def routes_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_WEBUI_STATE_DIR", str(state_dir))
     monkeypatch.setattr(config, "STATE_DIR", state_dir)
     monkeypatch.setattr(config, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     with routes._display_merge_cache_lock:
         routes._display_merge_cache.clear()
     yield SimpleNamespace(config=config, models=models, routes=routes)

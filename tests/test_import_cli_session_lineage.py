@@ -2,7 +2,8 @@ import json
 
 
 def test_import_cli_session_preserves_parent_session_id():
-    from api.models import import_cli_session, SESSION_DIR, Session
+    from api.config import SESSION_DIR
+    from api.models import import_cli_session, Session
 
     parent_id = 'parent_lineage_001'
     child_id = 'child_lineage_001'

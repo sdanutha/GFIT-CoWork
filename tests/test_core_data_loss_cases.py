@@ -11,6 +11,7 @@ Both are regression tests — they should FAIL against the current code
 """
 from __future__ import annotations
 
+import api.config
 import api.models as models
 
 
@@ -314,8 +315,8 @@ def test_truncation_boundary_survives_save_load(monkeypatch, tmp_path):
     """truncation_boundary must be persisted to JSON and restored on load."""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     sid = "boundary_save_load"
@@ -341,8 +342,8 @@ def test_truncation_boundary_none_survives_save_load(monkeypatch, tmp_path):
     """When truncation_boundary is None, it must survive save/load as None."""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     sid = "boundary_none_save"
@@ -369,8 +370,8 @@ def test_reconciled_passes_truncation_boundary(monkeypatch, tmp_path):
     to merge_session_messages_append_only so empty-sidecar recovery uses it."""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     sid = "reconciled_boundary"
@@ -467,9 +468,9 @@ def test_core_a_route_full_session_load_does_not_resurrect_deleted_turns(tmp_pat
 
     sess_dir = tmp_path / "sessions"
     sess_dir.mkdir()
-    orig_dir, orig_index = models.SESSION_DIR, models.SESSION_INDEX_FILE
-    models.SESSION_DIR = sess_dir
-    models.SESSION_INDEX_FILE = sess_dir / "_index.json"
+    orig_dir, orig_index = api.config.SESSION_DIR, api.config.SESSION_INDEX_FILE
+    api.config.SESSION_DIR = sess_dir
+    api.config.SESSION_INDEX_FILE = sess_dir / "_index.json"
     models.SESSIONS.clear()
 
     saved = {
@@ -514,5 +515,5 @@ def test_core_a_route_full_session_load_does_not_resurrect_deleted_turns(tmp_pat
         for name, val in saved.items():
             if val is not None:
                 setattr(routes, name, val)
-        models.SESSION_DIR, models.SESSION_INDEX_FILE = orig_dir, orig_index
+        api.config.SESSION_DIR, api.config.SESSION_INDEX_FILE = orig_dir, orig_index
         models.SESSIONS.clear()

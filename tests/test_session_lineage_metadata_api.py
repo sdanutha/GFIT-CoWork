@@ -1,5 +1,6 @@
 """Regression tests for /api/sessions lineage metadata used by sidebar collapse."""
 
+import api.config
 import json
 import sqlite3
 import time
@@ -18,15 +19,15 @@ def _isolate(tmp_path, monkeypatch):
     index_file = session_dir / "_index.json"
     state_db = tmp_path / "state.db"
     index_file.write_text("[]", encoding="utf-8")
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: state_db)
     monkeypatch.setattr(models, "_start_session_index_rebuild_thread", lambda: None)
 
     def uncached_persisted_session_ids():
         return frozenset(
             p.stem
-            for p in models.SESSION_DIR.glob("*.json")
+            for p in api.config.SESSION_DIR.glob("*.json")
             if not p.name.startswith("_")
         )
 

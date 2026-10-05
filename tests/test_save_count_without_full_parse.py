@@ -63,7 +63,7 @@ import api.models as M
 def session_store(tmp_path, monkeypatch):
     sdir = tmp_path / "sessions"
     sdir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(M, "SESSION_DIR", sdir)
+    monkeypatch.setattr("api.config.SESSION_DIR", sdir)
     monkeypatch.setattr(M, "SESSIONS", OrderedDict())
     return sdir
 

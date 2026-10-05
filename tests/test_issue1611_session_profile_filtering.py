@@ -478,7 +478,7 @@ def test_get_session_rejects_cli_session_from_inactive_profile():
          patch("api.profiles.get_active_profile_name", return_value="default"), \
          patch("api.routes.get_session", side_effect=KeyError), \
          patch("api.models.get_session", side_effect=KeyError), \
-         patch("api.routes.SESSION_INDEX_FILE", SimpleNamespace(exists=lambda: False)), \
+         patch("api.config.SESSION_INDEX_FILE", SimpleNamespace(exists=lambda: False)), \
          patch("api.routes._lookup_cli_session_metadata", return_value={"profile": "other"}), \
          patch("api.routes.get_cli_session_messages", return_value=[{"role": "user", "content": "foreign profile secret"}]), \
          patch("api.routes.bad", side_effect=fake_bad), \
@@ -553,7 +553,7 @@ def test_missing_session_under_nondefault_profile_still_404_cli_branch():
          patch("api.profiles.get_active_profile_name", return_value="research"), \
          patch("api.routes.get_session", side_effect=KeyError), \
          patch("api.models.get_session", side_effect=KeyError), \
-         patch("api.routes.SESSION_INDEX_FILE", SimpleNamespace(exists=lambda: False)), \
+         patch("api.config.SESSION_INDEX_FILE", SimpleNamespace(exists=lambda: False)), \
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \

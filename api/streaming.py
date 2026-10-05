@@ -27,13 +27,14 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+from api import config as _config
 from api.config import (
     get_config,
     STREAMS, STREAMS_LOCK, CANCEL_FLAGS, AGENT_INSTANCES, STREAM_PARTIAL_TEXT,
     STREAM_REASONING_TEXT, STREAM_LIVE_TOOL_CALLS,
     STREAM_GOAL_RELATED, PENDING_GOAL_CONTINUATION,
     STREAM_LAST_EVENT_ID,
-    LOCK, SESSIONS, SESSIONS_MAX, SESSION_DIR,
+    LOCK, SESSIONS, SESSIONS_MAX,
     _get_session_agent_lock, _alias_session_agent_lock,
     _set_thread_env, _clear_thread_env,
     register_active_run, update_active_run, unregister_active_run,
@@ -5594,7 +5595,7 @@ def _preserve_pre_compression_snapshot(s, old_sid: str) -> None:
     agent's new continuation id. The old JSON must remain on disk for lineage
     traversal, but it should not continue to appear as an active sidebar row.
     """
-    old_path = SESSION_DIR / f'{old_sid}.json'
+    old_path = _config.SESSION_DIR / f'{old_sid}.json'
     if not old_path.exists():
         return
     try:
@@ -11361,8 +11362,8 @@ def _run_agent_streaming(
             # Per-session toolset override (#493): if the session has
             # enabled_toolsets set, use that instead of the global config.
             try:
-                from api.models import Session, SESSION_DIR
-                _session_path = SESSION_DIR / f"{session_id}.json"
+                from api.models import Session
+                _session_path = _config.SESSION_DIR / f"{session_id}.json"
                 if _session_path.exists():
                     _session_meta = Session.load_metadata_only(session_id)
                     # load_metadata_only returns a Session INSTANCE, not a dict.

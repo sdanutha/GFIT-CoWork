@@ -13,7 +13,7 @@ from api import models, routes, workspace
 def _write_session_sidecar(monkeypatch, tmp_path, session):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "_write_session_index", lambda **_kwargs: None)
     sidecar = session_dir / f"{session.session_id}.json"
     sidecar.write_text(
@@ -451,7 +451,7 @@ def test_persisted_list_recovery_anchors_later_create_dir_to_fallback_a(
     selected = {"workspace": str(fallback_a)}
     sid = "sess-http-authority"
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
     monkeypatch.setattr(models, "_write_session_index", lambda **_kwargs: None)
     monkeypatch.setattr(workspace, "_home_path", lambda: tmp_path)

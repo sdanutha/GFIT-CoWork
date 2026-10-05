@@ -838,7 +838,7 @@ def test_handoff_summary_persistence_targets_both_backends_for_messaging_session
     mock_sessions.mkdir()
 
     monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: mock_home)
-    monkeypatch.setattr(models, "SESSION_DIR", mock_sessions)
+    monkeypatch.setattr("api.config.SESSION_DIR", mock_sessions)
 
     conn = _new_state_db(mock_home / "state.db")
     try:
@@ -902,7 +902,7 @@ def test_persisted_handoff_summary_deduplicates_identical_tail_markers(tmp_path,
     mock_sessions = tmp_path / "sessions"
     mock_sessions.mkdir()
     monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: mock_home)
-    monkeypatch.setattr(models, "SESSION_DIR", mock_sessions)
+    monkeypatch.setattr("api.config.SESSION_DIR", mock_sessions)
 
     conn = _new_state_db(mock_home / "state.db")
     try:

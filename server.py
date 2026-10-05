@@ -101,7 +101,8 @@ logger = logging.getLogger(__name__)
 
 from api.request_logging import emit_request_log
 from api.auth import check_auth_or_close, reset_request_auth_state
-from api.config import HOST, PORT, STATE_DIR, SESSION_DIR, DEFAULT_WORKSPACE
+from api import config as api_config
+from api.config import HOST, PORT, DEFAULT_WORKSPACE
 from api.helpers import (
     j,
     advertise_connection_close,
@@ -582,7 +583,7 @@ def main() -> None:
         from api.models import _active_state_db_path
         from api.session_recovery import recover_all_sessions_on_startup
         result = recover_all_sessions_on_startup(
-            SESSION_DIR,
+            api_config.SESSION_DIR,
             rebuild_index=True,
             state_db_path=_active_state_db_path(),
         )
@@ -618,8 +619,8 @@ def main() -> None:
         else:
             print('[ok] Agent dependencies installed successfully.', flush=True)
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    api_config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    api_config.SESSION_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_WORKSPACE.mkdir(parents=True, exist_ok=True)
 
     try:

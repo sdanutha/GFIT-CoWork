@@ -5,6 +5,7 @@ leg: each settled turn re-appended every empty recovered anchor once more.
 """
 from __future__ import annotations
 
+import api.config
 import copy
 import json
 import os
@@ -452,8 +453,8 @@ def test_bool_ids_do_not_survive_save_load_into_minted_collision(tmp_path, monke
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     monkeypatch.setattr(run_journal, "_default_session_dir", lambda: sessions)
-    monkeypatch.setattr(models, "SESSION_DIR", sessions)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", sessions / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", sessions)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", sessions / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", type(models.SESSIONS)())
 
     display, context = _identity_hole_history(True)
@@ -481,8 +482,8 @@ def _isolated_session_store(tmp_path, monkeypatch):
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     monkeypatch.setattr(run_journal, "_default_session_dir", lambda: sessions)
-    monkeypatch.setattr(models, "SESSION_DIR", sessions)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", sessions / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", sessions)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", sessions / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", type(models.SESSIONS)())
     return sessions
 
@@ -533,7 +534,7 @@ def test_handle_chat_sync_passes_result_turn_authority_to_settlement(tmp_path, m
     from api import models, routes
 
     _isolated_session_store(tmp_path, monkeypatch)
-    monkeypatch.setattr(routes, "SESSION_INDEX_FILE", models.SESSION_INDEX_FILE)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", api.config.SESSION_INDEX_FILE)
     monkeypatch.setattr(routes, "get_session", models.get_session)
     monkeypatch.setattr(routes, "title_from", models.title_from)
     monkeypatch.setattr(routes, "get_config", lambda: {"model": "m", "provider": "p"})

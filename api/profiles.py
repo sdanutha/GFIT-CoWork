@@ -2887,3 +2887,14 @@ def delete_profile_api(name: str) -> dict:
     _invalidate_list_profiles_cache()
     _invalidate_root_profile_cache()
     return {'ok': True, 'name': name}
+
+
+def gateway_session_metadata_path() -> Path:
+    """The Hermes Agent gateway's session metadata file (``sessions/sessions.json``)
+    in the active Profile's home, or the process's ``HERMES_HOME`` when the
+    Profile home cannot be resolved."""
+    try:
+        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
+    except Exception:
+        hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser().resolve()
+    return hermes_home / "sessions" / "sessions.json"

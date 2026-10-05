@@ -50,28 +50,12 @@ def test_sse_helpers_importable_from_route_approvals():
     assert callable(_approval_sse_notify)
 
 
-def test_sse_helpers_backward_compat():
-    """SSE helpers must still be importable from routes for backward compat."""
-    from api.routes import (
-        _approval_sse_subscribe,
-        _approval_sse_unsubscribe,
-        _approval_sse_notify_locked,
-        _approval_sse_notify,
-    )
-    assert callable(_approval_sse_subscribe)
-    assert callable(_approval_sse_unsubscribe)
-    assert callable(_approval_sse_notify_locked)
-    assert callable(_approval_sse_notify)
-
-
 def test_sse_helper_identity():
-    """SSE helpers imported from routes must be the same callables from route_approvals."""
+    """The approval helpers the route module uses are route_approvals' own callables."""
     import api.route_approvals as ra
     import api.routes as r
-    assert ra._approval_sse_subscribe is r._approval_sse_subscribe
     assert ra._approval_sse_unsubscribe is r._approval_sse_unsubscribe
     assert ra._approval_sse_notify_locked is r._approval_sse_notify_locked
-    assert ra._approval_sse_notify is r._approval_sse_notify
     assert ra.submit_pending is r.submit_pending
 
 

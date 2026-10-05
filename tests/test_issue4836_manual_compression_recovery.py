@@ -97,8 +97,8 @@ def _msg(role, content, ts):
 def test_manual_compress_persists_truncation_boundary(monkeypatch, cleanup_test_sessions, tmp_path):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     original_messages = [
@@ -135,8 +135,8 @@ def test_manual_compress_persists_truncation_boundary(monkeypatch, cleanup_test_
 def test_manual_compress_blocks_state_db_replay(monkeypatch, cleanup_test_sessions, tmp_path):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     sidecar = [

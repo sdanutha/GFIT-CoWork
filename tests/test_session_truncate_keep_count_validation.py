@@ -57,8 +57,8 @@ def _make_session(monkeypatch, tmp_path, sid):
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
 
     msgs = [

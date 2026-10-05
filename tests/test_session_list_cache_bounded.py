@@ -199,8 +199,8 @@ def test_sidebar_metadata_only_projects_existing_index_rows(monkeypatch, tmp_pat
         "profile": "default",
         **heavy_fields,
     }]))
-    monkeypatch.setattr(models, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_path)
     monkeypatch.setattr(models, "SESSIONS", {})
     monkeypatch.setattr(models, "_persisted_session_ids_snapshot", lambda: {"indexed"})
     monkeypatch.setattr(models, "_active_stream_ids", lambda: set())

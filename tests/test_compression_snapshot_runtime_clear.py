@@ -1,3 +1,4 @@
+import api.config
 import json
 
 from api import models
@@ -30,12 +31,12 @@ class FakeSession:
             "touch_updated_at": touch_updated_at,
             "skip_index": skip_index,
         }
-        path = streaming.SESSION_DIR / f"{self.session_id}.json"
+        path = api.config.SESSION_DIR / f"{self.session_id}.json"
         path.write_text(json.dumps(self.saved_payload), encoding="utf-8")
 
 
 def test_preserve_pre_compression_snapshot_clears_runtime_fields_while_restoring_continuation_state(tmp_path, monkeypatch):
-    monkeypatch.setattr(streaming, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     (tmp_path / "old_session.json").write_text(json.dumps({"messages": []}), encoding="utf-8")
     session = FakeSession()
 
@@ -71,8 +72,7 @@ def test_preserve_pre_compression_snapshot_clears_runtime_fields_while_restoring
 
 
 def test_preserve_pre_compression_snapshot_load_and_mark_branch_clears_runtime_fields(tmp_path, monkeypatch):
-    monkeypatch.setattr(streaming, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     old_payload = {
         "session_id": "old_session",
         "title": "Archived parent",
@@ -106,7 +106,7 @@ def test_preserve_pre_compression_snapshot_load_and_mark_branch_clears_runtime_f
 
 def test_preserve_pre_compression_snapshot_does_not_leave_continuation_marked_as_snapshot(tmp_path, monkeypatch):
     """A continuation loaded from an old snapshot must not remain hidden."""
-    monkeypatch.setattr(streaming, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     (tmp_path / "old_session.json").write_text(json.dumps({"messages": []}), encoding="utf-8")
     session = FakeSession()
     session.pre_compression_snapshot = True

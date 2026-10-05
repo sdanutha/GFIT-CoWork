@@ -35,7 +35,7 @@ def test_session_save_rejects_unsafe_session_id(tmp_path, monkeypatch):
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
 
     session = models.Session(session_id="../escape", workspace=str(tmp_path), messages=[])
 

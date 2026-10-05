@@ -89,10 +89,9 @@ def test_anchor_scene_persistence_round_trip_outside_provider_messages(tmp_path,
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     session = Session(
@@ -175,10 +174,9 @@ def test_anchor_scene_persistence_rejects_cross_profile_write(tmp_path, monkeypa
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     session = Session(
@@ -329,10 +327,9 @@ def test_anchor_scene_persistence_rejects_invalid_scene(tmp_path, monkeypatch):
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     Session(
@@ -368,10 +365,9 @@ def test_anchor_scene_persistence_prefers_unique_ref_over_stale_index(tmp_path, 
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     messages = [
@@ -424,10 +420,9 @@ def test_anchor_scene_persistence_rejects_duplicate_client_ref_over_stale_index(
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     messages = [
@@ -475,10 +470,9 @@ def test_anchor_scene_persistence_converts_window_index_to_full_index(tmp_path, 
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     Session(
@@ -533,10 +527,9 @@ def test_anchor_scene_persistence_rejects_unmatched_ref_without_index(tmp_path, 
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     Session(
@@ -579,10 +572,9 @@ def test_anchor_scene_persistence_rejects_ref_miss_stale_index_mismatch(tmp_path
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSIONS", models.SESSIONS)
 
     Session(
@@ -2148,8 +2140,7 @@ def test_runtime_journal_anchor_scene_matches_settled_hydrated_visible_semantics
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
 
     session_id = "anchorparity1"
     stream_id = "stream-parity-1"

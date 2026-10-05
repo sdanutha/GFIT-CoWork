@@ -7,7 +7,7 @@ import re as _re
 import tempfile
 from pathlib import Path
 
-from api.config import MAX_UPLOAD_BYTES, STATE_DIR
+from api.config import MAX_UPLOAD_BYTES
 from api.helpers import (
     arm_connection_close_if_body_pending,
     j,
@@ -25,6 +25,7 @@ from api.workspace import (
     rmtree_anchored,
     unlink_anchored,
 )
+from api import config as _config
 
 
 def _max_extracted_bytes() -> int:
@@ -213,7 +214,7 @@ def _attachment_root() -> Path:
     override = os.getenv('HERMES_WEBUI_ATTACHMENT_DIR', '').strip()
     if override:
         return Path(override).expanduser().resolve()
-    return (STATE_DIR / 'attachments').resolve()
+    return (_config.STATE_DIR / 'attachments').resolve()
 
 
 def _upload_destination(session_id: str, safe_name: str, dest_dir: Path | None = None) -> Path:

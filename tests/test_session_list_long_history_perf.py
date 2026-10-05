@@ -285,6 +285,7 @@ def test_sessions_api_runtime_overlay_sorts_active_rows_first(monkeypatch):
     )
 
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: {"stream-running"})
+    monkeypatch.setattr("api.models._active_stream_ids", lambda: {"stream-running"})
     with routes.LOCK:
         previous = routes.SESSIONS.get("older-running")
         routes.SESSIONS["older-running"] = live

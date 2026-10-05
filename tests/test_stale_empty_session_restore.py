@@ -198,7 +198,7 @@ def _invoke_api_session_keyerror(*, index_json, cli_messages):
 
     parsed = urlparse("/api/session?session_id=gone_001&messages=0&resolve_model=0")
     with patch("api.routes.get_session", side_effect=KeyError("gone_001")), \
-         patch("api.routes.SESSION_INDEX_FILE", _FakeIndexFile()), \
+         patch("api.config.SESSION_INDEX_FILE", _FakeIndexFile()), \
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.get_cli_session_messages", return_value=cli_messages), \
          patch("api.routes.j", side_effect=fake_j), \

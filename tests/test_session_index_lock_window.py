@@ -28,8 +28,8 @@ def test_session_index_fast_path_keeps_json_work_outside_global_lock(monkeypatch
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
 
     old = models.Session(session_id="idx_old", title="Old", updated_at=1.0)
     updated = models.Session(session_id="idx_updated", title="Updated", updated_at=20.0)

@@ -22,8 +22,8 @@ def test_repair_safe_session_recovery_restores_backup_and_rebuilds_index(tmp_pat
     live.unlink()
     index = tmp_path / "_index.json"
     index.write_text(json.dumps([]), encoding="utf-8")
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(_m, "SESSION_INDEX_FILE", index)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index)
     stale = _m.Session(
         session_id="stale_cached",
         title="stale",

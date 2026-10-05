@@ -7,6 +7,7 @@ initial streaming turn, the session still looks like Untitled + 0-messages
 The sidebar filter must exempt actively-streaming sessions from the empty-
 Untitled rule so they remain visible while the user navigates away.
 """
+import api.config
 import json
 
 import pytest
@@ -27,8 +28,8 @@ def _isolate(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     SESSIONS.clear()
     STREAMS.clear()
     yield session_dir
@@ -94,7 +95,7 @@ def test_streaming_session_visible_in_sidebar_fullscan(_isolate):
     _simulate_first_turn_streaming(s)
 
     # Corrupt the index to force the full-scan fallback
-    models.SESSION_INDEX_FILE.write_text("INVALID JSON")
+    api.config.SESSION_INDEX_FILE.write_text("INVALID JSON")
 
     ids = {row["session_id"] for row in all_sessions()}
     assert s.session_id in ids, (
@@ -108,7 +109,7 @@ def test_empty_session_still_hidden_fullscan(_isolate):
     """Empty Untitled session must still be hidden on the full-scan path."""
     s = new_session()
 
-    models.SESSION_INDEX_FILE.write_text("INVALID JSON")
+    api.config.SESSION_INDEX_FILE.write_text("INVALID JSON")
 
     ids = {row["session_id"] for row in all_sessions()}
     assert s.session_id not in ids, (
@@ -149,7 +150,7 @@ def test_pending_message_without_stream_still_visible(_isolate):
     # No active_stream_id set
     s.save()
 
-    models.SESSION_INDEX_FILE.write_text("INVALID JSON")
+    api.config.SESSION_INDEX_FILE.write_text("INVALID JSON")
 
     ids = {row["session_id"] for row in all_sessions()}
     assert s.session_id in ids, (
@@ -192,7 +193,7 @@ def test_messageful_session_missing_from_index_is_recovered_in_sidebar(_isolate)
     # the sidecar file, but a non-empty sidebar index lacks this session and the
     # in-memory runtime overlay is gone.
     assert Session.load(s.session_id) is not None
-    models.SESSION_INDEX_FILE.write_text(
+    api.config.SESSION_INDEX_FILE.write_text(
         json.dumps([indexed.compact()]),
         encoding="utf-8",
     )

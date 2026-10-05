@@ -1,5 +1,6 @@
 """Native-image turns keep model context private from the visible transcript."""
 
+import api.config
 import json
 import shutil
 import sqlite3
@@ -174,7 +175,7 @@ def test_trusted_notification_prefix_keeps_image_turn_clean_after_reload(
 
     session_dir = tmp_path / "webui-sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     models.Session(
         session_id=session.session_id,
         workspace="/fixture",
@@ -270,9 +271,8 @@ def test_get_session_projects_marked_payload_conflict_in_full_and_limited_paths(
     session_dir.mkdir()
     db_path = tmp_path / "state.db"
     _write_state_db(db_path, session_id, [(mirror, timestamp, state_payload)])
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     session = models.Session(
         session_id=session_id,
@@ -410,9 +410,8 @@ def test_truncation_watermark_keeps_proven_retained_image_row_only(
                 (44, session_id, "user", mirror, retained_tail_timestamp, "SAME-SECOND-REMOVED-PAYLOAD"),
             ],
         )
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     session = models.Session(
         session_id=session_id,
@@ -593,9 +592,8 @@ def test_get_session_projects_parent_only_payload_conflict_without_losing_parent
     session_dir.mkdir()
     db_path = tmp_path / "state.db"
     _write_state_db(db_path, session_id, [(mirror, timestamp, state_payload)])
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     parent = models.Session(
         session_id=parent_id,
@@ -765,9 +763,8 @@ def test_get_session_keeps_pending_agent_projection_private_but_in_context(
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     session = models.Session(
         session_id=session_id,
@@ -1118,7 +1115,7 @@ def test_settlement_reload_and_next_turn_keep_one_clean_bubble_and_rich_context(
     token = identity["token"]
     session_dir = tmp_path / "webui-sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     persisted = models.Session(
         session_id=session.session_id,
         workspace="/fixture",

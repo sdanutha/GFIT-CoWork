@@ -23,7 +23,6 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from api.config import STATE_DIR
 from api.helpers import redact_session_data
 # _redact_fn_cached is the ALWAYS-ON credential redactor (agent redactor with
 # force=True + local fallback regex). Unlike redact_session_data it does NOT
@@ -31,10 +30,11 @@ from api.helpers import redact_session_data
 # hard safety boundary that must redact credentials even if the operator turned
 # API-response redaction off.
 from api.helpers import _redact_fn_cached as _force_redact_credentials
+from api import config as _config
 
 logger = logging.getLogger(__name__)
 
-SHARES_DIR = STATE_DIR / "shares"
+SHARES_DIR = _config.STATE_DIR / "shares"
 _SHARE_LOCK = threading.Lock()
 
 
