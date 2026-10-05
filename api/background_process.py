@@ -48,6 +48,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from api import run_registry
 from api.process_event_utils import (
     ASYNC_DELIVERY_ROUTING_RETRY_SECONDS,
     claim_async_delegation_delivery,
@@ -331,7 +332,7 @@ def _active_run_ids_for_session(
             for run_key in stale_keys:
                 (_cfg.ACTIVE_RUNS or {}).pop(run_key, None)
         for run_key in stale_keys:
-            _cfg.unregister_stream_owner(run_key)
+            run_registry.forget_owner(run_key)
         return matches
     except Exception:
         logger.debug(
@@ -1694,8 +1695,8 @@ def _session_has_active_turn(session_id: str) -> bool:
         return True
 
     # Pre-ACTIVE_RUNS publication window (#6959 gate): the agent worker
-    # publishes its stream — register_stream_owner() first, then the live
-    # STREAMS channel — BEFORE it registers in ACTIVE_RUNS. In that window a
+    # publishes its stream (api.run_registry.open_stream: owner first, then the
+    # live STREAMS channel) BEFORE it registers in ACTIVE_RUNS. In that window a
     # same-session live STREAMS entry means a turn is already (or about to be)
     # active, so it must count here: otherwise a sibling async-delegation
     # completion would pass the busy pre-check, reserve the per-origin

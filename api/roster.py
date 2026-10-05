@@ -405,12 +405,12 @@ def _resume_jobs(name: str) -> None:
 
 def _cancel_runs(name: str) -> None:
     """Stop Profile *name*'s running turns through the Stop path."""
-    from api.config import ACTIVE_RUNS, ACTIVE_RUNS_LOCK, STREAMS, STREAMS_LOCK
+    from api import run_registry
+    from api.config import ACTIVE_RUNS, ACTIVE_RUNS_LOCK
     from api.session_ownership import UserSessionOwnership
     from api.streaming import cancel_stream
 
-    with STREAMS_LOCK:
-        stream_ids = set(STREAMS)
+    stream_ids = set(run_registry.live_stream_ids())
     with ACTIVE_RUNS_LOCK:
         stream_ids |= set(ACTIVE_RUNS)
     owner = UserSessionOwnership(name)
