@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 import server
-from api.access import ADMIN_ONLY_MESSAGE, request_admission
+from api.access import request_admission
 from api.auth import COOKIE_NAME
 from tests._gfit_server import gfit_server as _gfit_server
 
@@ -100,13 +100,9 @@ def test_the_admins_page_shell_carries_the_admin_role(srv):
 def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(srv, conn):
     user, admin = _session(srv, USER), _session(srv, ADMIN)
 
-    status, body = conn.request("GET", "/api/providers", session=user)
-    assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
     status, html = conn.request("GET", "/", session=user)
     assert 'data-gfit-role="user"' in html
 
-    status, body = conn.request("GET", "/api/providers", session=admin)
-    assert status == 200, body
     status, html = conn.request("GET", "/", session=admin)
     assert 'data-gfit-role="admin"' in html
     status, body = conn.request("GET", "/api/profiles", session=admin)
@@ -118,10 +114,8 @@ def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(s
 def test_a_user_request_after_an_admin_request_on_one_connection_is_the_users(srv, conn):
     user, admin = _session(srv, USER), _session(srv, ADMIN)
 
-    assert conn.request("GET", "/api/providers", session=admin)[0] == 200
+    assert conn.request("GET", "/api/profiles", session=admin)[0] == 200
 
-    status, body = conn.request("GET", "/api/providers", session=user)
-    assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
     status, body = conn.request("GET", "/api/profiles", session=user)
     assert [p["name"] for p in body["profiles"]] == [USER]
     # Refused before its body is read, so the server closes the connection.

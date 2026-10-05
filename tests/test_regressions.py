@@ -237,7 +237,7 @@ def test_all_api_modules_importable(cleanup_test_sessions):
     """All api/ modules must be importable without NameError or ImportError.
     Catches missing imports introduced during future module splits.
     """
-    import ast, pathlib
+    import ast
     api_dir = REPO_ROOT / "api"
     for module_file in api_dir.glob("*.py"):
         src = module_file.read_text()
@@ -249,7 +249,7 @@ def test_all_api_modules_importable(cleanup_test_sessions):
 
 def test_server_py_importable(cleanup_test_sessions):
     """server.py must parse without syntax errors after any split."""
-    import ast, pathlib
+    import ast
     src = (REPO_ROOT / "server.py").read_text()
     try:
         ast.parse(src)
@@ -1202,97 +1202,3 @@ def test_reload_recovery_persists_durable_inflight_state(cleanup_test_sessions):
 
 
 # ── R18: OAuth onboarding must recognize credential_pool-only auth ───────────
-
-def test_provider_oauth_authenticated_accepts_credential_pool_entries(
-    cleanup_test_sessions, tmp_path
-):
-    """R18a: pool-only OAuth auth.json should count as authenticated.
-
-    Hermes runtime resolves Codex credentials from credential_pool; onboarding
-    must not insist on stale or duplicated providers[provider_id] entries.
-    """
-    _make_auth_json_with_credential_pool(
-        "openai-codex",
-        [
-            {
-                "id": "pool1",
-                "label": "device_code",
-                "source": "device_code",
-                "auth_type": "oauth",
-                "access_token": "***",
-                "refresh_token": "***",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-            }
-        ],
-        tmp_path,
-    )
-
-    from api.onboarding import _provider_oauth_authenticated
-
-    assert _provider_oauth_authenticated("openai-codex", tmp_path) is True
-
-
-def test_provider_oauth_authenticated_rejects_flag_only_credential_pool_entries(
-    cleanup_test_sessions, tmp_path
-):
-    """R18a2: metadata flags alone must not count as usable OAuth auth."""
-    _make_auth_json_with_credential_pool(
-        "openai-codex",
-        [
-            {
-                "id": "pool1",
-                "label": "device_code",
-                "source": "device_code",
-                "auth_type": "oauth",
-                "has_access_token": True,
-                "has_refresh_token": True,
-                "base_url": "https://chatgpt.com/backend-api/codex",
-            }
-        ],
-        tmp_path,
-    )
-
-    from api.onboarding import _provider_oauth_authenticated
-
-    assert _provider_oauth_authenticated("openai-codex", tmp_path) is False
-
-
-def test_status_from_runtime_marks_openai_codex_ready_from_credential_pool(
-    cleanup_test_sessions, tmp_path
-):
-    """R18b: provider_ready should be true when auth lives only in credential_pool."""
-    _make_auth_json_with_credential_pool(
-        "openai-codex",
-        [
-            {
-                "id": "pool1",
-                "label": "device_code",
-                "source": "device_code",
-                "auth_type": "oauth",
-                "access_token": "***",
-                "refresh_token": "***",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-            }
-        ],
-        tmp_path,
-    )
-
-    from api.onboarding import _status_from_runtime
-    import api.onboarding as _ob
-
-    orig_home = _ob._get_active_hermes_home
-    orig_found = _ob._HERMES_FOUND
-    _ob._get_active_hermes_home = lambda: tmp_path
-    _ob._HERMES_FOUND = True
-    try:
-        result = _status_from_runtime(
-            {"model": {"provider": "openai-codex", "default": "codex-mini-latest"}},
-            True,
-        )
-    finally:
-        _ob._get_active_hermes_home = orig_home
-        _ob._HERMES_FOUND = orig_found
-
-    assert result["provider_configured"] is True
-    assert result["provider_ready"] is True
-    assert result["setup_state"] == "ready"

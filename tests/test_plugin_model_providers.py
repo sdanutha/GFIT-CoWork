@@ -65,101 +65,6 @@ def _install_fake_hermes_cli(monkeypatch, *, authenticated: bool = True, model_i
     monkeypatch.setitem(sys.modules, "hermes_cli.auth", fake_auth)
 
 
-class TestPluginModelProvidersSettings:
-    def test_get_providers_includes_plugin_model_provider(self, monkeypatch, tmp_path):
-        _install_fake_yandex_plugin(monkeypatch)
-        _install_fake_hermes_cli(monkeypatch, model_ids=["deepseek-v4-flash/latest"])
-        monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
-
-        env_path = tmp_path / ".env"
-        env_path.write_text("YANDEX_API_KEY=test-yandex-key-12345\n", encoding="utf-8")
-
-        old_cfg = dict(config.cfg)
-        old_mtime = config._cfg_mtime
-        config.cfg.clear()
-        config.cfg["model"] = {"provider": "gemini"}
-        try:
-            config._cfg_mtime = config.Path(config._get_config_path()).stat().st_mtime
-        except Exception:
-            config._cfg_mtime = 0.0
-
-        from api.providers import get_providers
-
-        try:
-            result = get_providers()
-            yandex = next((p for p in result["providers"] if p["id"] == "yandex"), None)
-            assert yandex is not None, "plugin model-provider must appear in Settings → Providers"
-            assert yandex["display_name"] == "Yandex AI Studio"
-            assert yandex["has_key"] is True
-            assert yandex["configurable"] is True
-            assert yandex.get("is_plugin_provider") is True
-            assert yandex["models_total"] >= 1
-        finally:
-            config.cfg.clear()
-            config.cfg.update(old_cfg)
-            config._cfg_mtime = old_mtime
-            config.invalidate_models_cache()
-
-    def test_get_providers_plugin_key_source_from_auth_store(self, monkeypatch, tmp_path):
-        """Credential-pool auth must not be misreported as config_yaml."""
-        _install_fake_yandex_plugin(monkeypatch)
-
-        fake_pkg = types.ModuleType("hermes_cli")
-        fake_pkg.__path__ = []
-        fake_models = types.ModuleType("hermes_cli.models")
-        fake_models.list_available_providers = lambda: []
-        fake_models.provider_model_ids = lambda pid: []
-        fake_auth = types.ModuleType("hermes_cli.auth")
-        fake_auth.get_auth_status = lambda pid: (
-            {
-                "logged_in": True,
-                "configured": True,
-                "key_source": "credential_pool:yandex",
-            }
-            if pid == "yandex"
-            else {}
-        )
-        monkeypatch.setitem(sys.modules, "hermes_cli", fake_pkg)
-        monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_models)
-        monkeypatch.setitem(sys.modules, "hermes_cli.auth", fake_auth)
-        monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
-
-        old_cfg = dict(config.cfg)
-        old_mtime = config._cfg_mtime
-        config.cfg.clear()
-        config.cfg["model"] = {}
-        try:
-            config._cfg_mtime = config.Path(config._get_config_path()).stat().st_mtime
-        except Exception:
-            config._cfg_mtime = 0.0
-
-        from api.providers import get_providers
-
-        try:
-            result = get_providers()
-            yandex = next((p for p in result["providers"] if p["id"] == "yandex"), None)
-            assert yandex is not None
-            assert yandex["has_key"] is True
-            assert yandex["key_source"] == "credential_pool:yandex"
-            assert yandex["key_source"] != "config_yaml"
-        finally:
-            config.cfg.clear()
-            config.cfg.update(old_cfg)
-            config._cfg_mtime = old_mtime
-            config.invalidate_models_cache()
-
-    def test_set_provider_key_accepts_plugin_env_var(self, monkeypatch, tmp_path):
-        _install_fake_yandex_plugin(monkeypatch)
-        monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
-
-        from api.providers import set_provider_key
-
-        result = set_provider_key("yandex", "test-yandex-key-abcdef")
-        assert result["ok"] is True
-        env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-        assert "YANDEX_API_KEY=test-yandex-key-abcdef" in env_text
-
-
 class TestPluginOnlyExcludesStaticProviders:
     def test_bundled_agent_profiles_are_not_plugin_only(self, monkeypatch):
         """Agent bundled profiles must not hijack WebUI static/custom paths."""
@@ -178,13 +83,6 @@ class TestPluginOnlyExcludesStaticProviders:
             assert static_pid not in plugin_model_provider_ids()
         assert effective_provider_display_name("custom", _PROVIDER_DISPLAY) == "Custom"
         assert effective_provider_display_name("gemini", _PROVIDER_DISPLAY) == "Gemini"
-
-
-class TestPluginModelProvidersPanelFilter:
-    def test_providers_panel_includes_plugin_model_providers(self):
-        src = open("static/panels.js", encoding="utf-8").read()
-        assert "p.is_plugin_provider" in src
-        assert "filter(p=>p.configurable||p.is_oauth||p.is_custom||p.is_plugin_provider||p.is_self_hosted)" in src
 
 
 class TestPluginModelProvidersPicker:

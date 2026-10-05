@@ -5,7 +5,6 @@ from __future__ import annotations
 import builtins
 
 import api.config as config
-import api.onboarding as onboarding
 import api.providers as providers
 
 
@@ -59,10 +58,3 @@ def test_xiaomi_provider_settings_detects_env_key(monkeypatch, tmp_path):
     assert providers._PROVIDER_ENV_VAR["xiaomi"] == "XIAOMI_API_KEY"
     assert providers._provider_has_key("xiaomi") is True
 
-
-def test_onboarding_lists_xiaomi_api_key_help():
-    setup = onboarding._SUPPORTED_PROVIDER_SETUPS["xiaomi"]
-
-    assert setup["env_var"] == "XIAOMI_API_KEY"
-    assert setup["default_base_url"] == "https://api.xiaomimimo.com/v1"
-    assert {model["id"] for model in setup["models"]} >= {"mimo-v2.5-pro"}

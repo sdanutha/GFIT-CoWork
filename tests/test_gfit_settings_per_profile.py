@@ -74,7 +74,6 @@ def test_speech_settings_a_user_saved_are_reported_as_theirs(srv):
     {"sync_to_insights": True},
     {"auto_title_refresh_every": "5"},
     {"default_workspace": "/tmp"},
-    {"provider_cost_budget": 1},
     {"theme": "light", "api_redact_enabled": False},
 ])
 def test_a_user_cannot_change_a_deployment_setting(srv, change):
@@ -123,7 +122,7 @@ def test_the_deployment_settings_are_the_ones_named():
     # Adding a setting means deciding whose it is: change this list on purpose.
     assert config._SETTINGS_DEPLOYMENT_KEYS == {
         "default_workspace", "onboarding_completed", "sync_to_insights", "api_redact_enabled",
-        "dashboard_plugins", "auth_disabled_acknowledged", "provider_cost_budget", "bot_name",
+        "dashboard_plugins", "auth_disabled_acknowledged", "bot_name",
         "auto_title_refresh_every", "inflight_state_max_sessions", "inflight_state_max_messages",
         "inflight_state_max_tool_calls", "inflight_state_max_string_chars", "inflight_state_max_json_chars",
     }

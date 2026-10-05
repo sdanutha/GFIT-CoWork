@@ -258,7 +258,6 @@ class TestIndexHtmlIntegration:
             "icons.js",
             "i18n.js",
             "workspace.js",
-            "onboarding.js",
         ):
             # Either inline `?v=__WEBUI_VERSION__` or via the VQ constant
             # produces a URL string the cache lookup can match.

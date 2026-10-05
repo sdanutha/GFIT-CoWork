@@ -176,15 +176,6 @@ class TestSettingsSearch:
             "settings menu items wrapper must own vertical scrolling"
         )
 
-    def test_panels_js_handles_providers_pane(self):
-        """panels.js must handle the Providers pane in index building."""
-        idx = PANELS_JS.find("function _buildSettingsIndex()")
-        assert idx >= 0, "_buildSettingsIndex not found"
-        body = PANELS_JS[idx:idx + 2000]
-        assert "settingsPaneProviders" in body, (
-            "_buildSettingsIndex must handle Providers pane"
-        )
-
     def test_panels_js_handles_plugins_pane(self):
         """panels.js must handle the Plugins pane in index building."""
         idx = PANELS_JS.find("function _buildSettingsIndex()")
@@ -192,18 +183,6 @@ class TestSettingsSearch:
         body = PANELS_JS[idx:idx + 2000]
         assert "settingsPanePlugins" in body, (
             "_buildSettingsIndex must handle Plugins pane"
-        )
-
-    def test_settings_index_includes_provider_cards(self):
-        """Providers pane entries must index provider cards and API key fields."""
-        idx = PANELS_JS.find("function _buildSettingsIndex()")
-        assert idx >= 0, "_buildSettingsIndex not found"
-        body = PANELS_JS[idx:idx + 3500]
-        assert "pane.querySelectorAll('.provider-card')" in body, (
-            "_buildSettingsIndex must scan provider cards so Providers search is not empty"
-        )
-        assert "card.querySelectorAll('.provider-card-field')" in body, (
-            "_buildSettingsIndex must index provider card fields like API key controls"
         )
 
     def test_settings_index_includes_plugin_cards(self):
@@ -219,16 +198,14 @@ class TestSettingsSearch:
             "_buildSettingsIndex must scan plugin cards so Plugins search is not empty"
         )
 
-    def test_resolve_settings_field_rehydrates_provider_plugin_cards(self):
-        """Provider and plugin search entries must survive pane re-renders."""
+    def test_resolve_settings_field_rehydrates_plugin_cards(self):
+        """Plugin search entries must survive pane re-renders (the Providers
+        pane went with the Admin, ADR 0006)."""
         idx = PANELS_JS.find("function _resolveSettingsField(entry)")
         assert idx >= 0, "_resolveSettingsField not found"
         body = PANELS_JS[idx:idx + 2200]
-        assert "entry.cardName && (entry.sectionKey === 'providers' || entry.sectionKey === 'plugins')" in body, (
-            "_resolveSettingsField must re-find provider/plugin cards by name after lazy pane re-renders"
-        )
-        assert "card.querySelectorAll('.provider-card-field')" in body, (
-            "_resolveSettingsField must be able to re-find provider card fields by label"
+        assert "entry.cardName && entry.sectionKey === 'plugins'" in body, (
+            "_resolveSettingsField must re-find plugin cards by name after lazy pane re-renders"
         )
 
     def test_filter_settings_caps_results(self):

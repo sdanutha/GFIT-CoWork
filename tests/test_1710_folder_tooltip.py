@@ -39,7 +39,7 @@ class TestFolderTooltipGated:
         # ``else if(!isDirLike)`` (preceded by a symlink tooltip branch).
         # Accept either form.
         gated_legacy = "if(item.type!=='dir')nameEl.title=t('double_click_rename')"
-        gated_symlink = "if(!isDirLike)"
+        gated_symlink = "if(!isDirLike"
         unguarded = "    nameEl.className='file-name';nameEl.textContent=item.name;nameEl.title=t('double_click_rename');"
         assert gated_legacy in block or gated_symlink in block, (
             "tooltip assignment must be guarded so directories "

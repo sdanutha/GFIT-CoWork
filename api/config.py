@@ -7639,8 +7639,6 @@ def _has_explicit_pool_credentials(provider_id: str) -> bool:
     cost more than once per TTL window.
     """
     return bool(_pool_entry_payloads(provider_id))
-_provider_models_invalidated_ts: dict[str, float] = {}  # provider_id -> timestamp of last invalidation
-
 # Disk-backed in-memory cache for get_available_models().
 # Written to disk on every cache population so the cache survives server restarts.
 # Invalidated (file deleted) whenever a provider is added/changed/removed or
@@ -8441,37 +8439,6 @@ def invalidate_credential_pool_cache(provider_id: str):
         invalidate_account_usage_status_cache(_resolve_provider_alias(provider_id))
     except Exception:
         logger.debug("Failed to invalidate account usage status cache", exc_info=True)
-
-
-def invalidate_provider_models_cache(provider_id: str):
-    """Invalidate cached models for a single provider.
-
-    Also invalidates the full cache so that the next get_available_models()
-    call rebuilds all groups cleanly (the rebuilt provider is merged with any
-    other cached groups from the 24h TTL window).  After the next
-    get_available_models() call, _provider_models_invalidated_ts[provider_id]
-    is cleared so the provider's fresh models are used.
-
-    Args:
-        provider_id: canonical provider id (e.g. 'openai', 'anthropic', 'custom:my-key')
-    """
-    global _available_models_cache, _available_models_cache_ts
-    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _CREDENTIAL_POOL_CACHE
-    with _available_models_cache_lock:
-        _available_models_cache = None
-        _available_models_cache_ts = 0.0
-        _available_models_live_rebuild_ts = 0.0
-        _available_models_cache_source_fingerprint = None
-        _sync_models_cache_provenance()
-        _provider_models_invalidated_ts[provider_id] = time.time()
-        # Also evict the credential pool so the next cold path re-loads it.
-        # Must evict both the original key and its canonical form (load_pool
-        # may be called with either, and both paths cache under their own key),
-        # scoped to the active profile's cache key.
-        _cp_tag = _credential_pool_profile_tag()
-        _CREDENTIAL_POOL_CACHE.pop((_cp_tag, provider_id), None)
-        _CREDENTIAL_POOL_CACHE.pop((_cp_tag, _resolve_provider_alias(provider_id)), None)
-    _delete_models_cache_on_disk()
 
 
 def _get_label_for_model(model_id: str, existing_groups: list) -> str:
@@ -11614,7 +11581,6 @@ _SETTINGS_DEFAULTS = {
     "onboarding_completed": False,
     "send_key": "enter",  # 'enter', 'ctrl+enter', or 'shift+enter'
     "show_token_usage": False,  # show input/output token badge below assistant messages
-    "show_quota_chip": False,  # show ambient provider quota chip in composer footer (default off; wide desktop only when enabled, see style.css @media)
     "show_conversation_outline": False,  # show opt-in desktop jump-to-question outline panel
     "show_busy_placeholder_hint": False,  # opt-in busy composer placeholder hint
     "hide_empty_state_suggestions": False,  # hide the default new-chat suggestion buttons
@@ -11664,7 +11630,6 @@ _SETTINGS_DEFAULTS = {
     "hide_composer_workspace": False,  # hide workspace controls in composer footer/mobile config panel
     "hide_composer_mobile_config": False,  # hide mobile composer config button
     "hide_composer_model": False,  # hide model chip in composer footer/mobile config panel
-    "hide_composer_quota_chip": False,  # hide provider quota chip in composer footer
     "hide_composer_reasoning": False,  # hide reasoning chip in composer footer/mobile config panel
     "hide_composer_toolsets": False,  # hide toolsets chip in composer footer
     "hide_composer_status": False,  # hide status text in composer footer
@@ -11701,7 +11666,6 @@ _SETTINGS_DEFAULTS = {
     "auto_title_refresh_every": "0",  # adaptive title refresh: 0=off, 5/10/20=every N exchanges
     "default_message_mode": "steer",  # behavior when sending while agent is running: queue | interrupt | steer
     "auth_disabled_acknowledged": False,  # user acknowledged unauthenticated risk
-    "provider_cost_budget": None,
 }
 _SETTINGS_SPEECH_KEYS = {
     "tts_enabled",
@@ -11730,6 +11694,10 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     # The embedded terminal and session YOLO went with the Admin (ADR 0006).
     "terminal_auto_expand_on_output",
     "hide_composer_yolo",
+    # Provider quota went with the Admin (ADR 0006).
+    "show_quota_chip",
+    "hide_composer_quota_chip",
+    "provider_cost_budget",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -12036,7 +12004,6 @@ _SETTINGS_DEPLOYMENT_KEYS = frozenset({
     "api_redact_enabled",
     "dashboard_plugins",
     "auth_disabled_acknowledged",
-    "provider_cost_budget",
     "bot_name",
     "auto_title_refresh_every",
     "inflight_state_max_sessions",
@@ -12073,7 +12040,6 @@ _SETTINGS_FLOAT_RANGES = {
 _SETTINGS_BOOL_KEYS = {
     "onboarding_completed",
     "show_token_usage",
-    "show_quota_chip",
     "show_conversation_outline",
     "show_busy_placeholder_hint",
     "hide_empty_state_suggestions",
@@ -12119,7 +12085,6 @@ _SETTINGS_BOOL_KEYS = {
     "hide_composer_workspace",
     "hide_composer_mobile_config",
     "hide_composer_model",
-    "hide_composer_quota_chip",
     "hide_composer_reasoning",
     "hide_composer_toolsets",
     "hide_composer_status",
@@ -12188,17 +12153,6 @@ def _current_umask() -> int:
     umask = os.umask(0)
     os.umask(umask)
     return umask
-
-
-def _coerce_provider_cost_budget(value: Any) -> float | None:
-    """Normalize a monthly budget to the persisted two-decimal representation."""
-    try:
-        rounded = round(float(value), 2)
-    except (TypeError, ValueError):
-        return None
-    if not (0 < rounded < 1e9) or not math.isfinite(rounded):
-        return None
-    return rounded
 
 
 def save_settings(settings: dict) -> dict:
@@ -12317,15 +12271,6 @@ def save_settings(settings: dict) -> dict:
                     seen.add(s)
                     cleaned.append(s)
                 v = cleaned
-            if k == "provider_cost_budget":
-                if v is None or v == "":
-                    current[k] = None
-                    continue
-                budget = _coerce_provider_cost_budget(v)
-                if budget is None:
-                    continue
-                current[k] = budget
-                continue
             # Coerce bool keys
             if k in _SETTINGS_BOOL_KEYS:
                 v = bool(v)

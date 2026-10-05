@@ -263,7 +263,7 @@ def test_clearing_the_password_in_settings_does_nothing(server, stored_password)
         assert "a-stored-upstream-hash" in stored_password.read_text(encoding="utf-8")
 
 
-def test_the_login_status_settings_and_onboarding_name_no_password(server):
+def test_the_login_status_and_settings_name_no_password(server):
     with server(legacy_env=PASSWORD_ENV) as srv:
         status, body, _ = srv.client().get("/api/auth/status")
         assert not set(PASSWORD_FIELDS) & set(body), body
@@ -274,9 +274,6 @@ def test_the_login_status_settings_and_onboarding_name_no_password(server):
         assert status == 200
         assert not set(PASSWORD_FIELDS) & set(settings), settings
         assert "password_hash" not in settings
-        status, onboarding, _ = admin.get("/api/onboarding/status")
-        assert status == 200
-        assert "password_enabled" not in onboarding["settings"], onboarding
         status, shell, _ = admin.get("/")
         assert status == 200
         for control in ("settingsPassword", "settingsCurrentPassword", "btnDisableAuth", "settingsPasswordEnvLock"):

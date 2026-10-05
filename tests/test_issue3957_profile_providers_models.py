@@ -357,32 +357,6 @@ def test_active_request_readonly_scope_blocks_pool_env_seed(monkeypatch, tmp_pat
     assert (work_home / "auth.json").exists() is False
 
 
-def test_providers_and_models_routes_wrap_in_profile_env():
-    """The two read routes are profile-scoped for non-default profiles (#3957).
-
-    Structural guard: a future refactor that drops the wiring would silently
-    reintroduce the bug, so pin it at the source level.
-      - /api/providers and /api/provider/quota wrap the synchronous read in
-        profile_env_for_active_request_readonly.
-      - /api/models/live stays on the mirrored profile_env_for_active_request
-        path because provider_model_ids() still delegates into agent helpers
-        that read process env / HERMES_HOME directly.
-      - /api/models relies on get_available_models() using the mirrored request
-        scope for the budget<=0 sync rebuild plus profile_scope_for_detached_worker
-        for the detached rebuild worker (the request-thread wrapper cannot reach
-        the worker thread — Codex CORE finding).
-    """
-    routes_src = Path(profiles.__file__).resolve().parent.joinpath("routes.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'with profile_env_for_active_request("/api/models/live"' in routes_src
-    assert "profile_env_for_active_request_readonly" in routes_src
-    config_src = Path(config.__file__).resolve().read_text(encoding="utf-8")
-    assert "profile_env_for_active_request as _prof_env_request" in config_src
-    assert "profile_scope_for_detached_worker" in config_src
-    assert "_get_models_cache_path" in config_src
-
-
 def test_models_sync_rebuild_uses_legacy_mirrored_env(monkeypatch, tmp_path):
     """The budget<=0 sync rebuild still mirrors profile env into os.environ."""
     base = tmp_path / ".hermes"

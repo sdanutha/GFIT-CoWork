@@ -22,17 +22,7 @@ from tests.test_gfit_session_route_answers import SESSION_ROUTES
 ADMIN_SESSION_ROUTES: set[tuple[str, str]] = set()
 
 # Admin-only routes that name no session, and why.
-_SERVER = "server-level: settings, providers, models, gateway, logs, process"
 ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
-    **{("GET", r): _SERVER for r in (
-        "/api/provider/cost-history", "/api/provider/quota", "/api/providers")},
-    **{("POST", r): _SERVER for r in (
-        "/api/models/refresh", "/api/providers", "/api/providers/delete", "/api/providers/self-hosted")},
-    **{(m, r): "onboarding" for m, r in (
-        ("GET", "/api/onboarding/oauth/poll"), ("GET", "/api/onboarding/status"),
-        ("POST", "/api/onboarding/complete"), ("POST", "/api/onboarding/oauth/cancel"),
-        ("POST", "/api/onboarding/oauth/start"), ("POST", "/api/onboarding/probe"),
-        ("POST", "/api/onboarding/setup"))},
     **{("POST", f"/api/profile/{verb}"): "Profile management (names a Profile under `name`)"
        for verb in ("create", "delete", "disable", "enable", "switch")},
     **{("GET", r): "pages and static prefixes" for r in ("/login",)},

@@ -2816,102 +2816,6 @@ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded'
 else _initMediaPlaybackObserver();
 setTimeout(_initMediaPlaybackObserver,0);
 
-// ── Ambient provider quota indicator (#1766) ────────────────────────────────
-let _providerQuotaRefreshInFlight=false;
-
-function _formatQuotaMoneyShort(value){
-  const n=Number(value);
-  if(!Number.isFinite(n)) return '';
-  if(Math.abs(n)>=100) return '$'+n.toFixed(0);
-  if(Math.abs(n)>=10) return '$'+n.toFixed(1);
-  return '$'+n.toFixed(2);
-}
-function _formatQuotaPercentShort(value){
-  const n=Number(value);
-  if(!Number.isFinite(n)) return '';
-  return Math.max(0,Math.min(100,n)).toFixed(0)+'%';
-}
-function _providerQuotaIndicatorText(status){
-  if(!status||status.status!=='available') return null;
-  const provider=status.display_name||status.provider||'Provider';
-  const accountLimits=status.account_limits||null;
-  if(accountLimits&&Array.isArray(accountLimits.windows)&&accountLimits.windows.length){
-    const w=accountLimits.windows.find(x=>x&&Number.isFinite(Number(x.remaining_percent)))||accountLimits.windows[0];
-    const remaining=_formatQuotaPercentShort(w&&w.remaining_percent);
-    if(remaining) return {label:remaining, title:provider+' — '+(status.message||'Provider usage loaded')+' — '+remaining+' remaining'};
-  }
-  const quota=status.quota||null;
-  if(quota){
-    const remaining=_formatQuotaMoneyShort(quota.limit_remaining);
-    const used=_formatQuotaMoneyShort(quota.usage);
-    const limit=_formatQuotaMoneyShort(quota.limit);
-    if(remaining){
-      const parts=[];
-      if(used) parts.push('used '+used);
-      if(limit) parts.push('limit '+limit);
-      return {label:remaining, title:provider+' — '+(status.message||'Provider quota loaded')+(parts.length?' — '+parts.join(' · '):'')};
-    }
-  }
-  return null;
-}
-function renderProviderQuotaIndicator(status){
-  const chip=$('providerQuotaChip');
-  const label=$('providerQuotaChipLabel');
-  const mobileAction=$('composerMobileQuotaAction');
-  const mobileLabel=$('composerMobileQuotaLabel');
-  if(!chip||!label) return;
-  // Hide entirely when the user has disabled the ambient quota chip in Settings.
-  // Boot defaults this on; an explicit false preference suppresses it.
-  if(window._showQuotaChip!==true){
-    chip.hidden=true;
-    label.textContent='';
-    chip.removeAttribute('title');
-    if(mobileAction){mobileAction.style.display='none';mobileAction.removeAttribute('title');}
-    if(mobileLabel) mobileLabel.textContent='';
-    return;
-  }
-  const text=_providerQuotaIndicatorText(status);
-  if(!text||status.status!=='available'||(!status.quota&&!status.account_limits)){
-    chip.hidden=true;
-    label.textContent='';
-    chip.removeAttribute('title');
-    if(mobileAction){mobileAction.style.display='none';mobileAction.removeAttribute('title');}
-    if(mobileLabel) mobileLabel.textContent='';
-    return;
-  }
-  label.textContent=text.label;
-  chip.title=text.title;
-  chip.hidden=false;
-  if(mobileAction){mobileAction.style.display='';mobileAction.title=text.title;}
-  if(mobileLabel) mobileLabel.textContent=text.label;
-}
-async function refreshProviderQuotaIndicator(){
-  // Short-circuit before the fetch when the chip is disabled — no point asking
-  // the server for quota data the UI will throw away, or that the caller may not read.
-  if(window._showQuotaChip!==true||(typeof gfitMay==='function'&&!gfitMay('provider_quota'))){
-    const chip=$('providerQuotaChip');
-    if(chip){chip.hidden=true;chip.removeAttribute('title');}
-    const mobileAction=$('composerMobileQuotaAction');
-    if(mobileAction){mobileAction.style.display='none';mobileAction.removeAttribute('title');}
-    const mobileLabel=$('composerMobileQuotaLabel');
-    if(mobileLabel) mobileLabel.textContent='';
-    return;
-  }
-  if(_providerQuotaRefreshInFlight) return;
-  _providerQuotaRefreshInFlight=true;
-  try{
-    const status=await api('/api/provider/quota');
-    renderProviderQuotaIndicator(status);
-  }catch(_e){
-    renderProviderQuotaIndicator(null);
-  }finally{
-    _providerQuotaRefreshInFlight=false;
-  }
-}
-window.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&typeof refreshProviderQuotaIndicator==='function') refreshProviderQuotaIndicator();
-});
-
 // Dynamic model labels -- populated by populateModelDropdown(), fallback to static map
 let _dynamicModelLabels={};
 window._configuredModelBadges=window._configuredModelBadges||{};
@@ -5561,9 +5465,6 @@ function syncToolsetsChip() {
   _syncToolsetsChip();
 }
 
-
-
-
 function _toolsetsInputList(input) {
   if (!input) return [];
   return input.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -6797,7 +6698,7 @@ function _clearActivityElapsedTimer(){
   _activityElapsedTimerGroup=null;
 }
 
-const _MOBILE_CONFIG_BASE_LABEL='Workspace, model, quota, reasoning, and context settings';
+const _MOBILE_CONFIG_BASE_LABEL='Workspace, model, reasoning, and context settings';
 
 function _setCtxCompressButton(btn,text){
   if(!btn)return;

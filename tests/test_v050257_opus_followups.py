@@ -32,60 +32,15 @@ new shape.
 from __future__ import annotations
 
 import api.config
-import os
-import stat
 import sys
 import tempfile
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 
 
 # ── 1: auth.json permission fix (chmod 0600 before rename) ───────────────────
-
-
-def test_oauth_write_auth_json_uses_chmod_0600_before_rename(monkeypatch, tmp_path):
-    """`_write_auth_json` must chmod 0600 BEFORE renaming so tokens never land
-    world-readable. The previous implementation used `tmp.replace()` which
-    preserves the temp file's umask-derived mode."""
-    sys.path.insert(0, str(REPO))
-    import api.oauth as oauth
-
-    # Point AUTH_JSON_PATH at a tmp dir
-    fake_path = tmp_path / "auth.json"
-    monkeypatch.setattr(oauth, "AUTH_JSON_PATH", fake_path)
-
-    # Set a permissive umask so default write would create 0644
-    old_umask = os.umask(0o022)
-    try:
-        oauth._write_auth_json({"credential_pool": {"openai-codex": []}})
-    finally:
-        os.umask(old_umask)
-
-    assert fake_path.exists(), "auth.json was not written"
-    if os.name == "nt":
-        assert fake_path.is_file(), "auth.json was not written as a file"
-        return
-    mode = stat.S_IMODE(fake_path.stat().st_mode)
-    # The file must be chmod 0600 — owner read/write only.
-    assert mode == 0o600, (
-        f"auth.json permissions are {oct(mode)}, expected 0o600. "
-        f"OAuth tokens (access_token, refresh_token) live in this file. "
-        f"On shared systems, world-readable tokens are a real exposure."
-    )
-
-
-def test_oauth_write_auth_json_source_calls_chmod():
-    """Source-level pin: any future change to _write_auth_json that drops the
-    chmod call must be caught even if the runtime test above is skipped on
-    a filesystem that doesn't support POSIX modes."""
-    src = (REPO / "api" / "oauth.py").read_text(encoding="utf-8")
-    assert "tmp.chmod(0o600)" in src, (
-        "_write_auth_json must call tmp.chmod(0o600) before tmp.replace() — "
-        "without it, OAuth tokens land world-readable on shared systems."
-    )
 
 
 # ── 2: cron history job_id path-traversal validation ────────────────────────
@@ -180,13 +135,11 @@ def test_session_load_metadata_only_returns_instance_not_dict():
     if a future change converts it to a dict."""
     sys.path.insert(0, str(REPO))
     from api.models import Session
-    import tempfile
 
     with tempfile.TemporaryDirectory() as tmpd:
         # Create a fake session file
         import json as _json
         sid = "test1234abcd"
-        from api import models
         original = api.config.SESSION_DIR
         api.config.SESSION_DIR = Path(tmpd)
         try:

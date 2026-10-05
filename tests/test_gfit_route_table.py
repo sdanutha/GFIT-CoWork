@@ -42,7 +42,8 @@ _DELETED_PATHS_BY_ADR_0006 = (
     "/api/shutdown", "/api/session/yolo", "/api/git/stage", "/api/git/unstage", "/api/git/discard",
     "/api/git/commit", "/api/git/fetch", "/api/git/pull", "/api/git/push", "/api/git/checkout",
     "/api/git/stash-checkout", "/api/escape/", "/api/file/reveal", "/api/file/open-vscode",
-    "/api/commands/exec", "/api/mcp/",
+    "/api/commands/exec", "/api/mcp/", "/api/providers", "/api/provider/", "/api/models/refresh",
+    "/api/onboarding/",
 )
 
 

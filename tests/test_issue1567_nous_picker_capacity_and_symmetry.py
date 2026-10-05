@@ -514,52 +514,6 @@ class TestProvidersCardPickerSymmetry:
     Nous Portal. This is the load-bearing invariant that ends the visual
     disagreement #1567 reports."""
 
-    def test_providers_card_and_picker_agree_on_featured_set(self, monkeypatch, tmp_path):
-        _scrub_provider_env(monkeypatch)
-        catalog = _build_big_catalog()
-        _install_fake_hermes_cli(monkeypatch, nous_ids=catalog)
-        monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
-
-        restore = _swap_in_test_config({"model": {"provider": "nous"}})
-        try:
-            from api.providers import get_providers
-            from api.config import _NOUS_FEATURED_TARGET
-
-            providers = {p["id"]: p for p in get_providers()["providers"]}
-            picker = config.get_available_models()
-            picker_nous = next(g for g in picker["groups"] if g["provider_id"] == "nous")
-
-            card = providers["nous"]
-            # Both render exactly _NOUS_FEATURED_TARGET visible models.
-            assert len(card["models"]) == _NOUS_FEATURED_TARGET
-            assert len(picker_nous["models"]) == _NOUS_FEATURED_TARGET
-
-            # Both report the full catalog size somewhere.
-            assert card["models_total"] == len(catalog), (
-                f"Providers card models_total should match live catalog size, "
-                f"got {card['models_total']} vs catalog {len(catalog)}."
-            )
-            picker_total = len(picker_nous.get("models", [])) + len(
-                picker_nous.get("extra_models", [])
-            )
-            assert picker_total == len(catalog), (
-                f"Picker featured + extras must equal live catalog size, "
-                f"got {picker_total} vs {len(catalog)}."
-            )
-
-            # And they pick THE SAME featured set (not e.g. one's first-15
-            # and another's last-15).
-            card_ids = [m["id"] for m in card["models"]]
-            picker_ids = [m["id"] for m in picker_nous["models"]]
-            assert card_ids == picker_ids, (
-                f"Providers card and picker must show the SAME featured "
-                f"set so users see consistent labels in both places. "
-                f"Card: {card_ids}\nPicker: {picker_ids}"
-            )
-        finally:
-            restore()
-
-
 # ────────────────────────────────────────────────────────────────────────
 # Section 6 — Frontend contract (static-source assertions)
 # ────────────────────────────────────────────────────────────────────────
@@ -597,29 +551,4 @@ class TestFrontendExtrasContract:
             "autocomplete covers the full catalog, not just the dropdown's "
             "featured subset. The slash command exists precisely so power "
             "users can reach any model by typing its name. (#1567)"
-        )
-
-    def test_panels_js_uses_models_total_for_count(self):
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent / "static" / "panels.js").read_text(encoding="utf-8")
-        idx = src.find("function _buildProviderCard")
-        assert idx != -1
-        body = src[idx : idx + 1500]
-        assert "models_total" in body, (
-            "Provider card header should use p.models_total (full catalog "
-            "size) for the count, not p.models.length (which is now the "
-            "trimmed featured-set size). Without this, the header text says "
-            "'15 models' instead of '396 models' for capped catalogs. (#1567)"
-        )
-
-    def test_panels_js_renders_more_disclosure_pill(self):
-        from pathlib import Path
-        src = (Path(__file__).resolve().parent.parent / "static" / "panels.js").read_text(encoding="utf-8")
-        # The "+N more" disclosure must reference the difference between
-        # rendered count and total count somewhere in the providers-card
-        # rendering path.
-        assert "provider-card-model-tag-more" in src, (
-            "Provider card must render a '+N more' disclosure pill when "
-            "len(models) < models_total, so users know the dropdown is "
-            "intentionally capped and the rest is reachable via /model."
         )

@@ -42,7 +42,6 @@ import pathlib
 import pytest
 
 import api.config as config
-import api.onboarding as onboarding
 import api.providers as providers
 import api.routes as routes
 
@@ -59,7 +58,7 @@ def _src(name: str) -> str:
 # --- source-form pins (fail on master / on any per-file revert) -----------
 
 
-@pytest.mark.parametrize("filename", ["onboarding.py", "providers.py", "routes.py"])
+@pytest.mark.parametrize("filename", ["providers.py", "routes.py"])
 def test_file_hardens_providers_key_read_against_none(filename):
     """Each target file must read the providers key as ``... or {}``.
 
@@ -92,7 +91,7 @@ def test_file_hardens_providers_key_read_against_none(filename):
     )
 
 
-@pytest.mark.parametrize("filename", ["onboarding.py", "providers.py", "routes.py"])
+@pytest.mark.parametrize("filename", ["providers.py", "routes.py"])
 def test_target_files_parse(filename):
     """Sanity: the hardened files are valid Python (guards real edits)."""
     ast.parse(_src(filename), filename=filename)
@@ -107,25 +106,6 @@ def _onboarding_cfg(providers_value):
         "providers": providers_value,
         "custom_providers": [],
     }
-
-
-def test_onboarding_provider_api_key_present_handles_none_providers():
-    """``_provider_api_key_present`` must treat ``providers: None`` like ``{}``."""
-    none_cfg = _onboarding_cfg(None)
-    empty_cfg = _onboarding_cfg({})
-
-    for provider in ("custom", "openai", "anthropic"):
-        got_none = onboarding._provider_api_key_present(provider, none_cfg, {})
-        got_empty = onboarding._provider_api_key_present(provider, empty_cfg, {})
-        assert got_none == got_empty
-        assert got_none is False  # no key configured anywhere
-
-
-def test_onboarding_none_providers_does_not_mask_configured_key():
-    """A provider key set under model.api_key is still found with providers: None."""
-    cfg = _onboarding_cfg(None)
-    cfg["model"] = {"provider": "custom", "api_key": "sk-xyz", "base_url": "http://x"}
-    assert onboarding._provider_api_key_present("custom", cfg, {}) is True
 
 
 # --- behavioural: providers (catalog + key lookup) ------------------------

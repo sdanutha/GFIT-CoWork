@@ -5667,15 +5667,6 @@ def _onboarding_request_is_local(handler) -> bool:
     return bool(is_local)
 
 
-def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
-    from api.directory import is_directory_enabled
-
-    auth_enabled = is_directory_enabled() if auth_enabled is None else auth_enabled
-    if auth_enabled or _truthy_env("HERMES_WEBUI_ONBOARDING_OPEN"):
-        return True
-    return _onboarding_request_is_local(handler)
-
-
 # Above this many distinct client keys, sweep out entries whose timestamps have
 # all aged past the window on the next update. Behind a reverse proxy the map
 # holds a single key (the proxy IP) and never trips this; a directly-exposed
@@ -10195,25 +10186,7 @@ from api.run_journal import (
     SSE_RELAY_CLOSE_EVENTS,
 )
 from api.todo_state import attach_todo_state
-from api.providers import (
-    get_providers,
-    get_provider_quota,
-    get_provider_cost_history,
-    provider_has_process_wakeup_recovery_credential,
-    set_provider_key,
-    remove_provider_key,
-)
-from api.onboarding import (
-    apply_onboarding_setup,
-    get_onboarding_status,
-    complete_onboarding,
-    probe_provider_endpoint,
-)
-from api.oauth import (
-    cancel_onboarding_oauth_flow,
-    poll_onboarding_oauth_flow,
-    start_onboarding_oauth_flow,
-)
+from api.providers import provider_has_process_wakeup_recovery_credential
 
 # Approval system -- state and helpers live in api.route_approvals.
 from api.route_approvals import (
@@ -13300,47 +13273,9 @@ def _get_api_model_auxiliary(handler, parsed):
     return j(handler, get_auxiliary_models())
 
 
-# ── Providers (GET) ──
-def _get_api_providers(handler, parsed):
-    # Apply the active per-request profile's env so provider auth probes
-    # resolve against that profile's credentials, not the process-default
-    # profile's (#3957). Without this, get_auth_status() probes on a
-    # non-default profile resolve the wrong/empty creds and can stall past
-    # the 30s frontend timeout. No-op for the default profile.
-    from api.profiles import profile_env_for_active_request_readonly
-    with profile_env_for_active_request_readonly("/api/providers", logger_override=logger):
-        return j(handler, get_providers())
-
-
 # ── Plugins/hooks visibility (read-only, no callback/source internals) ──
 def _get_api_plugins(handler, parsed):
     return _handle_plugins(handler, parsed)
-
-
-def _get_api_provider_quota(handler, parsed):
-    query = parse_qs(parsed.query)
-    provider_id = (query.get("provider", [""])[0] or None)
-    refresh = (query.get("refresh", [""])[0] or "").strip().lower() in {"1", "true", "yes", "on"}
-    # Bind the active request's profile env (matches /api/providers and
-    # /api/models/live). #4365 added a credential_pool.load_pool() path in
-    # get_provider_quota for all pooled providers; without this wrapper that
-    # read/write runs under the process-default profile, so a multi-profile
-    # client would see (and seed) the default profile's pool instead of its
-    # own (#4247/#4067 profile-isolation class).
-    from api.profiles import profile_env_for_active_request_readonly
-    with profile_env_for_active_request_readonly("/api/provider/quota", logger_override=logger):
-        return j(handler, get_provider_quota(provider_id, refresh=refresh))
-
-
-def _get_api_provider_cost_history(handler, parsed):
-    query = parse_qs(parsed.query)
-    provider_id = (query.get("provider", [""])[0] or None)
-    days_raw = (query.get("days", ["7"])[0] or "7").strip()
-    try:
-        days = max(1, min(int(days_raw), 365))
-    except (ValueError, TypeError):
-        days = 7
-    return j(handler, get_provider_cost_history(provider_id, days))
 
 
 def _get_api_settings(handler, parsed):
@@ -13393,10 +13328,6 @@ def _get_api_reasoning(handler, parsed):
             base_url=base_url,
         ),
     )
-
-
-def _get_api_onboarding_status(handler, parsed):
-    return j(handler, get_onboarding_status())
 
 
 def _get_static(handler, parsed):
@@ -13834,21 +13765,6 @@ def _get_api_clarify_stream(handler, parsed):
 
 def _get_api_session_stream(handler, parsed):
     return _handle_session_sse_stream(handler, parsed)
-
-
-def _get_api_onboarding_oauth_poll(handler, parsed):
-    qs = parse_qs(parsed.query)
-    flow_id = qs.get("flow_id", [""])[0]
-    try:
-        return j(
-            handler,
-            poll_onboarding_oauth_flow(flow_id),
-            extra_headers={"Cache-Control": "no-store"},
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except KeyError as e:
-        return bad(handler, str(e), 404)
 
 
 # ── Cron API (GET) ──
@@ -14778,47 +14694,6 @@ def _post_api_model_set(handler, parsed, body, diag):
         except ValueError as exc:
             return bad(handler, str(exc), status=400)
     return bad(handler, f"unknown scope: {scope}", status=400)
-
-
-# ── Providers (POST) ──
-def _post_api_providers(handler, parsed, body, diag):
-    provider_id = (body.get("provider") or "").strip().lower()
-    api_key = body.get("api_key")
-    if not provider_id:
-        return bad(handler, "provider is required")
-    if api_key is not None:
-        api_key = str(api_key).strip() or None
-    result = set_provider_key(provider_id, api_key)
-    if not result.get("ok"):
-        return bad(handler, result.get("error", "Unknown error"))
-    return j(handler, result)
-
-
-def _post_api_providers_delete(handler, parsed, body, diag):
-    provider_id = (body.get("provider") or "").strip().lower()
-    if not provider_id:
-        return bad(handler, "provider is required")
-    result = remove_provider_key(provider_id)
-    if not result.get("ok"):
-        return bad(handler, result.get("error", "Unknown error"))
-    return j(handler, result)
-
-
-def _post_api_providers_self_hosted(handler, parsed, body, diag):
-    try:
-        from api.onboarding import apply_self_hosted_provider_setup
-        return j(handler, apply_self_hosted_provider_setup(body))
-    except ValueError as exc:
-        return bad(handler, str(exc), 400)
-
-
-def _post_api_models_refresh(handler, parsed, body, diag):
-    provider_id = (body.get("provider") or "").strip().lower()
-    if not provider_id:
-        return bad(handler, "provider is required")
-    from api.config import invalidate_provider_models_cache
-    invalidate_provider_models_cache(provider_id)
-    return j(handler, {"ok": True, "provider": provider_id})
 
 
 def _post_api_reasoning(handler, parsed, body, diag):
@@ -15944,70 +15819,6 @@ def _post_api_settings(handler, parsed, body, diag):
 
     saved["auth_enabled"] = is_directory_enabled()
     return j(handler, saved)
-
-
-def _post_api_onboarding_oauth_start(handler, parsed, body, diag):
-    if not _onboarding_gate_allows(handler):
-        return bad(handler, "Onboarding OAuth is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-    try:
-        return j(handler, start_onboarding_oauth_flow(body), extra_headers={"Cache-Control": "no-store"})
-    except ValueError as e:
-        return bad(handler, str(e))
-    except RuntimeError as e:
-        return bad(handler, str(e), 500)
-
-
-def _post_api_onboarding_oauth_cancel(handler, parsed, body, diag):
-    try:
-        return j(handler, cancel_onboarding_oauth_flow(body), extra_headers={"Cache-Control": "no-store"})
-    except ValueError as e:
-        return bad(handler, str(e))
-
-
-def _post_api_onboarding_setup(handler, parsed, body, diag):
-    # Writing API keys to disk - restrict to local/private networks unless auth is active.
-    # In Docker, requests arrive from the bridge network (172.x.x.x), not 127.0.0.1,
-    # even when the user accesses via localhost:8787 on the host.
-    # Behind a reverse proxy (nginx/Caddy/Traefik) or SSH tunnel, X-Forwarded-For
-    # carries the real origin IP — read it first before falling back to the raw socket addr.
-    # HERMES_WEBUI_ONBOARDING_OPEN=1 lets operators on remote servers explicitly bypass
-    # the check when they control network access themselves (e.g. firewall + VPN).
-    if not _onboarding_gate_allows(handler):
-        return bad(handler, "Onboarding setup is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-    try:
-        return j(handler, apply_onboarding_setup(body))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except RuntimeError as e:
-        return bad(handler, str(e), 500)
-
-
-def _post_api_onboarding_complete(handler, parsed, body, diag):
-    # Marking onboarding complete flips the first-run wizard off (persists
-    # onboarding_completed=True). Gate it on the same local-network check as
-    # the other onboarding mutators so an unauthenticated public client on a
-    # bind with login off can't hide the first-run wizard. (#3765)
-    if not _onboarding_gate_allows(handler):
-        return bad(handler, "Onboarding is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-    return j(handler, complete_onboarding())
-
-
-def _post_api_onboarding_probe(handler, parsed, body, diag):
-    # Probe a self-hosted provider endpoint (#1499).  Validates the
-    # configured base URL is reachable + parses /models, returns the
-    # model catalog so the wizard can populate its dropdown.
-    # Read-only: no config.yaml or .env writes happen here.  Same local-
-    # network gate as /api/onboarding/setup (also writing-adjacent in
-    # spirit because it carries an api_key the user typed).
-    if not _onboarding_gate_allows(handler):
-        return bad(handler, "Onboarding probe is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-    provider = str((body or {}).get("provider") or "").strip().lower()
-    base_url = str((body or {}).get("base_url") or "")
-    api_key = str((body or {}).get("api_key") or "").strip() or None
-    try:
-        return j(handler, probe_provider_endpoint(provider, base_url, api_key))
-    except Exception as e:
-        return bad(handler, f"probe failed: {e}", 500)
 
 
 # ── Session pin (POST) ──

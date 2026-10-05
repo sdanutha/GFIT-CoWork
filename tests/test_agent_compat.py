@@ -164,19 +164,6 @@ def test_mcp_runtime_status_reads_agent_registry(monkeypatch, shape):
 
 
 @pytest.mark.parametrize("shape", SHAPES)
-def test_claude_code_credentials_read_through_agent(monkeypatch, shape):
-    import api.oauth as oauth
-
-    creds = {"accessToken": "cc-access", "refreshToken": "cc-refresh"}
-    _install_agent(monkeypatch, shape, "agent.anthropic_adapter", {"agent.anthropic_credentials": {
-        "read_claude_code_credentials": lambda: creds,
-        "is_claude_code_token_valid": lambda value: value is creds,
-    }})
-
-    assert oauth._read_claude_code_credentials() is creds
-
-
-@pytest.mark.parametrize("shape", SHAPES)
 def test_lmstudio_reasoning_options_use_agent_probe(monkeypatch, shape):
     import api.config as config
 

@@ -11,7 +11,6 @@ import unittest.mock as mock
 import pytest
 
 import api.config as cfg
-import api.onboarding as onboarding
 
 
 @pytest.fixture(autouse=True)
@@ -119,43 +118,6 @@ def test_glm_5_3_positioned_first_in_zai_fallback_block():
     first_zai_entry = zai_entries[0]
     assert first_zai_entry["id"] == "zai/glm-5.3", (
         f'Expected first Z.AI entry to be "zai/glm-5.3", got {first_zai_entry["id"]!r}'
-    )
-
-
-def test_zai_onboarding_default_stays_glm_5_1_until_direct_api_serves_glm_5_3():
-    """Z.AI onboarding default must remain glm-5.1 until the direct endpoint serves GLM-5.3.
-
-    The zai provider calls Z.ai's direct endpoint (api.z.ai/api/paas/v4), where the GLM-5.3
-    API is not live yet. Z.ai's GLM-5.3 guide marks it "coming soon"; GLM-5.3 is
-    Coding-Plan-only today. Defaulting direct-API users onto glm-5.3 would fail their first
-    message with model-not-found, so the default stays glm-5.1 — bump it only after the
-    direct endpoint serves GLM-5.3 (per the #7017 review gate).
-    """
-    zai_setup = onboarding._SUPPORTED_PROVIDER_SETUPS.get("zai", {})
-    assert zai_setup, "zai setup not found in _SUPPORTED_PROVIDER_SETUPS"
-
-    default_model = zai_setup.get("default_model")
-    assert default_model == "glm-5.1", (
-        f'Expected default_model "glm-5.1" (not glm-5.3), got {default_model!r}'
-    )
-
-
-def test_glm_5_3_in_zai_onboarding_models_list():
-    """GLM-5.3 must appear in the zai onboarding setup's models list."""
-    zai_setup = onboarding._SUPPORTED_PROVIDER_SETUPS.get("zai", {})
-    assert zai_setup, "zai setup not found in _SUPPORTED_PROVIDER_SETUPS"
-
-    models = zai_setup.get("models", [])
-    model_ids = [m["id"] for m in models]
-    assert "glm-5.3" in model_ids, (
-        f"glm-5.3 missing from zai onboarding models list; got {model_ids}"
-    )
-
-    # Verify the exact label in the onboarding list
-    glm_5_3_entry = [m for m in models if m["id"] == "glm-5.3"]
-    assert len(glm_5_3_entry) == 1
-    assert glm_5_3_entry[0]["label"] == "GLM-5.3", (
-        f'Expected label "GLM-5.3" in onboarding, got {glm_5_3_entry[0]["label"]!r}'
     )
 
 

@@ -35,13 +35,6 @@ def test_boot_auto_bind_sends_explicit_worktree_false():
     assert "worktree: false" in bind
 
 
-def test_onboarding_session_sends_explicit_worktree_false():
-    src = read("static/onboarding.js")
-    finish = src[src.index("async function _finishOnboarding") :]
-    finish = finish[: finish.index("\n}\n")]
-    assert "worktree: false" in finish
-
-
 def test_profile_switch_session_sends_explicit_worktree_false():
     src = read("static/panels.js")
     assert (

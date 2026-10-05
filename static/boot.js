@@ -2290,12 +2290,6 @@ document.addEventListener('keydown',async e=>{
     return;
   }
   if(e.key==='Escape'){
-    // Close onboarding overlay if open (skip/dismiss the wizard)
-    const onboardingOverlay=$('onboardingOverlay');
-    if(onboardingOverlay&&onboardingOverlay.style.display!=='none'){
-      if(typeof skipOnboarding==='function') skipOnboarding();
-      return;
-    }
     // Close settings panel if active
     if(_currentPanel==='settings'){_closeSettingsPanel();return;}
     // Close workspace dropdown
@@ -2727,7 +2721,6 @@ const _COMPOSER_SITUATIONAL_CONTROL_TOGGLE_DEFS=[
   {key:'hide_composer_voice_mode',label:'Voice mode',labelKey:'composer_control_voice_mode',selectors:['#btnVoiceMode'],orderSelector:'#btnVoiceMode',orderGroup:'left'},
   {key:'hide_composer_bg_badge',label:'Background badge',labelKey:'composer_control_bg_badge',selectors:['#bgBadge'],orderSelector:'#bgBadge',orderGroup:'right'},
   {key:'hide_composer_mobile_config',label:'Mobile config',labelKey:'composer_control_mobile_config',selectors:['#composerMobileConfigBtn'],orderSelector:'#composerMobileConfigBtn',orderGroup:'left'},
-  {key:'hide_composer_quota_chip',label:'Quota chip',labelKey:'composer_control_quota_chip',selectors:['#providerQuotaChip','#composerMobileQuotaAction'],orderSelector:'#providerQuotaChip',orderGroup:'left'},
   {key:'hide_composer_toolsets',label:'Toolsets',labelKey:'composer_control_toolsets',selectors:['#composerToolsetsWrap'],orderSelector:'#composerToolsetsWrap',orderGroup:'left'},
   {key:'hide_composer_status',label:'Status',labelKey:'composer_control_status',selectors:['#composerStatus'],orderSelector:'#composerStatus',orderGroup:'right'},
 ];
@@ -2941,7 +2934,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     // and workspace actions (New file/folder) work before the first session (#804).
     if(s.default_workspace) S._profileDefaultWorkspace=s.default_workspace;
     window._showTokenUsage=!!s.show_token_usage;
-    window._showQuotaChip=s.show_quota_chip===true;
     window._showConversationOutline=s.show_conversation_outline===true;
     document.documentElement.dataset.conversationOutline=window._showConversationOutline?'enabled':'disabled';
     if(typeof applyConversationOutlinePreference==='function') applyConversationOutlinePreference();
@@ -3102,7 +3094,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
   }catch(e){
     window._sendKey='enter';
     window._showTokenUsage=false;
-    window._showQuotaChip=false;
     window._showConversationOutline=false;
     document.documentElement.dataset.conversationOutline='disabled';
     if(typeof applyConversationOutlinePreference==='function') applyConversationOutlinePreference();
@@ -3363,15 +3354,13 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     try{Promise.resolve(_startBootModelDropdown()).catch(()=>{});}catch(_){}
   },0);
   // Start independent boot fetches without holding the conversation list behind
-  // them. The sidebar can render from /api/sessions while workspace/onboarding
-  // metadata settles in parallel.
+  // them. The sidebar can render from /api/sessions while workspace metadata
+  // settles in parallel.
   const _workspaceListReady=loadWorkspaceList();
-  const _onboardingReady=_bootSettings.onboarding_completed?Promise.resolve(false):loadOnboardingWizard();
   // Render the session list before restoring the saved conversation so a stale
   // saved-session/client-side boot error cannot leave the sidebar empty forever.
   await renderSessionList();
   await _workspaceListReady;
-  await _onboardingReady;
   _initResizePanels();
   // Workspace panel restore happens AFTER loadSession so we know if
   // the session has a workspace — prevents the snap-open-then-closed flash (#576).
@@ -3381,7 +3370,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
   // re-run when the browser restores the page from bfcache.
   const _srch = document.getElementById('sessionSearch'); if (_srch) _srch.value = '';
   if (typeof syncSessionSearchClear === 'function') syncSessionSearchClear();
-  if(typeof refreshProviderQuotaIndicator==='function') refreshProviderQuotaIndicator();
   const urlSession=(typeof _sessionIdFromLocation==='function')?_sessionIdFromLocation():null;
   const pwaLaunchAction=(window.HermesPWA&&typeof window.HermesPWA.launchAction==='function')
     ? window.HermesPWA.launchAction()

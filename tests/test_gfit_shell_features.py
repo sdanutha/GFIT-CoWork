@@ -25,7 +25,7 @@ USER = "600001"
 ADMIN = "521740"
 
 # What a User's web app may not call today, so must not show or poll.
-REFUSED_TO_A_USER = {"provider_quota", "profiles_admin", "onboarding"}
+REFUSED_TO_A_USER = {"profiles_admin"}
 
 
 # ── The list follows the gate ────────────────────────────────────────────────
@@ -113,7 +113,7 @@ def _static(name: str) -> str:
 
 
 def test_the_stylesheet_and_scripts_never_name_a_role():
-    for name in ("style.css", "ui.js", "boot.js", "panels.js", "messages.js", "commands.js", "onboarding.js"):
+    for name in ("style.css", "ui.js", "boot.js", "panels.js", "messages.js", "commands.js"):
         source = _static(name)
         assert "data-gfit-role" not in source, name
         assert "gfitAdminOnly" not in source and "data-gfit-admin-only" not in source, name
@@ -121,7 +121,7 @@ def test_the_stylesheet_and_scripts_never_name_a_role():
 
 def test_every_feature_the_browser_names_is_one_the_server_lists():
     css = _static("style.css")
-    js = "".join(_static(n) for n in ("ui.js", "boot.js", "panels.js", "messages.js", "commands.js", "onboarding.js"))
+    js = "".join(_static(n) for n in ("ui.js", "boot.js", "panels.js", "messages.js", "commands.js"))
     named = set(re.findall(r'data-gfit-may~="([a-z_]+)"', css))
     named |= set(re.findall(r'data-gfit-feature="([a-z_]+)"', css))
     named |= set(re.findall(r"gfitMay\('([a-z_]+)'\)", js))
