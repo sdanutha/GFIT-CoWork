@@ -29,16 +29,9 @@ async function cancelStream(reason){
   if(typeof console !== 'undefined' && console.info){
     console.info('[stream] cancel requested', {reason:_reason, streamId, sessionId:sid});
   }
-  let respBody=null;
-  let respOk=false;
-  try{
-    const r=await fetch(new URL(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,document.baseURI||location.href).href,{credentials:'include'});
-    respOk=!!(r&&r.ok);
-    try{respBody=await r.json();}catch(_){}
-  }catch(e){
-    if(typeof console !== 'undefined' && console.warn){
-      console.warn('cancelStream: /api/chat/cancel request failed', e);
-    }
+  const {ok:respOk, body:respBody, error:respError}=await requestStreamCancel(streamId);
+  if(respError && typeof console !== 'undefined' && console.warn){
+    console.warn('cancelStream: /api/chat/cancel request failed', respError);
   }
   // Active-session cancel should not tear down the current SSE transport before
   // the backend emits its terminal event; do that only for stale owner paths
@@ -74,11 +67,7 @@ async function cancelSessionStream(session){
   if(typeof console !== 'undefined' && console.info){
     console.info('[stream] cancel requested', {reason:'sidebar-stop', streamId, sessionId:sid});
   }
-  let respOk=false;
-  try{
-    const r=await fetch(new URL(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,document.baseURI||location.href).href,{credentials:'include'});
-    respOk=!!(r&&r.ok);
-  }catch(e){/* close local stream; keep UI state honest below */}
+  const {ok:respOk}=await requestStreamCancel(streamId);
   if(!respOk) return false;
   if(typeof closeLiveStream==='function') closeLiveStream(sid, streamId);
   session.active_stream_id=null;
@@ -1816,11 +1805,7 @@ window.renderTranscript=function(container, messages, opts){
     }
     if(engine==="elevenlabs"){
       _ttsSpeaking=true;
-      fetch(new URL('api/tts', document.baseURI || location.href).href, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: clean, engine: 'elevenlabs'})
-      })
+      requestSpeech({text: clean, engine: 'elevenlabs'})
       .then(r => {
         if(!r.ok) throw new Error('TTS request failed: ' + r.status);
         return r.blob();
@@ -1856,11 +1841,7 @@ window.renderTranscript=function(container, messages, opts){
     }
     if(engine==="openai"){
       _ttsSpeaking=true;
-      fetch(new URL('api/tts', document.baseURI || location.href).href, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: clean, engine: 'openai'})
-      })
+      requestSpeech({text: clean, engine: 'openai'})
       .then(r => {
         if(!r.ok) throw new Error('TTS request failed: ' + r.status);
         return r.blob();
@@ -1902,11 +1883,7 @@ window.renderTranscript=function(container, messages, opts){
       if(!isNaN(savedRate)){const pct=Math.round((savedRate-1)*100);const sign=pct>=0?'+':'';rate=sign+pct+'%';}
       if(!isNaN(savedPitch)){const hz=Math.round((savedPitch-1)*50);const sign=hz>=0?'+':'';pitch=sign+hz+'Hz';}
       _ttsSpeaking=true;
-      fetch(new URL('api/tts', document.baseURI || location.href).href, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: clean, voice, rate, pitch, engine: 'edge'})
-      })
+      requestSpeech({text: clean, voice, rate, pitch, engine: 'edge'})
       .then(r => {
         if(!r.ok) throw new Error('TTS request failed: ' + r.status);
         return r.blob();
