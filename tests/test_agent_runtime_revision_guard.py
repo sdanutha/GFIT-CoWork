@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import api.config
 import os
 from pathlib import Path
 import subprocess
@@ -869,7 +870,7 @@ def test_stream_admission_uses_one_gateway_ownership_snapshot(monkeypatch, gatew
         with routes.STREAMS_LOCK:
             routes.STREAMS.pop(stream_id, None)
         unregister_stream_owner(stream_id)
-        routes.STREAM_GOAL_RELATED.pop(stream_id, None)
+        api.config.STREAM_GOAL_RELATED.pop(stream_id, None)
 
 
 @pytest.mark.parametrize(

@@ -2922,12 +2922,10 @@ from api.config import (
     MAX_UPLOAD_BYTES,
     ACTIVE_RUNS,
     ACTIVE_RUNS_LOCK,
-    register_stream_owner,
     register_session_writeback_owner,
     clear_session_writeback_owner_if_owned,
     stream_owner_session_id,
     peek_stream,
-    unregister_stream_owner,
     CHAT_LOCK,
     _get_session_agent_lock,
     CUSTOM_MODELS_ENDPOINT_TIMEOUT_SECONDS,
@@ -2940,11 +2938,9 @@ from api.config import (
     get_reasoning_status,
     set_reasoning_display,
     set_reasoning_effort,
-    create_stream_channel,
     get_config,
     get_webui_session_save_mode,
     get_config_snapshot,
-    STREAM_GOAL_RELATED,
     PENDING_GOAL_CONTINUATION,
     _get_config_path,
     _load_yaml_config_file,
@@ -2958,6 +2954,7 @@ from api.config import (
 from api import config as api_config
 from api import profiles as api_profiles
 from api import route_table
+from api import run_registry
 from api.turn_builder import AGENT_BUNDLE_SIDE_FIELDS, webui_agent
 from api.helpers import (
     require,
@@ -22633,10 +22630,7 @@ def _handle_btw(handler, body):
     ephemeral.active_stream_id = stream_id
     register_session_writeback_owner(ephemeral.session_id, stream_id)
     ephemeral.save()
-    stream = create_stream_channel()
-    register_stream_owner(stream_id, ephemeral.session_id)
-    with STREAMS_LOCK:
-        STREAMS[stream_id] = stream
+    run_registry.open_stream(ephemeral.session_id, stream_id)
     from api.background import track_btw
     track_btw(body["session_id"], ephemeral.session_id, stream_id, question)
     thr = threading.Thread(
@@ -22683,10 +22677,7 @@ def _handle_background(handler, body):
     bg.active_stream_id = stream_id
     register_session_writeback_owner(bg.session_id, stream_id)
     bg.save()
-    stream = create_stream_channel()
-    register_stream_owner(stream_id, bg.session_id)
-    with STREAMS_LOCK:
-        STREAMS[stream_id] = stream
+    run_registry.open_stream(bg.session_id, stream_id)
     task_id = uuid.uuid4().hex[:8]
     from api.background import track_background, complete_background
     parent_sid = body["session_id"]
@@ -22903,10 +22894,7 @@ def _prepare_chat_start_session_for_stream(
 def _cleanup_chat_start_launch_failure(session, stream_id: str) -> None:
     """Release state registered before a worker thread successfully starts."""
     clear_session_writeback_owner_if_owned(session.session_id, stream_id)
-    unregister_stream_owner(stream_id)
-    with STREAMS_LOCK:
-        STREAMS.pop(stream_id, None)
-    STREAM_GOAL_RELATED.pop(stream_id, None)
+    run_registry.close_stream(stream_id)
     # The session-field reset needs the same concurrency discipline as the
     # registry half: hold the per-session lock and re-resolve the canonical
     # session before clearing anything. Mutating the passed-in stale object
@@ -23068,11 +23056,7 @@ def _start_regeneration_stream_locked(
         )
 
     def _cleanup_owned_start():
-        if goal_related:
-            STREAM_GOAL_RELATED.pop(stream_id, None)
-        with STREAMS_LOCK:
-            STREAMS.pop(stream_id, None)
-        unregister_stream_owner(stream_id)
+        run_registry.close_stream(stream_id)
         clear_session_writeback_owner_if_owned(s.session_id, stream_id)
         if gateway_starting:
             try:
@@ -23139,12 +23123,7 @@ def _start_regeneration_stream_locked(
             },
         )
         diag.stage("stream_registration") if diag else None
-        stream = create_stream_channel()
-        register_stream_owner(stream_id, s.session_id)
-        with STREAMS_LOCK:
-            STREAMS[stream_id] = stream
-        if goal_related:
-            STREAM_GOAL_RELATED[stream_id] = True
+        run_registry.open_stream(s.session_id, stream_id, goal_related=goal_related)
         if backend_is_gateway:
             from api.gateway_chat import _mark_gateway_run_starting
 
@@ -23322,7 +23301,7 @@ def _active_run_stream_for_session(session_id: str | None) -> str | None:
                 # The zombie run is pruned directly here (not via the normal teardown
                 # finally / unregister_active_run), so release its stream-owner entry too
                 # or STREAM_SESSION_OWNERS leaks for every reconciled zombie. (#5198 gate)
-                unregister_stream_owner(stale_stream_id)
+                run_registry.forget_owner(stale_stream_id)
     except Exception:
         return None
     return None
@@ -23499,13 +23478,8 @@ def _start_chat_stream_for_session(
     diag.stage("set_last_workspace") if diag else None
     set_last_workspace(workspace, profile=getattr(s, "profile", None))
     diag.stage("stream_registration") if diag else None
-    stream = create_stream_channel()
-    register_stream_owner(stream_id, s.session_id)
-    with STREAMS_LOCK:
-        STREAMS[stream_id] = stream
-    # #1932: mark stream as goal-related so the streaming hook evaluates the goal.
-    if goal_related:
-        STREAM_GOAL_RELATED[stream_id] = True
+    # #1932: a goal-related stream makes the streaming hook evaluate the goal.
+    run_registry.open_stream(s.session_id, stream_id, goal_related=goal_related)
     diag.stage("worker_thread_start") if diag else None
     worker_target = _run_gateway_chat_streaming if backend_is_gateway else _run_agent_streaming
     worker_kwargs = {"model_provider": model_provider, "goal_related": goal_related}

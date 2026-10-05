@@ -27,6 +27,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+from api import run_registry
 from api import config as _config
 from api.config import (
     get_config,
@@ -38,7 +39,6 @@ from api.config import (
     _get_session_agent_lock, _alias_session_agent_lock,
     _set_thread_env, _clear_thread_env,
     register_active_run, update_active_run, unregister_active_run,
-    unregister_stream_owner,
     peek_stream,
     stream_owner_session_id,
     session_writeback_owner,
@@ -9598,7 +9598,7 @@ def _run_agent_streaming(
         # The stream was cancelled before the worker started; the route layer
         # already registered the stream owner, so release it here to avoid
         # leaking a STREAM_SESSION_OWNERS entry that the teardown finally never sees.
-        unregister_stream_owner(stream_id)
+        run_registry.close_stream(stream_id)
         try:
             clear_session_writeback_owner_if_owned(session_id, stream_id)
         except Exception:
@@ -14029,7 +14029,7 @@ def _run_agent_streaming(
         # restore above.
         _reset_turn_session_identity(_turn_session_identity_tokens)
         with STREAMS_LOCK:
-            STREAMS.pop(stream_id, None)
+            run_registry.close_stream_locked(stream_id)
             CANCEL_FLAGS.pop(stream_id, None)
             AGENT_INSTANCES.pop(stream_id, None)  # Clean up agent instance reference
             STREAM_PARTIAL_TEXT.pop(stream_id, None)  # Clean up partial text buffer (#893)
@@ -14038,9 +14038,6 @@ def _run_agent_streaming(
             STREAM_GOAL_RELATED.pop(stream_id, None)  # Clean up goal-related flag (#1932)
             STREAM_LAST_EVENT_ID.pop(stream_id, None)  # Clean up event_id pointer (stage-364)
             unregister_active_run(stream_id)
-            # Clean up the stream-owner registry so stale stream_id→session_id
-            # mappings do not accumulate over thousands of completed streams (#6351).
-            unregister_stream_owner(stream_id)
             # Release the session's writeback-ownership entry only while this
             # stream still owns it (#6623 re-gate): a successor admitted after
             # cancel must keep its registry claim.

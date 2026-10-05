@@ -12,12 +12,12 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from api import run_registry
 from api.config import (
     AGENT_INSTANCES,
     CANCEL_FLAGS,
     PENDING_GOAL_CONTINUATION,
     STREAM_GOAL_RELATED,
-    STREAMS,
     STREAMS_LOCK,
     STREAM_LAST_EVENT_ID,
     STREAM_LIVE_TOOL_CALLS,
@@ -32,7 +32,6 @@ from api.config import (
     peek_stream,
     register_active_run,
     unregister_active_run,
-    unregister_stream_owner,
     update_active_run,
 )
 from api.helpers import _redact_text, redact_session_data
@@ -1003,7 +1002,7 @@ def _gateway_endpoint_for_profile(profile_name) -> tuple[str, str]:
 
 
 def _resume_gateway_run_for_session(session) -> bool:
-    from api.config import create_stream_channel, register_session_writeback_owner, register_stream_owner
+    from api.config import register_session_writeback_owner
 
     run = (session.gateway_run if session is not None else None) or {}
     stream_id = str(run.get("stream_id") or "")
@@ -1012,11 +1011,8 @@ def _resume_gateway_run_for_session(session) -> bool:
         return False
     sid = session.session_id
     endpoint = _gateway_endpoint_for_profile(session.profile)
-    with STREAMS_LOCK:
-        if stream_id in STREAMS:
-            return False
-        STREAMS[stream_id] = create_stream_channel()
-    register_stream_owner(stream_id, sid)
+    if run_registry.open_stream(sid, stream_id, only_if_absent=True) is None:
+        return False
     register_session_writeback_owner(sid, stream_id)
     _mark_gateway_run_starting(stream_id)
     threading.Thread(
@@ -1174,7 +1170,7 @@ def _run_gateway_chat_streaming(
         _clear_gateway_run_starting(stream_id)
         # Cancelled before the worker started; release the owner entry the route
         # layer registered so STREAM_SESSION_OWNERS does not leak (no teardown finally runs).
-        unregister_stream_owner(stream_id)
+        run_registry.close_stream(stream_id)
         # Also release the writeback-owner entry the route layer registered, so
         # SESSION_WRITEBACK_OWNERS does not leak on this pre-start cancellation
         # path (the teardown finally below never runs when we early-return here).
@@ -1788,13 +1784,12 @@ def _run_gateway_chat_streaming(
             STREAM_REASONING_TEXT.pop(stream_id, None)
             STREAM_LIVE_TOOL_CALLS.pop(stream_id, None)
             STREAM_LAST_EVENT_ID.pop(stream_id, None)
-            STREAMS.pop(stream_id, None)
+            run_registry.close_stream_locked(stream_id)
         if runs_api_pending_marked and gateway_run_id_pending(stream_id):
             _finish_gateway_run_starting(stream_id)
         _clear_gateway_run_starting(stream_id)
         with _STREAM_RUN_STARTING_CONDITION:
             _STREAM_ENDPOINTS.pop(stream_id, None)
-        unregister_stream_owner(stream_id)
         unregister_active_run(stream_id)
         # Release the writeback-owner entry the route layer registered for this
         # Gateway run so SESSION_WRITEBACK_OWNERS does not grow unbounded across

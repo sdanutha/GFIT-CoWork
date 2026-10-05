@@ -48,6 +48,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from api import run_registry
 from api.process_event_utils import (
     ASYNC_DELIVERY_ROUTING_RETRY_SECONDS,
     claim_async_delegation_delivery,
@@ -331,7 +332,7 @@ def _active_run_ids_for_session(
             for run_key in stale_keys:
                 (_cfg.ACTIVE_RUNS or {}).pop(run_key, None)
         for run_key in stale_keys:
-            _cfg.unregister_stream_owner(run_key)
+            run_registry.forget_owner(run_key)
         return matches
     except Exception:
         logger.debug(
