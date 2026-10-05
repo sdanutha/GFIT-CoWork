@@ -273,8 +273,8 @@ def test_webui_session_context_adds_gateway_like_metadata(monkeypatch, tmp_path)
     # shown, and the chat_id never leaks.
     from api.streaming import (
         _prefill_messages_with_webui_context,
-        _webui_ephemeral_system_prompt,
     )
+    from api.turn_builder import _webui_ephemeral_system_prompt
 
     gateway_state = tmp_path / "gateway_state.json"
     gateway_state.write_text(

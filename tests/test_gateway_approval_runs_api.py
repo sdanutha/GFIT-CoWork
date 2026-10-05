@@ -1876,7 +1876,7 @@ def test_gateway_worker_marks_run_pending_before_runs_api_prelude():
              patch("api.streaming._prefill_messages_with_webui_context", return_value=[]), \
              patch("api.streaming._normalize_prefill_messages_before_user_turn", side_effect=lambda messages: messages), \
              patch("api.streaming._public_prefill_context_status", return_value={}), \
-             patch("api.streaming._webui_ephemeral_system_prompt", return_value="sys"):
+             patch("api.turn_builder._webui_ephemeral_system_prompt", return_value="sys"):
             _run_gateway_chat_streaming(
                 session_id="sess-worker-run-starting",
                 msg_text="hi",
@@ -2131,7 +2131,7 @@ def test_chat_cancel_waits_for_worker_published_run_id_before_settlement(
              patch("api.streaming._prefill_messages_with_webui_context", return_value=[]), \
              patch("api.streaming._normalize_prefill_messages_before_user_turn", side_effect=lambda messages: messages), \
              patch("api.streaming._public_prefill_context_status", return_value={}), \
-             patch("api.streaming._webui_ephemeral_system_prompt", return_value="sys"):
+             patch("api.turn_builder._webui_ephemeral_system_prompt", return_value="sys"):
             worker_thread.start()
             assert support_gate.wait(timeout=5)
             request_thread.start()

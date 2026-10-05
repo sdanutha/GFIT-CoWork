@@ -1,8 +1,8 @@
 from api.streaming import (
     _fallback_title_from_exchange,
     _strip_workspace_prefix,
-    _workspace_context_prefix,
 )
+from api.turn_builder import _workspace_context_prefix
 
 
 def test_workspace_prefix_strips_only_versioned_sentinel():

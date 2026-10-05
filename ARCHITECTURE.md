@@ -785,10 +785,17 @@ The api/ modules in turn import Hermes internals:
     Standard library across all modules: json, os, re, sys, threading, time, traceback,
       uuid, http.server, pathlib, urllib.parse, email.parser, queue, collections
 
+`api/turn_builder.py` says what a WebUI agent turn is told and how a WebUI agent is
+made: `turn_prompts()` (the system message naming the session-creation Workspace, the
+ephemeral prompt with personality, surface context, progress and delivery guidance, and
+the `[Workspace::v1: ...]` prefix for the live Workspace) for the streaming turn and the
+non-streaming chat route, and `webui_agent()` for the agents the route module makes
+(non-streaming chat, compression, handoff summary, commit messages).
+
 AIAgent constructor parameters used:
 
     model=               OpenRouter model ID string
-    platform='cli'       Sets the platform context for tool selection
+    platform='webui'     Sets the platform context (no CLI terminal guidance)
     quiet_mode=True      Suppresses agent's own stdout output
     enabled_toolsets=    List of toolset names from config.yaml
     session_id=          Used for tool state keying (memory, todos, etc.)

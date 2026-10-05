@@ -2958,6 +2958,7 @@ from api.config import (
 from api import config as api_config
 from api import profiles as api_profiles
 from api import route_table
+from api.turn_builder import _AGENT_BUNDLE_SIDE_FIELDS, webui_agent
 from api.helpers import (
     require,
     bad,
@@ -2998,12 +2999,6 @@ from api.system_health import build_system_health_payload
 # an exact row's ``api_mode: anthropic_messages`` or its own pool never reached
 # the constructor at all. These helpers carry the WHOLE bundle instead, exactly
 # as ``api/streaming.py`` does for the streaming path.
-
-# The constructor-routing fields that travel with provider/base_url/api_key as
-# one authority. Mirrors ``api.streaming._RUNTIME_BUNDLE_FIELDS`` and
-# ``api.config.CUSTOM_CONNECTION_SIDE_FIELDS``.
-_AGENT_BUNDLE_SIDE_FIELDS = ("api_mode", "acp_command", "acp_args", "credential_pool")
-
 
 def _resolve_agent_connection_bundle(
     resolved_provider,
@@ -3055,29 +3050,6 @@ def _resolve_agent_connection_bundle(
             lookup_provider=lookup_provider or resolved_provider,
         )
     )
-
-
-def _agent_bundle_kwargs(agent_cls, bundle):
-    """Return the bundle's side-field kwargs supported by ``agent_cls``.
-
-    ``api_mode``/``acp_command``/``acp_args``/``credential_pool`` were added to
-    AIAgent over several releases, so gate each on the constructor signature the
-    way the streaming path does rather than raising TypeError against an older
-    hermes-agent build. Values come from the BUNDLE, never from the runtime
-    provider dict: a custom-provider override clears these, and reading them off
-    the runtime would re-introduce the authority the merge just replaced.
-    """
-    import inspect as _inspect
-
-    try:
-        params = set(_inspect.signature(agent_cls.__init__).parameters)
-    except (TypeError, ValueError):
-        return {}
-    return {
-        field: bundle[field]
-        for field in _AGENT_BUNDLE_SIDE_FIELDS
-        if field in params
-    }
 
 
 def _auxiliary_main_runtime(bundle, model):
@@ -24895,21 +24867,17 @@ def _handle_chat_sync(handler, body):
             _provider = _bundle["provider"]
             _api_key = _bundle["api_key"]
             _base_url = _bundle["base_url"]
-            agent = AIAgent(
+            agent = webui_agent(
+                AIAgent,
+                _bundle,
                 model=_model,
                 provider=_provider,
                 base_url=_base_url,
                 api_key=_api_key,
-                # Identify browser-originated sessions as WebUI so Hermes Agent
-                # does not inject CLI-specific terminal/output guidance.
-                platform="webui",
-                quiet_mode=True,
-                enabled_toolsets=_resolve_cli_toolsets(),
                 session_id=s.session_id,
-                **_agent_bundle_kwargs(AIAgent, _bundle),
+                toolsets=_resolve_cli_toolsets(),
             )
             from api.streaming import (
-                _WEBUI_PROGRESS_PROMPT,
                 _active_turn_boundary,
                 _assign_stable_message_ids,
                 _dedupe_replayed_context_messages,
@@ -24922,27 +24890,13 @@ def _handle_chat_sync(handler, body):
                 _sanitize_messages_for_agent,
                 _compact_session_image_parts_for_persistence,
                 _context_messages_for_new_turn,
-                _workspace_context_prefix,
             )
-            workspace_ctx = _workspace_context_prefix(str(s.workspace))
-            workspace_system_msg = (
-                f"Active workspace at session start: {s.workspace}\n"
-                "Every user message is prefixed with [Workspace::v1: /absolute/path] indicating the "
-                "workspace the user has selected in the web UI at the time they sent that message. "
-                "This tag is the single authoritative source of the active workspace and updates "
-                "with every message. It overrides any prior workspace mentioned in this system "
-                "prompt, memory, or conversation history. Always use the value from the most recent "
-                "[Workspace::v1: ...] tag as your default working directory for ALL file operations: "
-                "write_file, read_file, search_files, terminal workdir, and patch. "
-                "Never fall back to a hardcoded path when this tag is present.\n\n"
-                f"{_WEBUI_PROGRESS_PROMPT}\n\n"
-                "WebUI external-notes/durable-memory policy: Do not copy or dump this browser transcript "
-                "into external notes or durable memory by default. Write or update durable "
-                "notes only for explicit captures, durable preferences, decisions, blockers/open "
-                "issues, runbook-worthy workflows, or other clearly reusable signals; otherwise "
-                "leave external notes and durable memory unchanged. When you do write or update a durable note, briefly tell "
-                "the user what note or section changed so the write is reviewable."
-            )
+            from api.turn_builder import turn_prompts
+
+            _prompts = turn_prompts(s, session_id=s.session_id, config_data=get_config())
+            agent.ephemeral_system_prompt = _prompts.ephemeral_system_prompt
+            workspace_ctx = _prompts.user_prefix
+            workspace_system_msg = _prompts.system_message
 
             _previous_messages = list(s.messages or [])
             _previous_context_messages = list(_context_messages_for_new_turn(s, msg))
@@ -25603,16 +25557,15 @@ def _llm_git_commit_message(system_prompt: str, user_prompt: str, session=None) 
 
         AIAgent = require_ai_agent_class()
 
-        agent = AIAgent(
+        agent = webui_agent(
+            AIAgent,
+            _bundle,
             model=_main_model,
             provider=_main_provider,
             base_url=_main_base_url,
             api_key=_main_api_key,
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=[],
             session_id=f"git-commit-message-{uuid.uuid4().hex[:8]}",
-            **_agent_bundle_kwargs(AIAgent, _bundle),
+            toolsets=[],
         )
         result = agent.run_conversation(
             user_message=user_prompt,
@@ -27657,18 +27610,15 @@ def _handle_session_compress(handler, body, *, worker_session=None):
         )
         approx_tokens = _estimate_messages_tokens_rough(original_messages)
 
-        agent = AIAgent(
+        agent = webui_agent(
+            AIAgent,
+            _bundle,
             model=resolved_model,
             provider=resolved_provider,
             base_url=resolved_base_url,
             api_key=resolved_api_key,
-            # Identify browser-originated sessions as WebUI so Hermes Agent
-            # does not inject CLI-specific terminal/output guidance.
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=_resolve_cli_toolsets(),
             session_id=sid,
-            **_agent_bundle_kwargs(AIAgent, _bundle),
+            toolsets=_resolve_cli_toolsets(),
         )
         compressed = agent.context_compressor.compress(
             original_messages,
@@ -28353,16 +28303,15 @@ def _handle_handoff_summary(handler, body):
                 "fallback": True,
             })
 
-        agent = AIAgent(
+        agent = webui_agent(
+            AIAgent,
+            _bundle,
             model=resolved_model,
             provider=resolved_provider,
             base_url=resolved_base_url,
             api_key=resolved_api_key,
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=[],
             session_id=sid,
-            **_agent_bundle_kwargs(AIAgent, _bundle),
+            toolsets=[],
         )
 
         summary_system_prompt = (
