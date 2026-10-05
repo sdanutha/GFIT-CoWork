@@ -19,6 +19,7 @@ import api.auth as auth
 import api.login as login
 import api.profiles as profiles
 import api.roster as roster
+import api.roster_watch as roster_watch
 
 
 PASSWORD = "Tr0ub4dor&3-correct-horse"
@@ -146,6 +147,7 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
         monkeypatch.setenv(name, value)
     auth._sessions.clear()
     login._login_attempts.clear()
+    roster_watch.reset()
 
     # Profiles live under an isolated Hermes home.
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))

@@ -623,6 +623,11 @@ def main() -> None:
     api_config.SESSION_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_WORKSPACE.mkdir(parents=True, exist_ok=True)
 
+    # The Operator disables Profiles from the command line; the server ends
+    # their logins and running turns when it sees the roster change.
+    from api import roster_watch
+    roster_watch.start()
+
     try:
         from api.gateway_watcher import start_watcher
 

@@ -9,17 +9,18 @@ A Profile with no record is active and shown by its ID alone, so Profiles made
 before the roster existed (or outside GFIT-CoWork) keep working. An unreadable
 roster fails closed: every Profile counts as disabled until it is fixed.
 
-This module owns the Profile lifecycle: each Admin action on a Profile is one
+This module owns the Profile lifecycle: each action on a Profile is one
 function here (``create_profile``, ``disable_profile``, ``enable_profile``,
 ``delete_profile``) that checks the action is allowed, keeps the Hermes Profile (``api.profiles``)
 and its record in step, returns the Profile's roster view, and raises
-ProfileRefused (a message for the Admin and its kind) when it refuses. The
+ProfileRefused (a message for the Operator and its kind) when it refuses. The
 steps run in an order where a failure part way leaves the Profile shut, never
 open: create writes the record disabled before the Hermes Profile and makes it
-active only once the Profile exists, and delete disables the Profile before the
-Hermes Profile is deleted. Disabling a Profile
-stops its work straight away: its logins end, its running turns stop and its
-scheduled jobs pause (re-enabling resumes the ones it paused); its data stays.
+active only once the Profile exists, and delete refuses a Profile that is not
+already disabled. Disabling a
+Profile pauses its scheduled jobs (re-enabling resumes the ones it paused) and
+keeps its data; the running server notices the change and ends its logins and
+running turns (``api.roster_watch``), which live only in the server process.
 """
 from __future__ import annotations
 
@@ -163,6 +164,25 @@ def label_rows(profile_rows: list) -> list:
         else {**row, **view(row["name"])}
         for row in profile_rows
     ]
+
+
+def version() -> tuple | None:
+    """A token that changes whenever the roster file changes (None when there is no file)."""
+    try:
+        st = _path().stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+def disabled_names() -> list[str] | None:
+    """The Profiles the roster marks disabled, or None when the roster is unreadable."""
+    with _LOCK:
+        try:
+            records = _load()
+        except RosterUnreadable:
+            return None
+    return sorted(name for name, record in records.items() if record.get("status") == STATUS_DISABLED)
 
 
 def is_disabled(name: str) -> bool:
@@ -324,15 +344,14 @@ def _drop_record(name: str) -> None:
         logger.warning("The roster record of Profile %s could not be removed", name, exc_info=True)
 
 
-def _set_status(name: str, status: str, outcome: str = "changed") -> None:
-    """Record *status* for Profile *name*; when the roster cannot be written, refuse
-    saying the Profile was not *outcome* (``changed``, ``deleted``)."""
+def _set_status(name: str, status: str) -> None:
+    """Record *status* for Profile *name*; refuse when the roster cannot be written."""
     try:
         _set(name, status=status)
     except (OSError, RosterUnreadable) as exc:
         logger.warning("Profile roster %s could not be written (%s)", _path(), exc)
         raise ProfileRefused(
-            f"Profile '{name}' was not {outcome}: the Profile roster could not be written.",
+            f"Profile '{name}' was not changed: the Profile roster could not be written.",
             REFUSED_SERVER_FAULT,
         ) from exc
 
@@ -422,20 +441,24 @@ def _cancel_runs(name: str) -> None:
             logger.warning("Run %s of Profile %s could not be stopped", stream_id, name, exc_info=True)
 
 
-def _stop_work(name: str) -> None:
-    """End Profile *name*'s logins, stop its running turns and pause its scheduled jobs.
+def stop_live_work(name: str) -> None:
+    """End Profile *name*'s logins and stop its running turns.
 
-    A failure to stop work is logged and never undoes the disable.
+    Both live only in the server process, so only the server calls this
+    (``api.roster_watch``), never the command line. A failure is logged and
+    never undoes the disable.
     """
-    _end_sessions(name)
+    try:
+        _end_sessions(name)
+    except Exception:
+        logger.warning("The logins of Profile %s could not all be ended", name, exc_info=True)
     _cancel_runs(name)
-    _pause_jobs(name)
 
 
 def disable(name: str) -> None:
-    """Mark Profile *name*'s record disabled and stop its work now, with no guards."""
+    """Mark Profile *name*'s record disabled and pause its jobs, with no guards."""
     _set(name, status=STATUS_DISABLED)
-    _stop_work(name)
+    _pause_jobs(name)
 
 
 def enable(name: str) -> None:
@@ -445,11 +468,14 @@ def enable(name: str) -> None:
 
 
 def disable_profile(name: str) -> dict:
-    """The Admin disables Profile *name*: its logins end, its running turns stop and
-    its scheduled jobs pause now; its data stays."""
+    """Disable Profile *name*: its scheduled jobs pause now and its data stays.
+
+    The running server notices the roster change and ends the Profile's logins
+    and running turns (``api.roster_watch``).
+    """
     _check_existing_user_profile(name)
     _set_status(name, STATUS_DISABLED)
-    _stop_work(name)
+    _pause_jobs(name)
     return view(name)
 
 
@@ -463,10 +489,10 @@ def enable_profile(name: str) -> dict:
 
 
 def delete_profile(name: str) -> dict:
-    """The Admin deletes Profile *name*: shut it first, then delete it, then forget it.
+    """Delete Profile *name*, which must already be disabled, then forget its record.
 
-    The Profile is disabled (ending its sessions) before its data is removed,
-    so a deletion that cannot finish leaves it shut. Returns ``{'ok': True, 'name': name}``.
+    Disabling first gives the running server time to end the Profile's logins
+    and stop its turns before its files go. Returns ``{'ok': True, 'name': name}``.
     """
     from api import profiles
 
@@ -476,8 +502,13 @@ def delete_profile(name: str) -> dict:
     _check_name(name)
     if not profiles.named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' does not exist.")
-    _set_status(name, STATUS_DISABLED, "deleted")
-    _stop_work(name)
+    record = _record(name)
+    if record is None:
+        # Unknown is not disabled: an unreadable roster cannot show the Profile is shut.
+        raise ProfileRefused(
+            f"Profile '{name}' was not deleted: the Profile roster could not be read.", REFUSED_SERVER_FAULT)
+    if record.get("status") != STATUS_DISABLED:
+        raise ProfileRefused(f"Profile '{name}' is active: disable it first, then delete it.", REFUSED_CONFLICT)
     try:
         result = profiles.delete_profile_api(name)
     except Exception as exc:

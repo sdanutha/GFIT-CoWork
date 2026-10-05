@@ -17155,11 +17155,15 @@ def _post_api_profile_enable_or_disable(handler, parsed, body, diag):
         return bad(handler, "name is required")
     from api import roster
 
+    from api import roster_watch
+
     action = roster.disable_profile if parsed.path == "/api/profile/disable" else roster.enable_profile
     try:
-        return j(handler, {"ok": True, "profile": action(name)})
+        profile = action(name)
     except roster.ProfileRefused as e:
         return _profile_refused(handler, e)
+    roster_watch.check()
+    return j(handler, {"ok": True, "profile": profile})
 
 
 def _post_api_profile_delete(handler, parsed, body, diag):
@@ -17169,9 +17173,14 @@ def _post_api_profile_delete(handler, parsed, body, diag):
     # Deleting is permanent: the caller confirms by repeating the name.
     if str(body.get("confirm") or "").strip() != name:
         return bad(handler, "Confirm the deletion: send confirm set to the Profile name")
-    from api import roster
+    from api import roster, roster_watch
 
     try:
+        from api.profiles import named_profile_exists
+
+        if name != "default" and named_profile_exists(name) and roster.view(name)["status"] != "disabled":
+            roster.disable_profile(name)
+            roster_watch.check()
         return j(handler, roster.delete_profile(name))
     except roster.ProfileRefused as e:
         return _profile_refused(handler, e)
