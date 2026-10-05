@@ -5407,17 +5407,9 @@ def _handle_session_anchor_scene(handler, body):
         return bad(handler, "Read-only imported sessions cannot persist anchor scenes", 403)
     if s is None:
         return True
-    # Active-profile visibility guard (parity with GET /api/session, routes.py:~8922).
-    # _get_or_materialize_session loads by id with no profile scoping, so without
-    # this an authenticated request under profile A could persist anchor scenes
-    # onto a session owned by profile B (cross-profile write). Reject as 404 —
-    # same shape the read path uses — and leave anchor_activity_scenes untouched.
-    # #7710: cross-profile writes are rejected with 409
-    # ``session_profile_mismatch`` so the client can offer to switch
-    # to the owning profile (mirrors the detail-load endpoint's
-    # contract at #13043 / #13493). 404 is preserved for the
-    # None-profile (unknown/legacy) case so the frontend self-heal
-    # path still fires for actually-missing sids.
+    # A session materialized from CLI/state.db metadata is not in the WebUI
+    # store the accessor asked about, so ask session ownership again about the
+    # session as loaded (409 naming a known other Profile, #7710; else 404).
     _refusal = request_session_ownership().refuse_found_session(sid, s)
     if _refusal is not None:
         return _refusal.answer(handler, sid)
@@ -17948,12 +17940,9 @@ def _handle_session_export(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session, hide_owner=True)
     if s is None:
         return True
-    _refusal = request_session_ownership().refuse_found_session(sid, s)
-    if _refusal is not None:
-        return _refusal.answer_not_found(handler)
     # ``public_session_projection`` supersedes the narrower
     # ``redact_session_data`` path so export context_messages uses the same
     # alias-stripping boundary as the visible transcript.
@@ -18228,7 +18217,7 @@ def _handle_escape_authorize(handler, parsed, body: dict | None = None):
         return bad(handler, "session_id is required")
     if not rel:
         return bad(handler, "path is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -18246,7 +18235,7 @@ def _handle_escape_list_dir(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     rel_path = qs.get("path", ["."])[0]
@@ -18270,7 +18259,7 @@ def _handle_escape_file_read(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -18296,7 +18285,7 @@ def _handle_escape_file_raw(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -21016,7 +21005,7 @@ def _handle_folder_download(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
 
@@ -21101,7 +21090,7 @@ def _handle_file_raw(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -21140,7 +21129,7 @@ def _handle_file_read(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -24125,16 +24114,12 @@ def _handle_session_compression_recovery_start(handler, body):
         return bad(handler, "session_id is required")
     if _session_is_subagent_view_only(sid):
         return bad(handler, "Subagent sessions are view-only and cannot start compression recovery from WebUI", 400)
+    # The accessor answers as the detail load does (#7710): 409
+    # ``session_profile_mismatch`` for a known other Profile, 404 otherwise.
+    # Recovery continues only into this request's own sessions.
     source = load_owned_session(handler, sid, load=get_session)
     if source is None:
         return True
-    # #7710: same contract as the detail-load endpoint — 409
-    # ``session_profile_mismatch`` for a known other profile, 404 only for the
-    # None-profile self-heal path. Recovery continues only into this
-    # request's own sessions.
-    _refusal = request_session_ownership().refuse_found_session(sid, source)
-    if _refusal is not None:
-        return _refusal.answer(handler, sid)
     recovery = compression_recovery_payload_for_session(source)
     if not recovery:
         return bad(handler, "Session does not have a compression recovery action.", 409)
@@ -24838,7 +24823,11 @@ def _handle_chat_sync(handler, body):
         return j(handler, stale_response, status=409)
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot be written from WebUI", 400)
-    s = load_owned_session(handler, body.get("session_id"), load=get_session)
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    s = load_owned_session(handler, body["session_id"], load=get_session)
     if s is None:
         return True
     msg = str(body.get("message", "")).strip()
@@ -25867,7 +25856,7 @@ def _handle_file_delete(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -25898,7 +25887,7 @@ def _handle_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -25928,7 +25917,7 @@ def _handle_office_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -25962,7 +25951,7 @@ def _handle_file_create(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -25988,7 +25977,7 @@ def _handle_file_rename(handler, body):
         require(body, "session_id", "path", "new_name")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -26022,7 +26011,7 @@ def _handle_file_move(handler, body):
         require(body, "session_id", "path", "dest_dir")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -26119,7 +26108,7 @@ def _handle_create_dir(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -26140,7 +26129,7 @@ def _handle_file_reveal(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -26200,7 +26189,7 @@ def _handle_file_path(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -26229,7 +26218,7 @@ def _handle_file_open_vscode(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, names_owner=False)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
     if s is None:
         return True
     try:
@@ -27320,6 +27309,8 @@ def _run_manual_compression_job(sid, body):
             with profiles_api.profile_env_for_background_worker(session, "manual compression", logger_override=logger):
                 _handle_session_compress(memory_handler, body, worker_session=session)
         else:
+            # Not found by the worker's own load: the handler answers as for a
+            # request (the stale-runtime and stream checks run first).
             _handle_session_compress(memory_handler, body)
         status = int(memory_handler.status or 500)
         payload = memory_handler.payload()

@@ -560,7 +560,7 @@ def request_caller_reach() -> ProfileReach:
 
 
 def load_owned_session(
-    handler, session_id, *, load, not_found: str = NOT_FOUND_MESSAGE, names_owner: bool = True, **load_options
+    handler, session_id, *, load, not_found: str = NOT_FOUND_MESSAGE, hide_owner: bool = False, **load_options
 ):
     """The session the request names, when the request owns it; else None, its answer written.
 
@@ -569,16 +569,16 @@ def load_owned_session(
     Admin's read-only 403, for the unconfined and Admin adapters). Then *load*
     (the caller's session loader) loads it with *load_options*; a load
     that raises ``KeyError`` writes 404 *not_found*. Other errors pass to the
-    caller. With *names_owner* false a refusal never names the owner (always
-    404, the Admin's read-only 403 aside). For a session id the request chose,
+    caller. With *hide_owner* a refusal never says who owns the session (always
+    404, the Admin's read-only 403 aside), for routes that never did. For a session id the request chose,
     never one the server chose.
     """
     refusal = request_session_ownership().refuse_session(session_id)
     if refusal is not None:
-        if names_owner:
-            refusal.answer(handler, session_id, not_found=not_found)
-        else:
+        if hide_owner:
             refusal.answer_not_found(handler, not_found=not_found)
+        else:
+            refusal.answer(handler, session_id, not_found=not_found)
         return None
     try:
         return load(session_id, **load_options)
