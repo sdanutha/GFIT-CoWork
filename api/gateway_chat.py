@@ -955,10 +955,11 @@ def resume_gateway_runs_after_restart() -> list[str]:
 
     Call before serving so stale-pending repair does not mark these turns interrupted.
     """
+    from api import config as _config
     from api import models as _models
 
     try:
-        candidates = _sidecars_with_active_stream(_models.SESSION_DIR)
+        candidates = _sidecars_with_active_stream(_config.SESSION_DIR)
     except Exception:
         logger.warning("gateway reattach: could not scan session sidecars", exc_info=True)
         return []

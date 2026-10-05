@@ -188,7 +188,7 @@ def test_session_load_metadata_only_returns_instance_not_dict():
         sid = "test1234abcd"
         from api import models
         original = api.config.SESSION_DIR
-        models.SESSION_DIR = Path(tmpd)
+        api.config.SESSION_DIR = Path(tmpd)
         try:
             session_file = Path(tmpd) / f"{sid}.json"
             session_file.write_text(_json.dumps({
@@ -202,7 +202,7 @@ def test_session_load_metadata_only_returns_instance_not_dict():
             }))
             result = Session.load_metadata_only(sid)
         finally:
-            models.SESSION_DIR = original
+            api.config.SESSION_DIR = original
 
     # Result must be a Session instance — not None and not a dict.
     assert result is not None, "load_metadata_only returned None for valid session"

@@ -534,7 +534,7 @@ def test_handle_chat_sync_passes_result_turn_authority_to_settlement(tmp_path, m
     from api import models, routes
 
     _isolated_session_store(tmp_path, monkeypatch)
-    monkeypatch.setattr(routes, "SESSION_INDEX_FILE", api.config.SESSION_INDEX_FILE)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", api.config.SESSION_INDEX_FILE)
     monkeypatch.setattr(routes, "get_session", models.get_session)
     monkeypatch.setattr(routes, "title_from", models.title_from)
     monkeypatch.setattr(routes, "get_config", lambda: {"model": "m", "provider": "p"})

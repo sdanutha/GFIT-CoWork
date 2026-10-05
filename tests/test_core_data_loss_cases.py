@@ -469,8 +469,8 @@ def test_core_a_route_full_session_load_does_not_resurrect_deleted_turns(tmp_pat
     sess_dir = tmp_path / "sessions"
     sess_dir.mkdir()
     orig_dir, orig_index = api.config.SESSION_DIR, api.config.SESSION_INDEX_FILE
-    models.SESSION_DIR = sess_dir
-    models.SESSION_INDEX_FILE = sess_dir / "_index.json"
+    api.config.SESSION_DIR = sess_dir
+    api.config.SESSION_INDEX_FILE = sess_dir / "_index.json"
     models.SESSIONS.clear()
 
     saved = {
@@ -515,5 +515,5 @@ def test_core_a_route_full_session_load_does_not_resurrect_deleted_turns(tmp_pat
         for name, val in saved.items():
             if val is not None:
                 setattr(routes, name, val)
-        models.SESSION_DIR, models.SESSION_INDEX_FILE = orig_dir, orig_index
+        api.config.SESSION_DIR, api.config.SESSION_INDEX_FILE = orig_dir, orig_index
         models.SESSIONS.clear()

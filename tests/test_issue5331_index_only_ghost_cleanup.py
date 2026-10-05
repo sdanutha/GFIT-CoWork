@@ -49,7 +49,7 @@ def mock_env(tmp_path, monkeypatch):
     # Also refresh the module-level aliases in routes and models so they
     # pick up the patched config values.
     monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
-    monkeypatch.setattr(routes, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(routes, "SESSIONS", {})
     monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)

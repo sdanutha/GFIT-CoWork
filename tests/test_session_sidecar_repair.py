@@ -1,4 +1,5 @@
 """Regression tests for session sidecar repair logic."""
+import api.config
 import json
 import queue
 import os

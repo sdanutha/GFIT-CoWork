@@ -19,6 +19,7 @@ These tests prove the four required invariants:
   3. An evicted session lazily reloads from disk with identical content.
   4. No data loss: eviction removes only the in-memory copy, never the file.
 """
+import api.config
 import collections
 import shutil
 import tempfile
@@ -57,9 +58,9 @@ def isolated_session_env():
 
     index_file = sessions_dir / "_index.json"
     _cfg.SESSION_DIR = sessions_dir
-    _models.SESSION_DIR = sessions_dir
+    api.config.SESSION_DIR = sessions_dir
     _cfg.SESSION_INDEX_FILE = index_file
-    _models.SESSION_INDEX_FILE = index_file
+    api.config.SESSION_INDEX_FILE = index_file
     _cfg.LOCK = threading.Lock()
     _models.LOCK = _cfg.LOCK
     _cfg.SESSIONS = collections.OrderedDict()
@@ -70,10 +71,10 @@ def isolated_session_env():
     finally:
         _cfg.SESSION_DIR = old["cfg_SESSION_DIR"]
         if old["models_SESSION_DIR"] is not None:
-            _models.SESSION_DIR = old["models_SESSION_DIR"]
+            api.config.SESSION_DIR = old["models_SESSION_DIR"]
         _cfg.SESSION_INDEX_FILE = old["cfg_SESSION_INDEX_FILE"]
         if old["models_SESSION_INDEX_FILE"] is not None:
-            _models.SESSION_INDEX_FILE = old["models_SESSION_INDEX_FILE"]
+            api.config.SESSION_INDEX_FILE = old["models_SESSION_INDEX_FILE"]
         _cfg.SESSIONS = old["SESSIONS"]
         _models.SESSIONS = old["SESSIONS"]
         _cfg.LOCK = old["LOCK"]

@@ -5,6 +5,7 @@ After editing a message (truncate + send) in the duplicated session,
 the watermark is set based on the copied messages' timestamps.
 On next load, merge with state.db may filter out messages incorrectly.
 """
+import api.config
 import copy
 import os
 import tempfile
@@ -42,7 +43,7 @@ def isolated_session_env():
     }
 
     _cfg.SESSION_DIR = sessions_dir
-    _models.SESSION_DIR = sessions_dir
+    api.config.SESSION_DIR = sessions_dir
     _cfg.SESSION_INDEX_FILE = sessions_dir / 'index.json'
     _cfg.LOCK = threading.Lock()
     _cfg.SESSIONS = collections.OrderedDict()
@@ -56,7 +57,7 @@ def isolated_session_env():
         # Always restore, even on exception
         _cfg.SESSION_DIR = old_values['cfg_SESSION_DIR']
         if old_values['models_SESSION_DIR'] is not None:
-            _models.SESSION_DIR = old_values['models_SESSION_DIR']
+            api.config.SESSION_DIR = old_values['models_SESSION_DIR']
         _cfg.SESSIONS = old_values['SESSIONS']
         _cfg.LOCK = old_values['LOCK']
         _cfg.SESSION_INDEX_FILE = old_values['SESSION_INDEX_FILE']
