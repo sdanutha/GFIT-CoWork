@@ -22,7 +22,6 @@ from tests.test_gfit_session_route_answers import SESSION_ROUTES
 ADMIN_SESSION_ROUTES = {
     ("GET", "/api/escape/file/raw"), ("GET", "/api/escape/file/read"), ("GET", "/api/escape/list"),
     ("GET", "/api/terminal/output"),
-    ("GET", "/api/approval/inject_test"), ("GET", "/api/clarify/inject_test"),
     ("POST", "/api/escape/authorize"), ("POST", "/api/file/open-vscode"), ("POST", "/api/file/reveal"),
     *{("POST", f"/api/git/{verb}") for verb in (
         "checkout", "commit", "commit-message", "commit-message-selected", "commit-selected", "discard",
@@ -41,7 +40,7 @@ ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
         "/api/logs",
         "/api/provider/cost-history", "/api/provider/quota", "/api/providers")},
     **{("POST", r): _SERVER for r in (
-        "/api/admin/reload", "/api/commands/exec", "/api/gateway/restart",
+        "/api/commands/exec", "/api/gateway/restart",
         "/api/gateway/start", "/api/gateway/stop", "/api/health/restart",
         "/api/models/refresh", "/api/providers", "/api/providers/delete", "/api/providers/self-hosted",
         "/api/shutdown")},
@@ -52,10 +51,6 @@ ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
         ("POST", "/api/onboarding/setup"))},
     **{("POST", f"/api/profile/{verb}"): "Profile management (names a Profile under `name`)"
        for verb in ("create", "delete", "disable", "enable", "switch")},
-    ("GET", "/api/session/recovery/audit"): "audits the whole session store",
-    ("POST", "/api/session/recovery/repair-safe"): "repairs the whole session store",
-    ("POST", "/api/sessions/cleanup"): "bulk cleanup; names no session",
-    ("POST", "/api/sessions/cleanup_zero_message"): "bulk cleanup; names no session",
     **{("GET", r): "pages and static prefixes" for r in ("/login",)},
 }
 

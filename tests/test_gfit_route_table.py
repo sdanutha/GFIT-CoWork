@@ -38,9 +38,14 @@ _DELETED_BY_ADR_0006 = {
     "_get_api_dashboard_status", "_get_api_dashboard_config", "_post_api_dashboard_config",
     "_get_api_extensions_status", "_get_extensions", "_post_api_extensions_toggle",
     "_post_api_extensions_sidecar_proxy_consent",
+    "_get_api_session_recovery_audit", "_post_api_session_recovery_repair_safe", "_post_api_admin_reload",
+    "_post_api_sessions_cleanup", "_post_api_sessions_cleanup_zero_message",
+    "_get_api_approval_inject_test", "_get_api_clarify_inject_test",
 }
 # Path prefixes of those deleted routes: they now answer like any unknown path.
-_DELETED_PATHS_BY_ADR_0006 = ("/share", "/api/share/", "/api/kanban/", "/api/dashboard/", "/api/extensions/", "/extensions/", "/api/csp-report")
+_DELETED_PATHS_BY_ADR_0006 = ("/share", "/api/share/", "/api/kanban/", "/api/dashboard/", "/api/extensions/", "/extensions/", "/api/csp-report",
+                              "/api/session/recovery/", "/api/admin/reload", "/api/sessions/cleanup",
+                              "/api/approval/inject_test", "/api/clarify/inject_test")
 
 
 def _intended(method, path, user_may, kind):

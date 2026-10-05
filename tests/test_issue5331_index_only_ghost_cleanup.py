@@ -2,7 +2,7 @@
 
 #5331: sessions created in ``_index.json`` without a backing ``.json`` sidecar
 file accumulate in the sidebar and cannot be removed via normal UI. The existing
-``_handle_sessions_cleanup`` only iterates ``SESSION_DIR.glob('*.json')`` —
+``cleanup_sessions`` (then the cleanup route) only iterated ``SESSION_DIR.glob('*.json')`` —
 structurally blind to index-only entries.
 
 Phase 2 (new) reads the index and prunes entries that have no backing file
@@ -12,7 +12,6 @@ disk or an in-memory ``SESSIONS`` entry (or both).
 
 from __future__ import annotations
 
-import io
 import json
 import sys
 import threading
@@ -35,7 +34,6 @@ def mock_env(tmp_path, monkeypatch):
     """
     import api.config as config_mod
     import api.routes as routes
-    import api.models as models
 
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
@@ -52,25 +50,6 @@ def mock_env(tmp_path, monkeypatch):
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(routes, "SESSIONS", {})
     return sessions_dir, index_file
-
-
-def _fake_handler():
-    """Minimal handler mock for ``_handle_sessions_cleanup``.
-
-    ``j()`` writes the JSON response to ``handler.wfile`` (a ``BytesIO``),
-    so callers read the result via ``handler.wfile.getvalue()``.
-    """
-    handler = type("FakeHandler", (), {})()
-    handler.wfile = io.BytesIO()
-    handler.send_response = lambda status: None
-    handler.send_header = lambda key, value: None
-    handler.end_headers = lambda: None
-    return handler
-
-
-def _fake_handler_result(handler):
-    """Parse the JSON written to ``handler.wfile`` by ``j()``."""
-    return json.loads(handler.wfile.getvalue())
 
 
 def _make_session_file(sessions_dir, sid, title="Untitled", **extra):
@@ -119,11 +98,8 @@ def test_cleanup_prunes_index_only_ghosts(mock_env):
     ])
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
 
-    assert result["ok"] is True
     assert result["cleaned"] == 1  # only the ghost
 
     updated = _read_index(index_file)
@@ -144,9 +120,7 @@ def test_cleanup_keeps_in_memory_ghosts(mock_env):
         {"session_id": "sess-mem", "title": "Untitled", "message_count": 2},
     ])
 
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 0
 
     updated = _read_index(index_file)
@@ -177,9 +151,7 @@ def test_cleanup_mixed_ghosts_and_legit(mock_env):
         ghost_2,
     ])
 
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 2
 
     updated = _read_index(index_file)
@@ -197,9 +169,7 @@ def test_cleanup_empty_index_does_not_crash(mock_env):
     _write_index(index_file, [])
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 0
 
 
@@ -209,9 +179,7 @@ def test_cleanup_no_index_file_does_not_crash(mock_env):
     assert not index_file.exists()
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 0
 
 
@@ -221,9 +189,7 @@ def test_cleanup_corrupt_index_does_not_crash(mock_env):
     index_file.write_text("not valid json")
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 0  # Phase 2 gracefully skipped
 
     # Index file still exists and still invalid.
@@ -242,9 +208,7 @@ def test_cleanup_ghost_without_session_id_field(mock_env):
     ])
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 0
 
     updated = _read_index(index_file)
@@ -267,9 +231,7 @@ def test_cleanup_index_only_empty_ghosts_without_explicit_messages(mock_env):
     ])
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
     assert result["cleaned"] == 1
 
     updated = _read_index(index_file)
@@ -296,7 +258,7 @@ def test_cleanup_deletes_index_only_when_phase1_touched(mock_env):
         {"session_id": "sess-ghost", "title": "Untitled", "message_count": 1},
     ])
 
-    routes._handle_sessions_cleanup(_fake_handler(), {})
+    routes.cleanup_sessions()
 
     # After Phase-2-write, index should exist (Phase 3 should not have unlinked it).
     assert index_file.exists()
@@ -321,7 +283,7 @@ def test_cleanup_index_rewritten_when_phase1_removed_files(mock_env):
         {"session_id": "sess-orphan", "title": "Untitled", "message_count": 0},
     ])
 
-    routes._handle_sessions_cleanup(_fake_handler(), {}, zero_only=False)
+    routes.cleanup_sessions(zero_only=False)
 
     # Phase 1 unlinked the file.  Phase 2 removed the stale index entry.
     # Phase 3 skipped because Phase 2 already cleaned the index.
@@ -345,7 +307,7 @@ def test_cleanup_phase3_deletes_when_phase2_could_not_run(mock_env):
     # Corrupt index — Phase 2 will catch the exception and skip.
     index_file.write_text("corrupt json")
 
-    routes._handle_sessions_cleanup(_fake_handler(), {}, zero_only=False)
+    routes.cleanup_sessions(zero_only=False)
 
     # Phase 1 removed the file.  Phase 2 caught the corrupt-json exception.
     # Phase 3: phase1_touched=True, phase2_rewrote_index=False → unlink.
@@ -371,9 +333,7 @@ def test_cleanup_no_double_count_when_phase1_and_phase2_overlap(mock_env):
         {"session_id": "sess-ghost", "title": "Untitled", "message_count": 1},
     ])
 
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {})
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions()}
 
     # Phase 1: 1 (sess-zero).  Phase 2: 1 (sess-ghost).  Total = 2.
     assert result["cleaned"] == 2
@@ -404,12 +364,9 @@ def test_cleanup_zero_only_still_runs_phase2(mock_env):
     ])
 
     import api.routes as routes
-    handler = _fake_handler()
-    routes._handle_sessions_cleanup(handler, {}, zero_only=True)
-    result = _fake_handler_result(handler)
+    result = {"cleaned": routes.cleanup_sessions(zero_only=True)}
 
     # Phase 1: 1 (sess-zero, zero messages).  Phase 2: 1 (sess-ghost).  Total = 2.
-    assert result["ok"] is True
     assert result["cleaned"] == 2
 
     # Index exists (Phase 2 rewrote it, Phase 3 skipped).

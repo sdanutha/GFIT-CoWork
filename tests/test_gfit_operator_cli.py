@@ -287,3 +287,44 @@ def test_an_unreadable_roster_settles_nothing_until_it_is_fixed(srv):
     roster_path.write_text(json.dumps({BOB: {"status": "disabled"}}))
     assert roster_watch.check() == [BOB]
     assert _logins(BOB) == 0
+
+
+# ── Session-store maintenance (was the Admin's web routes) ───────────────────
+
+@pytest.fixture
+def session_dir(monkeypatch, tmp_path):
+    import api.config as config
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(config, "SESSION_DIR", sessions)
+    monkeypatch.setattr(config, "SESSION_INDEX_FILE", sessions / "_index.json")
+    return sessions
+
+
+def test_sessions_cleanup_deletes_empty_untitled_sessions_and_keeps_the_rest(session_dir, capsys):
+    from api.models import Session
+
+    Session(session_id="emptyone1234", title="Untitled", messages=[]).save()
+    Session(session_id="realone12345", title="Real", messages=[{"role": "user", "content": "hi"}]).save()
+    capsys.readouterr()
+
+    assert cli("sessions-cleanup") == 0
+
+    assert json.loads(capsys.readouterr().out) == {"cleaned": 1}
+    assert not (session_dir / "emptyone1234.json").exists()
+    assert (session_dir / "realone12345.json").exists()
+
+
+def test_sessions_audit_reports_without_changing_anything(session_dir, capsys):
+    before = sorted(p.name for p in session_dir.iterdir())
+
+    assert cli("sessions-audit") == 0
+
+    assert isinstance(json.loads(capsys.readouterr().out), dict)
+    assert sorted(p.name for p in session_dir.iterdir()) == before
+
+
+def test_sessions_repair_on_a_clean_store_succeeds(session_dir, capsys):
+    assert cli("sessions-repair") == 0
+    assert json.loads(capsys.readouterr().out).get("clean") is True

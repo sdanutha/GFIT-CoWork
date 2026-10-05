@@ -305,28 +305,6 @@ class TestApprovalHTTPEndpoints:
         assert status == 200
         assert result["ok"] is True
 
-    def test_respond_clears_injected_pending(self):
-        """Inject a pending entry, respond, verify it's cleared."""
-        sid = f"http-clear-{uuid.uuid4().hex[:8]}"
-        cmd = "rm -rf /tmp/testdir"
-
-        inject = get(f"/api/approval/inject_test?session_id={urllib.parse.quote(sid)}"
-                     f"&pattern_key=recursive+delete&command={urllib.parse.quote(cmd)}")
-        assert inject["ok"] is True
-
-        data = get(f"/api/approval/pending?session_id={urllib.parse.quote(sid)}")
-        assert data["pending"] is not None
-
-        result, status = post("/api/approval/respond", {
-            "session_id": sid,
-            "choice": "deny",
-        })
-        assert status == 200
-        assert result["ok"] is True
-
-        data2 = get(f"/api/approval/pending?session_id={urllib.parse.quote(sid)}")
-        assert data2["pending"] is None, "pending should be cleared after respond"
-
     def test_respond_rejects_invalid_choice(self):
         """respond with an unknown choice returns 400."""
         result, status = post("/api/approval/respond", {
@@ -339,23 +317,6 @@ class TestApprovalHTTPEndpoints:
         """respond without session_id returns 400."""
         result, status = post("/api/approval/respond", {"choice": "deny"})
         assert status == 400
-
-    def test_respond_session_choice_clears_pending(self):
-        """Inject pending, respond with 'session', verify cleared."""
-        sid = f"http-session-{uuid.uuid4().hex[:8]}"
-        inject = get(f"/api/approval/inject_test?session_id={urllib.parse.quote(sid)}"
-                     f"&pattern_key=force+kill+processes&command=pkill+-9+something")
-        assert inject["ok"] is True
-
-        result, status = post("/api/approval/respond", {
-            "session_id": sid,
-            "choice": "session",
-        })
-        assert status == 200
-        assert result["choice"] == "session"
-
-        data = get(f"/api/approval/pending?session_id={urllib.parse.quote(sid)}")
-        assert data["pending"] is None
 
     def test_pending_route_falls_back_to_gateway_queue(self, monkeypatch):
         """GET /api/approval/pending must surface gateway-only approvals when _pending is empty."""

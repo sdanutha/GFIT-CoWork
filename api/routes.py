@@ -10439,7 +10439,7 @@ from api.route_approvals import (
     resolve_gateway_pending_local_all,
     resolve_gateway_pending_local_no_run_mirror,
     set_session_yolo_enabled,
-    submit_pending,
+    submit_pending,  # noqa: F401  (tests submit approvals through the route module)
 )
 
 # Clarify prompts (optional -- graceful fallback if agent not available)
@@ -13778,11 +13778,6 @@ def _get_api_session_lineage_report(handler, parsed):
     return j(handler, report)
 
 
-def _get_api_session_recovery_audit(handler, parsed):
-    from api.session_recovery import audit_session_recovery
-    return j(handler, audit_session_recovery(api_config.SESSION_DIR, state_db_path=_active_state_db_path()))
-
-
 def _get_api_session_status(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
@@ -14189,13 +14184,6 @@ def _get_api_approval_stream(handler, parsed):
     return _handle_approval_sse_stream(handler, parsed)
 
 
-def _get_api_approval_inject_test(handler, parsed):
-    # Loopback-only: used by automated tests; blocked from any remote client
-    if handler.client_address[0] != "127.0.0.1":
-        return j(handler, {"error": "not found"}, status=404)
-    return _handle_approval_inject(handler, parsed)
-
-
 def _get_api_clarify_pending(handler, parsed):
     return _handle_clarify_pending(handler, parsed)
 
@@ -14206,13 +14194,6 @@ def _get_api_clarify_stream(handler, parsed):
 
 def _get_api_session_stream(handler, parsed):
     return _handle_session_sse_stream(handler, parsed)
-
-
-def _get_api_clarify_inject_test(handler, parsed):
-    # Loopback-only: used by automated tests; blocked from any remote client
-    if handler.client_address[0] != "127.0.0.1":
-        return j(handler, {"error": "not found"}, status=404)
-    return _handle_clarify_inject(handler, parsed)
 
 
 def _get_api_onboarding_oauth_poll(handler, parsed):
@@ -14855,12 +14836,6 @@ def _post_api_escape_authorize(handler, parsed, body, diag):
     return _handle_escape_authorize(handler, parsed, body)
 
 
-def _post_api_session_recovery_repair_safe(handler, parsed, body, diag):
-    from api.session_recovery import repair_safe_session_recovery
-    result = repair_safe_session_recovery(api_config.SESSION_DIR, state_db_path=_active_state_db_path())
-    return j(handler, result, status=200 if result.get("clean") else 409)
-
-
 def _post_api_prompts(handler, parsed, body, diag):
     text = str(body.get("text") or "").strip()
     label = str(body.get("label") or "").strip()
@@ -15264,27 +15239,6 @@ def _post_api_reasoning(handler, parsed, body, diag):
         return bad(handler, str(e))
     except RuntimeError as e:
         return bad(handler, str(e), 500)
-
-
-def _post_api_admin_reload(handler, parsed, body, diag):
-    # Hot-reload api.models module to pick up code changes without restart.
-    import importlib
-    from api import models as _models
-    importlib.reload(_models)
-    # Also re-expose get_session from the reloaded module so routes.py
-    # continues to work (routes.py imported it at module level).
-    import api.routes as _routes
-    _routes.get_session = _models.get_session
-    _routes.Session = _models.Session
-    return j(handler, {"status": "ok", "reloaded": "api.models"})
-
-
-def _post_api_sessions_cleanup(handler, parsed, body, diag):
-    return _handle_sessions_cleanup(handler, body, zero_only=False)
-
-
-def _post_api_sessions_cleanup_zero_message(handler, parsed, body, diag):
-    return _handle_sessions_cleanup(handler, body, zero_only=True)
 
 
 def _post_api_session_anchor_scene(handler, parsed, body, diag):
@@ -20464,26 +20418,6 @@ def _handle_approval_sse_stream(handler, parsed):
         _approval_sse_unsubscribe(sid, q)
 
 
-def _handle_approval_inject(handler, parsed):
-    """Inject a fake pending approval -- loopback-only, used by automated tests."""
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    key = qs.get("pattern_key", ["test_pattern"])[0]
-    cmd = qs.get("command", ["rm -rf /tmp/test"])[0]
-    if sid:
-        submit_pending(
-            sid,
-            {
-                "command": cmd,
-                "pattern_key": key,
-                "pattern_keys": [key],
-                "description": "test pattern",
-            },
-        )
-        return j(handler, {"ok": True, "session_id": sid})
-    return j(handler, {"error": "session_id required"}, status=400)
-
-
 def _handle_clarify_pending(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     pending = get_clarify_pending(sid)
@@ -20736,26 +20670,6 @@ def _handle_session_sse_stream(handler, parsed):
         pass  # client went away — normal for long-lived connections
     finally:
         ch.unsubscribe(q)
-
-
-def _handle_clarify_inject(handler, parsed):
-    """Inject a fake pending clarify prompt -- loopback-only, used by automated tests."""
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    question = qs.get("question", ["Which option?"])[0]
-    choices = qs.get("choices", [])
-    if sid:
-        submit_clarify_pending(
-            sid,
-            {
-                "question": question,
-                "choices_offered": choices,
-                "session_id": sid,
-                "kind": "clarify",
-            },
-        )
-        return j(handler, {"ok": True, "session_id": sid})
-    return j(handler, {"error": "session_id required"}, status=400)
 
 
 def _handle_live_models(handler, parsed):
@@ -21760,7 +21674,13 @@ def _handle_memory_read(handler, parsed=None):
 # ── POST route helpers ────────────────────────────────────────────────────────
 
 
-def _handle_sessions_cleanup(handler, body, zero_only=False):
+def cleanup_sessions(zero_only=False) -> int:
+    """Delete empty sessions and index-only ghost rows; return how many went.
+
+    An Operator task (``python3 -m api.operator_cli sessions-cleanup``), run
+    with the server stopped: it works on the session files and index directly.
+    *zero_only* deletes every session with no messages, else only untitled ones.
+    """
     cleaned = 0
     phase1_removed_ids = set()
 
@@ -21860,7 +21780,7 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
     if phase1_touched and not phase2_rewrote_index and api_config.SESSION_INDEX_FILE.exists():
         api_config.SESSION_INDEX_FILE.unlink(missing_ok=True)
 
-    return j(handler, {"ok": True, "cleaned": cleaned})
+    return cleaned
 
 
 def _handle_btw(handler, body):

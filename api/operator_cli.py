@@ -8,6 +8,9 @@ server, runs this with the same Python and environment as the web server::
     python3 -m api.operator_cli disable 521740
     python3 -m api.operator_cli enable 521740
     python3 -m api.operator_cli delete 521740 --confirm 521740
+    python3 -m api.operator_cli sessions-audit
+    python3 -m api.operator_cli sessions-repair
+    python3 -m api.operator_cli sessions-cleanup [--empty]
 
 It reads the repo ``.env`` first, as the launcher does, so it finds the same
 state directory and Hermes home as the server. Each action is the matching
@@ -15,14 +18,19 @@ function in ``api.roster``. This process changes only durable state (the
 roster, the Hermes Profile, the Profile's scheduled jobs); the running server
 notices a disable and ends the Profile's logins and running turns itself
 (``api.roster_watch``). Delete refuses a Profile that is not already disabled.
+
+The ``sessions-*`` actions look after the web app's session store:
+``sessions-audit`` is read-only; ``sessions-repair`` and ``sessions-cleanup``
+change session files and the index, so stop the server first.
 It never prepares or installs the Hermes Agent runtime; start the server once
 first so the runtime is ready.
 
-Exit status: 0 done, 1 refused, 2 bad usage.
+Exit status: 0 done, 1 refused (or a repair left problems), 2 bad usage.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -51,7 +59,30 @@ def _parser() -> argparse.ArgumentParser:
     delete = actions.add_parser("delete", help="delete a disabled Profile and all its data")
     delete.add_argument("name")
     delete.add_argument("--confirm", required=True, help="repeat the Profile name to confirm")
+    actions.add_parser("sessions-audit", help="report session-store problems (read-only)")
+    actions.add_parser("sessions-repair", help="apply the safe session-store repairs (stop the server first)")
+    cleanup = actions.add_parser(
+        "sessions-cleanup", help="delete untitled empty sessions and index ghosts (stop the server first)")
+    cleanup.add_argument("--empty", action="store_true", help="delete every session with no messages")
     return parser
+
+
+def _sessions(action: str, args) -> int:
+    """The session-store maintenance actions; print the result as JSON."""
+    from api import config
+    from api.models import _active_state_db_path
+
+    if action == "sessions-cleanup":
+        from api.routes import cleanup_sessions
+
+        print(json.dumps({"cleaned": cleanup_sessions(zero_only=args.empty)}))
+        return 0
+    from api import session_recovery
+
+    run = session_recovery.audit_session_recovery if action == "sessions-audit" else session_recovery.repair_safe_session_recovery
+    result = run(config.SESSION_DIR, state_db_path=_active_state_db_path())
+    print(json.dumps(result, indent=2, default=str))
+    return 0 if action == "sessions-audit" or result.get("clean") else 1
 
 
 def _row(view: dict) -> str:
@@ -65,6 +96,8 @@ def _row(view: dict) -> str:
 
 def run(argv: list[str]) -> int:
     args = _parser().parse_args(argv)
+    if args.action.startswith("sessions-"):
+        return _sessions(args.action, args)
     from api import profiles, roster
 
     try:

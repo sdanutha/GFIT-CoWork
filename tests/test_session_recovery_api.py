@@ -66,23 +66,3 @@ def test_repair_safe_session_recovery_leaves_unsafe_orphan_for_manual_review(tmp
     assert not live.exists()
     assert result["after"]["status"] == "needs_manual_review"
 
-
-def test_repair_safe_route_uses_clean_flag_for_status_code():
-    from pathlib import Path
-
-    src = Path("api/routes.py").read_text(encoding="utf-8")
-
-    assert 'status=200 if result.get("clean") else 409' in src
-
-
-def test_recovery_audit_routes_are_registered():
-    from pathlib import Path
-
-    src = Path("api/routes.py").read_text(encoding="utf-8")
-
-    from tests._route_source import route_handler
-
-    assert route_handler("GET", "/api/session/recovery/audit")
-    assert route_handler("POST", "/api/session/recovery/repair-safe")
-    assert "audit_session_recovery" in src
-    assert "repair_safe_session_recovery" in src

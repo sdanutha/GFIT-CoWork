@@ -1338,8 +1338,14 @@ def cleanup_test_sessions():
         except Exception:
             pass
 
+    # Sweep the empty sessions a test left behind. The bulk cleanup route went
+    # with the Admin (ADR 0006); delete them one by one like a User would.
     try:
-        _post(TEST_BASE, "/api/sessions/cleanup_zero_message")
+        with urllib.request.urlopen(TEST_BASE + "/api/sessions", timeout=10) as r:
+            listed = json.loads(r.read()).get("sessions") or []
+        for row in listed:
+            if isinstance(row, dict) and row.get("session_id") and not row.get("message_count"):
+                _post(TEST_BASE, "/api/session/delete", {"session_id": row["session_id"]})
     except Exception:
         pass
 

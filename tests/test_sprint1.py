@@ -426,55 +426,6 @@ def test_approval_pending_none():
     assert data["pending"] is None
 
 
-def test_approval_submit_and_respond():
-    """Inject a pending approval via server endpoint, retrieve it, respond with deny."""
-    test_sid = f"test-approval-{uuid.uuid4().hex[:6]}"
-    cmd = "rm -rf /tmp/testdir"
-    key = "recursive_delete"
-
-    # Inject into server process via test endpoint (shared module state)
-    inject = get(f"/api/approval/inject_test?session_id={urllib.parse.quote(test_sid)}&pattern_key={key}&command={urllib.parse.quote(cmd)}")
-    assert inject["ok"] is True
-
-    # Poll should now show the pending entry
-    data = get(f"/api/approval/pending?session_id={urllib.parse.quote(test_sid)}")
-    assert data["pending"] is not None, "Pending entry not visible after inject"
-    assert data["pending"]["command"] == cmd
-
-    # Respond with deny
-    result, status = post("/api/approval/respond", {
-        "session_id": test_sid,
-        "choice": "deny"
-    })
-    assert status == 200
-    assert result["ok"] is True
-    assert result["choice"] == "deny"
-
-    # Pending should be gone
-    data2 = get(f"/api/approval/pending?session_id={urllib.parse.quote(test_sid)}")
-    assert data2["pending"] is None, "Pending entry should be cleared after respond"
-
-
-def test_approval_respond_allow_session():
-    """Inject pending entry, respond with session choice, verify cleared (approved)."""
-    test_sid = f"test-approval-sess-{uuid.uuid4().hex[:6]}"
-
-    inject = get(f"/api/approval/inject_test?session_id={urllib.parse.quote(test_sid)}&pattern_key=force_kill&command=pkill+-9+someproc")
-    assert inject["ok"] is True
-
-    result, status = post("/api/approval/respond", {
-        "session_id": test_sid,
-        "choice": "session"
-    })
-    assert status == 200
-    assert result["ok"] is True
-    assert result["choice"] == "session"
-
-    # After session approval, pending should be cleared
-    data = get(f"/api/approval/pending?session_id={urllib.parse.quote(test_sid)}")
-    assert data["pending"] is None, "Pending entry should be cleared after session approval"
-
-
 # ──────────────────────────────────────────────
 # Stream status endpoint (B4/B5)
 # ──────────────────────────────────────────────
