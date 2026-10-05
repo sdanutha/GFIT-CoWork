@@ -8776,6 +8776,30 @@ async function handleComposerPrimaryAction(){
   await send();
 }
 
+// One Stop request for both Stop paths (composer and sidebar), through api() so an
+// expired login redirects to the login page and a hung request times out with a
+// message. A Stop is sent once: no retries. Resolves to {ok, body, error}; ok is
+// false when the request failed or is redirecting to login.
+async function requestStreamCancel(streamId){
+  try{
+    const body=await api(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,{retries:0,timeoutMs:15000});
+    if(body===undefined) return {ok:false, body:null, error:null};  // 401: api() is redirecting to login
+    return {ok:true, body, error:null};
+  }catch(e){
+    return {ok:false, body:null, error:e};
+  }
+}
+
+// One speech request for every read-aloud caller. The answer is audio, which
+// api() does not read, so this keeps a raw fetch; callers handle the Response.
+function requestSpeech(payload){
+  return fetch(new URL('api/tts', document.baseURI || location.href).href, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  });
+}
+
 function setBusy(v){
   S.busy=v;
   updateSendBtn();
@@ -9484,11 +9508,7 @@ function _playEdgeTtsChunked(text, btn){
     let rate='', pitch='';
     if(!isNaN(savedRate)){const pct=Math.round((savedRate-1)*100);const sign=pct>=0?'+':'';rate=sign+pct+'%';}
     if(!isNaN(savedPitch)){const hz=Math.round((savedPitch-1)*50);const sign=hz>=0?'+':'';pitch=sign+hz+'Hz';}
-    fetch(new URL('api/tts', document.baseURI || location.href).href, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text:chunk, voice:voice, rate:rate, pitch:pitch, engine:'edge'})
-    })
+    requestSpeech({text:chunk, voice:voice, rate:rate, pitch:pitch, engine:'edge'})
     .then(function(r){
       if(!r.ok){
         return r.json().catch(function(){return {};}).then(function(j){
@@ -9602,11 +9622,7 @@ function _playElevenLabsTts(text, btn){
     if(btn)btn.dataset.speaking='0';
     if(msg&&typeof showToast==='function') showToast(msg,4000,'error');
   };
-  fetch(new URL('api/tts', document.baseURI || location.href).href, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:text, engine:'elevenlabs'})
-  })
+  requestSpeech({text:text, engine:'elevenlabs'})
   .then(function(r){
     if(!r.ok){
       return r.json().catch(function(){return {};}).then(function(j){
@@ -9629,11 +9645,7 @@ function _playOpenaiTts(text, btn){
     if(btn)btn.dataset.speaking='0';
     if(msg&&typeof showToast==='function') showToast(msg,4000,'error');
   };
-  fetch(new URL('api/tts', document.baseURI || location.href).href, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:text, engine:'openai'})
-  })
+  requestSpeech({text:text, engine:'openai'})
   .then(function(r){
     if(!r.ok){
       return r.json().catch(function(){return {};}).then(function(j){

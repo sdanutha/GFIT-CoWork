@@ -88,7 +88,7 @@ class TestCancelStreamOwnerGuardStructural:
     def test_reads_cancel_response_json(self):
         """The fix must read the ``/api/chat/cancel`` response body so
         ``cancelled:false`` can be observed."""
-        assert "r.json" in CANCEL_STREAM_SRC, (
+        assert "body:respBody" in "".join(CANCEL_STREAM_SRC.split()), (
             "cancelStream() must read the response JSON to surface cancelled:false"
         )
 
@@ -135,7 +135,7 @@ class TestCancelStreamOwnerGuardStructural:
         """When the backend reports ``cancelled:false``, the fix should
         show a lightweight toast (the backend may have already finalized
         the turn, or a newer turn may hold the session lock)."""
-        assert "r.ok" in CANCEL_STREAM_SRC, (
+        assert "respOk&&respBody&&respBody.cancelled===false" in "".join(CANCEL_STREAM_SRC.split()), (
             "cancelStream() must gate cancelled:false cleanup on an HTTP-success "
             "response so failed gateway stops do not settle the UI locally"
         )
@@ -151,9 +151,10 @@ class TestCancelStreamOwnerGuardStructural:
         """The fetch call must still be inside a try/catch so a network
         failure does not propagate out of cancelStream()."""
         # The fix keeps the existing try/catch around fetch.
-        assert "catch" in CANCEL_STREAM_SRC, (
-            "cancelStream() must keep the try/catch around fetch to swallow "
-            "network errors without tearing down the active owner path"
+        # requestStreamCancel (ui.js) catches network errors and answers {ok:false}.
+        assert "requestStreamCancel(streamId)" in CANCEL_STREAM_SRC, (
+            "cancelStream() must send its request through requestStreamCancel, which "
+            "swallows network errors without tearing down the active owner path"
         )
 
 
@@ -201,6 +202,19 @@ globalThis.document = { baseURI: 'http://localhost:8787/' };
 globalThis.location = { href: 'http://localhost:8787/' };
 
 // The function under test, extracted from boot.js verbatim.
+
+// Stand-in for ui.js requestStreamCancel over the fetch stub above (the real
+// helper goes through api(); tests/test_gfit_live_turn.py covers it).
+async function requestStreamCancel(streamId){
+  try{
+    const r=await fetch(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,{credentials:'include'});
+    if(!r||!r.ok) return {ok:false, body:null, error:null};
+    let body=null; try{body=await r.json();}catch(_){}
+    return {ok:true, body, error:null};
+  }catch(e){
+    return {ok:false, body:null, error:e};
+  }
+}
 __CANCEL_STREAM_SRC__
 
 async function runAll() {

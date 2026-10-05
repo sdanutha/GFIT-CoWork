@@ -44,7 +44,7 @@ SHOW_TOAST_SRC = _extract_function(UI_JS, "show" + "Toast").replace(
 def test_source_gates_sidebar_settle_on_http_success():
     assert "return false" in CANCEL_SESSION_STREAM_SRC
     assert "return true" in CANCEL_SESSION_STREAM_SRC
-    assert "r.ok" in CANCEL_SESSION_STREAM_SRC, (
+    assert "requestStreamCancel(streamId)" in CANCEL_SESSION_STREAM_SRC, (
         "cancelSessionStream() must check the /api/chat/cancel HTTP status before "
         "closing local UI state"
     )
@@ -119,6 +119,19 @@ globalThis.fetch = (url, opts) => {
   });
 };
 
+
+// Stand-in for ui.js requestStreamCancel over the fetch stub above (the real
+// helper goes through api(); tests/test_gfit_live_turn.py covers it).
+async function requestStreamCancel(streamId){
+  try{
+    const r=await fetch(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,{credentials:'include'});
+    if(!r||!r.ok) return {ok:false, body:null, error:null};
+    let body=null; try{body=await r.json();}catch(_){}
+    return {ok:true, body, error:null};
+  }catch(e){
+    return {ok:false, body:null, error:e};
+  }
+}
 __CANCEL_SESSION_STREAM_SRC__
 
 const session = { session_id: 'sid-1', active_stream_id: 'stream-1' };
