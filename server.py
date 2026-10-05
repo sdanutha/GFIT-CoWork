@@ -107,7 +107,6 @@ from api.helpers import (
     j,
     advertise_connection_close,
     answer_not_found,
-    _build_csp_report_only_policy,
     _CLIENT_DISCONNECT_ERRORS,
 )
 from api.access import settle_request
@@ -324,17 +323,8 @@ class Handler(BaseHTTPRequestHandler):
                 pass
     _ver_suffix = WEBUI_VERSION.removeprefix('v')
     server_version = ('HermesWebUI/' + _ver_suffix) if _ver_suffix != 'unknown' else 'HermesWebUI'
-    _CSP_REPORT_TO = '{"group":"csp-endpoint","max_age":10886400,"endpoints":[{"url":"/api/csp-report"}]}'
-
-    @classmethod
-    def csp_report_only_policy(cls, extra_connect_src=None, extra_frame_src=None) -> str:
-        return _build_csp_report_only_policy(extra_connect_src, extra_frame_src)
 
     def end_headers(self) -> None:
-        extra_connect_src = getattr(self, "_csp_extra_connect_src", None)
-        extra_frame_src = getattr(self, "_csp_extra_frame_src", None)
-        self.send_header("Content-Security-Policy-Report-Only", self.csp_report_only_policy(extra_connect_src, extra_frame_src))
-        self.send_header("Report-To", self._CSP_REPORT_TO)
         advertise_connection_close(self)  # tell the client when the socket dies
         super().end_headers()
 
@@ -403,8 +393,7 @@ class Handler(BaseHTTPRequestHandler):
         self._req_t0 = time.time(); reset_request_auth_state(self)
         try:
             parsed = urlparse(self.path)
-            _is_csp_report_post = parsed.path == "/api/csp-report" and self.command == "POST"
-            if not _is_csp_report_post and not check_auth_or_close(self, parsed): return
+            if not check_auth_or_close(self, parsed): return
             settle_request(self)
             result = route_func(self, parsed)
             if result is False:

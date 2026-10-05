@@ -663,7 +663,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
         "panelSkills",
         "panelMemory",
         "panelTasks",
-        "panelKanban",
         "panelWorkspaces",
         "panelProfiles",
         "panelTodos",
@@ -685,18 +684,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
     assert "_currentPanel=panel" in sync_body
     assert "document.querySelectorAll('[data-panel]')" in sync_body
     assert "document.querySelectorAll('.panel-view')" in sync_body
-    assert "showing-x-" in sync_body, (
-        "Mobile sidebar sync must recognize an active extension panel instead of treating it as Chat"
-    )
-    assert "data-panel-token" in sync_body, (
-        "Mobile sidebar sync must restore the extension's matching sidebar view"
-    )
-    assert "const extensionPanel=`x-${extensionToken}`" in sync_body, (
-        "Extension nav buttons use x- tokens and must regain their active state on mobile"
-    )
-    assert "_currentPanel=extensionPanel" not in sync_body, (
-        "Extension tokens are not host panels and must not corrupt switchPanel's native state"
-    )
     boot_js = (REPO / "static" / "boot.js").read_text(encoding="utf-8")
     toggle_body = _js_function_body(boot_js, "toggleMobileSidebar")
     assert "_syncMobileSidebarPanelFromMainView()" in toggle_body, (
@@ -721,7 +708,6 @@ def test_mobile_sidebar_detail_selections_share_close_helper():
     panels_js = (REPO / "static" / "panels.js").read_text(encoding="utf-8")
     for name in [
         "openCronDetail",
-        "loadKanbanTask",
         "openMemorySection",
         "openWorkspaceDetail",
         "openProfileDetail",
@@ -736,7 +722,7 @@ def test_mobile_sidebar_detail_selections_share_close_helper():
     assert "mobile-panel-drawer', 'mobile-open'" in panels_js, (
         "Opening Settings from the rail should keep the mobile drawer available"
     )
-    for section in ["conversation", "appearance", "preferences", "providers", "plugins", "extensions", "system", "help"]:
+    for section in ["conversation", "appearance", "preferences", "providers", "plugins", "system", "help"]:
         assert f"switchSettingsSection('{section}',{{fromSidebarItem:true}})" in HTML, (
             f"Settings sidebar item {section} should close after selecting its detail"
         )

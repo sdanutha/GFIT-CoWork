@@ -156,7 +156,6 @@ def _post_new_session_with_workspace(
 
     monkeypatch.setattr(routes, "read_body", lambda _handler: body)
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
     monkeypatch.setattr(routes, "_guard_request_session_visibility", lambda *_a, **_k: True)
     monkeypatch.setattr(
         routes,

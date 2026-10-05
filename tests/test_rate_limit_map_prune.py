@@ -1,6 +1,6 @@
 """Regression test — the client rate-limit maps don't grow without bound.
 
-`_csp_report_rate_limited` / `_client_event_rate_limited` key a timestamp list
+`_client_event_rate_limited` keys a timestamp list
 by client IP and always re-store `[now]` for the calling key, so a key is only
 ever revisited when that same IP calls again. An IP that hits the endpoint once
 and never returns left its entry in the map forever. Behind a reverse proxy the
@@ -41,22 +41,22 @@ def test_prune_is_size_gated_noop_below_threshold(monkeypatch):
 def test_map_bounded_across_many_one_shot_ips(monkeypatch):
     """End-to-end: many distinct IPs each calling once must not grow the map
     without bound once it crosses the sweep threshold."""
-    routes._CSP_REPORT_RATE_LIMIT.clear()
+    routes._CLIENT_EVENT_RATE_LIMIT.clear()
     monkeypatch.setattr(routes, "_RATE_LIMIT_MAP_SWEEP_THRESHOLD", 50)
 
     base = 2_000_000.0
     # 200 distinct IPs, each a single hit far enough apart that older ones age out.
     for i in range(200):
         # Advance time by 2s per IP so the first entries fall outside the 60s window.
-        routes._csp_report_rate_limited(
+        routes._client_event_rate_limited(
             _ip_handler(f"198.51.100.{i % 256}.{i}"), now=base + i * 2.0
         )
 
     # Without the sweep this would hold ~200 keys; with it, only the recent window.
-    assert len(routes._CSP_REPORT_RATE_LIMIT) <= 60, (
-        f"rate-limit map grew unbounded: {len(routes._CSP_REPORT_RATE_LIMIT)} keys"
+    assert len(routes._CLIENT_EVENT_RATE_LIMIT) <= 60, (
+        f"rate-limit map grew unbounded: {len(routes._CLIENT_EVENT_RATE_LIMIT)} keys"
     )
-    routes._CSP_REPORT_RATE_LIMIT.clear()
+    routes._CLIENT_EVENT_RATE_LIMIT.clear()
 
 
 class _IpHandler:

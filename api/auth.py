@@ -53,7 +53,6 @@ def _resolve_session_ttl() -> int:
 PUBLIC_PATHS = frozenset({
     '/login', '/health', '/favicon.ico', '/sw.js',
     '/api/auth/login', '/api/auth/status',
-    '/share',
     '/manifest.json', '/manifest.webmanifest',
     '/session/manifest.json', '/session/manifest.webmanifest',
 })
@@ -678,11 +677,6 @@ def check_auth(handler, parsed) -> bool:
     # Public paths don't require auth
     if (
         parsed.path in PUBLIC_PATHS
-        or parsed.path.startswith('/share/')
-        or (
-            parsed.path.startswith('/api/share/')
-            and parsed.path not in {'/api/share/create', '/api/share/revoke'}
-        )
         or parsed.path.startswith('/static/')
         or parsed.path.startswith('/session/static/')
     ):

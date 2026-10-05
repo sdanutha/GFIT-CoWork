@@ -26,19 +26,8 @@ USER = "521740"
 OTHER_USER = "671278"
 ADMIN = "600001"
 
-EXTENSION_SCRIPT = "/extensions/gfit-request-admission.js"
-
-
 @pytest.fixture
-def extensions_on(monkeypatch, tmp_path):
-    root = tmp_path / "extensions"
-    root.mkdir()
-    monkeypatch.setenv("HERMES_WEBUI_EXTENSION_DIR", str(root))
-    monkeypatch.setenv("HERMES_WEBUI_EXTENSION_SCRIPT_URLS", EXTENSION_SCRIPT)
-
-
-@pytest.fixture
-def srv(monkeypatch, tmp_path, extensions_on):
+def srv(monkeypatch, tmp_path):
     users = {USER: "User One", OTHER_USER: "User Two", ADMIN: "Admin One"}
     with _gfit_server(
         monkeypatch, tmp_path, users=users, profile_names=[USER, OTHER_USER], admins=ADMIN,
@@ -47,7 +36,7 @@ def srv(monkeypatch, tmp_path, extensions_on):
 
 
 @pytest.fixture
-def login_off(monkeypatch, tmp_path, extensions_on):
+def login_off(monkeypatch, tmp_path):
     with _gfit_server(
         monkeypatch, tmp_path, users={}, profile_names=[USER, OTHER_USER], directory="",
     ) as s:
@@ -94,18 +83,16 @@ def _session(srv, uid) -> str:
 
 # ── The page shell ───────────────────────────────────────────────────────────
 
-def test_a_users_page_shell_carries_the_user_role_and_no_extensions(srv):
+def test_a_users_page_shell_carries_the_user_role(srv):
     status, html, _ = srv.logged_in(USER).get("/")
     assert status == 200
     assert '<html data-gfit-role="user" ' in html
-    assert EXTENSION_SCRIPT not in html
 
 
-def test_the_admins_page_shell_carries_the_admin_role_and_extensions(srv):
+def test_the_admins_page_shell_carries_the_admin_role(srv):
     status, html, _ = srv.logged_in(ADMIN).get("/")
     assert status == 200
     assert '<html data-gfit-role="admin" ' in html
-    assert EXTENSION_SCRIPT in html
 
 
 # ── One request's caller never reaches the next ──────────────────────────────
@@ -122,7 +109,6 @@ def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(s
     assert status == 200, body
     status, html = conn.request("GET", "/", session=admin)
     assert 'data-gfit-role="admin"' in html
-    assert EXTENSION_SCRIPT in html
     status, body = conn.request("GET", "/api/profiles", session=admin)
     assert {USER, OTHER_USER} <= {p["name"] for p in body["profiles"]}
     status, body = conn.request("GET", "/api/auth/status", session=admin)
@@ -223,7 +209,6 @@ def test_with_login_off_the_page_shell_has_no_role(login_off):
     status, html, _ = login_off.client().get("/")
     assert status == 200
     assert "data-gfit-role" not in html
-    assert EXTENSION_SCRIPT in html
 
 
 # ── A Directory session with no Admission is not admitted ────────────────────

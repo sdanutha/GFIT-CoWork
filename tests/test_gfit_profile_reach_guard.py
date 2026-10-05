@@ -47,7 +47,6 @@ NOT_SCOPING: dict[tuple[str, str, str], str] = {
     ("api/login.py", "session_identity", ASKS_USER): "display name: from the Profile roster for a User",
     ("api/login.py", "attempt_login", ASKS_USER):
         "login: runs before the request has an Admission; makes a User's Workspace",
-    ("api/routes.py", "_app_shell_for_role", ASKS_USER): "the app shell: no extension tags for a User",
     ("api/profiles.py", "get_active_profile_name", READS_POSTURE): POSTURE + ": the active Profile is the isolated one",
     ("api/profiles.py", "_resolve_profile_home_for_name", READS_POSTURE): POSTURE + ": every lookup clamps to it",
     ("api/profiles.py", "get_active_hermes_home", READS_POSTURE): POSTURE + ": the active home is the isolated one",

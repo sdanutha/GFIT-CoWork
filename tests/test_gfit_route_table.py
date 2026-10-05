@@ -31,6 +31,18 @@ _OPENED_TO_USERS = {
 }
 
 
+# Handlers of the Admin-only features ADR 0006 deleted: their routes are gone.
+_DELETED_BY_ADR_0006 = {
+    "_post_api_csp_report", "_get_share_page", "_get_api_share", "_post_api_share_create", "_post_api_share_revoke",
+    "_get_api_kanban", "_post_api_kanban", "_patch_api_kanban", "_delete_api_kanban",
+    "_get_api_dashboard_status", "_get_api_dashboard_config", "_post_api_dashboard_config",
+    "_get_api_extensions_status", "_get_extensions", "_post_api_extensions_toggle",
+    "_post_api_extensions_sidecar_proxy_consent",
+}
+# Path prefixes of those deleted routes: they now answer like any unknown path.
+_DELETED_PATHS_BY_ADR_0006 = ("/share", "/api/share/", "/api/kanban/", "/api/dashboard/", "/api/extensions/", "/extensions/", "/api/csp-report")
+
+
 def _intended(method, path, user_may, kind):
     """The answers the table changes on purpose: a session page's static
     assets and manifest name no session (the old list said READ only because
@@ -38,6 +50,8 @@ def _intended(method, path, user_may, kind):
     opened to Users."""
     if (method, path) in _OPENED_TO_USERS:
         return True, kind
+    if path.startswith(_DELETED_PATHS_BY_ADR_0006):
+        return False, None
     if path.startswith("/session/static/") or path in ("/session/manifest.json", "/session/manifest.webmanifest"):
         return user_may, None
     return user_may, kind
@@ -80,10 +94,10 @@ def test_a_user_prefix_route_has_a_reason():
     assert prefixes == set(route_table.VARIABLE_PATH_PREFIXES)
 
 
-def test_only_login_csp_reports_and_the_gone_ack_are_csrf_exempt():
+def test_only_login_and_the_gone_ack_are_csrf_exempt():
     exempt = {(route.method, route.pattern) for route in route_table.ROUTES if not route.csrf}
     # The deprecated ack answers 410 Gone to a stale tab that carries no token.
-    assert exempt == {("POST", "/api/auth/login"), ("POST", "/api/csp-report"), ("POST", "/api/process-complete-ack")}
+    assert exempt == {("POST", "/api/auth/login"), ("POST", "/api/process-complete-ack")}
     assert route_table.match("POST", "/api/session/new").csrf
 
 
@@ -119,6 +133,8 @@ HANDLERS_BEFORE = json.loads(
 )
 
 
+
+
 @pytest.mark.parametrize(
     "method,path,handler",
     [(method, path, name) for method, paths in HANDLERS_BEFORE.items() for path, name in paths.items()],
@@ -127,6 +143,10 @@ def test_the_table_dispatches_where_the_old_chains_did(method, path, handler):
     import api.routes as routes
 
     route = route_table.match(method, path)
+    if handler in _DELETED_BY_ADR_0006:
+        assert route is None or route.handler != handler
+        assert not hasattr(routes, handler)
+        return
     assert route is not None and route.handler == handler
     assert callable(getattr(routes, handler))
 

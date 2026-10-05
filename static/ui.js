@@ -1864,86 +1864,6 @@ async function jumpToTurnQuestion(questionRawIdx, assistantRawIdx){
   }
 }
 
-const DASHBOARD_STATUS_TTL_MS=60000;
-let _dashboardStatusCache=null;
-let _dashboardStatusFetchedAt=0;
-let _dashboardLastNonNeverMode='auto'; // Server-scoped dashboard config keeps this restore target session-global on purpose.
-let _dashboardSettingsLoadSeq=0;
-let _dashboardSettingsWriteSeq=0;
-
-function _dashboardHostIsLoopback(host){
-  // Canonical loopback classifier shared by the browser origin and the
-  // resolved dashboard target. Normalizes brackets, case, zone ids, and a
-  // terminal hostname dot; classifies IPv4 127/8, IPv6 ::1, IPv4-mapped IPv6
-  // whose embedded IPv4 is 127/8, and localhost/.localhost names (RFC 6761).
-  if(!host) return false;
-  let h=String(host).replace(/^\[|\]$/g,'').toLowerCase();
-  if(h.endsWith('.')) h=h.slice(0,-1);
-  if(h==='localhost'||h.endsWith('.localhost')) return true;
-  const ipv4=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if(ipv4){
-    const octets=ipv4.slice(1).map(Number);
-    return octets.every(o=>o>=0&&o<=255)&&octets[0]===127;
-  }
-  if(h.includes(':')){
-    const zone=h.indexOf('%');
-    if(zone!==-1) h=h.slice(0,zone);
-    if(h==='::1'||h==='0:0:0:0:0:0:0:1') return true;
-    const mapped=/^(?:::ffff:|0:0:0:0:0:ffff:)(.+)$/.exec(h);
-    if(mapped){
-      const tail=mapped[1];
-      const dotted=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(tail);
-      if(dotted){
-        const octets=dotted.slice(1).map(Number);
-        return octets.every(o=>o>=0&&o<=255)&&octets[0]===127;
-      }
-      const hex=/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
-      if(hex) return (parseInt(hex[1],16)>>>8)===127;
-      return false;
-    }
-    return false;
-  }
-  return false;
-}
-
-function _dashboardIsBrowserLoopback(){
-  return _dashboardHostIsLoopback(window.location.hostname||'');
-}
-
-function _dashboardUrlIsLoopback(url){
-  if(!url) return false;
-  try{
-    return _dashboardHostIsLoopback(new URL(url).hostname);
-  }catch(_){return false;}
-}
-
-function _normalizeDashboardEnabledMode(mode){
-  return mode==='auto'||mode==='always'||mode==='never'?mode:'auto';
-}
-
-function _setDashboardModeForChip(mode){
-  mode=_normalizeDashboardEnabledMode(mode);
-  if(mode==='auto'||mode==='always') _dashboardLastNonNeverMode=mode;
-}
-
-function _getDashboardChipRestoreMode(){
-  return _dashboardLastNonNeverMode||'auto';
-}
-
-function _dashboardBrowserUrl(status){
-  if(!status||!status.running) return '';
-  if(status.browser_url||status.url){
-    try{return new URL(status.browser_url||status.url).toString().replace(/\/$/,'');}
-    catch(_){}
-  }
-  if(!status.port) return '';
-  let source;
-  try{source=new URL('http://127.0.0.1:'+status.port);}
-  catch(_){return '';}
-  const browserHost=window.location.hostname||source.hostname;
-  const displayHost=browserHost.includes(':')&&!browserHost.startsWith('[')?'['+browserHost+']':browserHost;
-  return source.protocol+'//'+displayHost+':'+status.port;
-}
 function _stripInlineEventHandlers(node){
   if(!node)return;
   const strip=el=>{
@@ -1959,8 +1879,8 @@ function _syncNavActionMirrors(){
   const rail=document.querySelector('.rail');
   const sidebar=document.querySelector('.sidebar-nav');
   if(!rail||!sidebar)return;
-  const anchor=sidebar.querySelector('.dashboard-link,[data-dashboard-link]')||sidebar.querySelector('[data-panel="logs"]');
-  const sources=Array.from(rail.querySelectorAll('.nav-tab:not([data-panel]):not([data-dashboard-link])')).filter(source=>source.id);
+  const anchor=sidebar.querySelector('[data-panel="logs"]');
+  const sources=Array.from(rail.querySelectorAll('.nav-tab:not([data-panel])')).filter(source=>source.id);
   const mirrors=Array.from(sidebar.querySelectorAll('[data-nav-action-mirror]'));
   const sourceIds=new Set(sources.map(source=>source.id));
   mirrors.forEach(mirror=>{
@@ -2015,122 +1935,6 @@ function _initNavActionMirrors(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_initNavActionMirrors,{once:true});
 else _initNavActionMirrors();
-function _applyDashboardStatus(status){
-  const running=!!(status&&status.running);
-  const url=running?_dashboardBrowserUrl(status):'';
-  const warning=running&&!_dashboardIsBrowserLoopback()&&_dashboardUrlIsLoopback(url)?t('dashboard_loopback_warning'):'';
-  document.querySelectorAll('[data-dashboard-link]').forEach(btn=>{
-    btn.classList.toggle('dashboard-link-visible',running);
-    btn.classList.toggle('nav-action-visible',running);
-    btn.style.display=running?'':'none';
-    btn.dataset.dashboardUrl=url;
-    const tipText=warning||t('tab_dashboard');
-    if(btn.hasAttribute('data-tooltip')){
-      // Sync the custom CSS tooltip and explicitly clear the native title so
-      // the slow ~1.5s native browser tooltip does not co-fire alongside the
-      // fast custom tooltip (#1775).
-      btn.setAttribute('data-tooltip',tipText);
-      if(btn.hasAttribute('title')) btn.removeAttribute('title');
-    } else {
-      btn.title=tipText;
-    }
-    btn.setAttribute('aria-label',tipText);
-  });
-}
-async function refreshDashboardStatus(force=false){
-  const now=Date.now();
-  // Skip the interval-driven poll while the tab is hidden: the 60s interval
-  // equals the cache TTL, so every background tick was a real /api/dashboard/status
-  // fetch that never hit the cache — a needless wakeup on a tab nobody is
-  // looking at (battery/CPU, #2476). Forced calls (settings save, init, the
-  // visibilitychange catch-up) still run. A visible tab keeps its live status.
-  if(!force&&typeof document!=='undefined'&&document.hidden){
-    return _dashboardStatusCache;
-  }
-  if(!force&&_dashboardStatusCache&&(now-_dashboardStatusFetchedAt)<DASHBOARD_STATUS_TTL_MS){
-    _applyDashboardStatus(_dashboardStatusCache);
-    return _dashboardStatusCache;
-  }
-  if(typeof gfitMay==='function'&&!gfitMay('dashboard')){
-    _dashboardStatusCache={running:false};
-    _applyDashboardStatus(_dashboardStatusCache);
-    return _dashboardStatusCache;
-  }
-  try{
-    const status=await api('/api/dashboard/status',{timeoutToast:false});
-    _dashboardStatusCache=status||{running:false};
-  }catch(_){
-    _dashboardStatusCache={running:false};
-  }
-  _dashboardStatusFetchedAt=Date.now();
-  _applyDashboardStatus(_dashboardStatusCache);
-  return _dashboardStatusCache;
-}
-async function loadDashboardSettings(){
-  const modeEl=$('settingsDashboardMode');
-  const urlEl=$('settingsDashboardUrl');
-  if(!modeEl&&!urlEl) return;
-  const loadSeq=++_dashboardSettingsLoadSeq;
-  const writeSeq=_dashboardSettingsWriteSeq;
-  try{
-    const cfg=await api('/api/dashboard/config');
-    if(loadSeq!==_dashboardSettingsLoadSeq||writeSeq!==_dashboardSettingsWriteSeq) return;
-    const mode=_normalizeDashboardEnabledMode(cfg&&cfg.enabled);
-    if(modeEl) modeEl.value=mode;
-    _setDashboardModeForChip(mode);
-    if(urlEl) urlEl.value=cfg.url||'';
-    if(typeof _renderTabVisibilityChips==='function') _renderTabVisibilityChips();
-  }catch(_){/* leave defaults visible */}
-}
-async function saveDashboardSettings(opts){
-  opts=opts||{};
-  const modeEl=$('settingsDashboardMode');
-  const urlEl=$('settingsDashboardUrl');
-  const statusEl=$('settingsDashboardStatus');
-  const payload={enabled:(modeEl&&modeEl.value)||'auto',url:(urlEl&&urlEl.value||'').trim()};
-  _dashboardSettingsWriteSeq+=1;
-  try{
-    const saved=await api('/api/dashboard/config',{method:'POST',body:JSON.stringify(payload)});
-    const mode=_normalizeDashboardEnabledMode(saved&&saved.enabled);
-    if(modeEl) modeEl.value=mode;
-    _setDashboardModeForChip(mode);
-    if(urlEl) urlEl.value=saved.url||'';
-    if(statusEl) statusEl.textContent='Dashboard link settings saved.';
-    await refreshDashboardStatus(true);
-    if(typeof _renderTabVisibilityChips==='function') _renderTabVisibilityChips();
-  }catch(err){
-    if(statusEl) statusEl.textContent='Dashboard link settings failed to save.';
-    else if(typeof showToast==='function') showToast('Dashboard link settings failed to save.');
-    try{await loadDashboardSettings();}catch(_){}
-    if(opts.raiseOnError) throw err;
-  }
-}
-function openHermesDashboard(event){
-  if(event){event.preventDefault();event.stopPropagation();}
-  const btn=event&&event.currentTarget?event.currentTarget:document.querySelector('[data-dashboard-link]');
-  const url=(btn&&btn.dataset&&btn.dataset.dashboardUrl)||_dashboardBrowserUrl(_dashboardStatusCache);
-  if(!url) return false;
-  window.open(url,'_blank','noopener,noreferrer');
-  return false;
-}
-function _initDashboardLinkProbe(){
-  if(typeof gfitMay==='function'&&!gfitMay('dashboard')) return;
-  loadDashboardSettings();
-  refreshDashboardStatus(true);
-  setInterval(refreshDashboardStatus,DASHBOARD_STATUS_TTL_MS);
-  // Catch up once when the tab becomes visible again, since the interval poll
-  // was skipped while hidden and its cache is now stale.
-  if(typeof document!=='undefined'&&typeof document.addEventListener==='function'){
-    document.addEventListener('visibilitychange',()=>{
-      if(!document.hidden) refreshDashboardStatus(true);
-    });
-  }
-}
-if(document.readyState==='complete'){
-  _initDashboardLinkProbe();
-}else{
-  document.addEventListener('DOMContentLoaded',_initDashboardLinkProbe,{once:true});
-}
 
 /* ── Image lightbox — click any .msg-media-img to enlarge ─────────────────── */
 function _openImgLightbox(imgEl) {
@@ -9577,26 +9381,6 @@ function speakMessage(btn){
     _playEdgeTtsChunked(clean, btn);
     return;
   }
-  // Extension-registered TTS engine (window.registerHermesTtsEngine). Synthesize
-  // via the extension, then play through the shared audio-buffer path.
-  if(typeof window._hermesTtsIsRegistered==='function' && window._hermesTtsIsRegistered(engine)){
-    if(btn) btn.dataset.speaking='1';
-    _ttsSpeaking=true;
-    const _failReg=function(msg){
-      _ttsSpeaking=false;_playingEdgeAudio=null;
-      if(btn)btn.dataset.speaking='0';
-      if(msg&&typeof showToast==='function') showToast(msg,4000,'error');
-    };
-    const _opts={
-      voice: localStorage.getItem('hermes-tts-voice')||'',
-      rate: parseFloat(localStorage.getItem('hermes-tts-rate')),
-      pitch: parseFloat(localStorage.getItem('hermes-tts-pitch')),
-    };
-    Promise.resolve(window._hermesTtsSynth(engine, clean, _opts))
-      .then(function(buf){ return _playAudioBuf(buf, btn, 'TTS'); })
-      .catch(function(e){ _failReg((e&&e.message)||'TTS engine failed'); });
-    return;
-  }
 
   if(!('speechSynthesis' in window)){
     showToast(t('tts_not_supported')||'Speech synthesis not supported in this browser.');
@@ -9751,23 +9535,7 @@ function autoReadLastAssistant(){
     _playEdgeTtsChunked(clean, null);
     return;
   }
-  // Extension-registered TTS engine (window.registerHermesTtsEngine): synth via
-  // the extension, then play through the shared audio-buffer path. Mirrors the
-  // registered-engine branch in speakMessage() so auto-read honors the selection.
-  if(typeof window._hermesTtsIsRegistered==='function' && window._hermesTtsIsRegistered(engine)){
-    _ttsSpeaking=true;
-    const _opts={
-      voice: localStorage.getItem('hermes-tts-voice')||'',
-      rate: parseFloat(localStorage.getItem('hermes-tts-rate')),
-      pitch: parseFloat(localStorage.getItem('hermes-tts-pitch')),
-    };
-    Promise.resolve(window._hermesTtsSynth(engine, clean, _opts))
-      .then(function(buf){ return _playAudioBuf(buf, null, 'TTS'); })
-      .catch(function(){ _ttsSpeaking=false; _playingEdgeAudio=null; });
-    return;
-  }
-  // Unknown/unregistered engine (e.g. an extension engine that's no longer
-  // registered) — fall back to browser TTS only if it's available.
+  // Unknown engine — fall back to browser TTS only if it's available.
   if(!('speechSynthesis' in window)) return;
   // Use chunked playback for browser TTS
   _ttsChunkQueue=_splitForTTS(clean);

@@ -2,8 +2,8 @@
 
 A Deployment is upgraded by rebuilding its image, so the update check and its
 routes are gone. The extension Gallery installed code from Upstream's registry,
-so its routes are gone too, while extensions from the configured extension
-folder keep working. A removed route answers like any route the server does not
+so its routes are gone too, and the rest of the extension system went with the
+Admin (ADR 0006). A removed route answers like any route the server does not
 know: 404 for the Admin, and the Admin gate's refusal for a User.
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 
@@ -36,7 +36,8 @@ GALLERY_REMOVED = [
     ("POST", "/api/extensions/uninstall", {"id": "x"}),
 ]
 
-EXTENSION_ROUTES_KEPT = [
+# The whole extension system went with the Admin (ADR 0006).
+EXTENSIONS_REMOVED = [
     ("GET", "/api/extensions/status", None),
     ("POST", "/api/extensions/toggle", {"id": "no-such-extension", "enabled": False}),
     ("POST", "/api/extensions/sidecar-proxy-consent", {"id": "no-such-extension", "approved": False}),
@@ -54,33 +55,13 @@ def srv(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("who,expected", [(ADMIN, 404), (USER, 403)])
-@pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED)
+@pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED + EXTENSIONS_REMOVED)
 def test_removed_route_answers_like_an_unknown_route(srv, who, expected, method, path, body):
     client = srv.logged_in(who)
     unknown_status, unknown_payload, _ = client.request(method, UNKNOWN, body)
     status, payload, _ = client.request(method, path, body)
     assert status == unknown_status == expected, (who, method, path, payload)
     assert payload == unknown_payload, (who, method, path, payload)
-
-
-@pytest.mark.parametrize("method,path,body", EXTENSION_ROUTES_KEPT)
-def test_extension_routes_for_the_extension_folder_still_answer_the_admin(srv, method, path, body):
-    admin = srv.logged_in(ADMIN)
-    unknown_payload = admin.request(method, UNKNOWN, body)[1]
-    status, payload, _ = admin.request(method, path, body)
-    assert status < 500, (method, path, payload)
-    assert payload != unknown_payload, (method, path, payload)
-
-
-def test_extension_status_no_longer_reports_gallery_installs(srv, monkeypatch, tmp_path):
-    ext_dir = tmp_path / "extensions"
-    ext_dir.mkdir()
-    monkeypatch.setenv("HERMES_WEBUI_EXTENSION_DIR", str(ext_dir))
-    status, body, _ = srv.logged_in(ADMIN).get("/api/extensions/status")
-    assert status == 200
-    assert body["extension_dir_configured"] is True
-    assert body["extension_dir_valid"] is True
-    assert "gallery_installed" not in body
 
 
 def test_settings_report_both_versions_and_no_update_settings(srv):

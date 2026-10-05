@@ -47,12 +47,6 @@ def test_login_page_says_gfit_cowork():
     assert f"<h1>{BRAND}</h1>" in html
 
 
-def test_share_page_says_gfit_cowork():
-    html = _get("/share/does-not-matter")
-    assert f"<title>Shared Conversation - {BRAND}</title>" in html
-    assert "Hermes WebUI" not in html
-
-
 def test_favicon_svg_is_gfit_cowork_mark():
     for name in ("favicon.svg", "favicon-512.svg"):
         svg = _get(f"/static/{name}")

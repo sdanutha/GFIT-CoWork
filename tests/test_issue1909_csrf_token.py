@@ -159,7 +159,7 @@ def test_index_shell_includes_csrf_fetch_and_sendbeacon_injection():
     assert "X-Hermes-CSRF-Token" in src
     assert "window.fetch=function" in src
     assert "navigator.sendBeacon=function" in src
-    assert "auth\\/login|csp-report" in src
+    assert "\\/api\\/auth\\/login$" in src
 
 
 def test_index_shell_injects_session_bound_csrf_token(monkeypatch):
@@ -174,10 +174,7 @@ def test_index_shell_injects_session_bound_csrf_token(monkeypatch):
         captured["content_type"] = content_type
         return True
 
-    import api.extensions as extensions
-
     monkeypatch.setattr(routes, "t", fake_t)
-    monkeypatch.setattr(extensions, "inject_extension_tags", lambda html: html)
 
     try:
         handler = _FakeHandler({"Cookie": f"{auth.COOKIE_NAME}={cookie}"})

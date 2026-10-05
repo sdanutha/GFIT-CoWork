@@ -63,7 +63,6 @@ def test_session_route_and_global_route_stay_separate(monkeypatch):
 
     calls = {"global": 0, "session": 0}
 
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         routes,
         "_handle_session_events_stream",

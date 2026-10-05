@@ -187,22 +187,10 @@ def _build_csp_enforced_policy(
     )
 
 
-def _build_csp_report_only_policy(
-    extra_connect_src: str | None = None,
-    extra_frame_src: str | None = None,
-) -> str:
-    return (
-        _build_csp_enforced_policy(extra_connect_src, extra_frame_src)
-        + "; report-uri /api/csp-report; report-to csp-endpoint"
-    )
-
-
 def _security_headers(handler):
     """Add security headers to every response."""
     extra_connect_src = _csp_extra_connect_src()
     extra_frame_src = _csp_extra_frame_src()
-    handler._csp_extra_connect_src = extra_connect_src
-    handler._csp_extra_frame_src = extra_frame_src
     handler.send_header('X-Content-Type-Options', 'nosniff')
     handler.send_header('X-Frame-Options', 'DENY')
     handler.send_header('Referrer-Policy', 'same-origin')

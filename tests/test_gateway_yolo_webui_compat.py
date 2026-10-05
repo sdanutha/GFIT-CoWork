@@ -875,7 +875,6 @@ def test_yolo_post_without_local_card_relays_run_backed_approval(monkeypatch):
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "read_body", lambda _handler: {"session_id": sid, "enabled": True})
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
     monkeypatch.setattr("api.runner_client.HttpRunnerClient.respond_approval", fake_respond)
     monkeypatch.setattr(config, "gateway_supports_approval_identity_v1", lambda *_a, **_k: True)
     monkeypatch.setenv("HERMES_WEBUI_CHAT_BACKEND", "gateway")
@@ -937,7 +936,6 @@ def test_yolo_post_preserves_mirror_while_owned_relay_fails(monkeypatch):
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "read_body", fake_read_body)
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
     monkeypatch.setattr(
         routes,
         "get_session",
@@ -1042,7 +1040,6 @@ def test_yolo_post_keeps_transition_unconfirmed_until_second_mirror_check(monkey
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "read_body", lambda _handler: {"session_id": sid, "enabled": True})
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
     monkeypatch.setattr(routes, "gateway_pending_mirrors", fake_mirrors)
     monkeypatch.setattr(routes, "_relay_gateway_run_approval", fake_relay)
 
@@ -1193,7 +1190,6 @@ def test_yolo_post_serializes_post_snapshot_gateway_approval(monkeypatch):
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "read_body", lambda _handler: {"session_id": sid, "enabled": True})
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
     monkeypatch.setattr(routes, "gateway_pending_mirror", lambda _sid: None)
     monkeypatch.setattr(routes, "reconcile_gateway_pending_mirror_locked", lambda _sid: (None, 0, False))
     monkeypatch.setattr(routes, "resolve_gateway_approval", lambda *_a, **_k: 0)
@@ -1360,7 +1356,6 @@ def test_yolo_disable_linearizes_after_selected_gateway_autoapproval(monkeypatch
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "gateway_yolo_handoff", observed_disable_handoff)
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
 
     approval_worker = threading.Thread(
         target=lambda: worker_results.append(
@@ -1449,7 +1444,6 @@ def test_disable_that_wins_handoff_precedes_enable_drain(monkeypatch):
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "read_body", lambda _handler: {"session_id": sid, "enabled": False})
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
 
     enable_worker = threading.Thread(target=run_enable, name="yolo-enable")
     disable_worker = threading.Thread(target=run_disable, name="yolo-disable")
@@ -1555,7 +1549,6 @@ def test_yolo_post_first_relay_serializes_next_gateway_approval(monkeypatch):
     monkeypatch.setattr(routes, "j", fake_j)
     monkeypatch.setattr(routes, "read_body", lambda _handler: {"session_id": sid, "enabled": True})
     monkeypatch.setattr(routes, "_check_csrf", lambda _handler: True)
-    monkeypatch.setattr(routes, "_handle_extension_sidecar_proxy", lambda *_a, **_k: False)
 
     try:
         routes.handle_post(object(), urllib.parse.urlparse("/api/session/yolo"))

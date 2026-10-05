@@ -1328,7 +1328,6 @@ _SIDEBAR_HEAVY_METADATA_FIELDS = (
     'gateway_routing_history',
     'composer_draft',
     'process_wakeup_pause',
-    'share_token',
 )
 
 
@@ -1420,8 +1419,6 @@ class Session:
                  composer_draft=None,
                  anchor_activity_scenes=None,
                  process_wakeup_pause=None,
-                 share_token=None,
-                 share_created_at=None,
                  gateway_run=None,
                  **kwargs):
         self.session_id = session_id or uuid.uuid4().hex[:12]
@@ -1535,8 +1532,6 @@ class Session:
         self.composer_draft = composer_draft if isinstance(composer_draft, dict) else {}
         self.anchor_activity_scenes = anchor_activity_scenes if isinstance(anchor_activity_scenes, dict) else {}
         self.process_wakeup_pause = process_wakeup_pause if isinstance(process_wakeup_pause, dict) else {}
-        self.share_token = str(share_token).strip() if share_token else None
-        self.share_created_at = share_created_at
         self.gateway_run = gateway_run if isinstance(gateway_run, dict) else None
         # #5854: a compact fingerprint of anchor_activity_scenes ({scene_key:
         # updated_at}) persisted BEFORE the messages array so the sidebar-poll
@@ -1617,7 +1612,6 @@ class Session:
             'is_cli_session', 'source_tag', 'raw_source', 'session_source', 'source_label', 'read_only',
             'enabled_toolsets', 'composer_draft',
             'process_wakeup_pause',
-            'share_token', 'share_created_at',
             'gateway_run',
         ]
         meta = {k: getattr(self, k, None) for k in METADATA_FIELDS}
@@ -2071,8 +2065,6 @@ class Session:
             'enabled_toolsets': self.enabled_toolsets,
             'composer_draft': self.composer_draft if isinstance(self.composer_draft, dict) else {},
             'process_wakeup_pause': self.process_wakeup_pause if isinstance(self.process_wakeup_pause, dict) else {},
-            'share_token': self.share_token,
-            'share_created_at': self.share_created_at,
             'is_streaming': _is_streaming_session(
                 self.active_stream_id, active_stream_ids
             ) if include_runtime else False,

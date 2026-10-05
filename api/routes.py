@@ -32,8 +32,7 @@ import socket as _socket
 from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from contextlib import closing
-from urllib.parse import parse_qs, quote, urljoin, urlsplit
-from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 from api.agent_runtime import (
     AgentRuntimeChangedError,
@@ -70,7 +69,6 @@ from api.session_ownership import (
     request_profile_reach,
     request_session_ownership,
 )
-from api.shares import create_or_refresh_share, load_share, revoke_share
 from api.trusted_proxy import forwarded_client_address, peer_address, peer_is_trusted_proxy
 
 logger = logging.getLogger(__name__)
@@ -287,19 +285,12 @@ _MESSAGING_SESSION_METADATA_CACHE: dict[str, object] = {
 }
 _MESSAGING_SESSION_METADATA_LOCK = threading.Lock()
 _STALE_MESSAGING_END_REASONS = {"session_reset", "session_switch"}
-_CSP_REPORT_LOGGER = logging.getLogger("csp_report")
-_CSP_REPORT_RATE_LIMIT: dict[str, list[float]] = {}
-_CSP_REPORT_RATE_LIMIT_LOCK = threading.Lock()
-_CSP_REPORT_RATE_LIMIT_WINDOW_SECONDS = 60
-_CSP_REPORT_RATE_LIMIT_MAX = 100
-_CSP_REPORT_MAX_BODY_BYTES = 64 * 1024
 _CLIENT_EVENT_LOGGER = logging.getLogger("client_event")
 _CLIENT_EVENT_RATE_LIMIT: dict[str, list[float]] = {}
 _CLIENT_EVENT_RATE_LIMIT_LOCK = threading.Lock()
 _CLIENT_EVENT_RATE_LIMIT_WINDOW_SECONDS = 60
 _CLIENT_EVENT_RATE_LIMIT_MAX = 30
 _CLIENT_EVENT_MAX_BODY_BYTES = 4 * 1024
-_EXTENSION_SIDECAR_PROXY_MAX_RESPONSE_BYTES = 512 * 1024
 _CLIENT_EVENT_ALLOWED_FIELDS = {
     "event": 64,
     "source": 80,
@@ -2964,7 +2955,6 @@ from api.helpers import (
     j,
     t,
     read_body,
-    MAX_BODY_BYTES,
     _security_headers,
     _sanitize_error,
     redact_session_data,
@@ -3070,19 +3060,6 @@ def _auxiliary_main_runtime(bundle, model):
     for field in AGENT_BUNDLE_SIDE_FIELDS:
         runtime[field] = bundle[field]
     return runtime
-
-
-def _kanban_unknown_endpoint(handler, parsed, method: str) -> bool:
-    """Return a Kanban-specific 404 for stale clients/obsolete endpoint shapes."""
-    return bad(
-        handler,
-        (
-            f"unknown Kanban endpoint: {method} {parsed.path}. "
-            "If this appeared after a WebUI update, your browser may be running "
-            "a stale cached bundle; use Hard refresh now, then reopen Kanban."
-        ),
-        status=404,
-    ) or True
 
 
 # A cancelled worker that stays in ACTIVE_RUNS longer than this is treated as
@@ -5518,145 +5495,6 @@ def _get_or_materialize_session(sid: str, *, refresh_cli_messages: bool = False)
     return s
 
 
-def _share_snapshot_messages_for_session(session, *, cli_meta: dict | None = None) -> list:
-    """Return the visible transcript that a public share should snapshot.
-
-    External sessions (Telegram/Discord/Slack/CLI/etc.) may have no WebUI sidecar
-    or may persist only local metadata in the sidecar while the transcript lives
-    in state.db. Public sharing should snapshot the same visible conversation the
-    session page renders, not the bare local sidecar payload.
-    """
-    sid = str(getattr(session, "session_id", "") or "").strip()
-    current_messages = list(getattr(session, "messages", None) or [])
-    if not sid:
-        return current_messages
-    profile = getattr(session, "profile", None)
-    is_messaging = (
-        _is_messaging_session_record(session)
-        or _is_messaging_session_record(cli_meta)
-    )
-    if is_messaging or not current_messages:
-        cli_messages = get_cli_session_messages(sid, profile=profile)
-        if cli_messages:
-            if is_messaging:
-                return _merged_session_messages_for_display(session, cli_messages)
-            return list(cli_messages)
-    return current_messages
-
-
-def _build_share_metadata_sidecar(
-    sid: str,
-    snapshot_session,
-    *,
-    cli_meta: dict | None = None,
-):
-    """Create a minimal WebUI sidecar for share metadata on external sessions."""
-    cli_meta = dict(cli_meta or {})
-    workspace = (
-        cli_meta.get("workspace")
-        or cli_meta.get("cwd")
-        or getattr(snapshot_session, "workspace", None)
-    )
-    if not workspace:
-        workspace = get_last_workspace()
-    session = Session(
-        session_id=sid,
-        title=(
-            cli_meta.get("title")
-            or getattr(snapshot_session, "title", None)
-            or title_from(getattr(snapshot_session, "messages", None) or [], "CLI Session")
-        ),
-        workspace=workspace,
-        messages=[],
-        model=cli_meta.get("model") or getattr(snapshot_session, "model", None) or "unknown",
-        model_provider=(
-            cli_meta.get("model_provider")
-            or getattr(snapshot_session, "model_provider", None)
-        ),
-        created_at=cli_meta.get("created_at") or getattr(snapshot_session, "created_at", None),
-        updated_at=cli_meta.get("updated_at") or getattr(snapshot_session, "updated_at", None),
-        profile=cli_meta.get("profile") or getattr(snapshot_session, "profile", None),
-    )
-    session.is_cli_session = bool(
-        getattr(snapshot_session, "is_cli_session", False)
-        or is_cli_session_row(cli_meta)
-    )
-    session.source_tag = cli_meta.get("source_tag") or getattr(snapshot_session, "source_tag", None)
-    session.raw_source = (
-        cli_meta.get("raw_source")
-        or getattr(snapshot_session, "raw_source", None)
-        or session.source_tag
-    )
-    session.session_source = (
-        cli_meta.get("session_source")
-        or getattr(snapshot_session, "session_source", None)
-    )
-    session.source_label = (
-        cli_meta.get("source_label")
-        or getattr(snapshot_session, "source_label", None)
-    )
-    session.read_only = bool(
-        cli_meta.get("read_only") or getattr(snapshot_session, "read_only", False)
-    )
-    for attr in (
-        "user_id",
-        "chat_id",
-        "chat_type",
-        "thread_id",
-        "session_key",
-        "platform",
-        "origin_chat_id",
-        "origin_user_id",
-        "parent_session_id",
-    ):
-        value = cli_meta.get(attr)
-        if value is None:
-            value = getattr(snapshot_session, attr, None)
-        if value is not None:
-            setattr(session, attr, value)
-    return session
-
-
-def _resolve_share_session_pair(sid: str, handler):
-    """Resolve a shareable session plus the sidecar that stores share metadata.
-
-    Returns ``(snapshot_session, stored_session_or_none, cli_meta)``. The
-    snapshot session always carries the transcript that should become the public
-    share payload. ``stored_session`` is the WebUI-owned sidecar to mutate for
-    share_token/share_created_at persistence; it may be absent for pure external
-    sessions that have not yet created local metadata.
-    """
-    try:
-        stored_session = get_session(sid)
-        cli_meta = (
-            _lookup_cli_session_metadata(sid)
-            if _session_requires_cli_metadata_lookup(stored_session)
-            else {}
-        )
-        effective_profile = (
-            (cli_meta or {}).get("profile")
-            or getattr(stored_session, "profile", None)
-            or None
-        )
-        if request_session_ownership().refuse_found_session(sid, {"profile": effective_profile}) is not None:
-            raise KeyError(sid)
-        stored_session = _ensure_full_session_before_mutation(sid, stored_session)
-        snapshot_session = copy.copy(stored_session)
-        snapshot_session.messages = _share_snapshot_messages_for_session(
-            stored_session,
-            cli_meta=cli_meta,
-        )
-        return snapshot_session, stored_session, cli_meta or {}
-    except KeyError:
-        cli_meta = _lookup_cli_session_metadata(sid) or {}
-        if request_session_ownership().refuse_found_session(sid, cli_meta) is not None:
-            raise KeyError(sid) from None
-        synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta)
-        if reason == "was_webui" or synth is None:
-            raise KeyError(sid) from None
-        return synth, None, cli_meta
-
-
 def _reconcile_stale_stream_state_for_session_rows(session_rows) -> bool:
     """Clear stale persisted stream fields before /api/sessions serializes rows."""
     changed = False
@@ -5893,255 +5731,6 @@ def _check_csrf(handler) -> bool:
     return _set_csrf_failure_reason(handler, "token_mismatch")
 
 
-_EXTENSION_SIDECAR_PROXY_RE = _re.compile(
-    r"^/api/extensions/(?P<extension_id>[^/]+)/sidecar(?:/(?P<proxy_path>.*))?$"
-)
-_HOP_BY_HOP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "proxy-connection",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-}
-
-
-def _connection_bound_header_names(headers) -> set[str]:
-    names = set(_HOP_BY_HOP_HEADERS)
-    if not headers or not hasattr(headers, "items"):
-        return names
-    connection_values = []
-    if hasattr(headers, "get_all"):
-        connection_values.extend(headers.get_all("Connection", []))
-    else:
-        for name, value in headers.items():
-            if str(name).lower() == "connection":
-                connection_values.append(value)
-    for value in connection_values:
-        for token in str(value).split(","):
-            normalized = token.strip().lower()
-            if normalized:
-                names.add(normalized)
-    return names
-
-
-def _match_extension_sidecar_proxy_path(path: str) -> tuple[str, str] | None:
-    match = _EXTENSION_SIDECAR_PROXY_RE.match(path or "")
-    if not match:
-        return None
-    return match.group("extension_id"), match.group("proxy_path") or ""
-
-
-def _read_body_bytes(handler) -> bytes:
-    raw_length = handler.headers.get("Content-Length", 0)
-    try:
-        length = int(raw_length)
-    except (TypeError, ValueError):
-        try:
-            handler.close_connection = True
-        except Exception:
-            pass
-        raise ValueError(f"Invalid Content-Length: {raw_length!r}") from None
-    if length < 0:
-        try:
-            handler.close_connection = True
-        except Exception:
-            pass
-        raise ValueError(f"Invalid Content-Length: {length}")
-    if length > MAX_BODY_BYTES:
-        try:
-            handler.close_connection = True
-        except Exception:
-            pass
-        raise ValueError(f"Request body too large ({length} bytes, max {MAX_BODY_BYTES})")
-    return handler.rfile.read(length) if length else b""
-
-
-def _extension_sidecar_proxy_request_headers(handler) -> dict[str, str]:
-    headers = {}
-    raw_headers = getattr(handler, "headers", None)
-    if not raw_headers or not hasattr(raw_headers, "items"):
-        return headers
-    blocked_headers = _connection_bound_header_names(raw_headers)
-    for name, value in raw_headers.items():
-        lower = str(name).lower()
-        if (
-            lower in blocked_headers
-            or lower in {"authorization", "cookie", "content-length", "host", "origin", "referer"}
-            or lower.startswith("x-csrf")
-            or lower.startswith("x-hermes-")
-        ):
-            continue
-        headers[str(name)] = str(value)
-    return headers
-
-
-def _send_extension_sidecar_proxy_response(handler, status: int, body: bytes, headers) -> bool:
-    handler.send_response(status)
-    sent_content_type = False
-    blocked_headers = _connection_bound_header_names(headers)
-    if headers and hasattr(headers, "items"):
-        for name, value in headers.items():
-            lower = str(name).lower()
-            if (
-                lower in blocked_headers
-                or lower in {"content-length", "set-cookie"}
-                or lower.startswith("x-hermes-")
-            ):
-                continue
-            if lower == "content-type":
-                sent_content_type = True
-            handler.send_header(str(name), str(value))
-    if not sent_content_type:
-        handler.send_header("Content-Type", "application/octet-stream")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Cache-Control", "no-store")
-    _security_headers(handler)
-    handler.end_headers()
-    handler.wfile.write(body)
-    return True
-
-
-def _read_extension_sidecar_proxy_body(stream) -> bytes:
-    body = stream.read(_EXTENSION_SIDECAR_PROXY_MAX_RESPONSE_BYTES + 1)
-    if len(body) > _EXTENSION_SIDECAR_PROXY_MAX_RESPONSE_BYTES:
-        raise ValueError("Extension sidecar response too large")
-    return body
-
-
-def _extension_sidecar_proxy_redirect_url(
-    allowed_origin: str,
-    request_url: str,
-    redirect_url: str,
-) -> str | None:
-    resolved = urljoin(request_url, redirect_url or "")
-    allowed = urlsplit(allowed_origin or "")
-    parts = urlsplit(resolved)
-    if not allowed.scheme or not allowed.netloc or not parts.scheme or not parts.netloc:
-        return None
-    allowed_scheme = allowed.scheme.lower()
-    redirect_scheme = parts.scheme.lower()
-    if redirect_scheme != allowed_scheme:
-        return None
-    allowed_name, allowed_port = _normalize_host_port(allowed.netloc)
-    redirect_name, redirect_port = _normalize_host_port(parts.netloc)
-    if redirect_name != allowed_name or not _ports_match(
-        allowed_scheme,
-        redirect_port,
-        allowed_port,
-    ):
-        return None
-    return resolved
-
-
-def _extension_sidecar_proxy_same_origin_opener(allowed_origin: str):
-    class _SameOriginRedirectHandler(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            resolved = _extension_sidecar_proxy_redirect_url(
-                allowed_origin,
-                req.full_url,
-                newurl,
-            )
-            if not resolved:
-                raise URLError("Extension sidecar redirect crossed declared origin")
-            return super().redirect_request(req, fp, code, msg, headers, resolved)
-
-    return build_opener(ProxyHandler({}), _SameOriginRedirectHandler)
-
-
-def _handle_extension_sidecar_proxy(
-    handler,
-    parsed,
-    method: str,
-    *,
-    read_request_body: bool = False,
-):
-    matched = _match_extension_sidecar_proxy_path(parsed.path)
-    if matched is None:
-        return False
-    # Require same-origin browser provenance on EVERY proxied method, not just
-    # GET. Browser extensions (the only legitimate caller) always send Origin/
-    # Referer/Sec-Fetch-Site, so this costs nothing on the real path while
-    # closing the GET-vs-unsafe-method asymmetry: without it, POST/PATCH/PUT/
-    # DELETE fell through the CSRF compatibility path that intentionally admits
-    # non-browser clients, giving unsafe methods weaker provenance than GET.
-    if not _check_same_origin_browser_request(handler, require_provenance=True):
-        # Provenance rejection runs before read_body(), so close-and-advertise
-        # whenever the request DECLARED a body (Content-Length non-zero, or any
-        # Transfer-Encoding): those bytes are still queued in rfile and a reused
-        # HTTP/1.1 connection would parse them as the next request line (same
-        # class as _check_csrf). Gating on read_request_body instead was wrong in
-        # both directions — it missed a GET that carries a declared body, and it
-        # closed a healthy connection on a body-less DELETE/PUT/PATCH.
-        arm_connection_close_if_body_pending(handler)
-        return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-    try:
-        request_body = _read_body_bytes(handler) if read_request_body else None
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    from api.extensions import (
-        ExtensionSidecarProxyError,
-        resolve_extension_sidecar_proxy_target,
-    )
-
-    extension_id, proxy_path = matched
-    try:
-        target = resolve_extension_sidecar_proxy_target(
-            extension_id,
-            proxy_path,
-            query=parsed.query,
-        )
-        proxied_headers = _extension_sidecar_proxy_request_headers(handler)
-        # token-v1: inject the per-extension shared secret core minted. The
-        # inbound x-hermes-* strip above guarantees the client cannot have
-        # forged this header.
-        _auth_token = target.get("auth_token")
-        if _auth_token:
-            proxied_headers["X-Hermes-Sidecar-Token"] = _auth_token
-        request = Request(
-            target["upstream_url"],
-            data=request_body,
-            headers=proxied_headers,
-            method=method,
-        )
-        opener = _extension_sidecar_proxy_same_origin_opener(target["origin"])
-        with opener.open(request, timeout=10) as response:
-            body = _read_extension_sidecar_proxy_body(response)
-            return _send_extension_sidecar_proxy_response(
-                handler,
-                getattr(response, "status", 200),
-                body,
-                response.headers,
-            )
-    except ExtensionSidecarProxyError as exc:
-        return bad(handler, str(exc), status=exc.status)
-    except ValueError as exc:
-        return bad(handler, str(exc), status=502)
-    except HTTPError as exc:
-        try:
-            body = _read_extension_sidecar_proxy_body(exc)
-        except ValueError as read_exc:
-            return bad(handler, str(read_exc), status=502)
-        return _send_extension_sidecar_proxy_response(
-            handler,
-            exc.code,
-            body,
-            exc.headers,
-        )
-    except (TimeoutError, URLError, OSError):
-        logger.warning(
-            "extension sidecar proxy failed for %s %s",
-            method,
-            parsed.path,
-            exc_info=True,
-        )
-        return bad(handler, "Failed to reach extension sidecar", status=502)
-
-
 def _client_ip_for_rate_limit(handler) -> str:
     try:
         address = getattr(handler, "client_address", None)
@@ -6290,21 +5879,6 @@ def _prune_stale_rate_limit_keys(mapping: dict, cutoff: float) -> None:
         del mapping[k]
 
 
-def _csp_report_rate_limited(handler, *, now: float | None = None) -> bool:
-    now = time.time() if now is None else now
-    key = _client_ip_for_rate_limit(handler)
-    cutoff = now - _CSP_REPORT_RATE_LIMIT_WINDOW_SECONDS
-    with _CSP_REPORT_RATE_LIMIT_LOCK:
-        _prune_stale_rate_limit_keys(_CSP_REPORT_RATE_LIMIT, cutoff)
-        timestamps = [ts for ts in _CSP_REPORT_RATE_LIMIT.get(key, []) if ts >= cutoff]
-        if len(timestamps) >= _CSP_REPORT_RATE_LIMIT_MAX:
-            _CSP_REPORT_RATE_LIMIT[key] = timestamps
-            return True
-        timestamps.append(now)
-        _CSP_REPORT_RATE_LIMIT[key] = timestamps
-    return False
-
-
 def _client_event_rate_limited(handler, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     key = _client_ip_for_rate_limit(handler)
@@ -6318,13 +5892,6 @@ def _client_event_rate_limited(handler, *, now: float | None = None) -> bool:
         timestamps.append(now)
         _CLIENT_EVENT_RATE_LIMIT[key] = timestamps
     return False
-
-
-def _send_no_content(handler, status: int = 204) -> bool:
-    handler.send_response(status)
-    handler.send_header("Content-Length", "0")
-    handler.end_headers()
-    return True
 
 
 def _safe_content_length(handler, max_bytes: int) -> int:
@@ -6350,45 +5917,6 @@ def _safe_content_length(handler, max_bytes: int) -> int:
             pass
         raise OverflowError(f"Request body too large ({length} bytes, max {max_bytes})")
     return length
-
-
-def _read_csp_report_payload(handler):
-    try:
-        length = _safe_content_length(handler, _CSP_REPORT_MAX_BODY_BYTES)
-    except OverflowError as exc:
-        try:
-            handler.rfile.read(_CSP_REPORT_MAX_BODY_BYTES)
-        except Exception:
-            pass
-        return {"discarded": "body_too_large", "error": str(exc)}
-    except ValueError as exc:
-        return {"discarded": "invalid_content_length", "error": str(exc)}
-    raw = handler.rfile.read(length) if length else b"{}"
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except Exception:
-        return {"invalid": True, "bytes": len(raw)}
-
-
-def _handle_csp_report(handler) -> bool:
-    """Collect browser CSP report-only violations without requiring auth."""
-    if _csp_report_rate_limited(handler):
-        _CSP_REPORT_LOGGER.warning(
-            "Dropped CSP report from %s: rate limit exceeded",
-            _client_ip_for_rate_limit(handler),
-        )
-        # Rate-limit rejection runs before the body is read; close-and-advertise
-        # so the unread report can't corrupt the next pooled request -- but only
-        # when a body was really declared. A body-less report answered 204 WITH
-        # `Connection: close` once the 100-per-60s limiter tripped (reproduced on
-        # the wire at request 101; the pipelined `GET /api/health/agent` was
-        # dropped), so a browser that keeps reporting loses its socket each time.
-        arm_connection_close_if_body_pending(handler)
-        return _send_no_content(handler)
-
-    payload = _read_csp_report_payload(handler)
-    _CSP_REPORT_LOGGER.info("CSP report from %s: %s", _client_ip_for_rate_limit(handler), payload)
-    return _send_no_content(handler)
 
 
 def _bounded_client_event_string(value, limit: int) -> str | None:
@@ -11247,16 +10775,14 @@ def _app_shell_for_role(html: str, role) -> str:
     ``<html>`` carries the role and the features the caller may use
     (``data-gfit-may``, from :func:`api.access.shell_features`): the stylesheet
     hides the others and the scripts do not call them (cosmetic; the server
-    gate is the source of truth). Extensions are Admin-only, so a User's shell
-    does not load them.
+    gate is the source of truth).
     """
-    from api.access import ROLE_USER, shell_features
-    from api.extensions import inject_extension_tags
+    from api.access import shell_features
 
     if role:
         may = " ".join(shell_features(role))
         html = html.replace("<html ", f'<html data-gfit-role="{role}" data-gfit-may="{may}" ', 1)
-    return html if role == ROLE_USER else inject_extension_tags(html)
+    return html
 
 
 def _handle_directory_login(handler, body) -> bool:
@@ -12436,7 +11962,7 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
     from api.workspace_policy import request_workspace_policy
 
     # Every folder the dashboard reads comes from somewhere a User does not
-    # control alone (the shared Kanban store, a file inside a project), so each
+    # control alone (a file inside a project), so each
     # one asks the request's Workspace policy. A refused folder is no folder.
     policy = request_workspace_policy()
 
@@ -12453,23 +11979,6 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
     requested_board = str((qs.get("board") or [""])[0] or "").strip()
     workspace_raw = str(get_last_workspace() or "").strip()
     repo_root = usable(Path(workspace_raw).expanduser()) if workspace_raw else None
-    selected_board_meta = None
-    if requested_board:
-        try:
-            from api.kanban_bridge import _kb, _board_meta_dict
-            kb = _kb()
-            for meta in kb.list_boards(include_archived=True) or []:
-                board = _board_meta_dict(meta)
-                if str(board.get("slug") or "") == requested_board:
-                    selected_board_meta = board
-                    workdir = str(board.get("default_workdir") or "").strip()
-                    if workdir:
-                        candidate = usable(Path(workdir).expanduser())
-                        if candidate is not None and candidate.exists():
-                            repo_root = candidate
-                    break
-        except Exception:
-            selected_board_meta = None
     repo_root = usable(_project_os_resolve_repo_root_for_board(repo_root, requested_board, usable))
     if not repo_root or not repo_root.exists():
         j(handler, {
@@ -12541,14 +12050,11 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
             board_dict = raw_board
         board_name = board_dict.get("display_name") or board_dict.get("name") or board_dict.get("slug")
         board_desc = handoff.get("goal_summary") or board_dict.get("repo_corroboration")
-    if selected_board_meta:
-        board_name = board_name or selected_board_meta.get("name") or selected_board_meta.get("slug")
-        board_desc = board_desc or selected_board_meta.get("description")
 
     j(handler, {
         "workspace": str(repo_root),
         "repo_root": str(repo_root),
-        "selected_board_slug": requested_board or (selected_board_meta or {}).get("slug"),
+        "selected_board_slug": requested_board or None,
         "git": git,
         "docs": {
             "project": project_md,
@@ -13797,9 +13303,6 @@ def _route_handler(route):
 
 def handle_get(handler, parsed) -> bool:
     """Handle all GET routes through the route table. Returns True if handled, False for 404."""
-    proxy_result = _handle_extension_sidecar_proxy(handler, parsed, "GET")
-    if proxy_result is not False:
-        return proxy_result
     route = route_table.match("GET", parsed.path)
     if route is not None:
         if route.session_guard and not _guard_request_session_visibility(handler, parsed, method="GET"):
@@ -13860,18 +13363,6 @@ def _get_app_shell(handler, parsed):
         )
     except Exception as exc:
         return _serve_shell_unavailable(handler, exc)
-
-
-def _get_share_page(handler, parsed):
-    share_path = (Path(__file__).parent.parent / "static" / "share.html").resolve()
-    return t(
-        handler,
-        share_path.read_text(encoding="utf-8"),
-        content_type="text/html; charset=utf-8",
-        extra_headers={
-            "X-Robots-Tag": "noindex, nofollow",
-        },
-    )
 
 
 def _get_login(handler, parsed):
@@ -13943,21 +13434,6 @@ def _get_api_auth_status(handler, parsed):
     return j(handler, payload)
 
 
-def _get_api_share(handler, parsed):
-    token = parsed.path[len("/api/share/"):].strip()
-    share = load_share(token)
-    if not share:
-        return bad(handler, "Shared conversation not found", 404)
-    return j(
-        handler,
-        {"share": share},
-        extra_headers={
-            "Cache-Control": "no-store",
-            "X-Robots-Tag": "noindex, nofollow",
-        },
-    )
-
-
 def _get_manifest(handler, parsed):
     return _serve_manifest(handler)
 
@@ -14010,18 +13486,6 @@ def _get_api_insights(handler, parsed):
 
 def _get_api_project_os_dashboard(handler, parsed):
     return _handle_project_os_dashboard(handler, parsed)
-
-
-def _get_api_kanban(handler, parsed):
-    from api.kanban_bridge import handle_kanban_get
-
-    # Only treat an explicit False as "no route matched". None means the
-    # bridge already sent a response via bad()/j() — emitting our own 404
-    # on top of that produces concatenated JSON bodies on the wire.
-    result = handle_kanban_get(handler, parsed)
-    if result is False:
-        return _kanban_unknown_endpoint(handler, parsed, "GET")
-    return True
 
 
 def _get_api_wiki_status(handler, parsed):
@@ -14172,23 +13636,6 @@ def _get_api_model_auxiliary(handler, parsed):
     return j(handler, get_auxiliary_models())
 
 
-def _get_api_dashboard_status(handler, parsed):
-    from api import dashboard_probe
-
-    j(handler, dashboard_probe.get_dashboard_status())
-    return True
-
-
-def _get_api_dashboard_config(handler, parsed):
-    from api import dashboard_probe
-
-    try:
-        j(handler, dashboard_probe.get_dashboard_config())
-    except ValueError as exc:
-        bad(handler, str(exc), status=400)
-    return True
-
-
 # ── Providers (GET) ──
 def _get_api_providers(handler, parsed):
     # Apply the active per-request profile's env so provider auth probes
@@ -14286,18 +13733,6 @@ def _get_api_reasoning(handler, parsed):
 
 def _get_api_onboarding_status(handler, parsed):
     return j(handler, get_onboarding_status())
-
-
-def _get_api_extensions_status(handler, parsed):
-    from api.extensions import get_extension_status
-
-    return j(handler, get_extension_status())
-
-
-def _get_extensions(handler, parsed):
-    from api.extensions import serve_extension_static
-
-    return serve_extension_static(handler, parsed)
 
 
 def _get_static(handler, parsed):
@@ -15299,7 +14734,7 @@ def handle_delete(handler, parsed) -> bool:
 
 def _dispatch_write(handler, parsed, method: str) -> bool:
     """One preamble for every unsafe method, driven by the request's route-table row:
-    CSRF (unless the row is exempt), the extension proxy, then the handler at
+    CSRF (unless the row is exempt), then the handler at
     once when it reads its own body, else the JSON body, the session guard and
     the handler. A path with no row has its body read and guarded before the 404."""
     diag = None
@@ -15317,16 +14752,6 @@ def _dispatch_write(handler, parsed, method: str) -> bool:
             finally:
                 if diag:
                     diag.finish()
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        method,
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        if diag:
-            diag.finish()
-        return proxy_result
     if route is not None and route.body == "own":
         # The route reads its own body (multipart uploads, raw reports).
         return _route_handler(route)(handler, parsed, None, diag)
@@ -15351,16 +14776,6 @@ def _dispatch_write(handler, parsed, method: str) -> bool:
     if route is None:
         return False  # 404
     return _route_handler(route)(handler, parsed, body, diag)
-
-
-def _post_api_csp_report(handler, parsed, body, diag):
-    if diag:
-        diag.stage("csp_report")
-    try:
-        return _handle_csp_report(handler)
-    finally:
-        if diag:
-            diag.finish()
 
 
 # T1 deprecation alias for the legacy ack endpoint that the pre-rename
@@ -15440,68 +14855,10 @@ def _post_api_escape_authorize(handler, parsed, body, diag):
     return _handle_escape_authorize(handler, parsed, body)
 
 
-def _post_api_extensions_toggle(handler, parsed, body, diag):
-    from api.extensions import ExtensionToggleError, set_extension_user_enabled
-
-    try:
-        return j(
-            handler,
-            set_extension_user_enabled(body.get("id"), body.get("enabled")),
-        )
-    except ExtensionToggleError as exc:
-        return bad(handler, str(exc), status=exc.status)
-    except Exception:
-        logger.exception("extension toggle failed")
-        return bad(handler, "Failed to update extension state", status=500)
-
-
-def _post_api_extensions_sidecar_proxy_consent(handler, parsed, body, diag):
-    from api.extensions import (
-        ExtensionSidecarProxyError,
-        set_extension_sidecar_proxy_consent,
-    )
-
-    try:
-        return j(
-            handler,
-            set_extension_sidecar_proxy_consent(
-                body.get("id"),
-                body.get("approved"),
-            ),
-        )
-    except ExtensionSidecarProxyError as exc:
-        return bad(handler, str(exc), status=exc.status)
-    except Exception:
-        logger.exception("extension sidecar proxy consent update failed")
-        return bad(handler, "Failed to update extension state", status=500)
-
-
 def _post_api_session_recovery_repair_safe(handler, parsed, body, diag):
     from api.session_recovery import repair_safe_session_recovery
     result = repair_safe_session_recovery(api_config.SESSION_DIR, state_db_path=_active_state_db_path())
     return j(handler, result, status=200 if result.get("clean") else 409)
-
-
-def _post_api_kanban(handler, parsed, body, diag):
-    from api.kanban_bridge import handle_kanban_post
-
-    result = handle_kanban_post(handler, parsed, body)
-    if result is False:
-        return _kanban_unknown_endpoint(handler, parsed, "POST")
-    return True
-
-
-def _post_api_dashboard_config(handler, parsed, body, diag):
-    from api import dashboard_probe
-
-    try:
-        j(handler, dashboard_probe.save_dashboard_config(body))
-    except ValueError as exc:
-        bad(handler, str(exc), status=400)
-    except Exception as exc:
-        logger.exception("dashboard config save failed")
-        bad(handler, str(exc), status=500)
-    return True
 
 
 def _post_api_prompts(handler, parsed, body, diag):
@@ -15518,96 +14875,6 @@ def _post_api_prompts(handler, parsed, body, diag):
     prompts.append(new_prompt)
     _save_saved_prompts(prompts)
     return j(handler, {"ok": True, "prompt": new_prompt})
-
-
-def _post_api_share_create(handler, parsed, body, diag):
-    sid = str(body.get("session_id") or "").strip()
-    if not sid:
-        return bad(handler, "session_id is required", 400)
-    try:
-        snapshot_session, stored_session, cli_meta = _resolve_share_session_pair(sid, handler)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    try:
-        share_meta = create_or_refresh_share(snapshot_session)
-    except ValueError as exc:
-        return bad(handler, str(exc), 400)
-    persisted_session = stored_session
-    if persisted_session is None:
-        persisted_session = _build_share_metadata_sidecar(
-            sid,
-            snapshot_session,
-            cli_meta=cli_meta,
-        )
-    persisted_session.share_token = share_meta["share_token"]
-    persisted_session.share_created_at = share_meta["share_created_at"]
-    persisted_session.save(touch_updated_at=False)
-    _publish_session_list_changed(
-        "session_share_create",
-        profile=getattr(persisted_session, "profile", None),
-        session_id=sid,
-    )
-    response_session = copy.copy(persisted_session)
-    response_session.messages = list(getattr(snapshot_session, "messages", None) or [])
-    return j(
-        handler,
-        {
-            "ok": True,
-            "share": {
-                "token": share_meta["share_token"],
-                "url": f"/share/{share_meta['share_token']}",
-                "title": share_meta["share_title"],
-                "message_count": share_meta["share_message_count"],
-                "created_at": share_meta["share_created_at"],
-                "updated_at": share_meta["share_updated_at"],
-            },
-            "session": public_session_projection(
-                response_session.compact() | {"messages": response_session.messages}
-            ),
-        },
-    )
-
-
-def _post_api_share_revoke(handler, parsed, body, diag):
-    sid = str(body.get("session_id") or "").strip()
-    if not sid:
-        return bad(handler, "session_id is required", 400)
-    try:
-        snapshot_session, stored_session, cli_meta = _resolve_share_session_pair(sid, handler)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    target_session = stored_session
-    if target_session is None:
-        token = str(getattr(snapshot_session, "share_token", "") or "").strip()
-        if not token:
-            return bad(handler, "Session not found", 404)
-        target_session = _build_share_metadata_sidecar(
-            sid,
-            snapshot_session,
-            cli_meta=cli_meta,
-        )
-        target_session.share_token = token
-        target_session.share_created_at = getattr(snapshot_session, "share_created_at", None)
-    revoke_share(target_session)
-    target_session.share_token = None
-    target_session.share_created_at = None
-    target_session.save(touch_updated_at=False)
-    _publish_session_list_changed(
-        "session_share_revoke",
-        profile=getattr(target_session, "profile", None),
-        session_id=sid,
-    )
-    response_session = copy.copy(target_session)
-    response_session.messages = list(getattr(snapshot_session, "messages", None) or [])
-    return j(
-        handler,
-        {
-            "ok": True,
-            "session": public_session_projection(
-                response_session.compact() | {"messages": response_session.messages}
-            ),
-        },
-    )
 
 
 def _post_api_session_new(handler, parsed, body, diag):
@@ -17757,15 +17024,6 @@ def _patch_api_mcp_servers(handler, parsed, body, diag):
     return _handle_mcp_server_toggle(handler, name, body)
 
 
-def _patch_api_kanban(handler, parsed, body, diag):
-    from api.kanban_bridge import handle_kanban_patch
-
-    result = handle_kanban_patch(handler, parsed, body)
-    if result is False:
-        return _kanban_unknown_endpoint(handler, parsed, "PATCH")
-    return True
-
-
 def _delete_api_mcp_servers(handler, parsed, body, diag):
     name = parsed.path[len("/api/mcp/servers/"):]
     return _handle_mcp_server_delete(handler, name)
@@ -17779,14 +17037,6 @@ def _delete_api_prompts(handler, parsed, body, diag):
     _save_saved_prompts(prompts)
     return j(handler, {"ok": True})
 
-
-def _delete_api_kanban(handler, parsed, body, diag):
-    from api.kanban_bridge import handle_kanban_delete
-
-    result = handle_kanban_delete(handler, parsed, body)
-    if result is False:
-        return _kanban_unknown_endpoint(handler, parsed, "DELETE")
-    return True
 
 # ── GET route helpers ─────────────────────────────────────────────────────────
 
@@ -18376,8 +17626,7 @@ def _chat_stream_resume_cursor(handler, qs: dict, stream_id: str | None = None) 
     ``EventSource`` auto-reconnect, Android/CLI clients) sends automatically on
     reconnect, carrying the ``id:`` of the last event it received. Every
     journaled event on this stream already emits ``id: stream_id:seq`` via
-    ``_sse_with_id()``. Same resolution-chain precedent as
-    ``api/kanban_bridge.py`` (``?since=`` → ``Last-Event-ID``).
+    ``_sse_with_id()``.
     """
     after_seq_raw = qs.get("after_seq", [None])[0]
     has_explicit_query = (

@@ -128,6 +128,14 @@ def _pipelined_after(
         sock.close()
 
 
+def _pipelined_after_login_rejection(request: bytes, *, stop_after: int | None = None) -> bytes:
+    """Like :func:`_pipelined_after`, on a server with login on, where *request*
+    (an unauthenticated GET) is refused 401 before any body is read; the
+    follow-up is a public GET."""
+    with _own_server() as port:
+        return _pipelined_after(request, stop_after=stop_after, port=port, follow=_PUBLIC_FOLLOWING_GET)
+
+
 def _assert_single_closed_response(answered: bytes, status: bytes, leftover: bytes) -> None:
     text = answered.decode("latin-1", errors="replace")
     assert answered.startswith(b"HTTP/1.1 " + status), text
@@ -158,23 +166,23 @@ def test_chunked_upload_rejection_closes_and_cannot_poison_the_socket(path):
     _assert_single_closed_response(answered, b"411", _MULTIPART_PAYLOAD)
 
 
-def test_sidecar_get_with_a_body_closes_and_cannot_poison_the_socket():
-    """A provenance-rejected GET that carries a declared body.
+def test_unauthenticated_get_with_a_body_closes_and_cannot_poison_the_socket(auth_on):
+    """An unauthenticated GET that carries a declared body.
 
     `read_request_body=False` said "no body" and the 403 went out with
     keep-alive; the gate's repro then got `501 Unsupported method ('{}GET')` on
-    the same socket. No Origin/Referer/Sec-Fetch-Site here, so provenance fails
+    the same socket. No login cookie here, so auth fails
     before the body would ever be read.
     """
-    answered = _pipelined_after(
-        "GET /api/extensions/probe/sidecar/ping HTTP/1.1\r\n"
+    answered = _pipelined_after_login_rejection(
+        "GET /api/sessions HTTP/1.1\r\n"
         "Host: 127.0.0.1\r\n"
         "Content-Type: application/json\r\n"
         f"Content-Length: {len(_BODY)}\r\n"
         "\r\n".encode() + _BODY
     )
 
-    _assert_single_closed_response(answered, b"403", _BODY)
+    _assert_single_closed_response(answered, b"401", _BODY)
 
 
 # ── Framing hidden behind a DUPLICATED header ─────────────────────────────────
@@ -187,9 +195,9 @@ def test_sidecar_get_with_a_body_closes_and_cannot_poison_the_socket():
 #   /api/upload -> 400, then 400 Bad request syntax ('--x')
 
 
-def test_duplicate_content_length_sidecar_get_closes_and_cannot_poison_the_socket():
-    answered = _pipelined_after(
-        "GET /api/extensions/probe/sidecar/ping HTTP/1.1\r\n"
+def test_duplicate_content_length_unauthenticated_get_closes_and_cannot_poison_the_socket(auth_on):
+    answered = _pipelined_after_login_rejection(
+        "GET /api/sessions HTTP/1.1\r\n"
         "Host: 127.0.0.1\r\n"
         "Content-Type: application/json\r\n"
         "Content-Length: 0\r\n"
@@ -197,7 +205,7 @@ def test_duplicate_content_length_sidecar_get_closes_and_cannot_poison_the_socke
         "\r\n".encode() + _BODY
     )
 
-    _assert_single_closed_response(answered, b"403", _BODY)
+    _assert_single_closed_response(answered, b"401", _BODY)
 
 
 @pytest.mark.parametrize("path", _MULTIPART_UPLOAD_PATHS)
@@ -236,14 +244,14 @@ _BLANK_FRAMING_HEADER_LINES = (
 
 
 @pytest.mark.parametrize("framing", _BLANK_FRAMING_HEADER_LINES)
-def test_blank_framing_sidecar_get_closes_and_cannot_poison_the_socket(framing):
-    answered = _pipelined_after(
-        b"GET /api/extensions/probe/sidecar/ping HTTP/1.1\r\n"
+def test_blank_framing_unauthenticated_get_closes_and_cannot_poison_the_socket(framing, auth_on):
+    answered = _pipelined_after_login_rejection(
+        b"GET /api/sessions HTTP/1.1\r\n"
         b"Host: 127.0.0.1\r\n"
         b"Content-Type: application/json\r\n" + framing + b"\r\n" + _BODY
     )
 
-    _assert_single_closed_response(answered, b"403", _BODY)
+    _assert_single_closed_response(answered, b"401", _BODY)
 
 
 @pytest.mark.parametrize("path", _MULTIPART_UPLOAD_PATHS)
@@ -298,14 +306,14 @@ _MALFORMED_ZERO_FRAMING_LINES = [
 
 
 @pytest.mark.parametrize("framing", _MALFORMED_ZERO_FRAMING_LINES)
-def test_malformed_zero_framing_sidecar_get_closes_and_cannot_poison_the_socket(framing):
-    answered = _pipelined_after(
-        b"GET /api/extensions/probe/sidecar/ping HTTP/1.1\r\n"
+def test_malformed_zero_framing_unauthenticated_get_closes_and_cannot_poison_the_socket(framing, auth_on):
+    answered = _pipelined_after_login_rejection(
+        b"GET /api/sessions HTTP/1.1\r\n"
         b"Host: 127.0.0.1\r\n"
         b"Content-Type: application/json\r\n" + framing + b"\r\n" + _BODY
     )
 
-    _assert_single_closed_response(answered, b"403", _BODY)
+    _assert_single_closed_response(answered, b"401", _BODY)
 
 
 @pytest.mark.parametrize("path", _MULTIPART_UPLOAD_PATHS)
@@ -376,14 +384,14 @@ _IDENTITY_FRAMING_LINES = [
 
 
 @pytest.mark.parametrize("framing", _IDENTITY_FRAMING_LINES)
-def test_identity_framing_sidecar_get_closes_and_cannot_poison_the_socket(framing):
-    answered = _pipelined_after(
-        b"GET /api/extensions/probe/sidecar/ping HTTP/1.1\r\n"
+def test_identity_framing_unauthenticated_get_closes_and_cannot_poison_the_socket(framing, auth_on):
+    answered = _pipelined_after_login_rejection(
+        b"GET /api/sessions HTTP/1.1\r\n"
         b"Host: 127.0.0.1\r\n"
         b"Content-Type: application/json\r\n" + framing + b"\r\n" + _BODY
     )
 
-    _assert_single_closed_response(answered, b"403", _BODY)
+    _assert_single_closed_response(answered, b"401", _BODY)
 
 
 @pytest.mark.parametrize("path", _MULTIPART_UPLOAD_PATHS)
@@ -432,21 +440,21 @@ def test_identity_framing_upload_closes_and_cannot_poison_the_socket(path, frami
         "two-agreeing-zeroes",
     ],
 )
-def test_bodyless_framing_keeps_the_pooled_socket_alive(framing):
+def test_bodyless_framing_keeps_the_pooled_socket_alive(framing, auth_on):
     """The over-close half of the contract, on the wire.
 
     Framing that positively says "no body" must NOT be swept up by the blank
     rule: the rejection answers without `Connection: close` and the pipelined GET
     is served on the same socket. Two agreeing zeroes are still no body.
     """
-    answered = _pipelined_after(
-        b"GET /api/extensions/probe/sidecar/ping HTTP/1.1\r\n"
+    answered = _pipelined_after_login_rejection(
+        b"GET /api/sessions HTTP/1.1\r\n"
         b"Host: 127.0.0.1\r\n" + framing + b"\r\n",
         stop_after=2,
     )
 
     text = answered.decode("latin-1", errors="replace")
-    assert answered.startswith(b"HTTP/1.1 403"), text
+    assert answered.startswith(b"HTTP/1.1 401"), text
     assert b"HTTP/1.1 200 OK" in answered, (
         f"the pipelined GET was not served, so a body-less rejection dropped a "
         f"healthy pooled connection: {text}"
@@ -649,44 +657,6 @@ def test_csrf_token_rejection_with_a_body_still_closes_the_pooled_socket(auth_on
 
     _assert_closed(answered, b"403")
     assert _BODY not in answered, answered.decode("latin-1", errors="replace")
-
-
-@pytest.fixture
-def csp_limiter_tripped(monkeypatch):
-    """Force the CSP-report limiter, instead of sending 101 reports in 60s."""
-    import api.routes as routes
-
-    monkeypatch.setattr(routes, "_csp_report_rate_limited", lambda _handler: True)
-
-
-@pytest.mark.parametrize("framing", _BODYLESS_FRAMING, ids=_BODYLESS_IDS)
-def test_bodyless_rate_limited_csp_report_keeps_the_pooled_socket_alive(
-    framing, csp_limiter_tripped
-):
-    """A dropped 204 must not hang up on a browser that is still reporting."""
-    with _own_server() as port:
-        answered = _pipelined_after(
-            b"POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\n" + framing + b"\r\n",
-            stop_after=2,
-            port=port,
-            follow=_PUBLIC_FOLLOWING_GET,
-        )
-
-    _assert_kept_alive(answered, b"204")
-
-
-def test_rate_limited_csp_report_with_a_body_still_closes(csp_limiter_tripped):
-    """The limiter answers without reading the report, so a declared body closes."""
-    with _own_server() as port:
-        answered = _pipelined_after(
-            b"POST /api/csp-report HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-            b"Content-Type: application/csp-report\r\n"
-            b"Content-Length: " + str(len(_BODY)).encode() + b"\r\n\r\n" + _BODY,
-            port=port,
-            follow=_PUBLIC_FOLLOWING_GET,
-        )
-
-    _assert_closed(answered, b"204")
 
 
 @pytest.fixture

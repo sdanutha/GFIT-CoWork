@@ -52,7 +52,7 @@ def test_session_save_rejects_unsafe_session_id(tmp_path, monkeypatch):
 def test_bespoke_telemetry_body_readers_reject_invalid_lengths_without_unbounded_read():
     import api.routes as routes
 
-    for reader in (routes._read_csp_report_payload, routes._read_client_event_payload):
+    for reader in (routes._read_client_event_payload,):
         handler = SimpleNamespace(headers=_Headers({"Content-Length": "-1"}), rfile=_RejectNegativeRead(), close_connection=False)
         payload = reader(handler)
         assert handler.close_connection is True
@@ -63,7 +63,6 @@ def test_bespoke_telemetry_body_readers_close_connection_on_oversize():
     import api.routes as routes
 
     cases = [
-        (routes._read_csp_report_payload, routes._CSP_REPORT_MAX_BODY_BYTES + 1),
         (routes._read_client_event_payload, routes._CLIENT_EVENT_MAX_BODY_BYTES + 1),
     ]
     for reader, size in cases:

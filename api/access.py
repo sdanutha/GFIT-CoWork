@@ -215,17 +215,14 @@ def user_may_call(method: str, path: str) -> bool:
 # call them. The list follows the gate, so the two cannot disagree; the gate
 # stays the authority.
 SHELL_FEATURES: dict[str, tuple[str, str]] = {
-    "dashboard": ("GET", "/api/dashboard/status"),
     "provider_quota": ("GET", "/api/provider/quota"),
     "mcp_servers": ("GET", "/api/mcp/servers"),
     "terminal": ("POST", "/api/terminal/start"),
     "logs": ("GET", "/api/logs"),
-    "kanban": ("GET", "/api/kanban/boards"),
     "profiles_admin": ("POST", "/api/profile/create"),
     "settings": ("POST", "/api/settings"),
     "gateway_restart": ("POST", "/api/gateway/restart"),
     "yolo": ("POST", "/api/session/yolo"),
-    "share_session": ("POST", "/api/share/create"),
     "reveal_on_server": ("POST", "/api/file/reveal"),
     "onboarding": ("GET", "/api/onboarding/status"),
 }

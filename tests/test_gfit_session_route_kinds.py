@@ -28,27 +28,23 @@ ADMIN_SESSION_ROUTES = {
         "checkout", "commit", "commit-message", "commit-message-selected", "commit-selected", "discard",
         "fetch", "pull", "push", "stage", "stash-checkout", "unstage")},
     ("POST", "/api/session/worktree/remove"), ("POST", "/api/session/yolo"),
-    ("POST", "/api/share/create"), ("POST", "/api/share/revoke"),
     *{("POST", f"/api/terminal/{verb}") for verb in ("close", "input", "resize", "start")},
 }
 
 # Admin-only routes that name no session, and why.
 _SERVER = "server-level: settings, providers, models, gateway, logs, process"
 ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
-    **{(m, r): "kanban store (prefix route)" for m, r in (
-        ("DELETE", "/api/kanban/"), ("GET", "/api/kanban/"), ("PATCH", "/api/kanban/"), ("POST", "/api/kanban/"))},
     **{(m, r): "MCP servers" for m, r in (
         ("DELETE", "/api/mcp/servers/"), ("GET", "/api/mcp/servers"), ("GET", "/api/mcp/tools"),
         ("PATCH", "/api/mcp/servers/"), ("PUT", "/api/mcp/servers/"))},
     **{("GET", r): _SERVER for r in (
-        "/api/dashboard/config", "/api/dashboard/status", "/api/extensions/status", "/api/logs",
+        "/api/logs",
         "/api/provider/cost-history", "/api/provider/quota", "/api/providers")},
     **{("POST", r): _SERVER for r in (
-        "/api/admin/reload", "/api/commands/exec", "/api/dashboard/config",
-        "/api/extensions/sidecar-proxy-consent", "/api/extensions/toggle", "/api/gateway/restart",
+        "/api/admin/reload", "/api/commands/exec", "/api/gateway/restart",
         "/api/gateway/start", "/api/gateway/stop", "/api/health/restart",
         "/api/models/refresh", "/api/providers", "/api/providers/delete", "/api/providers/self-hosted",
-        "/api/shutdown", "/api/csp-report")},
+        "/api/shutdown")},
     **{(m, r): "onboarding" for m, r in (
         ("GET", "/api/onboarding/oauth/poll"), ("GET", "/api/onboarding/status"),
         ("POST", "/api/onboarding/complete"), ("POST", "/api/onboarding/oauth/cancel"),
@@ -60,8 +56,7 @@ ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
     ("POST", "/api/session/recovery/repair-safe"): "repairs the whole session store",
     ("POST", "/api/sessions/cleanup"): "bulk cleanup; names no session",
     ("POST", "/api/sessions/cleanup_zero_message"): "bulk cleanup; names no session",
-    ("GET", "/api/share/"): "a share link by its token (prefix route)",
-    **{("GET", r): "pages and static prefixes" for r in ("/extensions/", "/login", "/share", "/share/")},
+    **{("GET", r): "pages and static prefixes" for r in ("/login",)},
 }
 
 

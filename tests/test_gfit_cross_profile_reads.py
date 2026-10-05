@@ -510,22 +510,12 @@ def _project_folder(path: Path, secret: str, repo_root: Path | None = None) -> P
 
 
 @pytest.fixture
-def boards(srv, tmp_path, monkeypatch):
-    """Kanban boards (one store for every Profile) pointing at Bob's Workspace and outside it."""
-    import api.kanban_bridge as kanban_bridge
-
-    folders = {
+def boards(srv, tmp_path):
+    """Project folders in Bob's Workspace and outside any Workspace, for boards to point at."""
+    return {
         "bob": _project_folder(srv.profile_home(BOB) / "workspace" / "bobs-repo", "BOB-SECRET"),
         "outside": _project_folder(tmp_path / "outside-repo", "SERVER-SECRET"),
     }
-    metas = [
-        {"slug": "bobs-board", "name": "Bob's board", "default_workdir": str(folders["bob"])},
-        {"slug": "outside-board", "name": "Outside", "default_workdir": str(folders["outside"])},
-        {"slug": "no-folder-board", "name": "No folder"},
-    ]
-    fake_kb = types.SimpleNamespace(list_boards=lambda include_archived=True: metas)
-    monkeypatch.setattr(kanban_bridge, "_kb", lambda: fake_kb)
-    return folders
 
 
 def _dashboard(client, board="") -> dict:
@@ -565,13 +555,6 @@ def test_a_repository_path_inside_a_users_project_is_followed_only_inside_their_
     assert Path(body["repo_root"]).resolve() == own.resolve()
     assert Path(body["workspace"]).resolve() == own.resolve()
     assert "ALICE-PLAN" in text
-
-
-def test_the_admins_dashboard_follows_any_board_folder(srv, boards):
-    admin = srv.logged_in(ADMIN)
-
-    assert "BOB-SECRET" in json.dumps(_dashboard(admin, "bobs-board"))
-    assert "SERVER-SECRET" in json.dumps(_dashboard(admin, "outside-board"))
 
 
 # ── Step (b), ticket 09: per-Profile views stay on the User's own Profile ────
