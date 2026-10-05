@@ -25,9 +25,7 @@ USER = "600001"
 ADMIN = "521740"
 
 # What a User's web app may not call today, so must not show or poll.
-REFUSED_TO_A_USER = {"provider_quota", "mcp_servers", "terminal", "logs",
-                     "profiles_admin", "gateway_restart", "yolo",
-                     "reveal_on_server", "onboarding"}
+REFUSED_TO_A_USER = {"provider_quota", "profiles_admin", "onboarding"}
 
 
 # ── The list follows the gate ────────────────────────────────────────────────

@@ -151,7 +151,7 @@ def test_preferences_ui_exposes_and_saves_fade_text_effect():
     fade_load = load_block[load_block.index(f"$('{FADE_CHECKBOX_ID}')") :]
     assert_contains_all(
         fade_load[:700],
-        [f"settings.{FADE_SETTING}", FADE_RUNTIME_FLAG, "addEventListener('change',_schedulePreferencesAutosave"],
+        [f"settings.{FADE_SETTING}", FADE_RUNTIME_FLAG, "_schedulePreferencesAutosave();"],
     )
 
     autosave_block = function_block(PANELS_JS, "_autosavePreferencesSettings")

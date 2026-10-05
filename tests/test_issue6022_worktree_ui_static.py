@@ -73,11 +73,6 @@ def test_file_and_folder_creation_send_explicit_worktree_false():
     assert "body:JSON.stringify({workspace:ws})" not in src
 
 
-def test_terminal_auto_session_sends_explicit_worktree_false():
-    src = read("static/commands.js")
-    assert "await newSession(false, {worktree: false});" in src
-
-
 def test_no_bare_session_new_posts_remain_in_static_js():
     # Belt-and-suspenders: no static file may POST /api/session/new with a
     # body that has a workspace but silently omits the worktree key on an

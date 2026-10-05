@@ -24,7 +24,6 @@ owned by another run remain live.
 import queue
 import threading
 import uuid
-from contextlib import contextmanager
 
 from api.session_events import publish_session_list_changed
 
@@ -41,9 +40,6 @@ try:
         _permanent_approved,
         _gateway_queues,
         resolve_gateway_approval,
-        enable_session_yolo,
-        disable_session_yolo,
-        is_session_yolo_enabled,
     )
 except ImportError:
     _submit_pending_raw = lambda *a, **k: None
@@ -52,9 +48,6 @@ except ImportError:
     save_permanent_allowlist = lambda *a, **k: None
     is_approved = lambda *a, **k: True
     resolve_gateway_approval = lambda *a, **k: 0
-    enable_session_yolo = lambda *a, **k: None
-    disable_session_yolo = lambda *a, **k: None
-    is_session_yolo_enabled = lambda *a, **k: False
     _pending = {}
     _lock = threading.Lock()
     _permanent_approved = set()
@@ -69,95 +62,6 @@ _GATEWAY_MIRROR_RETAINED = "_gateway_mirror_retained"
 _GATEWAY_ENTRY_DATA_TOKEN_KEY = "_webui_mirror_token"
 _GATEWAY_AGENT_IDENTITY_V1 = "_gateway_agent_identity_v1"
 _gateway_relay_owners: dict[tuple[str, str], str] = {}
-_yolo_transition_lock = threading.Lock()
-_yolo_transitions: dict[str, dict] = {}
-_gateway_yolo_handoff_guard = threading.Lock()
-_gateway_yolo_handoffs: dict[str, dict] = {}
-
-
-@contextmanager
-def gateway_yolo_handoff(session_key: str):
-    """Serialize one session's YOLO toggles with gateway approval dispatch."""
-    session_key = str(session_key or "").strip()
-    with _gateway_yolo_handoff_guard:
-        entry = _gateway_yolo_handoffs.get(session_key)
-        if entry is None:
-            entry = {"lock": threading.Lock(), "users": 0}
-            _gateway_yolo_handoffs[session_key] = entry
-        entry["users"] += 1
-    lock = entry["lock"]
-    lock.acquire()
-    try:
-        yield
-    finally:
-        lock.release()
-        with _gateway_yolo_handoff_guard:
-            entry["users"] -= 1
-            if entry["users"] == 0:
-                _gateway_yolo_handoffs.pop(session_key, None)
-
-
-def begin_session_yolo_transition(session_key: str) -> object | None:
-    """Register a pending YOLO enable until one approval relay settles.
-
-    Multiple tabs may relay approvals for different runs in the same session.
-    Track every in-flight enable intent so one failed relay cannot undo another
-    successful or explicit enable. Do not publish an unconfirmed enable to the
-    shared session flag: the gateway stream may only auto-approve later prompts
-    after a relay succeeds or an explicit enable wins.
-    """
-    session_key = str(session_key or "").strip()
-    if not session_key:
-        return None
-    token = object()
-    with _yolo_transition_lock:
-        transition = _yolo_transitions.get(session_key)
-        if transition is None:
-            transition = {
-                "was_enabled": bool(is_session_yolo_enabled(session_key)),
-                "tokens": set(),
-                "committed": False,
-            }
-            _yolo_transitions[session_key] = transition
-        transition["tokens"].add(token)
-    return token
-
-
-def finish_session_yolo_transition(session_key: str, token: object | None, *, succeeded: bool) -> None:
-    """Settle one pending YOLO enable without exposing or applying stale state."""
-    session_key = str(session_key or "").strip()
-    if not session_key or token is None:
-        return
-    with _yolo_transition_lock:
-        transition = _yolo_transitions.get(session_key)
-        if transition is None or token not in transition["tokens"]:
-            return
-        transition["tokens"].remove(token)
-        if succeeded:
-            transition["committed"] = True
-            # The first confirmed relay commits YOLO immediately. Any remaining
-            # tokens may fail later but cannot revoke this successful enable.
-            enable_session_yolo(session_key)
-        if transition["tokens"]:
-            return
-        _yolo_transitions.pop(session_key, None)
-        if transition["committed"] or transition["was_enabled"]:
-            enable_session_yolo(session_key)
-        else:
-            disable_session_yolo(session_key)
-
-
-def set_session_yolo_enabled(session_key: str, enabled: bool) -> None:
-    """Apply an explicit YOLO choice and supersede in-flight rollbacks."""
-    session_key = str(session_key or "").strip()
-    if not session_key:
-        return
-    with _yolo_transition_lock:
-        _yolo_transitions.pop(session_key, None)
-        if enabled:
-            enable_session_yolo(session_key)
-        else:
-            disable_session_yolo(session_key)
 
 
 def _approval_sse_subscribe(session_id: str) -> queue.Queue:
@@ -477,20 +381,6 @@ def gateway_pending_mirror(
         reconcile_gateway_pending_mirror_locked(session_key)
         entry = _gateway_pending_mirror_locked(session_key, approval_id, run_id, mirror_token)
         return dict(entry) if entry else None
-
-
-def gateway_pending_mirrors(session_key: str) -> list[dict]:
-    """Return every currently parked run-backed mirror in queue order."""
-    with _lock:
-        reconcile_gateway_pending_mirror_locked(session_key)
-        queue = _pending.get(session_key)
-        entries = queue if isinstance(queue, list) else [queue] if queue else []
-        return [
-            dict(entry)
-            for entry in entries
-            if _is_gateway_mirror_entry(entry)
-            and str(entry.get("run_id") or "").strip()
-        ]
 
 
 def claim_gateway_approval_relay_owner(session_key: str, run_id: str, approval_id: str) -> bool:
@@ -963,75 +853,18 @@ def resolve_gateway_pending_local_no_run_mirror(
     return True, 1, head, total
 
 
-def resolve_gateway_pending_local_all(
-    session_key: str,
-    choice: str,
-    reason: str | None = None,
-) -> tuple[int, dict | None, int]:
-    """Resolve every parked local/no-run approval without touching remote runs."""
-    targets = []
-    removed_pending = False
-    with _lock:
-        reconcile_gateway_pending_mirror_locked(session_key)
-
-        gateway_queue = _gateway_queues.get(session_key) or []
-        retained_gateway_queue = []
-        for entry in gateway_queue:
-            data = getattr(entry, "data", None) or {}
-            if str(data.get("run_id") or "").strip():
-                retained_gateway_queue.append(entry)
-            else:
-                targets.append(entry)
-        if retained_gateway_queue:
-            _gateway_queues[session_key] = retained_gateway_queue
-        else:
-            _gateway_queues.pop(session_key, None)
-
-        queue = _pending.get(session_key)
-        entries = queue if isinstance(queue, list) else [queue] if queue else []
-        retained_pending = [
-            entry
-            for entry in entries
-            if _is_gateway_mirror_entry(entry)
-            and str(entry.get("run_id") or "").strip()
-        ]
-        removed_pending = len(retained_pending) != len(entries)
-        if retained_pending:
-            _pending[session_key] = retained_pending
-        else:
-            _pending.pop(session_key, None)
-
-        for entry in targets:
-            _settle_gateway_entry(entry, choice, reason)
-        head, total, _changed = reconcile_gateway_pending_mirror_locked(session_key)
-        _approval_sse_notify_locked(session_key, head, total)
-
-    if targets or removed_pending:
-        publish_session_list_changed("attention_resolved")
-    return len(targets), head, total
-
-
 def settle_gateway_pending_local_notification(
     session_key: str,
     approval: dict,
 ) -> tuple[bool, dict | None, int]:
-    """Auto-resolve or publish one local approval at the YOLO handoff boundary.
+    """Publish one local approval the Agent is blocking on.
 
     The Agent adds its blocking entry before invoking WebUI's notify callback.
-    Serialize that callback with session YOLO commit/disable so a waiter arriving
-    after a drain snapshot cannot be parked behind an already-committed enable.
-    Run-backed approvals stay on the Runs API path and are never resolved here.
+    Returns ``(auto_resolved, head, total)``; nothing is auto-resolved since
+    session YOLO went with the Admin (ADR 0006).
     """
-    with gateway_yolo_handoff(session_key):
-        run_id = str((approval or {}).get("run_id") or "").strip()
-        if not run_id and is_session_yolo_enabled(session_key):
-            _resolved, head, total = resolve_gateway_pending_local_all(
-                session_key,
-                "once",
-            )
-            return True, head, total
-        head, total = submit_gateway_pending_mirror(session_key, approval)
-        return False, head, total
+    head, total = submit_gateway_pending_mirror(session_key, approval)
+    return False, head, total
 
 
 def submit_pending(session_key: str, approval: dict) -> None:

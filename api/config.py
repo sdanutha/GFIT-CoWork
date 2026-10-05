@@ -11660,7 +11660,6 @@ _SETTINGS_DEFAULTS = {
     "hide_composer_mic": False,  # hide dictation mic button in composer footer
     "show_titlebar_profile": False,  # show profile switcher in app titlebar (opt-in)
     "hide_composer_voice_mode": False,  # hide hands-free voice-mode button in composer footer
-    "hide_composer_yolo": False,  # hide YOLO chip in composer footer
     "hide_composer_profile": False,  # hide profile chip in composer footer
     "hide_composer_workspace": False,  # hide workspace controls in composer footer/mobile config panel
     "hide_composer_mobile_config": False,  # hide mobile composer config button
@@ -11695,7 +11694,6 @@ _SETTINGS_DEFAULTS = {
     "notifications_enabled": False,  # browser notification when tab is in background
     "show_thinking": True,  # show/hide thinking/reasoning blocks in chat view
     "simplified_tool_calling": True,  # legacy compatibility; Worklog renderer remains enabled
-    "terminal_auto_expand_on_output": False,  # auto-expand terminal panel when output arrives while collapsed
     "workspace_todos_tab": False,  # show a Todos tab in the workspace panel (right side)
     "api_redact_enabled": True,  # redact sensitive data (API keys, secrets) from API responses
     "dashboard_plugins": {},  # plugin_name -> bool, opt-in per plugin (default off per PF-10b)
@@ -11729,6 +11727,9 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     "update_channel",
     "ignore_agent_updates",
     "whats_new_summary_enabled",
+    # The embedded terminal and session YOLO went with the Admin (ADR 0006).
+    "terminal_auto_expand_on_output",
+    "hide_composer_yolo",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -12098,7 +12099,6 @@ _SETTINGS_BOOL_KEYS = {
     "rtl",
     "notifications_enabled",
     "show_thinking",
-    "terminal_auto_expand_on_output",
     "workspace_todos_tab",
     "api_redact_enabled",
     "session_jump_buttons",
@@ -12115,7 +12115,6 @@ _SETTINGS_BOOL_KEYS = {
     "hide_composer_mic",
     "show_titlebar_profile",
     "hide_composer_voice_mode",
-    "hide_composer_yolo",
     "hide_composer_profile",
     "hide_composer_workspace",
     "hide_composer_mobile_config",

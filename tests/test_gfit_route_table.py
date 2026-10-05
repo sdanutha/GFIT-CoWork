@@ -31,21 +31,19 @@ _OPENED_TO_USERS = {
 }
 
 
-# Handlers of the Admin-only features ADR 0006 deleted: their routes are gone.
-_DELETED_BY_ADR_0006 = {
-    "_post_api_csp_report", "_get_share_page", "_get_api_share", "_post_api_share_create", "_post_api_share_revoke",
-    "_get_api_kanban", "_post_api_kanban", "_patch_api_kanban", "_delete_api_kanban",
-    "_get_api_dashboard_status", "_get_api_dashboard_config", "_post_api_dashboard_config",
-    "_get_api_extensions_status", "_get_extensions", "_post_api_extensions_toggle",
-    "_post_api_extensions_sidecar_proxy_consent",
-    "_get_api_session_recovery_audit", "_post_api_session_recovery_repair_safe", "_post_api_admin_reload",
-    "_post_api_sessions_cleanup", "_post_api_sessions_cleanup_zero_message",
-    "_get_api_approval_inject_test", "_get_api_clarify_inject_test",
-}
-# Path prefixes of those deleted routes: they now answer like any unknown path.
-_DELETED_PATHS_BY_ADR_0006 = ("/share", "/api/share/", "/api/kanban/", "/api/dashboard/", "/api/extensions/", "/extensions/", "/api/csp-report",
-                              "/api/session/recovery/", "/api/admin/reload", "/api/sessions/cleanup",
-                              "/api/approval/inject_test", "/api/clarify/inject_test")
+# Paths of the Admin-only features ADR 0006 deleted: they now answer like any
+# unknown path, and their handlers are gone. Listed explicitly so a route that
+# disappears by accident still fails the dispatch test below.
+_DELETED_PATHS_BY_ADR_0006 = (
+    "/share", "/api/share/", "/api/kanban/", "/api/dashboard/", "/api/extensions/", "/extensions/",
+    "/api/csp-report", "/api/session/recovery/", "/api/admin/reload", "/api/sessions/cleanup",
+    "/api/approval/inject_test", "/api/clarify/inject_test", "/api/terminal/", "/api/session/worktree/remove",
+    "/api/logs", "/api/health/restart", "/api/gateway/start", "/api/gateway/stop", "/api/gateway/restart",
+    "/api/shutdown", "/api/session/yolo", "/api/git/stage", "/api/git/unstage", "/api/git/discard",
+    "/api/git/commit", "/api/git/fetch", "/api/git/pull", "/api/git/push", "/api/git/checkout",
+    "/api/git/stash-checkout", "/api/escape/", "/api/file/reveal", "/api/file/open-vscode",
+    "/api/commands/exec", "/api/mcp/",
+)
 
 
 def _intended(method, path, user_may, kind):
@@ -127,8 +125,8 @@ def test_one_matcher_chooses_the_row(method, path, pattern):
 def test_the_table_classifies_reads_writes_and_callers():
     assert route_table.match("GET", "/api/session").session == READ
     assert route_table.match("POST", "/api/session/rename").session == WRITE
-    assert route_table.match("POST", "/api/session/yolo").caller == ADMIN
-    assert route_table.match("GET", "/api/session/yolo").caller == USER
+    assert route_table.match("POST", "/api/profile/create").caller == ADMIN
+    assert route_table.match("GET", "/api/session").caller == USER
 
 
 # ── Dispatch: the table chooses the handler the old if-chains chose ──────────
@@ -148,7 +146,7 @@ def test_the_table_dispatches_where_the_old_chains_did(method, path, handler):
     import api.routes as routes
 
     route = route_table.match(method, path)
-    if handler in _DELETED_BY_ADR_0006:
+    if path.startswith(_DELETED_PATHS_BY_ADR_0006):
         assert route is None or route.handler != handler
         assert not hasattr(routes, handler)
         return

@@ -62,3 +62,18 @@ def test_answering_a_pending_clarify_prompt_clears_it(user):
     assert status == 200, body
     assert body["ok"] is True
     assert _pending(user, "clarify", sid) is None
+
+
+def test_a_user_cannot_switch_on_yolo_through_an_approval_answer(user):
+    # Session YOLO went with the Admin (ADR 0006); the answer route was a way round it.
+    sid = _own_session(user)
+    routes.submit_pending(sid, {
+        "command": "rm -rf /tmp/testdir", "pattern_key": "recursive_delete",
+        "pattern_keys": ["recursive_delete"], "description": "test pattern",
+    })
+
+    status, body, _ = user.post("/api/approval/respond", {"session_id": sid, "choice": "once", "yolo": True})
+
+    assert status == 400, body
+    assert "YOLO" in body["error"]
+    assert _pending(user, "approval", sid) is not None

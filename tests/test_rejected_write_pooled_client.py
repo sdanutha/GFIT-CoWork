@@ -659,45 +659,6 @@ def test_csrf_token_rejection_with_a_body_still_closes_the_pooled_socket(auth_on
     assert _BODY not in answered, answered.decode("latin-1", errors="replace")
 
 
-@pytest.fixture
-def restart_succeeds(monkeypatch):
-    """Pin the SUCCESS outcome -- the one that closed a healthy socket every call."""
-    import api.routes as routes
-
-    monkeypatch.setattr(
-        routes, "restart_active_profile_gateway", lambda: {"status": "completed"}
-    )
-
-
-@pytest.mark.parametrize("framing", _BODYLESS_FRAMING, ids=_BODYLESS_IDS)
-def test_bodyless_successful_restart_keeps_the_pooled_socket_alive(framing, restart_succeeds):
-    """`/api/health/restart` closed on success too; the WebUI sends no body."""
-    with _own_server() as port:
-        answered = _pipelined_after(
-            b"POST /api/health/restart HTTP/1.1\r\nHost: 127.0.0.1\r\n" + framing + b"\r\n",
-            stop_after=2,
-            port=port,
-            follow=_PUBLIC_FOLLOWING_GET,
-        )
-
-    _assert_kept_alive(answered, b"200")
-
-
-def test_restart_with_a_body_still_closes_the_pooled_socket(restart_succeeds):
-    """The endpoint consumes its body on no outcome, so a declared one closes."""
-    with _own_server() as port:
-        answered = _pipelined_after(
-            b"POST /api/health/restart HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-            b"Content-Type: application/json\r\n"
-            b"Content-Length: " + str(len(_BODY)).encode() + b"\r\n\r\n" + _BODY,
-            port=port,
-            follow=_PUBLIC_FOLLOWING_GET,
-        )
-
-    _assert_closed(answered, b"200")
-    assert _BODY not in answered, answered.decode("latin-1", errors="replace")
-
-
 @pytest.mark.parametrize("framing", _BODYLESS_FRAMING, ids=_BODYLESS_IDS)
 def test_bodyless_deprecated_ack_keeps_the_pooled_socket_alive(framing):
     """The 410 alias, which the body-bearing test at the top of this file pins closed."""

@@ -258,7 +258,6 @@ class TestIndexHtmlIntegration:
             "icons.js",
             "i18n.js",
             "workspace.js",
-            "terminal.js",
             "onboarding.js",
         ):
             # Either inline `?v=__WEBUI_VERSION__` or via the VQ constant

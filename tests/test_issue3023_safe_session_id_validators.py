@@ -65,16 +65,6 @@ def test_session_delete_validator_accepts_hyphenated_ids():
     assert "'0123456789abcdefghijklmnopqrstuvwxyz_'" not in src
 
 
-def test_session_worktree_remove_validator_accepts_hyphenated_ids():
-    """``/api/session/worktree/remove`` validator path must accept hyphens (#3023)."""
-    from tests._route_source import route_source
-
-    # The worktree-remove handler must use the shared helper
-    block = route_source("POST", "/api/session/worktree/remove")
-    assert "is_safe_session_id" in block
-    assert "'0123456789abcdefghijklmnopqrstuvwxyz_'" not in block
-
-
 def test_repair_stale_pending_validator_accepts_hyphenated_ids():
     """``_repair_stale_pending`` in models.py must accept hyphens (#3023)."""
     models_src = open("api/models.py", encoding="utf-8").read()

@@ -70,7 +70,6 @@ SESSION_ROUTES: dict[tuple[str, str], object] = {
     ("GET", "/api/session/stream"): Query(),
     ("GET", "/api/session/usage"): Query(),
     ("GET", "/api/session/worktree/status"): Query(),
-    ("GET", "/api/session/yolo"): Query(),
     ("POST", "/api/session/anchor-scene"): Body(),
     ("POST", "/api/session/archive"): Body({"archived": True}),
     ("POST", "/api/session/branch"): Body(),

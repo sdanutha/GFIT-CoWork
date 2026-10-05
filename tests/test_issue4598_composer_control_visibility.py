@@ -23,13 +23,12 @@ INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
 STYLE_CSS = (ROOT / "static" / "style.css").read_text(encoding="utf-8")
 
-# The 15 composer-control visibility flags this feature ships.
+# The composer-control visibility flags this feature ships (YOLO went with the Admin, ADR 0006).
 HIDE_KEYS = [
     "hide_composer_attach",
     "hide_composer_saved_prompts",
     "hide_composer_mic",
     "hide_composer_voice_mode",
-    "hide_composer_yolo",
     "hide_composer_profile",
     "hide_composer_workspace",
     "hide_composer_mobile_config",
@@ -57,7 +56,6 @@ I18N_KEYS = [
     "composer_control_reasoning",
     "composer_control_context",
     "composer_control_voice_mode",
-    "composer_control_yolo",
     "composer_control_bg_badge",
     "composer_control_mobile_config",
     "composer_control_quota_chip",

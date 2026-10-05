@@ -657,53 +657,6 @@ def test_transfer_encoding_beside_a_content_length_still_declares_a_body(length)
     assert request_declares_body(cast(Any, handler)) is True
 
 
-_RESTART_OUTCOMES = [
-    {"status": "completed"},
-    {"status": "in_progress"},
-    {"status": "busy"},
-    {"status": "error"},
-]
-
-
-@pytest.mark.parametrize("outcome", _RESTART_OUTCOMES, ids=lambda o: o["status"])
-@pytest.mark.parametrize(
-    "headers",
-    [{"Content-Length": "15"}, {"Transfer-Encoding": "chunked"}, {"Content-Length": "banana"}],
-    ids=["content-length", "chunked", "unreadable-length"],
-)
-def test_health_restart_closes_connection(headers, outcome, monkeypatch):
-    """health/restart never consumes its body on any outcome — so a declared one closes."""
-    import api.routes as routes
-
-    handler = SimpleNamespace(headers=headers, close_connection=False)
-    monkeypatch.setattr(routes, "restart_active_profile_gateway", lambda: outcome)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: True)
-
-    routes._handle_health_restart(handler)
-    assert handler.close_connection is True
-
-
-@pytest.mark.parametrize("outcome", _RESTART_OUTCOMES, ids=lambda o: o["status"])
-@pytest.mark.parametrize(
-    "headers", [{}, {"Content-Length": "0"}], ids=["no-content-length", "zero-content-length"]
-)
-def test_bodyless_health_restart_keeps_connection(headers, outcome, monkeypatch):
-    """Including the SUCCESS path, which closed a healthy socket on every call.
-
-    The WebUI's restart button sends no body, so the old unconditional arming made
-    a 200 "restarted successfully" hang up the connection every single time. The
-    framing decides for all four outcomes, not the result.
-    """
-    import api.routes as routes
-
-    handler = SimpleNamespace(headers=headers, close_connection=False)
-    monkeypatch.setattr(routes, "restart_active_profile_gateway", lambda: outcome)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: True)
-
-    routes._handle_health_restart(handler)
-    assert handler.close_connection is False
-
-
 def _deprecated_ack_post(monkeypatch, headers):
     """Drive the deprecated /api/process-complete-ack 410, which runs pre-CSRF."""
     import api.routes as routes

@@ -1879,14 +1879,13 @@ function _syncNavActionMirrors(){
   const rail=document.querySelector('.rail');
   const sidebar=document.querySelector('.sidebar-nav');
   if(!rail||!sidebar)return;
-  const anchor=sidebar.querySelector('[data-panel="logs"]');
   const sources=Array.from(rail.querySelectorAll('.nav-tab:not([data-panel])')).filter(source=>source.id);
   const mirrors=Array.from(sidebar.querySelectorAll('[data-nav-action-mirror]'));
   const sourceIds=new Set(sources.map(source=>source.id));
   mirrors.forEach(mirror=>{
     if(!sourceIds.has(mirror.getAttribute('data-nav-action-mirror')))mirror.remove();
   });
-  let next=anchor||null;
+  let next=null;
   sources.slice().reverse().forEach(source=>{
     const sourceVisible=(()=>{
       if(source.hidden||source.getAttribute('aria-hidden')==='true')return false;
@@ -5514,7 +5513,6 @@ document.addEventListener('click',function(e){
 
 // ── Session toolsets chip (#493) ───────────────────────────────────────────
 let _currentSessionToolsets = null; // null = active profile defaults, array = custom list
-let _toolsetsCatalog = null;
 
 function _applyToolsetsChip(toolsets) {
   _currentSessionToolsets = toolsets;
@@ -5563,37 +5561,8 @@ function syncToolsetsChip() {
   _syncToolsetsChip();
 }
 
-function _normalizeToolsetsCatalog(payload) {
-  const servers = payload && Array.isArray(payload.servers) ? payload.servers : [];
-  const seen = new Set();
-  const names = [];
-  servers.forEach(function(server) {
-    const name = String((server && server.name) || '').trim();
-    if (!name || seen.has(name)) return;
-    seen.add(name);
-    names.push(name);
-  });
-  return names;
-}
 
-function _loadToolsetsCatalog() {
-  if (Array.isArray(_toolsetsCatalog)) return Promise.resolve(_toolsetsCatalog);
-  if (typeof gfitMay==='function'&&!gfitMay('mcp_servers')) return Promise.resolve([]);
-  return api('/api/mcp/servers')
-    .then(function(payload) {
-      _toolsetsCatalog = _normalizeToolsetsCatalog(payload);
-      return _toolsetsCatalog;
-    })
-    .catch(function() {
-      _toolsetsCatalog = false;
-      return [];
-    });
-}
 
-function invalidateToolsetsCatalog(payload) {
-  _toolsetsCatalog = payload && Array.isArray(payload.servers) ? _normalizeToolsetsCatalog(payload) : null;
-}
-if (typeof window !== 'undefined') window.invalidateToolsetsCatalog = invalidateToolsetsCatalog;
 
 function _toolsetsInputList(input) {
   if (!input) return [];
@@ -5614,12 +5583,6 @@ function _ensureToolsetsPresetSection() {
   return section;
 }
 
-function _appendToolsetsLabel(section, text) {
-  const label = document.createElement('div');
-  label.className = 'toolsets-dropdown-desc';
-  label.textContent = text;
-  section.appendChild(label);
-}
 
 function _renderToolsetsPresetSections(opts) {
   const state = opts && opts.state;
@@ -5627,7 +5590,6 @@ function _renderToolsetsPresetSections(opts) {
   const section = _ensureToolsetsPresetSection();
   if (!section || !state || !input) return;
   const selected = _toolsetsInputList(input);
-  const selectedSet = new Set(selected);
   const hasCustom = selected.length > 0;
   state.textContent = hasCustom
     ? '🔧 ' + selected.join(', ')
@@ -5640,37 +5602,6 @@ function _renderToolsetsPresetSections(opts) {
   defaultsBtn.className = 'toolsets-action-btn toolsets-clear-btn';
   defaultsBtn.textContent = t('session_toolsets_use_profile_defaults');
   section.appendChild(defaultsBtn);
-
-  _appendToolsetsLabel(section, t('session_toolsets_configured_servers'));
-  if (_toolsetsCatalog === null) {
-    _appendToolsetsLabel(section, t('session_toolsets_loading_servers'));
-    return;
-  }
-  if (_toolsetsCatalog === false) {
-    _appendToolsetsLabel(section, t('mcp_load_failed'));
-    return;
-  }
-  if (!Array.isArray(_toolsetsCatalog) || !_toolsetsCatalog.length) {
-    _appendToolsetsLabel(section, t('session_toolsets_no_configured_servers'));
-    return;
-  }
-  _toolsetsCatalog.forEach(function(name) {
-    const row = document.createElement('label');
-    row.className = 'toolsets-server-option';
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.gap = '6px';
-    row.style.margin = '4px 0';
-    row.style.fontSize = '12px';
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'toolsets-server-checkbox';
-    checkbox.value = name;
-    checkbox.checked = selectedSet.has(name);
-    row.appendChild(checkbox);
-    row.appendChild(document.createTextNode(name));
-    section.appendChild(row);
-  });
 }
 
 function _populateToolsetsDropdown() {
@@ -5728,14 +5659,6 @@ function toggleToolsetsDropdown() {
   if (typeof closeReasoningDropdown === 'function') closeReasoningDropdown();
   _syncToolsetsChip();
   _populateToolsetsDropdown();
-  _loadToolsetsCatalog().then(function() {
-    const stillOpen = dd && dd.classList.contains('open');
-    if (stillOpen) {
-      const state = $('toolsetsDropdownState');
-      const input = $('toolsetsInput');
-      _renderToolsetsPresetSections({ state, input });
-    }
-  });
   dd.classList.add('open');
   _positionToolsetsDropdown();
   chip.classList.add('active');
@@ -5821,20 +5744,6 @@ document.addEventListener('click', function(e) {
   }
 });
 
-document.addEventListener('change', function(e) {
-  if (!e.target.closest('#toolsetsPresetSections')) return;
-  if (!e.target.classList.contains('toolsets-server-checkbox')) return;
-  const input = $('toolsetsInput');
-  const state = $('toolsetsDropdownState');
-  if (!input) return;
-  const checked = Array.from(document.querySelectorAll('#toolsetsPresetSections .toolsets-server-checkbox:checked'))
-    .map(el => String(el.value || '').trim())
-    .filter(Boolean);
-  const catalogSet = new Set(Array.isArray(_toolsetsCatalog) ? _toolsetsCatalog : []);
-  const manual = _toolsetsInputList(input).filter(name => !catalogSet.has(name));
-  input.value = checked.concat(manual).join(', ');
-  _renderToolsetsPresetSections({ state, input });
-});
 
 // Position toolsets dropdown on resize, OR close it if the chip is no longer
 // visible (e.g. resize crossed the 1100px container threshold while dropdown
@@ -10233,7 +10142,6 @@ const AGENT_HEALTH_INTERVAL_MS=30000;
 const AGENT_HEALTH_DISMISSED_KEY='agent-health-dismissed';
 let _agentHealthTimer=null;
 let _agentHealthLastState='unknown';
-let _lastGatewayRestartTime=0;
 function _agentHealthDismissed(){
   try{return localStorage.getItem(AGENT_HEALTH_DISMISSED_KEY)==='1';}
   catch(_){return false;}
@@ -10264,35 +10172,8 @@ function dismissAgentHealthAlert(){
   _setAgentHealthDismissed(true);
   _hideAgentHealthAlert();
 }
-async function restartGatewayService(){
-  const btn = $('btnRestartGateway');
-  const dismissBtn = $('agentHealthDismiss');
-  if(!btn) return;
-  btn.disabled = true;
-  if(dismissBtn) dismissBtn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = 'Restarting...';
-  try {
-    const res = await api('/api/health/restart', {method: 'POST'});
-    if(res && res.ok){
-      showToast('Gateway service restarted successfully');
-      _hideAgentHealthAlert();
-      _lastGatewayRestartTime = Date.now();
-      setTimeout(pollAgentHealth, 15000);
-    } else {
-      showToast(res && res.error || 'Failed to restart gateway service');
-    }
-  } catch(e) {
-    showToast('Failed to restart gateway service: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    if(dismissBtn) dismissBtn.disabled = false;
-    btn.textContent = originalText;
-  }
-}
 async function pollAgentHealth(){
   if(document.visibilityState !== 'visible') return;
-  if(Date.now() - _lastGatewayRestartTime < 15000) return;
   try{
     const payload=await api('/api/health/agent',{timeoutToast:false});
     if(payload.alive === true){
@@ -10583,7 +10464,6 @@ function syncTopbar(){
     if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
     if(typeof _syncWorkspaceHeadingState==='function') _syncWorkspaceHeadingState();
     if(typeof syncModelChip==='function') syncModelChip();
-    if(typeof syncTerminalButton==='function') syncTerminalButton();
     if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
     else {
       const sidebarName=$('sidebarWsName');
@@ -10707,7 +10587,6 @@ function syncTopbar(){
   if(clearBtn) clearBtn.style.display=(S.messages&&S.messages.filter(msg=>msg.role!=='tool').length>0)?'':'none';
   if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
   if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
-  if(typeof syncTerminalButton==='function') syncTerminalButton();
   // modelSelect already set above
   // Update profile chip label.
   // The chip is the profile-SWITCHER trigger (it fronts the profile dropdown) and
@@ -20739,21 +20618,8 @@ function _showWorkspaceRootContextMenu(e){
   createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
   menu.appendChild(createSep);
 
-  const revealRoot=_workspaceContextMenuItem(t('reveal_in_finder'),async()=>{
-    menu.remove();
-    try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
-    catch(err){showToast(t('reveal_failed')+(err.message||err));}
-  });
-  revealRoot.dataset.gfitFeature='reveal_on_server';  // acts on the server machine (api/access.py SHELL_FEATURES)
-  menu.appendChild(revealRoot);
+  // acts on the server machine (api/access.py SHELL_FEATURES)
 
-  const vscodeRoot=_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
-    menu.remove();
-    try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
-    catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}
-  });
-  vscodeRoot.dataset.gfitFeature='reveal_on_server';
-  menu.appendChild(vscodeRoot);
 
   menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
     menu.remove();
@@ -20971,9 +20837,6 @@ function _renderTreeItems(container, entries, depth){
     el.setAttribute('draggable','true');
     el.dataset.wsType=item.type;
     el.oncontextmenu=(e)=>{
-      const grant=typeof _workspaceEscapeGrantForPath==='function' ? _workspaceEscapeGrantForPath(item.path) : null;
-      const isDirRow=item.type==='dir'||(item.type==='symlink'&&item.is_dir);
-      if(grant&&!isDirRow){e.preventDefault();e.stopPropagation();return;}
       e.preventDefault();e.stopPropagation();_showFileContextMenu(e,item);
     };
     el.ondragstart=(e)=>{_setWsDragData(e,item);e.dataTransfer.effectAllowed='copy';el.classList.add('dragging');};
@@ -20981,16 +20844,12 @@ function _renderTreeItems(container, entries, depth){
 
     const isLk = item.type === 'symlink';
     const isExternalLink = isLk && item.target_outside_workspace;
-    const escapeGrant = typeof _workspaceEscapeGrantForPath === 'function' ? _workspaceEscapeGrantForPath(item.path) : null;
-    const exactEscapeGrant = typeof _workspaceEscapeExactGrant === 'function' ? _workspaceEscapeExactGrant(item.path) : null;
-    const isReadOnlyEscape = !!escapeGrant;
-    const isNestedEscape = !!escapeGrant && !exactEscapeGrant;
     // External symlinks are display-only: not expandable, not openable.
     // The read gate (resolve_in_workspace) still blocks navigation through them.
     const isDirLike = !isExternalLink && (item.type === 'dir' || (isLk && item.is_dir));
     const isFileLike = !isExternalLink && !isDirLike;
     el.dataset.wsIsDir = String(isDirLike);
-    if(isExternalLink || isReadOnlyEscape){el.removeAttribute('draggable');el.ondragstart=null;}
+    if(isExternalLink){el.removeAttribute('draggable');el.ondragstart=null;}
 
     if(isDirLike){
       // Toggle arrow for directories
@@ -21026,21 +20885,8 @@ function _renderTreeItems(container, entries, depth){
     // (the "Double-click to rename" hint here would be misleading). #1710.
     if(isLk && item.target)
       nameEl.title = t('symlink_link_to').replace('{target}', () => elideMiddle(item.target));
-    else if(isExternalLink)
-      nameEl.title = (typeof isReadOnlyEscape!=='undefined'
-        ? isReadOnlyEscape
-        : (typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false))
-        ? t('external_link_read_only')
-        : t('external_link_open_confirm');
-    else if(typeof isReadOnlyEscape!=='undefined'
-      ? isReadOnlyEscape
-      : (typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false))
-      nameEl.title = t('external_link_read_only');
-    else if(!isDirLike)
+    else if(!isDirLike && !isExternalLink)
       nameEl.title = t('double_click_rename');
-    const nameIsReadOnlyEscape=typeof isReadOnlyEscape!=='undefined'
-      ? isReadOnlyEscape
-      : (typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false);
     // Single-click opens (file) or expand-toggles (dir) but is debounced 300ms so a
     // double-click can cancel it and trigger rename instead. Without the debounce, the
     // click bubbles to el.onclick before dblclick can fire — that's #1698. Without the
@@ -21060,12 +20906,6 @@ function _renderTreeItems(container, entries, depth){
       if(_nameClickTimer){clearTimeout(_nameClickTimer);_nameClickTimer=null;}
       // For directories, double-click navigates (breadcrumb view)
       if(isDirLike){loadDir(item.path);return;}
-      // Escape-root rows remain browse-only, nested escape rows stay display-only.
-      if(nameIsReadOnlyEscape){
-        if(isExternalLink){if(typeof el.onclick==='function')el.onclick(e);return;}
-        openFile(item.path);
-        return;
-      }
       const inp=document.createElement('input');
       inp.className='file-rename-input';inp.value=item.name;
       inp.onclick=(e2)=>e2.stopPropagation();
@@ -21120,13 +20960,11 @@ function _renderTreeItems(container, entries, depth){
 
     // Delete button -- for file-like rows and directory-like rows
     if(isFileLike){
-      if(!isReadOnlyEscape){
-        const del=document.createElement('button');
-        del.className='file-del-btn';del.title=t('delete_title');del.textContent='\u00d7';
-        del.onclick=async(e)=>{e.stopPropagation();await deleteWorkspaceFile(item.path,item.name);};
-        el.appendChild(del);
-      }
-    }else if(isDirLike&& !isReadOnlyEscape){
+      const del=document.createElement('button');
+      del.className='file-del-btn';del.title=t('delete_title');del.textContent='\u00d7';
+      del.onclick=async(e)=>{e.stopPropagation();await deleteWorkspaceFile(item.path,item.name);};
+      el.appendChild(del);
+    }else if(isDirLike){
       const del=document.createElement('button');
       del.className='file-del-btn';del.title=t('delete_title');del.textContent='\u00d7';
       del.onclick=async(e)=>{e.stopPropagation();await deleteWorkspaceDir(item.path,item.name);};
@@ -21134,10 +20972,8 @@ function _renderTreeItems(container, entries, depth){
     }
 
     if(isDirLike){
-      if(!isReadOnlyEscape){
-        _bindWorkspaceMoveDropTarget(el,item.path);
-        _bindWorkspaceOsUploadDropTarget(el,item.path);
-      }
+      _bindWorkspaceMoveDropTarget(el,item.path);
+      _bindWorkspaceOsUploadDropTarget(el,item.path);
       // Single-click toggles expand/collapse
       el.onclick=async(e)=>{
         e.stopPropagation();
@@ -21159,27 +20995,10 @@ function _renderTreeItems(container, entries, depth){
         }
       };
     }else if(isExternalLink){
-      // Display-only: the link points outside the workspace. We do NOT disclose
-      // the resolved outside path (#4581 hardening) and do NOT recursively
-      // authorize nested escape rows under an already-authorized external root.
-      el.onclick=async(e)=>{
-        e.stopPropagation();
-        if(isNestedEscape){
-          await showConfirmDialog({
-            title:item.name,
-            message:t('external_link_read_only'),
-            confirmLabel:t('dialog_confirm_btn'),
-            danger:false,
-            hideCancel:true,
-            focusCancel:false,
-          });
-          return;
-        }
-        const grant = await authorizeWorkspaceEscapeNavigation(item);
-        if(!grant) return;
-        if(grant.isDir) await loadDir(item.path);
-        else await openFile(item.path);
-      };
+      // Display-only: the link points outside the Workspace, which a User may
+      // not open (ADR 0006), and the resolved outside path is never disclosed
+      // (#4581 hardening).
+      el.onclick=(e)=>e.stopPropagation();
     }else{
       el.onclick=async()=>openFile(item.path);
     }
@@ -21204,10 +21023,6 @@ function _renderTreeItems(container, entries, depth){
 
 async function deleteWorkspaceDir(relPath, name){
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(relPath)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const ok=await showConfirmDialog({title:t('delete_dir_confirm',name),message:'',confirmLabel:'Delete',danger:true,focusCancel:true});
   if(!ok)return;
   try{
@@ -21231,104 +21046,84 @@ function _showFileContextMenu(e, item){
   menu.style.top=(e.clientY+100>vh?e.clientY-100:e.clientY)+'px';
   const isDirLike=item.type==='dir'||(item.type==='symlink'&&item.is_dir);
   const targetDir=isDirLike ? item.path : _workspaceParentDir(item.path);
-  const isReadOnlyEscape=typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false;
 
-  if(!isReadOnlyEscape){
-    menu.appendChild(_workspaceContextMenuItem(t('new_file'),async()=>{
-      menu.remove();
-      await promptNewFile(targetDir);
-    }));
+  menu.appendChild(_workspaceContextMenuItem(t('new_file'),async()=>{
+    menu.remove();
+    await promptNewFile(targetDir);
+  }));
 
-    menu.appendChild(_workspaceContextMenuItem(t('new_folder'),async()=>{
-      menu.remove();
-      await promptNewFolder(targetDir);
-    }));
+  menu.appendChild(_workspaceContextMenuItem(t('new_folder'),async()=>{
+    menu.remove();
+    await promptNewFolder(targetDir);
+  }));
 
-    const createSep=document.createElement('hr');
-    createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
-    menu.appendChild(createSep);
+  const createSep=document.createElement('hr');
+  createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
+  menu.appendChild(createSep);
 
-    // Rename
-    const renameItem=document.createElement('div');
-    renameItem.textContent=t('rename_title');
-    renameItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    renameItem.onmouseenter=()=>renameItem.style.background='var(--hover-bg)';
-    renameItem.onmouseleave=()=>renameItem.style.background='';
-    renameItem.onclick=()=>{menu.remove();_inlineRenameFileItem(item);};
-    menu.appendChild(renameItem);
+  // Rename
+  const renameItem=document.createElement('div');
+  renameItem.textContent=t('rename_title');
+  renameItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+  renameItem.onmouseenter=()=>renameItem.style.background='var(--hover-bg)';
+  renameItem.onmouseleave=()=>renameItem.style.background='';
+  renameItem.onclick=()=>{menu.remove();_inlineRenameFileItem(item);};
+  menu.appendChild(renameItem);
 
-    // Reveal in File Manager
-    const revealItem=document.createElement('div');
-    revealItem.textContent=t('reveal_in_finder');
-    revealItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    revealItem.onmouseenter=()=>revealItem.style.background='var(--hover-bg)';
-    revealItem.onmouseleave=()=>revealItem.style.background='';
-    revealItem.onclick=async()=>{menu.remove();try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('reveal_failed')+(err.message||err));}};
-    revealItem.dataset.gfitFeature='reveal_on_server';  // acts on the server machine (api/access.py SHELL_FEATURES)
-    menu.appendChild(revealItem);
+// acts on the server machine (api/access.py SHELL_FEATURES)
 
-    // Open in VS Code (#2735)
-    const vscodeItem=document.createElement('div');
-    vscodeItem.textContent=t('open_in_vscode');
-    vscodeItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    vscodeItem.onmouseenter=()=>vscodeItem.style.background='var(--hover-bg)';
-    vscodeItem.onmouseleave=()=>vscodeItem.style.background='';
-    vscodeItem.onclick=async()=>{menu.remove();try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}};
-    vscodeItem.dataset.gfitFeature='reveal_on_server';
-    menu.appendChild(vscodeItem);
 
-    // Copy file path — resolves the absolute on-disk path on the server (so the
-    // user gets the full /home/.../workspace/foo.py rather than the relative
-    // path the file tree shows) and writes it to the OS clipboard. Useful for
-    // pasting into terminals, editors, or other apps without taking the slower
-    // Reveal-in-Finder round trip.
-    const copyPathItem=document.createElement('div');
-    copyPathItem.textContent=t('copy_file_path');
-    copyPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    copyPathItem.onmouseenter=()=>copyPathItem.style.background='var(--hover-bg)';
-    copyPathItem.onmouseleave=()=>copyPathItem.style.background='';
-    copyPathItem.onclick=async()=>{
-      menu.remove();
+  // Copy file path — resolves the absolute on-disk path on the server (so the
+  // user gets the full /home/.../workspace/foo.py rather than the relative
+  // path the file tree shows) and writes it to the OS clipboard. Useful for
+  // pasting into terminals, editors, or other apps without taking the slower
+  // Reveal-in-Finder round trip.
+  const copyPathItem=document.createElement('div');
+  copyPathItem.textContent=t('copy_file_path');
+  copyPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+  copyPathItem.onmouseenter=()=>copyPathItem.style.background='var(--hover-bg)';
+  copyPathItem.onmouseleave=()=>copyPathItem.style.background='';
+  copyPathItem.onclick=async()=>{
+    menu.remove();
+    try{
+      const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});
+      const abs=(r&&r.path)||item.path;
       try{
-        const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});
-        const abs=(r&&r.path)||item.path;
-        try{
-          await navigator.clipboard.writeText(abs);
-          showToast(t('path_copied'));
-        }catch(clipErr){
-          const ta=document.createElement('textarea');
-          ta.value=abs;
-          ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
-          document.body.appendChild(ta);
-          ta.select();
-          let copied=false;
-          try{copied=document.execCommand('copy');}catch(_){}
-          ta.remove();
-          if(copied) showToast(t('path_copied'));
-          else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
-        }
-      }catch(err){
-        showToast(t('path_copy_failed')+(err.message||err));
+        await navigator.clipboard.writeText(abs);
+        showToast(t('path_copied'));
+      }catch(clipErr){
+        const ta=document.createElement('textarea');
+        ta.value=abs;
+        ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
+        document.body.appendChild(ta);
+        ta.select();
+        let copied=false;
+        try{copied=document.execCommand('copy');}catch(_){}
+        ta.remove();
+        if(copied) showToast(t('path_copied'));
+        else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
       }
-    };
-    menu.appendChild(copyPathItem);
+    }catch(err){
+      showToast(t('path_copy_failed')+(err.message||err));
+    }
+  };
+  menu.appendChild(copyPathItem);
 
-    const copyRelPathItem=document.createElement('div');
-    copyRelPathItem.textContent=t('copy_relative_path');
-    copyRelPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    copyRelPathItem.onmouseenter=()=>copyRelPathItem.style.background='var(--hover-bg)';
-    copyRelPathItem.onmouseleave=()=>copyRelPathItem.style.background='';
-    copyRelPathItem.onclick=async()=>{
-      menu.remove();
-      try{
-        const rel=_normalizeWorkspaceRelPath(item.path)||item.path;
-        await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
-      }catch(err){
-        showToast(t('path_copy_failed')+(err.message||err));
-      }
-    };
-    menu.appendChild(copyRelPathItem);
-  }
+  const copyRelPathItem=document.createElement('div');
+  copyRelPathItem.textContent=t('copy_relative_path');
+  copyRelPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+  copyRelPathItem.onmouseenter=()=>copyRelPathItem.style.background='var(--hover-bg)';
+  copyRelPathItem.onmouseleave=()=>copyRelPathItem.style.background='';
+  copyRelPathItem.onclick=async()=>{
+    menu.remove();
+    try{
+      const rel=_normalizeWorkspaceRelPath(item.path)||item.path;
+      await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
+    }catch(err){
+      showToast(t('path_copy_failed')+(err.message||err));
+    }
+  };
+  menu.appendChild(copyRelPathItem);
 
   if(isDirLike){
     const dlItem=document.createElement('div');
@@ -21345,18 +21140,16 @@ function _showFileContextMenu(e, item){
     menu.appendChild(dlItem);
   }
 
-  if(!isReadOnlyEscape){
-    const sep=document.createElement('hr');
-    sep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
-    menu.appendChild(sep);
-    const delItem=document.createElement('div');
-    delItem.textContent=t('delete_title');
-    delItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--error,#e94560);';
-    delItem.onmouseenter=()=>delItem.style.background='var(--hover-bg)';
-    delItem.onmouseleave=()=>delItem.style.background='';
-    delItem.onclick=()=>{menu.remove();if(isDirLike)deleteWorkspaceDir(item.path,item.name);else deleteWorkspaceFile(item.path,item.name);};
-    menu.appendChild(delItem);
-  }
+  const sep=document.createElement('hr');
+  sep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
+  menu.appendChild(sep);
+  const delItem=document.createElement('div');
+  delItem.textContent=t('delete_title');
+  delItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--error,#e94560);';
+  delItem.onmouseenter=()=>delItem.style.background='var(--hover-bg)';
+  delItem.onmouseleave=()=>delItem.style.background='';
+  delItem.onclick=()=>{menu.remove();if(isDirLike)deleteWorkspaceDir(item.path,item.name);else deleteWorkspaceFile(item.path,item.name);};
+  menu.appendChild(delItem);
 
   document.body.appendChild(menu);
   const dismiss=()=>{menu.remove();document.removeEventListener('click',dismiss);};
@@ -21365,10 +21158,6 @@ function _showFileContextMenu(e, item){
 
 async function _inlineRenameFileItem(item){
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(item.path)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const isDirLike=item.type==='dir'||(item.type==='symlink'&&item.is_dir);
   // Pre-fill the input with the current name and select just the stem
   // (everything before the last '.') so the user can immediately retype the
@@ -21402,10 +21191,6 @@ async function _inlineRenameFileItem(item){
 
 async function deleteWorkspaceFile(relPath, name){
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(relPath)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const _delFile=await showConfirmDialog({title:t('delete_confirm',name),message:'',confirmLabel:'Delete',danger:true,focusCancel:true});
   if(!_delFile) return;
   try{
@@ -21429,10 +21214,6 @@ async function promptNewFile(targetDir = S.currentDir || '.'){
     }catch(e){setStatus(t('create_failed')+e.message);return;}
   }
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(targetDir)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const targetLabel=_workspaceCreateTargetLabel(targetDir);
   const name=await showPromptDialog({
     title:t('new_file_prompt_title', targetLabel),
@@ -21462,10 +21243,6 @@ async function promptNewFolder(targetDir = S.currentDir || '.'){
     }catch(e){setStatus(t('folder_create_failed')+e.message);return;}
   }
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(targetDir)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const targetLabel=_workspaceCreateTargetLabel(targetDir);
   const name=await showPromptDialog({
     title:t('new_folder_prompt_title', targetLabel),

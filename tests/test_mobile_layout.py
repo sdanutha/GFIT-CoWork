@@ -667,7 +667,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
         "panelProfiles",
         "panelTodos",
         "panelInsights",
-        "panelLogs",
     ]:
         assert f'id="{panel_id}"' in HTML, f"{panel_id} should exist for mobile sidebar sync"
     assert 'id="panelPlugin"' not in HTML, (

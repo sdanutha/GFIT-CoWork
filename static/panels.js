@@ -16,17 +16,14 @@ let _currentProfileDetail = null; // full profile object
 let _profileMode = 'empty'; // 'empty' | 'read' | 'create'
 let _profilePreFormDetail = null;
 let _pendingSettingsTargetPanel = null; // destination selected while settings had unsaved changes
-let _logsAutoRefreshTimer = null;
-let _lastLogsLines = [];
-let _logsSeverityFilter = 'all';
 
 // Map of panel names → i18n keys for the app titlebar label.
 const APP_TITLEBAR_KEYS = {
   chat: 'tab_chat', tasks: 'tab_tasks', skills: 'tab_skills',
   memory: 'tab_memory', workspaces: 'tab_workspaces',
-  profiles: 'tab_profiles', todos: 'tab_todos', insights: 'tab_insights', logs: 'tab_logs', settings: 'tab_settings',
+  profiles: 'tab_profiles', todos: 'tab_todos', insights: 'tab_insights', settings: 'tab_settings',
 };
-const MAIN_VIEW_PANELS = ['settings','skills','memory','tasks','workspaces','profiles','insights','logs','plugin'];
+const MAIN_VIEW_PANELS = ['settings','skills','memory','tasks','workspaces','profiles','insights','plugin'];
 const MAIN_VIEW_SIDEBAR_PANEL_FALLBACKS = { plugin: 'settings' };
 
 /**
@@ -407,8 +404,6 @@ async function switchPanel(name, opts = {}) {
   if (nextPanel === 'profiles') await loadProfilesPanel();
   if (nextPanel === 'todos') loadTodos();
   if (nextPanel === 'insights') await loadInsights();
-  if (nextPanel === 'logs') await loadLogs();
-  _syncLogsAutoRefresh();
   if (typeof _syncSystemHealthMonitorVisibility === 'function') _syncSystemHealthMonitorVisibility();
   if (nextPanel === 'settings') {
     switchSettingsSection(_currentSettingsSection);
@@ -2285,153 +2280,6 @@ function _legacyTodosFromMessages() {
   return [];
 }
 
-// ── Create / rename / archive board modals ──────────────────────────────────
-
-// ── Logs panel ──
-function _selectedLogsFile() {
-  const el = $('logsFile');
-  const value = (el && el.value) || 'agent';
-  return ['agent','errors','gateway'].includes(value) ? value : 'agent';
-}
-
-function _selectedLogsTail() {
-  const el = $('logsTail');
-  const value = Number((el && el.value) || 200);
-  return [100,200,500,1000].includes(value) ? value : 200;
-}
-
-function _severityForLine(line) {
-  const text = String(line || '').toUpperCase();
-  if (/\b(ERROR|CRITICAL|TRACEBACK)\b/.test(text)) return 'error';
-  if (/\b(WARNING|WARN)\b/.test(text)) return 'warning';
-  if (/\b(DEBUG)\b/.test(text)) return 'debug';
-  if (/\b(INFO)\b/.test(text)) return 'info';
-  return 'other';
-}
-
-function _filteredLogsLines() {
-  if (_logsSeverityFilter === 'all') return _lastLogsLines;
-  return _lastLogsLines.filter(line => {
-    const sev = _severityForLine(line);
-    if (_logsSeverityFilter === 'errors') return sev === 'error';
-    if (_logsSeverityFilter === 'warnings') return sev === 'warning' || sev === 'error';
-    return true;
-  });
-}
-
-function _applyLogsSeverityFilter() {
-  const el = $('logsSeverityFilter');
-  _logsSeverityFilter = (el && el.value) || 'all';
-  // Re-render from cached lines without re-fetching
-  _renderLogs({ lines: _lastLogsLines, hint: '', truncated: false, _fromFilter: true });
-}
-
-function _logLineSeverityClass(line) {
-  const text = String(line || '').toUpperCase();
-  if (/\b(WARNING|WARN)\b/.test(text)) return 'log-line-warning';
-  if (/\b(DEBUG)\b/.test(text)) return 'log-line-debug';
-  if (/\b(INFO)\b/.test(text)) return 'log-line-info';
-  if (/\b(ERROR|CRITICAL|TRACEBACK)\b/.test(text)) return 'log-line-error';
-  return '';
-}
-
-function _syncLogsWrap() {
-  const out = $('logsOutput');
-  const wrap = $('logsWrap');
-  if (out && wrap) out.classList.toggle('wrap', !!wrap.checked);
-}
-
-async function loadLogs(animate) {
-  const box = $('logsOutput');
-  const status = $('logsStatus');
-  const refreshBtn = $('logsRefreshBtn');
-  if (!box) return;
-  if (animate && refreshBtn) {
-    refreshBtn.style.opacity = '0.5';
-    refreshBtn.disabled = true;
-  }
-  const file = _selectedLogsFile();
-  const tail = _selectedLogsTail();
-  try {
-    if (status) status.textContent = t('logs_loading');
-    const data = await api('/api/logs?file=' + encodeURIComponent(file) + '&tail=' + encodeURIComponent(tail));
-    _renderLogs(data);
-  } catch(e) {
-    _lastLogsLines = [];
-    box.innerHTML = `<div class="logs-empty">${esc(t('error_prefix') + e.message)}</div>`;
-    if (status) status.textContent = t('logs_load_failed');
-  } finally {
-    if (animate && refreshBtn) {
-      refreshBtn.style.opacity = '';
-      refreshBtn.disabled = false;
-    }
-    _syncLogsAutoRefresh();
-  }
-}
-
-function _renderLogs(data) {
-  const box = $('logsOutput');
-  const status = $('logsStatus');
-  if (!box) return;
-  const rawLines = Array.isArray(data && data.lines) ? data.lines : [];
-  // Only update cache when loading fresh data (not when re-rendering from filter)
-  if (data && !data._fromFilter) _lastLogsLines = rawLines.slice();
-  const displayLines = _filteredLogsLines();
-  const hint = data && data.hint ? `<div class="logs-hint">${esc(data.hint)}</div>` : '';
-  const truncated = data && data.truncated ? `<div class="logs-hint warn">${esc(t('logs_truncated_hint'))}</div>` : '';
-  const filterNote = _logsSeverityFilter !== 'all'
-    ? `<div class="logs-hint">${esc(displayLines.length + ' / ' + _lastLogsLines.length + ' ' + t('logs_filter_active'))}</div>`
-    : '';
-  if (!displayLines.length) {
-    box.innerHTML = `${hint}${truncated}${filterNote}<div class="logs-empty">${esc(t('logs_empty'))}</div>`;
-  } else {
-    box.innerHTML = `${hint}${truncated}${filterNote}` + displayLines.map(line => {
-      const cls = _logLineSeverityClass(line);
-      return `<div class="log-line ${cls}">${esc(line)}</div>`;
-    }).join('');
-  }
-  _syncLogsWrap();
-  if (status) {
-    const bytes = data && Number(data.total_bytes || 0);
-    const when = data && data.mtime ? new Date(data.mtime * 1000).toLocaleString() : t('logs_no_mtime');
-    status.textContent = `${rawLines.length} / ${data.tail || _selectedLogsTail()} lines · ${bytes.toLocaleString()} bytes · ${when}`;
-  }
-}
-
-function _startLogsAutoRefresh() {
-  if (_logsAutoRefreshTimer) return;
-  _logsAutoRefreshTimer = setInterval(() => {
-    if (_currentPanel !== 'logs') { _stopLogsAutoRefresh(); return; }
-    const toggle = $('logsAutoRefresh');
-    if (toggle && !toggle.checked) return;
-    loadLogs(false);
-  }, 5000);
-}
-
-function _stopLogsAutoRefresh() {
-  if (_logsAutoRefreshTimer) {
-    clearInterval(_logsAutoRefreshTimer);
-    _logsAutoRefreshTimer = null;
-  }
-}
-
-function _syncLogsAutoRefresh() {
-  const toggle = $('logsAutoRefresh');
-  if (_currentPanel === 'logs' && (!toggle || toggle.checked)) _startLogsAutoRefresh();
-  else _stopLogsAutoRefresh();
-}
-
-async function copyLogsAll() {
-  const lines = _filteredLogsLines();
-  const text = lines.join('\n');
-  try {
-    await _copyText(text);
-    showToast(t('logs_copied'));
-  } catch(e) {
-    showToast(t('copy_failed'), 'error');
-  }
-}
-
 // ── Insights panel ──
 const STATIC_MODEL_HEALTH_ROWS = [
   {id:'openai/gpt-5.4-mini', provider:'OpenAI', inputCostPerM:0.25, outputCostPerM:2.00, replacement:'Default economical general-purpose model'},
@@ -3756,10 +3604,8 @@ function syncWorkspaceDisplays(){
 async function loadWorkspaceList(){
   try{
     const data = await api('/api/workspaces');
-    if(typeof syncTerminalBackendState==='function') syncTerminalBackendState(data);
     _workspaceList = data.workspaces || [];
     syncWorkspaceDisplays();
-    if(typeof syncTerminalButton==='function') syncTerminalButton();
     return data;
   }catch(e){ return {workspaces:[], last:''}; }
 }
@@ -6786,8 +6632,6 @@ function _preferencesPayloadFromUi(){
   if(showTpsCb) payload.show_tps=showTpsCb.checked;
   const fadeTextCb=$('settingsFadeTextEffect');
   if(fadeTextCb) payload.fade_text_effect=fadeTextCb.checked;
-  const terminalAutoExpandCb=$('settingsTerminalAutoExpand');
-  if(terminalAutoExpandCb) payload.terminal_auto_expand_on_output=terminalAutoExpandCb.checked;
   const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
   if(workspaceTodosTabCb) payload.workspace_todos_tab=workspaceTodosTabCb.checked;
   const showCliCb=$('settingsShowCliSessions');
@@ -6927,9 +6771,6 @@ function _schedulePreferencesAutosave(){
 async function _autosavePreferencesSettings(payload){
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-    if(payload&&payload.terminal_auto_expand_on_output!==undefined){
-      window._terminalAutoExpandOnOutput=!!(saved&&saved.terminal_auto_expand_on_output);
-    }
     if(payload&&payload.workspace_todos_tab!==undefined){
       window._workspaceTodosTab=!!(saved&&saved.workspace_todos_tab);
       if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
@@ -7411,8 +7252,6 @@ async function loadSettingsPanel(){
         _schedulePreferencesAutosave();
       },{once:false});
     }
-    const terminalAutoExpandCb=$('settingsTerminalAutoExpand');
-    if(terminalAutoExpandCb){terminalAutoExpandCb.checked=!!settings.terminal_auto_expand_on_output;window._terminalAutoExpandOnOutput=terminalAutoExpandCb.checked;terminalAutoExpandCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
     if(workspaceTodosTabCb){
       workspaceTodosTabCb.checked=!!settings.workspace_todos_tab;
@@ -8895,7 +8734,6 @@ function _applySavedSettingsUi(saved, body, opts){
   window._simplifiedToolCalling=true;
   _syncChatActivityDisplayModeControl(body.chat_activity_display_mode);
   _syncTransparentEventTimestampsControl(body.transparent_stream_event_timestamps, body.chat_activity_display_mode);
-  window._terminalAutoExpandOnOutput=!!body.terminal_auto_expand_on_output;
   window._workspaceTodosTab=!!body.workspace_todos_tab;
   if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
   window._sessionJumpButtonsEnabled=!!body.session_jump_buttons;
@@ -9518,7 +9356,6 @@ async function saveSettings(andClose){
   body.show_busy_placeholder_hint=showBusyPlaceholderHint===true;
   body.show_tps=showTps;
   body.fade_text_effect=fadeTextEffect;
-  body.terminal_auto_expand_on_output=!!($('settingsTerminalAutoExpand')||{}).checked;
   body.workspace_todos_tab=!!window._workspaceTodosTab;
   body.show_cli_sessions=showCliSessions;
   // Persist the opt-out child independently; the read path applies the parent gate.
@@ -9713,215 +9550,11 @@ function dismissErrorBanner(){
 
 
 // ── MCP Server Management ──
-function _mcpStatusLabel(status){
-  const key={
-    active:'mcp_status_active',
-    configured:'mcp_status_configured',
-    disabled:'mcp_status_disabled',
-    invalid_config:'mcp_status_invalid_config',
-  }[status]||'mcp_status_unknown';
-  return t(key);
-}
-function toggleMcpServer(name, enabled){
-  api('/api/mcp/servers/'+encodeURIComponent(name),{
-    method:'PATCH',
-    body:JSON.stringify({enabled:enabled}),
-  }).then(r=>{
-    if(r&&r.ok){
-      _refreshMcpToolsetsCatalog();
-      showToast(t(enabled?'mcp_enabled_toast':'mcp_disabled_toast',name));
-    }
-    else showToast(t('mcp_toggle_failed'),'error');
-    loadMcpServers();
-  }).catch(()=>{showToast(t('mcp_toggle_failed'),'error');loadMcpServers();});
-}
-function _refreshMcpToolsetsCatalog(payload){
-  if(typeof window.invalidateToolsetsCatalog==='function') window.invalidateToolsetsCatalog(payload);
-}
-function loadMcpServers(){
-  const list=$('mcpServerList');
-  if(!list) return;
-  list.innerHTML=`<div style="color:var(--muted);font-size:12px;padding:6px 0">${esc(t('loading'))}</div>`;
-  api('/api/mcp/servers').then(r=>{
-    if(!r||!Array.isArray(r.servers)) return;
-    _refreshMcpToolsetsCatalog(r);
-    if(!r.servers.length){
-      list.innerHTML=`<div class="mcp-empty-state" style="color:var(--muted);font-size:12px;padding:6px 0">${esc(t('mcp_no_servers'))}</div>`;
-      return;
-    }
-    // Live status is withheld while the profile's runtime scope cannot be confirmed
-    // (e.g. a chat turn on this profile is running); say so instead of "not connected".
-    const scopeNotice=r.runtime_scope==='unavailable'
-      ?`<div class="mcp-runtime-notice" style="color:var(--muted);font-size:12px;padding:6px 0">${esc(t('mcp_runtime_scope_unavailable'))}</div>`
-      :'';
-    list.innerHTML=scopeNotice+r.servers.map(s=>{
-      const transportLabel=s.transport==='http'?'HTTP':s.transport==='stdio'?'stdio':(''+(s.transport||'unknown'));
-      const transportClass=s.transport==='http'?'mcp-http':s.transport==='stdio'?'mcp-stdio':'mcp-unknown';
-      const transportBadge=`<span class="mcp-transport-badge ${transportClass}">${esc(transportLabel)}</span>`;
-      const status=s.status||'configured';
-      const statusBadge=`<span class="mcp-status-badge mcp-status-${esc(status)}">${esc(_mcpStatusLabel(status))}</span>`;
-      const toolCount=s.tool_count===null||typeof s.tool_count==='undefined'?'—':String(s.tool_count);
-      const detail=s.transport==='http'
-        ? (s.url||'')
-        : (s.transport==='stdio'?`${s.command||''} ${Array.isArray(s.args)?s.args.join(' '):''}`:t('mcp_status_invalid_config'));
-      const envInfo=s.env?Object.entries(s.env).map(([k,v])=>`${k}=${v}`).join(', '):'';
-      const headersInfo=s.headers?Object.entries(s.headers).map(([k,v])=>`${k}=${v}`).join(', '):'';
-      const secretInfo=[envInfo,headersInfo].filter(Boolean).join(' | ');
-      const isEnabled=s.enabled!==false;
-      const encodedName=encodeURIComponent(s.name).replace(/'/g,"\\'");
-      const toggleBtn=r.toggle_supported
-        ?`<button type="button" class="mcp-toggle-btn ${isEnabled?'mcp-toggle-enabled':'mcp-toggle-disabled'}" title="${esc(t(isEnabled?'mcp_disable_server':'mcp_enable_server'))}" onclick="toggleMcpServer('${encodedName}',${!isEnabled})">${esc(t(isEnabled?'mcp_enabled_yes':'mcp_enabled_no'))}</button>`
-        :`<span>${esc(t(isEnabled?'mcp_enabled_yes':'mcp_enabled_no'))}</span>`;
-      return `<div class="mcp-server-row">
-        <div class="mcp-server-row-head">
-          <span class="mcp-server-name">${esc(s.name)}</span>
-          ${transportBadge}
-          ${statusBadge}
-        </div>
-        <div class="mcp-server-detail">${esc(detail)}${secretInfo?' | '+esc(secretInfo):''}</div>
-        <div class="mcp-server-meta"><span class="mcp-tool-count">${esc(t('mcp_tool_count',toolCount))}</span>${toggleBtn}</div>
-      </div>`;
-    }).join('');
-  }).catch(()=>{list.innerHTML=`<div class="mcp-error-state" style="color:#ef4444;font-size:12px;padding:6px 0">${esc(t('mcp_load_failed'))}</div>`});
-}
-let _mcpToolsCache=[];
-let _mcpToolsMeta={};
-let _mcpToolsPage=1;
-let _mcpToolsPageSize=5;
-const MCP_TOOLS_PAGE_SIZE_OPTIONS=[5,10,20,40];
-function _filterMcpToolsForSearch(tools, query){
-  const q=(query||'').trim().toLowerCase();
-  if(!q) return Array.isArray(tools)?tools:[];
-  return (Array.isArray(tools)?tools:[]).filter(tool=>{
-    const hay=[tool.name,tool.server,tool.description].map(v=>String(v||'').toLowerCase()).join(' ');
-    return hay.includes(q);
-  });
-}
-function _mcpToolSchemaText(schemaSummary){
-  if(!Array.isArray(schemaSummary)||!schemaSummary.length) return t('mcp_tools_schema_empty');
-  return schemaSummary.map(p=>{
-    const req=p.required?'*':'';
-    const desc=p.description?` — ${p.description}`:'';
-    return `${p.name}${req}: ${p.type||'unknown'}${desc}`;
-  }).join('\n');
-}
-function _mcpToolsSummary(total, filtered, page, pages, query){
-  const trimmedQuery=(query||'').trim();
-  if(!filtered){
-    if(trimmedQuery) return t('mcp_tools_summary_no_matches',trimmedQuery,total);
-    return total?t('mcp_tools_summary_none'):'';
-  }
-  const pageSize=_mcpToolsPageSize||5;
-  const start=(page-1)*pageSize+1;
-  const end=Math.min(filtered,page*pageSize);
-  const searchNote=trimmedQuery?t('mcp_tools_summary_matching',trimmedQuery):'';
-  const totalNote=filtered===total?'':t('mcp_tools_summary_total_note',total);
-  return t('mcp_tools_summary_showing',start,end,filtered,searchNote,totalNote,page,pages);
-}
-function _mcpToolPageSizeControl(){
-  const options=MCP_TOOLS_PAGE_SIZE_OPTIONS.map(size=>`<option value="${size}" ${size===_mcpToolsPageSize?'selected':''}>${size}</option>`).join('');
-  return `<label class="mcp-tool-page-size">${esc(t('mcp_tools_page_size_prefix'))} <select aria-label="${esc(t('mcp_tools_per_page_aria'))}" onchange="setMcpToolsPageSize(this.value)">${options}</select> ${esc(t('mcp_tools_page_size_suffix'))}</label>`;
-}
-function _mcpToolsEmptyMessage(query){
-  const base=esc(t(query?'mcp_tools_no_matches':'mcp_tools_no_tools'));
-  const unavailable=Array.isArray(_mcpToolsMeta.unavailable_servers)?_mcpToolsMeta.unavailable_servers:[];
-  if(query||!unavailable.length) return base;
-  return `${base}<br><span class="mcp-tool-empty-detail">${esc(t('mcp_tools_inactive_configured_servers',unavailable.join(', ')))}</span>`;
-}
-function _renderMcpToolPager(filteredCount, page, pages){
-  const pager=$('mcpToolPager');
-  if(!pager) return;
-  if(pages<=1){
-    pager.innerHTML='';
-    return;
-  }
-  pager.innerHTML=`<button type="button" class="mcp-tool-page-btn" onclick="setMcpToolsPage(${page-1})" ${page<=1?'disabled':''} aria-label="${esc(t('mcp_tools_previous_page_aria'))}">${esc(t('mcp_tools_previous_page'))}</button>
-    <span class="mcp-tool-page-label">${page} / ${pages}</span>
-    <button type="button" class="mcp-tool-page-btn" onclick="setMcpToolsPage(${page+1})" ${page>=pages?'disabled':''} aria-label="${esc(t('mcp_tools_next_page_aria'))}">${esc(t('mcp_tools_next_page'))}</button>`;
-}
-function _renderMcpTools(tools, query){
-  const list=$('mcpToolList');
-  const toolbar=$('mcpToolToolbar');
-  if(!list) return;
-  const filtered=_filterMcpToolsForSearch(tools, query);
-  const total=Array.isArray(tools)?tools.length:0;
-  const pages=Math.max(1,Math.ceil(filtered.length/_mcpToolsPageSize));
-  _mcpToolsPage=Math.min(Math.max(1,_mcpToolsPage||1),pages);
-  if(toolbar) toolbar.innerHTML=`<span class="mcp-tool-summary">${esc(_mcpToolsSummary(total,filtered.length,_mcpToolsPage,pages,query))}</span>${_mcpToolPageSizeControl()}`;
-  _renderMcpToolPager(filtered.length,_mcpToolsPage,pages);
-  if(!filtered.length){
-    list.innerHTML=`<div class="mcp-tool-empty-state" style="color:var(--muted);font-size:12px;padding:6px 0">${_mcpToolsEmptyMessage(query)}</div>`;
-    return;
-  }
-  const visible=filtered.slice((_mcpToolsPage-1)*_mcpToolsPageSize,_mcpToolsPage*_mcpToolsPageSize);
-  list.innerHTML=visible.map(tool=>{
-    const status=tool.status||'unknown';
-    const statusBadge=`<span class="mcp-status-badge mcp-status-${esc(status)}">${esc(_mcpStatusLabel(status))}</span>`;
-    const schemaText=_mcpToolSchemaText(tool.schema_summary);
-    return `<div class="mcp-tool-row">
-      <div class="mcp-server-row-head">
-        <span class="mcp-tool-name">${esc(tool.name)}</span>
-        <span class="mcp-tool-server">${esc(tool.server||'unknown')}</span>
-        ${statusBadge}
-      </div>
-      <div class="mcp-server-detail">${esc(tool.description||'')}</div>
-      <pre class="mcp-tool-schema">${esc(schemaText)}</pre>
-    </div>`;
-  }).join('');
-}
-function setMcpToolsPage(page){
-  _mcpToolsPage=page;
-  const input=$('mcpToolSearch');
-  _renderMcpTools(_mcpToolsCache,input?input.value:'');
-  const list=$('mcpToolList');
-  if(list) list.scrollTop=0;
-}
-function setMcpToolsPageSize(size){
-  const next=Number(size);
-  if(!MCP_TOOLS_PAGE_SIZE_OPTIONS.includes(next)) return;
-  _mcpToolsPageSize=next;
-  _mcpToolsPage=1;
-  const input=$('mcpToolSearch');
-  _renderMcpTools(_mcpToolsCache,input?input.value:'');
-  const list=$('mcpToolList');
-  if(list) list.scrollTop=0;
-}
-function filterMcpTools(){
-  _mcpToolsPage=1;
-  const input=$('mcpToolSearch');
-  _renderMcpTools(_mcpToolsCache,input?input.value:'');
-  const list=$('mcpToolList');
-  if(list) list.scrollTop=0;
-}
-function loadMcpTools(){
-  const list=$('mcpToolList');
-  const toolbar=$('mcpToolToolbar');
-  const pager=$('mcpToolPager');
-  if(!list) return;
-  if(toolbar) toolbar.textContent='';
-  if(pager) pager.innerHTML='';
-  list.innerHTML=`<div style="color:var(--muted);font-size:12px;padding:6px 0">${esc(t('loading'))}</div>`;
-  api('/api/mcp/tools').then(r=>{
-    _mcpToolsCache=(r&&Array.isArray(r.tools))?r.tools:[];
-    _mcpToolsMeta=r||{};
-    _mcpToolsPage=1;
-    filterMcpTools();
-  }).catch(()=>{list.innerHTML=`<div class="mcp-tool-error-state" style="color:#ef4444;font-size:12px;padding:6px 0">${esc(t('mcp_tools_load_failed'))}</div>`});
-}
-let _gatewayActionInFlight=false;
-function _gatewayActionButton(action){
-  const labels={start:t('gateway_start'),stop:t('gateway_stop'),restart:t('gateway_restart')};
-  return `<button class="sm-btn gateway-action-btn" data-gateway-action="${esc(action)}" onclick="_gatewayAction(${jsArg(action)})" ${_gatewayActionInFlight?'disabled':''} style="padding:5px 10px;font-size:12px">${esc(labels[action]||action)}</button>`;
-}
-function _gatewayActionControls(r){
-  const actions=(r&&r.running)?['stop','restart']:['start'];
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${actions.map(_gatewayActionButton).join('')}</div>`;
-}
 function _renderGatewayStatus(r){
   const card=$('gatewayStatusCard');
   if(!card||!r) return;
   if(!r.configured){
-    card.innerHTML=`<div style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block"></span>${esc(t('gateway_not_configured'))}</div>${_gatewayActionControls(r)}`;
+    card.innerHTML=`<div style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;display:inline-block"></span>${esc(t('gateway_not_configured'))}</div>`;
     return;
   }
   if(!r.running){
@@ -9931,7 +9564,7 @@ function _renderGatewayStatus(r){
       : reason === 'remote_gateway_unreachable'
         ? t('gateway_endpoint_unreachable')
         : t('gateway_not_running');
-    card.innerHTML=`<div style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span>${esc(statusLabel)}</div>${_gatewayActionControls(r)}`;
+    card.innerHTML=`<div style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span>${esc(statusLabel)}</div>`;
     return;
   }
   const platformIcons={telegram:'💬',discord:'🎮',slack:'📝',web:'🌐',api:'🔌'};
@@ -9944,35 +9577,19 @@ function _renderGatewayStatus(r){
   }
   const lastActive=r.last_active?`<span style="font-size:11px;color:var(--muted)">${esc(t('gateway_last_active'))}: ${esc(new Date(r.last_active).toLocaleString())}</span>`:'';
   const sessionInfo=r.session_count?`<span style="font-size:11px;color:var(--muted)">${r.session_count} ${esc(r.session_count!==1?t('gateway_sessions'):t('gateway_session'))}</span>`:'';
-  card.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span><span style="font-size:13px;font-weight:500;color:#22c55e">${esc(t('gateway_running'))}</span></div>${badges?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${badges}</div>`:''}<div style="display:flex;gap:12px">${sessionInfo}${lastActive}</div>${_gatewayActionControls(r)}`;
+  card.innerHTML=`<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px"><span style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block"></span><span style="font-size:13px;font-weight:500;color:#22c55e">${esc(t('gateway_running'))}</span></div>${badges?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${badges}</div>`:''}<div style="display:flex;gap:12px">${sessionInfo}${lastActive}</div>`;
 }
 function loadGatewayStatus(){
   const card=$('gatewayStatusCard');
   if(!card) return;
   return api('/api/gateway/status').then(r=>_renderGatewayStatus(r)).catch(()=>{card.innerHTML=`<div style="color:#ef4444;font-size:12px">${esc(t('gateway_status_load_failed'))}</div>`});
 }
-async function _gatewayAction(action){
-  if(_gatewayActionInFlight) return;
-  _gatewayActionInFlight=true;
-  const buttons=[...document.querySelectorAll('.gateway-action-btn')];
-  buttons.forEach(btn=>{btn.disabled=true;});
-  try{
-    const result=await api(`/api/gateway/${encodeURIComponent(action)}`,{method:'POST',body:JSON.stringify({}),timeoutMs:70000,timeoutToast:false});
-    if(typeof showToast==='function') showToast(result&&result.message?result.message:t(`gateway_${action}_success`),3000,'success');
-  }catch(e){
-    const msg=e&&e.message?e.message:String(e||'');
-    if(typeof showToast==='function') showToast(`${t(`gateway_${action}_failed`)}${msg?': '+msg:''}`,5000,'error');
-  }finally{
-    _gatewayActionInFlight=false;
-    await loadGatewayStatus();
-  }
-}
-// Load MCP servers when system settings tab opens
+// Load the gateway status when the system settings tab opens
 const _origSwitchSettings=switchSettingsSection;
 switchSettingsSection=function(name, opts){
   _origSwitchSettings(name, opts);
   if(name==='preferences') updateNotificationPermissionStatus();
-  if(name==='system'){loadMcpServers();loadMcpTools();loadGatewayStatus();}
+  if(name==='system') loadGatewayStatus();
 };
 
 // ── Checkpoints / Rollback ──────────────────────────────────────────────────

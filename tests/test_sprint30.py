@@ -281,7 +281,7 @@ class TestApprovalMessagesJS:
         src = read(REPO / "static/messages.js")
         assert "_approvalResponding = {...owner, choice};" in src, \
             "respondApproval should record the immutable owner before the API call"
-        assert "_setApprovalControlsDisabled(controlChoice, true);" in src, \
+        assert "_setApprovalControlsDisabled(choice, true);" in src, \
             "respondApproval should disable buttons immediately using the clicked control target"
 
     def test_respond_uses_i18n_for_error(self):

@@ -233,7 +233,7 @@ class TestApprovalModuleExports:
         cb_end = STREAMING_SRC.find("_reg_notify(session_id, _approval_notify_cb)", cb_start)
         cb_body = STREAMING_SRC[cb_start:cb_end]
         assert "auto_resolved, head, total = _settle_pending_for_polling(" in cb_body, \
-            "approval notify callback must settle admission at the YOLO handoff boundary"
+            "approval notify callback must settle the pending approval before publishing"
         assert "if auto_resolved and head is None:" in cb_body, \
             "an auto-resolved local approval must not publish a stale card"
         assert '"pending_count": total' in cb_body, \

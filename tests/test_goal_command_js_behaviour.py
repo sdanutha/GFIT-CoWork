@@ -95,7 +95,6 @@ const markInflight = () => {};
 const saveInflightState = () => {};
 const startApprovalPolling = () => {};
 const startClarifyPolling = () => {};
-const _fetchYoloState = () => {};
 const attachLiveStream = () => {};
 const renderSessionList = () => {};
 const newSession = async () => {};

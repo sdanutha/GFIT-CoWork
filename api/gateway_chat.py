@@ -346,71 +346,17 @@ def _gateway_reasoning_effort_for_request(cfg, *, model=None, model_provider=Non
         return None
 
 
-def _gateway_session_yolo_enabled(session_id: str) -> bool:
-    """Return the WebUI-owned, in-memory YOLO state for a browser session."""
-    try:
-        from tools.approval import is_session_yolo_enabled
-
-        return bool(is_session_yolo_enabled(str(session_id or "")))
-    except Exception:
-        return False
-
-
 def _settle_gateway_run_approval(
     session_id: str,
     approval_data: dict,
     base_url: str,
     api_key: str,
 ) -> tuple[bool, dict | None, int]:
-    """Auto-approve or mirror one run approval at a session-linearized point."""
-    from api.route_approvals import gateway_yolo_handoff, submit_gateway_pending_mirror
+    """Mirror one run approval as a card (nothing is auto-approved: ADR 0006)."""
+    from api.route_approvals import submit_gateway_pending_mirror
 
-    run_id = str(approval_data.get("run_id") or "").strip()
-    identity_v1 = bool(approval_data.get("_gateway_agent_identity_v1"))
-    with gateway_yolo_handoff(session_id):
-        if _gateway_session_yolo_enabled(session_id):
-            try:
-                _auto_approve_gateway_run(
-                    base_url,
-                    api_key,
-                    run_id,
-                    approval_data["approval_id"] if identity_v1 else "",
-                )
-                return True, None, 0
-            except Exception:
-                # Fail closed: if remote approval fails, surface the real card
-                # before allowing a same-session toggle to pass the handoff.
-                logger.warning(
-                    "WebUI YOLO could not auto-approve run %s; showing approval card",
-                    run_id,
-                    exc_info=True,
-                )
-        head, total = submit_gateway_pending_mirror(session_id, approval_data)
-        return False, head, total
-
-
-def _auto_approve_gateway_run(
-    base_url: str,
-    api_key: str,
-    run_id: str,
-    approval_id: str,
-) -> None:
-    """Resolve one Runs API prompt using only the shipped approval contract.
-
-    This is a WebUI-owned compatibility path: the Runs API does not yet expose
-    session YOLO, so WebUI answers each approval request while its own session
-    flag is enabled. Native Agent-side YOLO would be preferable because it can
-    bypass gates before they pause and also covers Agent-owned computer-use
-    policy; https://github.com/NousResearch/hermes-agent/pull/61946 tracks that
-    API capability. Until then, do not send speculative fields to the Agent.
-    """
-    from api.runner_client import HttpRunnerClient
-
-    HttpRunnerClient(base_url=base_url, api_key=api_key).respond_approval(
-        run_id,
-        approval_id,
-        "once",
-    )
+    head, total = submit_gateway_pending_mirror(session_id, approval_data)
+    return False, head, total
 
 
 def gateway_chat_config_status(config_data=None, environ: dict[str, str] | None = None) -> dict:

@@ -64,7 +64,6 @@ function renderFileTree(){{events.push(['tree',S.session.workspace]);}}
 function renderSessionArtifacts(){{}}
 function clearPreview(){{}}
 function syncWorkspaceDisplays(){{events.push(['display',S.session.workspace]);}}
-function syncTerminalButton(){{events.push(['terminal',S.session.workspace]);}}
 function showToast(message,duration,kind){{events.push(['toast',message,duration,kind]);}}
 function t(key,path){{return key+':'+path;}}
 function _refreshGitBadge(){{}}
@@ -81,7 +80,6 @@ function _refreshGitBadge(){{}}
     assert payload["treeGen"] == 0
     assert ["restore", "/fallback-a"] in payload["events"]
     assert ["display", "/fallback-a"] in payload["events"]
-    assert ["terminal", "/fallback-a"] in payload["events"]
     assert [
         "toast",
         "workspace_recovered_notice:/fallback-a",
@@ -123,7 +121,6 @@ function renderFileTree(){{events.push(['tree',S.session.workspace]);}}
 function renderSessionArtifacts(){{}}
 function clearPreview(){{}}
 function syncWorkspaceDisplays(){{events.push(['display',S.session.workspace]);}}
-function syncTerminalButton(){{events.push(['terminal',S.session.workspace]);}}
 function showToast(message,duration,kind){{events.push(['toast',message,duration||null,kind||null]);}}
 function t(key,path){{return key+(path?':'+path:'');}}
 function _refreshGitBadge(){{}}

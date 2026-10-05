@@ -13,13 +13,9 @@ shapes: ``pre_split`` (the name still lives on its original module) and
 original module no longer resolves it).
 """
 
-import contextlib
-import sqlite3
 import sys
-import threading
 import types
 import warnings
-from types import SimpleNamespace
 
 import pytest
 
@@ -165,38 +161,6 @@ def test_mcp_runtime_status_reads_agent_registry(monkeypatch, shape):
     }})
 
     assert routes._mcp_runtime_status_by_name() == {"alpha": statuses[0], "beta": statuses[1]}
-
-
-@pytest.mark.parametrize("shape", SHAPES)
-def test_reload_mcp_command_shuts_down_and_rediscovers(monkeypatch, shape):
-    import api.commands as commands
-
-    servers = {"old": object()}
-    calls = []
-
-    def shutdown_mcp_servers():
-        calls.append("shutdown")
-        servers.clear()
-
-    def discover_mcp_tools():
-        calls.append("discover")
-        servers.update(old=object(), new=object())
-        return ["t1", "t2", "t3"]
-
-    _install_agent(
-        monkeypatch, shape, "tools.mcp_tool",
-        {
-            "tools.mcp_tool_lifecycle": {"shutdown_mcp_servers": shutdown_mcp_servers},
-            "tools.mcp_tool_discovery": {"discover_mcp_tools": discover_mcp_tools},
-        },
-        native={"_servers": servers, "_lock": threading.Lock()},
-    )
-
-    out = commands._run_reload_mcp_command()
-    assert calls == ["shutdown", "discover"]
-    assert "Reconnected: old" in out
-    assert "Added: new" in out
-    assert "3 tool(s) available across 2 server(s)" in out
 
 
 @pytest.mark.parametrize("shape", SHAPES)

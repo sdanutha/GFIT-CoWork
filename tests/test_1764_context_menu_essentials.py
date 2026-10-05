@@ -107,7 +107,7 @@ class TestCopyFilePathMenuItem:
         assert m
         body = m.group(0)
         # No exists() check — that's specifically what we want NOT to be
-        # there. Distinguishing from _handle_file_reveal which does check.
+        # there.
         assert "exists()" not in body, (
             "Copy-path must not gate on exists() — copying a stale path is "
             "still useful for debugging deleted files."
@@ -176,55 +176,6 @@ class TestSessionRenameMenuItem:
 # ════════════════════════════════════════════════════════════════════
 #  Item C — reveal-failed toast includes the resolved path
 # ════════════════════════════════════════════════════════════════════
-
-
-class TestRevealFailedTostIncludesPath:
-    def test_handler_includes_target_in_404_message(self):
-        """When `target.exists()` returns false, the 404 response body must
-        include the resolved server-side path so the frontend toast can
-        show users *which* file the system expected. Previously it was
-        just "File not found" with no path — useless for diagnosing stale
-        session rows.
-        """
-        src = ROUTES.read_text(encoding="utf-8")
-        # Find _handle_file_reveal body.
-        m = re.search(
-            r"def _handle_file_reveal\(handler, body\):.*?(?=\ndef )",
-            src,
-            re.DOTALL,
-        )
-        assert m, "_handle_file_reveal not found"
-        body = m.group(0)
-        # The bad() call for not-exists must include the path.
-        assert 'f"File not found: {target}"' in body, (
-            "Reveal handler must include the resolved path in the 404 message."
-        )
-        # And NOT the bare unhelpful message.
-        # (We allow the substring 'File not found' because the new f-string
-        # contains it as a prefix; pin via the f-string presence above.)
-        assert 'bad(handler, "File not found", 404)' not in body, (
-            "Old bare 'File not found' message must be removed."
-        )
-
-    def test_existing_translation_key_unchanged(self):
-        """The frontend toast prefix `reveal_failed: 'Failed to reveal: '`
-        is unchanged — the additional path comes from the server-side
-        message, so the prefix + message concat still reads well.
-        """
-        src = I18N.read_text(encoding="utf-8")
-        assert "reveal_failed: 'Failed to reveal: '" in src
-
-    def test_reveal_call_site_uses_message_or_err(self):
-        """The frontend reveal handler call site must guard against err
-        being a non-Error object (e.g. a network-layer reject without a
-        .message). Previously `err.message` alone could produce
-        "Failed to reveal: undefined" — we use `(err.message||err)`.
-        """
-        src = UI.read_text(encoding="utf-8")
-        # Match both possible forms (with or without parens).
-        assert (
-            "(err.message||err)" in src or "(err.message || err)" in src
-        ), "Reveal-failed toast must guard against err with no .message"
 
 
 
@@ -317,30 +268,3 @@ class TestFilePathEndpointBehaviour:
         assert status == 404, body
         assert "session" in body.get("error", "").lower()
 
-
-class TestRevealHandlerErrorIncludesPath:
-    """End-to-end check that the reveal endpoint's 404 includes the path."""
-
-    def _new_session(self):
-        body, status = _post("/api/session/new", {})
-        assert status == 200, body
-        return body["session"]["session_id"]
-
-    def test_404_message_contains_resolved_path(self):
-        """Reveal of a missing file must surface the resolved server-side
-        path in the error, so the frontend toast can show users *which*
-        file was missing — useful when a stale row points at a deleted
-        file (#1764)."""
-        sid = self._new_session()
-        body, status = _post(
-            "/api/file/reveal",
-            {"session_id": sid, "path": "missing-xyz-1764.txt"},
-        )
-        assert status == 404, body
-        err = body.get("error", "")
-        # Must include the filename in the resolved path.
-        assert "missing-xyz-1764.txt" in err, (
-            f"Reveal 404 message must include the resolved path, got: {err!r}"
-        )
-        # Must keep the human-readable prefix.
-        assert "File not found" in err

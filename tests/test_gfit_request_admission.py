@@ -100,12 +100,12 @@ def test_the_admins_page_shell_carries_the_admin_role(srv):
 def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(srv, conn):
     user, admin = _session(srv, USER), _session(srv, ADMIN)
 
-    status, body = conn.request("GET", "/api/logs", session=user)
+    status, body = conn.request("GET", "/api/providers", session=user)
     assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
     status, html = conn.request("GET", "/", session=user)
     assert 'data-gfit-role="user"' in html
 
-    status, body = conn.request("GET", "/api/logs", session=admin)
+    status, body = conn.request("GET", "/api/providers", session=admin)
     assert status == 200, body
     status, html = conn.request("GET", "/", session=admin)
     assert 'data-gfit-role="admin"' in html
@@ -118,9 +118,9 @@ def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(s
 def test_a_user_request_after_an_admin_request_on_one_connection_is_the_users(srv, conn):
     user, admin = _session(srv, USER), _session(srv, ADMIN)
 
-    assert conn.request("GET", "/api/logs", session=admin)[0] == 200
+    assert conn.request("GET", "/api/providers", session=admin)[0] == 200
 
-    status, body = conn.request("GET", "/api/logs", session=user)
+    status, body = conn.request("GET", "/api/providers", session=user)
     assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
     status, body = conn.request("GET", "/api/profiles", session=user)
     assert [p["name"] for p in body["profiles"]] == [USER]
@@ -139,7 +139,7 @@ def test_a_refused_request_and_the_next_get_no_leftover_caller(srv, conn):
     # The disabled User is refused, not served as the Admin who came before.
     status, body = conn.request("GET", "/api/profiles", session=user)
     assert status == 401, body
-    status, body = conn.request("GET", "/api/logs", session=user)
+    status, body = conn.request("GET", "/api/providers", session=user)
     assert status == 401, body
     # A request with no session after the refusal is not anyone.
     status, body = conn.request("GET", "/api/profiles")
@@ -255,7 +255,7 @@ def test_the_admin_gate_refuses_a_session_with_no_admission():
 
     clear_request_admission()
     handler = _Handler(_admin_session_record())
-    assert _refuse_admin_only_for_user(handler, urlparse("/api/logs"), _admin_session_record())
+    assert _refuse_admin_only_for_user(handler, urlparse("/api/providers"), _admin_session_record())
     assert handler.status == 403
 
 

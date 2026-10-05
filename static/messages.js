@@ -1,10 +1,4 @@
-const _AGENT_COMMAND_ALIASES = {
-  'reload_mcp': 'reload-mcp',
-  'reload_skills': 'reload-skills',
-  'codex_runtime': 'codex-runtime',
-  'credits': 'credits'
-};
-const _AGENT_COMMANDS_RUN_ON_WEBUI = new Set([
+const _AGENT_COMMANDS_CLI_ONLY_IN_WEBUI = new Set([
   'reload-mcp','reload-skills','codex-runtime','credits',
   'reload_mcp','reload_skills','codex_runtime','credits'
 ]);
@@ -1439,7 +1433,7 @@ async function send(){
       if(!S.session){await newSession();await renderSessionList();}
       // Busy-control slash commands must be intercepted HERE, before the
       // defaultMessageMode routing block, so the user can always type /steer, /interrupt,
-      // /queue, /terminal, /goal, /yolo, or /stop while the agent is running and have
+      // /queue, /goal, or /stop while the agent is running and have
       // them execute immediately.
       // Without this intercept they fall through to the queue and execute after
       // the current turn ends — by which point there is no active stream and
@@ -1448,7 +1442,7 @@ async function send(){
       // or queued as the literal text "/stop" (#6951).
       if(text.startsWith('/')&&!literalSlash){
         const _pc=typeof parseCommand==='function'&&parseCommand(text);
-        if(_pc&&['steer','interrupt','queue','terminal','goal','yolo','stop'].includes(_pc.name)){
+        if(_pc&&['steer','interrupt','queue','goal','stop'].includes(_pc.name)){
           const _bc=COMMANDS.find(c=>c.name===_pc.name);
           if(_bc){
             $('msg').value='';autoResize();
@@ -1543,41 +1537,13 @@ async function send(){
       const _agentCmd=typeof getAgentCommandMetadata==='function'
         ? await getAgentCommandMetadata(_parsedCmd.name)
         : null;
-      if(_agentCmd&&_agentCmd.cli_only){
+      const _agentCmdName=String(_agentCmd&&_agentCmd.name||_parsedCmd&&_parsedCmd.name||'').trim().toLowerCase();
+      // Commands that ran on the server (agent reloads, plugin commands) went
+      // with the Admin (ADR 0006): answer them like CLI-only commands.
+      if(_agentCmd&&(_agentCmd.cli_only||_agentCmd.category==='Plugin'||_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI.has(_agentCmdName))){
         if(!S.session){await newSession();await renderSessionList();}
         S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
         S.messages.push({role:'assistant',content:cliOnlyCommandResponse(_parsedCmd.name,_agentCmd),_ts:Date.now()/1000});
-        renderMessages();
-        $('msg').value='';autoResize();hideCmdDropdown();return;
-      }
-      const _agentCmdName=String(_agentCmd&&_agentCmd.name||_parsedCmd&&_parsedCmd.name||'').trim().toLowerCase();
-      if(_AGENT_COMMANDS_RUN_ON_WEBUI.has(_agentCmdName)){
-        if(!S.session){await newSession();await renderSessionList();}
-        S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
-        let _agentOutput='(no output)';
-        try{
-          _agentOutput=typeof executeAgentCommand==='function'
-            ? await executeAgentCommand(text,_agentCmd||{name:_agentCmdName})
-            : 'Agent command runtime unavailable in WebUI.';
-        }catch(e){
-          _agentOutput=`Agent command error: ${e&&e.message||e}`;
-        }
-        S.messages.push({role:'assistant',content:String(_agentOutput||'(no output)'),_ts:Date.now()/1000});
-        renderMessages();
-        $('msg').value='';autoResize();hideCmdDropdown();return;
-      }
-      if(_agentCmd&&_agentCmd.category==='Plugin'){
-        if(!S.session){await newSession();await renderSessionList();}
-        S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
-        let _pluginOutput='(no output)';
-        try{
-          _pluginOutput=typeof executeAgentPluginCommand==='function'
-            ? await executeAgentPluginCommand(text,_agentCmd)
-            : 'Plugin command runtime unavailable in WebUI.';
-        }catch(e){
-          _pluginOutput=`Plugin command error: ${e&&e.message||e}`;
-        }
-        S.messages.push({role:'assistant',content:String(_pluginOutput||'(no output)'),_ts:Date.now()/1000});
         renderMessages();
         $('msg').value='';autoResize();hideCmdDropdown();return;
       }
@@ -1730,7 +1696,6 @@ async function send(){
     });
     _runOptionalPreStartUiStep('startApprovalPolling.prestart', ()=>startApprovalPolling(activeSid));
     _runOptionalPreStartUiStep('startClarifyPolling.prestart', ()=>startClarifyPolling(activeSid));
-    _runOptionalPreStartUiStep('fetchYoloState.prestart', ()=>_fetchYoloState(activeSid));  // sync YOLO pill with backend state
     S.activeStreamId = null;  // will be set after stream starts
     _runOptionalPreStartUiStep('updateSendBtn.prestart', ()=>{
       if(typeof updateSendBtn==='function') updateSendBtn();
@@ -7455,43 +7420,6 @@ function scheduleComposerAutoResize(){
   });
 }
 
-
-// ── YOLO mode state ──
-// Session-scoped; stored server-side in memory (tools/approval.py).
-// Lifecycle:
-//   • Page reload: state PERSISTS — _fetchYoloState() re-syncs from backend.
-//   • Cross-tab: state is SHARED — enabling YOLO in Tab A affects Tab B for
-//     the same session (both poll the same server-side flag).
-//   • Server restart: state is LOST — in-memory only, not persisted to disk.
-//   • Session switch: state resets — loadSession() clears _yoloEnabled and
-//     fetches the new session's state.
-let _yoloEnabled = false;
-
-async function _fetchYoloState(sid) {
-  try {
-    const data = await api('/api/session/yolo?session_id=' + encodeURIComponent(sid));
-    _yoloEnabled = !!data.yolo_enabled;
-    _updateYoloPill();
-  } catch (_) { /* ignore */ }
-}
-
-function _updateYoloPill() {
-  const pill = $('yoloPill');
-  if (!pill) return;
-  pill.style.display = _yoloEnabled ? '' : 'none';
-  if (_yoloEnabled) {
-    pill.title = t('yolo_pill_title_active');
-    pill.setAttribute('data-i18n-title', 'yolo_pill_title_active');
-  }
-  if (typeof applyLocaleToDOM === 'function') applyLocaleToDOM();
-}
-
-async function toggleYoloFromApproval() {
-  const owner = _captureApprovalResponseOwner();
-  if (!owner) return false;
-  return !!(await respondApproval('once', {yolo: true, owner}));
-}
-
 // ── Approval polling ──
 let _approvalPollTimer = null;
 let _approvalFallbackPollInFlight = false;
@@ -7809,10 +7737,8 @@ function _approvalClearedOwnerMayRefresh(owner) {
 }
 
 function _setApprovalControlsDisabled(choice, disabled) {
-  const loadingId = choice === "skipAll"
-    ? "approvalSkipAll"
-    : (choice ? "approvalBtn" + choice.charAt(0).toUpperCase() + choice.slice(1) : null);
-  ["approvalBtnOnce","approvalBtnSession","approvalBtnAlways","approvalBtnDeny","approvalSkipAll"].forEach(id => {
+  const loadingId = choice ? "approvalBtn" + choice.charAt(0).toUpperCase() + choice.slice(1) : null;
+  ["approvalBtnOnce","approvalBtnSession","approvalBtnAlways","approvalBtnDeny"].forEach(id => {
     const b = $(id);
     if (!b) return;
     b.disabled = !!disabled;
@@ -7961,11 +7887,6 @@ function _restoreFailedApprovalResponse(owner, errMsg) {
   if (typeof setStatus === "function") setStatus(errMsg);
 }
 
-function _applyApprovalYoloProjection(result) {
-  if (!result || typeof result.yolo_enabled !== "boolean") return;
-  _yoloEnabled = result.yolo_enabled;
-  _updateYoloPill();
-}
 
 function toggleApprovalCardCollapsed(forceCollapsed) {
   const card = $("approvalCard");
@@ -7983,10 +7904,9 @@ async function respondApproval(choice, options = {}) {
   if (_approvalResponseMatches(sid, approvalId, owner.generation, owner)) return false;
   _approvalClearedOwner = null;
   _unmarkApprovalDismissed(sid, approvalId);
-  const controlChoice = options.yolo ? "skipAll" : choice;
   _approvalResponding = {...owner, choice};
-  _approvalResponding.controlChoice = controlChoice;
-  _setApprovalControlsDisabled(controlChoice, true);
+  _approvalResponding.controlChoice = choice;
+  _setApprovalControlsDisabled(choice, true);
   try {
     const result = await api("/api/approval/respond", {
       method: "POST",
@@ -7996,7 +7916,6 @@ async function respondApproval(choice, options = {}) {
         approval_id: approvalId,
         ...(owner.runId ? {run_id: owner.runId} : {}),
         ...(owner.mirrorToken ? {mirror_token: owner.mirrorToken} : {}),
-        ...(options.yolo ? {yolo: true} : {}),
       })
     });
     if (!_approvalResponseOwnerIsCurrent(owner)) {
@@ -8005,7 +7924,6 @@ async function respondApproval(choice, options = {}) {
     }
     if (result && result.ok) {
       _releaseApprovalResponseOwner(owner);
-      if (options.yolo) _applyApprovalYoloProjection(result);
       const pendingEntry = _approvalPendingBySession.get(sid);
       const pendingOwner = _approvalMirrorOwnerFor(sid, approvalId);
       const samePending = !!(
@@ -8033,8 +7951,7 @@ async function respondApproval(choice, options = {}) {
           }
         })();
       }
-      if (options.yolo) showToast(t(_yoloEnabled ? 'yolo_enabled' : 'yolo_disabled'));
-      return options.yolo ? result : true;
+      return true;
     }
     const errMsg = (result && result.error) || "Approval response not accepted.";
     _restoreFailedApprovalResponse(owner, errMsg);
@@ -8051,7 +7968,6 @@ async function respondApproval(choice, options = {}) {
       _releaseApprovalResponseOwner(owner);
       return false;
     }
-    if (options.yolo) _applyApprovalYoloProjection(errorPayload);
     _restoreFailedApprovalResponse(owner, errMsg);
     return false;
   }

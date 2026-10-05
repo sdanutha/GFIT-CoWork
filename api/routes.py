@@ -17,12 +17,10 @@ import mimetypes
 import os
 import queue
 import re
-import platform
 import shlex
 import shutil
 import sqlite3
 import stat as _stat
-import subprocess
 import sys
 import threading
 import time
@@ -61,7 +59,6 @@ from api.session_events import (
     subscribe_session_events,
     unsubscribe_session_events,
 )
-from api.gateway_restart import restart_active_profile_gateway
 from api.session_ownership import (
     UNCONFINED as _UNCONFINED_OWNERSHIP,
     load_owned_session,
@@ -479,7 +476,6 @@ from api.profiles import (  # noqa: E402
     _SKILLS_STATS_CACHE,
     get_active_profile_name,
     get_active_profile_name as _get_active_profile_name,
-    get_active_hermes_home,
     profile_scope_for_detached_worker,
 )
 
@@ -1235,138 +1231,6 @@ def _gateway_status_payload() -> dict:
             "gateway_state": health_gateway_state,
         },
     }
-
-
-_GATEWAY_LIFECYCLE_TIMEOUT_SECONDS = 60
-
-# Server-side single-flight guard for gateway lifecycle actions. The client
-# disables its button while a request is in flight, but a scripted authed
-# client could still fire overlapping start/stop/restart calls, spawning
-# concurrent `hermes gateway` subprocesses. Serialize them here (mirrors the
-# self-update _apply_lock pattern): a non-blocking acquire returns 409 on
-# contention rather than launching a second overlapping subprocess.
-_GATEWAY_ACTION_LOCK = threading.Lock()
-
-
-def _run_gateway_lifecycle_command(action: str) -> subprocess.CompletedProcess:
-    if action not in {"start", "stop", "restart"}:
-        raise ValueError("unsupported gateway action")
-
-    from api import config as api_config
-    from api.profiles import get_active_profile_name
-
-    agent_dir = getattr(api_config, "_AGENT_DIR", None)
-    if not agent_dir:
-        raise FileNotFoundError("Hermes agent checkout not found")
-    agent_dir = Path(agent_dir).expanduser().resolve()
-    main_py = agent_dir / "hermes_cli" / "main.py"
-    if not main_py.exists():
-        raise FileNotFoundError("Hermes agent CLI entrypoint not found")
-
-    cmd = [str(getattr(api_config, "PYTHON_EXE", sys.executable)), str(main_py)]
-    profile_name = ""
-    try:
-        profile_name = str(get_active_profile_name() or "").strip()
-    except Exception as exc:
-        logger.debug("Could not resolve active profile for gateway lifecycle: %s", exc)
-    if profile_name and profile_name != "default":
-        cmd.extend(["--profile", profile_name])
-    cmd.extend(["gateway", action])
-
-    env = os.environ.copy()
-    env.setdefault("PYTHONUTF8", "1")
-    env.setdefault("BROWSER", "echo")
-    return subprocess.run(
-        cmd,
-        cwd=str(agent_dir),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=_GATEWAY_LIFECYCLE_TIMEOUT_SECONDS,
-    )
-
-
-def _handle_gateway_lifecycle(handler, action: str, body: dict):
-    del body  # Reserved for future per-gateway naming without changing the route contract.
-    # Reject overlapping lifecycle actions instead of spawning concurrent
-    # `hermes gateway` subprocesses (a non-blocking acquire — the action holds
-    # the lock for at most _GATEWAY_LIFECYCLE_TIMEOUT_SECONDS).
-    if action not in {"start", "stop", "restart"}:
-        return bad(handler, "unsupported gateway action", 400)
-    if not _GATEWAY_ACTION_LOCK.acquire(blocking=False):
-        return j(
-            handler,
-            {
-                "ok": False,
-                "error": "Another gateway action is already in progress; try again shortly.",
-                "action": action,
-            },
-            status=409,
-        )
-    try:
-        result = _run_gateway_lifecycle_command(action)
-    except ValueError as exc:
-        return bad(handler, str(exc), 400)
-    except FileNotFoundError as exc:
-        return j(handler, {"ok": False, "error": _sanitize_error(exc), "action": action}, status=500)
-    except subprocess.TimeoutExpired as exc:
-        logger.warning(
-            "Gateway %s command timed out after %ss; stdout=%r stderr=%r",
-            action,
-            _GATEWAY_LIFECYCLE_TIMEOUT_SECONDS,
-            exc.stdout,
-            exc.stderr,
-        )
-        return j(
-            handler,
-            {
-                "ok": False,
-                "error": f"Gateway {action} timed out after {_GATEWAY_LIFECYCLE_TIMEOUT_SECONDS} seconds",
-                "action": action,
-            },
-            status=504,
-        )
-    except Exception as exc:
-        logger.exception("Gateway %s command failed before completion", action)
-        return j(handler, {"ok": False, "error": _sanitize_error(exc), "action": action}, status=500)
-    finally:
-        _GATEWAY_ACTION_LOCK.release()
-
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    if result.returncode != 0:
-        logger.warning(
-            "Gateway %s command failed with exit code %s; stdout=%r stderr=%r",
-            action,
-            result.returncode,
-            stdout,
-            stderr,
-        )
-        return j(
-            handler,
-            {
-                "ok": False,
-                "error": f"Gateway {action} failed with exit code {result.returncode}",
-                "action": action,
-                "returncode": result.returncode,
-            },
-            status=500,
-        )
-
-    return j(
-        handler,
-        {
-            "ok": True,
-            "action": action,
-            # Do NOT return captured stdout/stderr — the `hermes gateway` CLI
-            # prints service/PID/status details the browser shouldn't receive
-            # (mirrors the failure path, which already suppresses them). The
-            # frontend localizes its own success copy; the refreshed status
-            # payload carries the user-facing state.
-            "message": f"Gateway {action} completed.",
-            "status": _gateway_status_payload(),
-        },
-    )
 
 
 def _mark_cron_running(job_id: str):
@@ -2946,7 +2810,7 @@ from api import config as api_config
 from api import profiles as api_profiles
 from api import route_table
 from api import run_registry
-from api.turn_builder import AGENT_BUNDLE_SIDE_FIELDS, webui_agent
+from api.turn_builder import webui_agent
 from api.helpers import (
     require,
     bad,
@@ -3037,29 +2901,6 @@ def _resolve_agent_connection_bundle(
             lookup_provider=lookup_provider or resolved_provider,
         )
     )
-
-
-def _auxiliary_main_runtime(bundle, model):
-    """Return the ``main_runtime`` an auxiliary client must receive for a bundle.
-
-    When the auxiliary client answers, AIAgent is never built, so this dict is
-    the ONLY place the resolved authority reaches the wire. It therefore carries
-    the same whole bundle :func:`api.turn_builder.agent_bundle_kwargs` hands the constructor —
-    endpoint and credential plus every field in
-    :data:`AGENT_BUNDLE_SIDE_FIELDS`. Sending only provider/model/base_url/
-    api_key silently downgraded an exact row's ``api_mode``
-    (``anthropic_messages`` fell back to chat completions) and dropped the
-    credential pool/ACP transport that belong to the same record.
-    """
-    runtime = {
-        "provider": bundle["provider"],
-        "model": model,
-        "base_url": bundle["base_url"],
-        "api_key": bundle["api_key"],
-    }
-    for field in AGENT_BUNDLE_SIDE_FIELDS:
-        runtime[field] = bundle[field]
-    return runtime
 
 
 # A cancelled worker that stays in ACTIVE_RUNS longer than this is treated as
@@ -5833,32 +5674,6 @@ def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
     if auth_enabled or _truthy_env("HERMES_WEBUI_ONBOARDING_OPEN"):
         return True
     return _onboarding_request_is_local(handler)
-
-
-# Operator-facing copy reused by every embedded-terminal endpoint refusal.
-_EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE = (
-    "Embedded terminal is only available from local networks when login is off. "
-    "Configure the Directory (HERMES_WEBUI_DIRECTORY=ldap and the "
-    "HERMES_WEBUI_LDAP_* settings) to turn login on, or set "
-    "HERMES_WEBUI_ONBOARDING_OPEN=1 to allow it on a deliberately-exposed server."
-)
-
-
-def _embedded_terminal_gate_allows(handler) -> bool:
-    """Local-origin gate for the embedded-terminal endpoints.
-
-    The embedded terminal spawns a PTY shell that runs arbitrary commands as the
-    server-process user, so admitting an unauthenticated remote caller is remote
-    code execution. When auth is enabled, ``check_auth()`` has already verified
-    the session cookie before the request reaches these handlers, so this returns
-    True. When auth is DISABLED (the default out-of-the-box state) ``check_auth()``
-    admits every caller unconditionally, so restrict the terminal to local/private
-    origins — the same trust model the onboarding/bootstrap endpoints use, ignoring
-    spoofable forwarded headers unless an operator has opted into trusting them.
-    A deliberately-exposed server with login off (access secured at another layer)
-    opts out with ``HERMES_WEBUI_ONBOARDING_OPEN=1``.
-    """
-    return _onboarding_gate_allows(handler)
 
 
 # Above this many distinct client keys, sweep out entries whose timestamps have
@@ -10328,17 +10143,12 @@ from api.workspace import (
     get_profile_default_workspace,
     set_last_workspace,
     git_info_for_workspace,
-    authorize_escape_target,
-    EscapeAuthorizationExpiredError,
     list_dir,
-    list_authorized_escape_dir,
     serialize_workspace_entries_for_browser,
     dir_signature,
     list_workspace_suggestions,
     read_file_content,
-    read_authorized_escape_file_content,
     resolve_in_workspace,
-    raw_authorized_escape_target,
     resolve_trusted_workspace,
     _resolve_path,
     resolve_implicit_workspace_with_recovery,
@@ -10350,7 +10160,6 @@ from api.workspace import (
     rename_anchored,
     make_anchored_dir,
     _strip_surrounding_quotes,
-    _is_remote_terminal_backend,
     _workspace_blocked_roots,
 )
 from api.upload import (
@@ -10416,7 +10225,6 @@ from api.route_approvals import (
     _permanent_approved,
     _gateway_queues,
     resolve_gateway_approval,
-    is_session_yolo_enabled,
     _approval_sse_subscribers,
     _approval_sse_unsubscribe,
     _approval_sse_notify_locked,
@@ -10424,21 +10232,15 @@ from api.route_approvals import (
     _GATEWAY_MIRROR_FLAG,
     _GATEWAY_MIRROR_TOKEN,
     _gateway_mirror_entry_token,
-    gateway_yolo_handoff,
-    begin_session_yolo_transition,
     claim_gateway_approval_relay_owner,
-    finish_session_yolo_transition,
     gateway_pending_mirror,
-    gateway_pending_mirrors,
     release_gateway_approval_relay_owner,
     retire_gateway_pending_mirror,
     settle_gateway_pending_run,
     reconcile_gateway_pending_mirror_locked,
     resolve_gateway_pending_local,
     resolve_gateway_pending_run,
-    resolve_gateway_pending_local_all,
     resolve_gateway_pending_local_no_run_mirror,
-    set_session_yolo_enabled,
     submit_pending,  # noqa: F401  (tests submit approvals through the route module)
 )
 
@@ -10817,80 +10619,6 @@ def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bo
     handler.wfile.write(payload)
     return True
 
-
-# ── Logs endpoint ─────────────────────────────────────────────────────────────
-_LOG_FILE_WHITELIST = {
-    "agent": "agent.log",
-    "errors": "errors.log",
-    "gateway": "gateway.log",
-}
-_LOG_TAIL_VALUES = {100, 200, 500, 1000}
-_LOG_DEFAULT_TAIL = 200
-_LOG_MAX_BYTES = 4 * 1024 * 1024
-
-
-def _normalize_logs_tail(raw_tail) -> int:
-    try:
-        tail = int(str(raw_tail or "").strip())
-    except (TypeError, ValueError):
-        return _LOG_DEFAULT_TAIL
-    return tail if tail in _LOG_TAIL_VALUES else _LOG_DEFAULT_TAIL
-
-
-def _handle_logs(handler, parsed) -> bool:
-    """Return a bounded tail window for an active-profile Hermes log file."""
-    query = parse_qs(parsed.query)
-    file_key = (query.get("file", ["agent"])[0] or "agent").strip().lower()
-    filename = _LOG_FILE_WHITELIST.get(file_key)
-    if not filename:
-        return bad(handler, "Unknown log file", status=400)
-
-    tail = _normalize_logs_tail(query.get("tail", [None])[0])
-    try:
-        from api.profiles import get_active_hermes_home
-
-        hermes_home = Path(get_active_hermes_home()).expanduser()
-    except Exception:
-        hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")).expanduser()
-
-    log_dir = hermes_home / "logs"
-    log_path = log_dir / filename
-    try:
-        # Defense in depth: the filename is hardcoded above, but keep the final
-        # path anchored under the active profile's logs directory.
-        if log_path.resolve(strict=False).parent != log_dir.resolve(strict=False):
-            return bad(handler, "Invalid log file", status=400)
-        if not log_path.exists() or not log_path.is_file():
-            return j(handler, {
-                "file": file_key,
-                "tail": tail,
-                "lines": [],
-                "truncated": False,
-                "total_bytes": 0,
-                "mtime": None,
-                "hint": f"Log file for {file_key} not found yet.",
-            })
-        st = log_path.stat()
-        total_bytes = int(st.st_size)
-        read_bytes = min(total_bytes, _LOG_MAX_BYTES)
-        with log_path.open("rb") as fh:
-            if total_bytes > read_bytes:
-                fh.seek(total_bytes - read_bytes)
-            raw = fh.read(read_bytes)
-        text = raw.decode("utf-8", errors="replace")
-        lines = text.splitlines()[-tail:]
-        return j(handler, {
-            "file": file_key,
-            "tail": tail,
-            "lines": lines,
-            "truncated": total_bytes > read_bytes,
-            "total_bytes": total_bytes,
-            "mtime": st.st_mtime,
-            "hint": "",
-        })
-    except Exception as exc:
-        logger.exception("Failed to read whitelisted log file %s", file_key)
-        return bad(handler, _sanitize_error(exc), status=500)
 
 # ── Insights endpoint ──────────────────────────────────────────────────────────
 
@@ -12532,66 +12260,6 @@ def _shutdown_log_value(value, *, default: str = "unknown", max_len: int = 160) 
     return text
 
 
-def _handle_shutdown(handler) -> bool:
-    """Shut down the WebUI server process."""
-    headers = getattr(handler, "headers", {})
-    ua = headers.get("User-Agent", "no-ua") if hasattr(headers, "get") else "no-ua"
-    remote = "unknown"
-    if getattr(handler, "client_address", None):
-        remote = getattr(handler, "client_address", ("unknown",))[0]
-    logger.info(
-        "[shutdown-request] remote=%s method=%s path=%s ua=%s",
-        _shutdown_log_value(remote),
-        _shutdown_log_value(getattr(handler, "command", None)),
-        _shutdown_log_value(getattr(handler, "path", None), max_len=240),
-        _shutdown_log_value(ua, default="no-ua", max_len=240),
-    )
-    j(handler, {"status": "shutting_down"})
-    import signal
-    import threading
-
-    def _do_shutdown():
-        import time
-        time.sleep(0.3)
-        os.kill(os.getpid(), signal.SIGINT)
-
-    threading.Thread(target=_do_shutdown, daemon=True).start()
-    return True
-
-
-def _handle_health_restart(handler) -> bool:
-    """Restart the Hermes messaging gateway service."""
-    # This endpoint never consumes its request body on any outcome, so close when
-    # one was DECLARED -- and only then. Arming unconditionally closed the socket
-    # on every call including the successful, body-less one the WebUI actually
-    # makes: verified on the wire, `POST /api/health/restart` with no
-    # `Content-Length` answered with `Connection: close` and the pipelined
-    # `GET /api/health/agent` was never served. The single arming covers every
-    # outcome below (completed / in_progress / busy / error) because the framing,
-    # not the result, decides.
-    arm_connection_close_if_body_pending(handler)
-    outcome = restart_active_profile_gateway()
-
-    if outcome.get("status") == "completed":
-        return j(handler, {"ok": True, "message": "Gateway service restarted successfully"})
-
-    if outcome.get("status") == "in_progress":
-        return j(handler, {"ok": True, "message": "Gateway service restart initiated (in progress)"})
-
-    if outcome.get("status") == "busy":
-        return j(
-            handler,
-            {"ok": False, "error": outcome.get("message", "Restart already in progress. Please wait a moment and try again.")},
-            status=429,
-        )
-
-    return j(
-        handler,
-        {"ok": False, "error": outcome.get("message", "Internal error running restart")},
-        status=500,
-    )
-
-
 def _serve_manifest(handler) -> bool:
     """Serve static/manifest.json with the correct PWA Content-Type.
 
@@ -13582,10 +13250,6 @@ def _get_api_wiki_page(handler, parsed):
     return j(handler, {"content": content, "path": page_path})
 
 
-def _get_api_logs(handler, parsed):
-    return _handle_logs(handler, parsed)
-
-
 def _get_health(handler, parsed):
     return _handle_health(handler, parsed)
 
@@ -13793,13 +13457,6 @@ def _get_api_session_status(handler, parsed):
         return bad(handler, "Session not found", 404)
 
 
-def _get_api_session_yolo(handler, parsed):
-    sid = parse_qs(parsed.query).get("session_id", [""])[0]
-    if not sid:
-        return bad(handler, "Missing session_id")
-    return j(handler, {"yolo_enabled": is_session_yolo_enabled(sid)})
-
-
 def _get_api_session_usage(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
@@ -13940,7 +13597,6 @@ def _get_api_workspaces(handler, parsed):
         {
             "workspaces": wss,
             "last": lw,
-            "terminal_remote_backend": _terminal_remote_backend_enabled(),
         },
     )
 
@@ -13970,10 +13626,6 @@ def _get_api_sessions_search(handler, parsed):
 
 def _get_api_list(handler, parsed):
     return _handle_list_dir(handler, parsed)
-
-
-def _get_api_escape_list(handler, parsed):
-    return _handle_escape_list_dir(handler, parsed)
 
 
 def _get_api_git_status(handler, parsed):
@@ -14140,10 +13792,6 @@ def _get_api_chat_stream(handler, parsed):
     return _handle_sse_stream(handler, parsed)
 
 
-def _get_api_terminal_output(handler, parsed):
-    return _handle_terminal_output(handler, parsed)
-
-
 def _get_api_sessions_gateway_stream(handler, parsed):
     return _handle_gateway_sse_stream(handler, parsed)
 
@@ -14160,20 +13808,12 @@ def _get_api_file_raw(handler, parsed):
     return _handle_file_raw(handler, parsed)
 
 
-def _get_api_escape_file_raw(handler, parsed):
-    return _handle_escape_file_raw(handler, parsed)
-
-
 def _get_api_folder_download(handler, parsed):
     return _handle_folder_download(handler, parsed)
 
 
 def _get_api_file(handler, parsed):
     return _handle_file_read(handler, parsed)
-
-
-def _get_api_escape_file_read(handler, parsed):
-    return _handle_escape_file_read(handler, parsed)
 
 
 def _get_api_approval_pending(handler, parsed):
@@ -14440,16 +14080,6 @@ def _get_api_profile_active(handler, parsed):
 # ── Gateway Status (GET) ──
 def _get_api_gateway_status(handler, parsed):
     return j(handler, _gateway_status_payload())
-
-
-# ── MCP Servers (GET) ──
-def _get_api_mcp_servers(handler, parsed):
-    return _handle_mcp_servers_list(handler)
-
-
-# ── MCP Tools (GET) ──
-def _get_api_mcp_tools(handler, parsed):
-    return _handle_mcp_tools_list(handler)
 
 
 def _get_api_notes_sources(handler, parsed):
@@ -14798,14 +14428,6 @@ def _post_api_process_complete_ack(handler, parsed, body, diag):
             diag.finish()
 
 
-def _post_api_shutdown(handler, parsed, body, diag):
-    return _handle_shutdown(handler)
-
-
-def _post_api_health_restart(handler, parsed, body, diag):
-    return _handle_health_restart(handler)
-
-
 def _post_api_upload(handler, parsed, body, diag):
     return handle_upload(handler)
 
@@ -14830,10 +14452,6 @@ def _post_api_client_events_log(handler, parsed, body, diag):
     if diag:
         diag.stage("read_client_event_body")
     return _handle_client_event_log(handler, _read_client_event_payload(handler))
-
-
-def _post_api_escape_authorize(handler, parsed, body, diag):
-    return _handle_escape_authorize(handler, parsed, body)
 
 
 def _post_api_prompts(handler, parsed, body, diag):
@@ -15476,7 +15094,6 @@ def _post_api_session_update(handler, parsed, body, diag):
         return bad(handler, "Read-only imported sessions cannot be updated from WebUI", 403)
     if s is None:
         return True
-    old_ws = getattr(s, "workspace", "")
     old_model = getattr(s, "model", None)
     old_provider = getattr(s, "model_provider", None)
     try:
@@ -15508,40 +15125,11 @@ def _post_api_session_update(handler, parsed, body, diag):
 
                 _evict_session_agent(body["session_id"])
         s.save()
-    if str(old_ws or "") != str(new_ws or ""):
-        try:
-            from api.terminal import close_terminal
-            close_terminal(body["session_id"])
-        except Exception:
-            logger.debug("Failed to close workspace terminal after workspace update")
     set_last_workspace(new_ws, profile=getattr(s, "profile", None))
     return j(
         handler,
         {"session": public_session_projection(s.compact() | {"messages": s.messages})},
     )
-
-
-def _post_api_session_worktree_remove(handler, parsed, body, diag):
-    sid = body.get("session_id", "")
-    if not sid or not isinstance(sid, str) or not sid.strip():
-        return bad(handler, "session_id must be a non-empty string", status=400)
-    sid = sid.strip()
-    if not is_safe_session_id(sid):
-        return bad(handler, "Invalid session_id", 400)
-    s = load_owned_session(handler, sid, load=get_session, metadata_only=True)
-    if s is None:
-        return True
-    force = bool(body.get("force", False))
-    try:
-        from api.worktrees import remove_worktree_for_session
-
-        result = remove_worktree_for_session(s, force=force)
-        return j(handler, result)
-    except ValueError as exc:
-        return bad(handler, str(exc), status=400)
-    except Exception as exc:
-        logger.exception("failed to remove worktree for session %s", sid)
-        return bad(handler, _sanitize_error(exc), status=500)
 
 
 def _post_api_session_delete(handler, parsed, body, diag):
@@ -15639,11 +15227,6 @@ def _post_api_session_delete(handler, parsed, body, diag):
         forget_bg_task_completion_dedup(sid)
     except Exception:
         logger.debug("Failed to prune bg-task dedup entry for deleted session %s", sid)
-    try:
-        from api.terminal import close_terminal
-        close_terminal(sid)
-    except Exception:
-        logger.debug("Failed to close workspace terminal for deleted session %s", sid)
     # Also delete from CLI state.db for CLI sessions shown in sidebar,
     # but never erase external messaging channel memory via WebUI delete.
     state_db_cleanup_failed = False
@@ -16014,30 +15597,6 @@ def _post_api_session_undo(handler, parsed, body, diag):
         return j(handler, {"error": str(e)})
 
 
-# ── YOLO mode toggle (POST) ──
-# Session-scoped only — stored in-memory on the server side.
-# Important lifecycle notes:
-#   • Page reload: state PERSISTS (frontend re-fetches via GET endpoint)
-#   • Cross-tab: state is SHARED (same server-side flag per session)
-#   • Server restart: state is LOST (in-memory only)
-#   • Cross-session: isolated (each session has its own flag)
-# Fixes #467
-def _post_api_session_yolo(handler, parsed, body, diag):
-    try:
-        require(body, "session_id")
-    except ValueError as e:
-        return bad(handler, str(e))
-    sid = str(body["session_id"] or "").strip()
-    enabled = bool(body.get("enabled", True))
-    if not enabled:
-        with gateway_yolo_handoff(sid):
-            set_session_yolo_enabled(sid, False)
-            return j(handler, {"ok": True, "yolo_enabled": bool(is_session_yolo_enabled(sid))})
-
-    payload, status = _enable_session_yolo_and_release_pending(sid, choice="once")
-    return j(handler, payload, status=status)
-
-
 def _post_api_btw(handler, parsed, body, diag):
     return _handle_btw(handler, body)
 
@@ -16065,22 +15624,6 @@ def _post_api_chat(handler, parsed, body, diag):
 def _post_api_chat_steer(handler, parsed, body, diag):
     from api.streaming import _handle_chat_steer
     return _handle_chat_steer(handler, body)
-
-
-def _post_api_terminal_start(handler, parsed, body, diag):
-    return _handle_terminal_start(handler, body)
-
-
-def _post_api_terminal_input(handler, parsed, body, diag):
-    return _handle_terminal_input(handler, body)
-
-
-def _post_api_terminal_resize(handler, parsed, body, diag):
-    return _handle_terminal_resize(handler, body)
-
-
-def _post_api_terminal_close(handler, parsed, body, diag):
-    return _handle_terminal_close(handler, body)
 
 
 # ── Cron API (POST) ──
@@ -16134,55 +15677,6 @@ def _post_api_crons_resume(handler, parsed, body, diag):
         return _handle_cron_resume(handler, body)
 
 
-# ── Git workspace ops (POST) ──
-def _post_api_git_stage(handler, parsed, body, diag):
-    return _handle_git_stage(handler, body)
-
-
-def _post_api_git_unstage(handler, parsed, body, diag):
-    return _handle_git_unstage(handler, body)
-
-
-def _post_api_git_discard(handler, parsed, body, diag):
-    return _handle_git_discard(handler, body)
-
-
-def _post_api_git_commit_message(handler, parsed, body, diag):
-    return _handle_git_commit_message(handler, body)
-
-
-def _post_api_git_commit_message_selected(handler, parsed, body, diag):
-    return _handle_git_commit_message_selected(handler, body)
-
-
-def _post_api_git_commit(handler, parsed, body, diag):
-    return _handle_git_commit(handler, body)
-
-
-def _post_api_git_commit_selected(handler, parsed, body, diag):
-    return _handle_git_commit_selected(handler, body)
-
-
-def _post_api_git_fetch(handler, parsed, body, diag):
-    return _handle_git_remote_action(handler, body, "fetch")
-
-
-def _post_api_git_pull(handler, parsed, body, diag):
-    return _handle_git_remote_action(handler, body, "pull")
-
-
-def _post_api_git_push(handler, parsed, body, diag):
-    return _handle_git_remote_action(handler, body, "push")
-
-
-def _post_api_git_checkout(handler, parsed, body, diag):
-    return _handle_git_checkout(handler, body)
-
-
-def _post_api_git_stash_checkout(handler, parsed, body, diag):
-    return _handle_git_stash_checkout(handler, body)
-
-
 # ── File ops (POST) ──
 def _post_api_file_delete(handler, parsed, body, diag):
     return _handle_file_delete(handler, body)
@@ -16212,16 +15706,8 @@ def _post_api_file_create_dir(handler, parsed, body, diag):
     return _handle_create_dir(handler, body)
 
 
-def _post_api_file_reveal(handler, parsed, body, diag):
-    return _handle_file_reveal(handler, body)
-
-
 def _post_api_file_path(handler, parsed, body, diag):
     return _handle_file_path(handler, body)
-
-
-def _post_api_file_open_vscode(handler, parsed, body, diag):
-    return _handle_file_open_vscode(handler, body)
 
 
 # ── Workspace management (POST) ──
@@ -16269,32 +15755,6 @@ def _post_api_commands_bundles_resolve(handler, parsed, body, diag):
         return bad(handler, _sanitize_error(e), 500)
 
 
-def _post_api_commands_exec(handler, parsed, body, diag):
-    from api.commands import execute_agent_command, execute_plugin_command
-
-    command = str(body.get("command", "") or "").strip()
-    if not command:
-        return bad(handler, "command is required")
-
-    try:
-        return j(handler, {"output": execute_agent_command(command)})
-    except KeyError:
-        pass
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except RuntimeError as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-    try:
-        return j(handler, {"output": execute_plugin_command(command)})
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except KeyError:
-        return bad(handler, "Plugin command not found", 404)
-    except RuntimeError as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
 # ── Skills (POST) ──
 def _post_api_skills_save(handler, parsed, body, diag):
     return _handle_skill_save(handler, body)
@@ -16311,10 +15771,6 @@ def _post_api_skills_toggle(handler, parsed, body, diag):
 # ── Memory (POST) ──
 def _post_api_memory_write(handler, parsed, body, diag):
     return _handle_memory_write(handler, body)
-
-
-def _post_api_gateway_control(handler, parsed, body, diag):
-    return _handle_gateway_lifecycle(handler, parsed.path.rsplit("/", 1)[-1], body)
 
 
 # ── Profile API (POST) ──
@@ -16968,21 +16424,6 @@ def _post_api_rollback_restore(handler, parsed, body, diag):
         return bad(handler, str(e), status=500)
 
 
-def _put_api_mcp_servers(handler, parsed, body, diag):
-    name = parsed.path[len("/api/mcp/servers/"):]
-    return _handle_mcp_server_update(handler, name, body)
-
-
-def _patch_api_mcp_servers(handler, parsed, body, diag):
-    name = parsed.path[len("/api/mcp/servers/"):]
-    return _handle_mcp_server_toggle(handler, name, body)
-
-
-def _delete_api_mcp_servers(handler, parsed, body, diag):
-    name = parsed.path[len("/api/mcp/servers/"):]
-    return _handle_mcp_server_delete(handler, name)
-
-
 def _delete_api_prompts(handler, parsed, body, diag):
     pid = str(body.get("id") or "").strip()
     if not pid:
@@ -17355,138 +16796,6 @@ def _handle_list_dir(handler, parsed):
         return bad(handler, _sanitize_error(e), 500)
     except (FileNotFoundError, ValueError) as e:
         return bad(handler, _sanitize_error(e), 404)
-
-
-def _read_json_request_body(handler, *, max_bytes: int = 4096) -> dict:
-    try:
-        length = _safe_content_length(handler, max_bytes)
-    except (ValueError, OverflowError) as exc:
-        raise ValueError(_sanitize_error(exc)) from exc
-    raw = handler.rfile.read(length) if length else b"{}"
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except Exception as exc:
-        raise ValueError("invalid JSON body") from exc
-    return payload if isinstance(payload, dict) else {}
-
-
-def _handle_escape_authorize(handler, parsed, body: dict | None = None):
-    if handler.command != "POST":
-        return bad(handler, "method not allowed", 405)
-    if not handler.headers.get("Origin"):
-        return bad(handler, "browser origin required", 403)
-    if not _check_csrf(handler):
-        return bad(handler, _csrf_rejection_error(handler), 403)
-    if body is None:
-        try:
-            body = _read_json_request_body(handler)
-        except ValueError as exc:
-            return bad(handler, _sanitize_error(exc), 400)
-    qs = parse_qs(parsed.query)
-    sid = str(body.get("session_id") or qs.get("session_id", [""])[0] or "").strip()
-    rel = str(body.get("path") or qs.get("path", [""])[0] or "").strip()
-    token = str(body.get("token") or qs.get("token", [""])[0] or "").strip()
-    if token:
-        return bad(handler, "token must not be provided", 400)
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not rel:
-        return bad(handler, "path is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
-    if s is None:
-        return True
-    try:
-        payload = authorize_escape_target(Path(s.workspace), sid, rel)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    return j(handler, payload)
-
-
-def _handle_escape_list_dir(handler, parsed):
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    token = qs.get("token", [""])[0]
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not token:
-        return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
-    if s is None:
-        return True
-    rel_path = qs.get("path", ["."])[0]
-    try:
-        payload = list_authorized_escape_dir(Path(s.workspace), sid, token, rel_path)
-        payload["entries"] = serialize_workspace_entries_for_browser(payload.get("entries"))
-        return j(handler, payload)
-    except FileNotFoundError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    except EscapeAuthorizationExpiredError as exc:
-        return bad(handler, _sanitize_error(exc), 403)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-
-
-def _handle_escape_file_read(handler, parsed):
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    token = qs.get("token", [""])[0]
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not token:
-        return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
-    if s is None:
-        return True
-    rel = qs.get("path", [""])[0]
-    try:
-        return j(handler, read_authorized_escape_file_content(Path(s.workspace), sid, token, rel))
-    except FileNotFoundError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    except EscapeAuthorizationExpiredError as exc:
-        return bad(handler, _sanitize_error(exc), 403)
-    except ImportError as exc:
-        # Optional Office parsers absent on a lean install — mirror
-        # _handle_file_read: a 503 with the install hint, not a 500 traceback.
-        return bad(handler, _sanitize_error(exc), 503)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-
-
-def _handle_escape_file_raw(handler, parsed):
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    token = qs.get("token", [""])[0]
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not token:
-        return bad(handler, "token is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
-    if s is None:
-        return True
-    rel = qs.get("path", [""])[0]
-    force_download = qs.get("download", [""])[0] == "1"
-    try:
-        anchor_root, target = raw_authorized_escape_target(Path(s.workspace), sid, token, rel)
-    except FileNotFoundError:
-        return j(handler, {"error": "not found"}, status=404)
-    except EscapeAuthorizationExpiredError as exc:
-        return bad(handler, _sanitize_error(exc), 403)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    if not target.exists() or not target.is_file():
-        return j(handler, {"error": "not found"}, status=404)
-    ext = target.suffix.lower()
-    mime = MIME_MAP.get(ext, "application/octet-stream")
-    inline_preview = qs.get("inline", [""])[0] == "1"
-    dangerous_types = {"text/html", "application/xhtml+xml", "image/svg+xml"}
-    html_inline_ok = inline_preview and mime == "text/html"
-    disposition = "attachment" if force_download or (mime in dangerous_types and not html_inline_ok) else "inline"
-    sandbox_csp = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
-    # Content-Security-Policy sandboxing is carried through the csp=sandbox_csp handoff below.
-    csp = sandbox_csp if (inline_preview and not force_download and disposition == "inline") else None
-    if html_inline_ok:
-        return _serve_inline_html_preview(handler, target, "no-store", csp=sandbox_csp, anchor_root=anchor_root)
-    return _serve_file_bytes(handler, target, mime, disposition, "no-store", csp=csp, anchor_root=anchor_root)
 
 
 def _sse_with_id(handler, event, data, event_id=None):
@@ -18326,184 +17635,6 @@ def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
                 subscriber_stream.unsubscribe(subscriber)
             except Exception:
                 pass
-    return True
-
-
-def _terminal_session_lookup(body_or_query):
-    sid = str(body_or_query.get("session_id", "")).strip()
-    if not sid:
-        raise ValueError("session_id required")
-    try:
-        s = get_session(sid)
-    except KeyError:
-        raise KeyError("Session not found")
-    return sid, s
-
-
-_REMOTE_TERMINAL_BACKEND_UNSUPPORTED_ERROR = "remote_terminal_backend_unsupported"
-_REMOTE_TERMINAL_BACKEND_UNSUPPORTED_MESSAGE = (
-    "Embedded terminal is only supported for local terminal backends."
-)
-
-
-def _terminal_remote_backend_enabled() -> bool:
-    terminal_cfg = get_config().get("terminal", {})
-    return _is_remote_terminal_backend(terminal_cfg)
-
-
-def _handle_terminal_start(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        sid, session = _terminal_session_lookup(body)
-        if _terminal_remote_backend_enabled():
-            return j(
-                handler,
-                {
-                    "error": _REMOTE_TERMINAL_BACKEND_UNSUPPORTED_ERROR,
-                    "message": _REMOTE_TERMINAL_BACKEND_UNSUPPORTED_MESSAGE,
-                },
-                status=400,
-            )
-        workspace = resolve_trusted_workspace(getattr(session, "workspace", "") or "", profile=getattr(session, "profile", None))
-        from api.terminal import start_terminal
-        term = start_terminal(
-            sid,
-            workspace,
-            rows=int(body.get("rows") or 24),
-            cols=int(body.get("cols") or 80),
-            restart=bool(body.get("restart")),
-        )
-        return j(
-            handler,
-            {
-                "ok": True,
-                "session_id": sid,
-                "workspace": term.workspace,
-                "running": term.is_alive(),
-            },
-        )
-    except KeyError as e:
-        return bad(handler, str(e), 404)
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except Exception as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_terminal_input(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        require(body, "session_id")
-        data = str(body.get("data", ""))
-        if len(data) > 8192:
-            return bad(handler, "input too large", 413)
-        from api.terminal import write_terminal
-        write_terminal(body["session_id"], data)
-        return j(handler, {"ok": True})
-    except KeyError as e:
-        return bad(handler, str(e), 404)
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except Exception as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_terminal_resize(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        require(body, "session_id")
-        from api.terminal import resize_terminal
-        resize_terminal(
-            body["session_id"],
-            rows=int(body.get("rows") or 24),
-            cols=int(body.get("cols") or 80),
-        )
-        return j(handler, {"ok": True})
-    except KeyError as e:
-        return bad(handler, str(e), 404)
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except Exception as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_terminal_close(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        require(body, "session_id")
-        from api.terminal import close_terminal
-        closed = close_terminal(body["session_id"])
-        return j(handler, {"ok": True, "closed": closed})
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-
-
-def _handle_terminal_output(handler, parsed):
-    if not _embedded_terminal_gate_allows(handler):
-        return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    if not sid:
-        return bad(handler, "session_id required")
-    from api.terminal import attach_terminal
-    # EventSource automatically returns the last received SSE id on transport
-    # reconnect. Seed only newer backlog entries in that case so already-rendered
-    # terminal bytes (including ANSI cursor controls) are not written twice. A
-    # genuinely new viewer has no cursor and receives the full bounded backlog.
-    after_seq = None
-    last_event_id = str(handler.headers.get("Last-Event-ID", "") or "").strip()
-    if last_event_id:
-        try:
-            after_seq = max(0, int(last_event_id))
-        except ValueError:
-            pass
-    # Look up and subscribe in one atomic step. A separate `get_terminal()` then
-    # `term.subscribe()` leaves a window in which the idle reaper can claim and
-    # tear the terminal down, leaving this stream attached to a corpse after we
-    # already committed a 200. Attaching atomically means we either hold a live
-    # viewer (which makes the terminal un-reapable) or learn it is gone in time
-    # to answer 404.
-    attached = attach_terminal(sid, after_seq=after_seq)
-    if attached is None:
-        return j(handler, {"error": "terminal not running"}, status=404)
-    term, output = attached
-
-    # The subscription is live from here on, so EVERY exit path — including a
-    # failure while writing the response headers — must unsubscribe. Writing
-    # headers to a client that already dropped raises BrokenPipeError, and if
-    # that escaped before the try block the queue would stay in
-    # `_subscribers` forever, pinning `unwatched_since` at None and making the
-    # terminal permanently unreapable: the exact fd/thread leak this reaper
-    # exists to prevent. Hence the try starts immediately after the attach.
-    try:
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        handler.send_header("Cache-Control", "no-cache")
-        handler.send_header("X-Accel-Buffering", "no")
-        handler.send_header("Connection", "close")
-        end_sse_headers(handler)
-        _sse_set_write_deadline(handler)  # Defect A: slow tab can't pin this thread
-        while True:
-            try:
-                event_seq, event, data = output.get(timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS)
-            except queue.Empty:
-                handler.wfile.write(b": terminal heartbeat\n\n")
-                handler.wfile.flush()
-                if term.closed.is_set() and output.empty():
-                    _sse(handler, "terminal_closed", {"exit_code": term.proc.poll()})
-                    break
-                continue
-            _sse_with_id(handler, event, data, event_id=event_seq)
-            if event in ("terminal_closed", "terminal_error"):
-                break
-    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-        pass
-    finally:
-        term.unsubscribe(output)
     return True
 
 
@@ -24503,36 +23634,6 @@ def _git_locked_by_active_stream(session) -> bool:
         return False
 
 
-def _git_reject_destructive_if_unsafe(handler, session) -> bool:
-    from api.workspace_git import (
-        GitWorkspaceError,
-        WORKSPACE_GIT_DESTRUCTIVE_ENV,
-        workspace_git_destructive_enabled,
-    )
-
-    if not workspace_git_destructive_enabled():
-        _git_bad(
-            handler,
-            GitWorkspaceError(
-                f"Destructive workspace Git operations are disabled. Set {WORKSPACE_GIT_DESTRUCTIVE_ENV}=1 to enable them.",
-                "destructive_git_disabled",
-            ),
-            status=403,
-        )
-        return True
-    if _git_locked_by_active_stream(session):
-        _git_bad(
-            handler,
-            GitWorkspaceError(
-                "A session run is active. Wait for it to finish before running this Git operation.",
-                "active_stream",
-            ),
-            status=409,
-        )
-        return True
-    return False
-
-
 def _handle_git_status(handler, parsed):
     qs = parse_qs(parsed.query)
     workspace = _git_session_workspace(handler, qs.get("session_id", [""])[0])
@@ -24585,370 +23686,6 @@ def _git_bad(handler, err, status: int = 400):
         },
         status=status,
     )
-
-
-def _git_paths_from_body(body) -> list[str]:
-    raw_paths = body.get("paths")
-    if raw_paths is None and body.get("path"):
-        raw_paths = [body.get("path")]
-    if isinstance(raw_paths, str):
-        raw_paths = [raw_paths]
-    if not isinstance(raw_paths, list):
-        raise ValueError("paths must be a list")
-    return [str(path) for path in raw_paths]
-
-
-def _handle_git_stage(handler, body):
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_stage
-
-        return j(handler, {"ok": True, "git": git_stage(workspace, paths)})
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_unstage(handler, body):
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_unstage
-
-        return j(handler, {"ok": True, "git": git_unstage(workspace, paths)})
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_discard(handler, body):
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_discard
-
-        return j(
-            handler,
-            {
-                "ok": True,
-                "git": git_discard(
-                    workspace,
-                    paths,
-                    delete_untracked=bool(body.get("delete_untracked")),
-                ),
-            },
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _llm_git_commit_message(system_prompt: str, user_prompt: str, session=None) -> str:
-    from api import profiles as profiles_api
-
-    active_profile = profiles_api.get_active_profile_name() or "default"
-    with profiles_api.profile_env_for_background_worker(
-        active_profile,
-        "git commit message",
-        logger_override=logger,
-    ):
-        from api.config import (
-            get_effective_default_model,
-            model_with_provider_context,
-            resolve_model_provider,
-        )
-
-        session_model = str(getattr(session, "model", "") or "").strip()
-        session_provider = str(getattr(session, "model_provider", "") or "").strip() or None
-        model_for_resolution = (
-            model_with_provider_context(session_model, session_provider)
-            if session_model
-            else get_effective_default_model()
-        )
-        _main_model, _main_provider, _main_base_url = resolve_model_provider(model_for_resolution)
-        _main_api_key = None
-        _rt = None
-        try:
-            from api.oauth import resolve_runtime_provider_with_anthropic_env_lock
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-
-            _rt = resolve_runtime_provider_with_anthropic_env_lock(
-                resolve_runtime_provider,
-                requested=_main_provider,
-            )
-            _main_api_key = _rt.get("api_key")
-            if not _main_provider:
-                _main_provider = _rt.get("provider")
-            if not _main_base_url:
-                _main_base_url = _rt.get("base_url")
-        except Exception as _e:
-            logger.debug("git commit message runtime provider resolution failed: %s", _e)
-        # Atomic custom-provider authority (see the /api/chat note): the record
-        # that supplies the endpoint must also supply the credential — and the
-        # wire protocol, credential pool and ACP transport that go with it.
-        _bundle = _resolve_agent_connection_bundle(
-            _main_provider, _main_api_key, _main_base_url, _rt
-        )
-        _main_provider = _bundle["provider"]
-        _main_api_key = _bundle["api_key"]
-        _main_base_url = _bundle["base_url"]
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        main_runtime = _auxiliary_main_runtime(_bundle, _main_model)
-        ensure_agent_runtime_current()
-        try:
-            from agent.auxiliary_client import get_text_auxiliary_client
-
-            aux_client, aux_model = get_text_auxiliary_client(
-                "compression",
-                main_runtime=main_runtime,
-            )
-            if aux_client is not None and aux_model:
-                response = aux_client.chat.completions.create(
-                    model=aux_model,
-                    messages=messages,
-                )
-                return str(response.choices[0].message.content or "").strip()
-        except Exception as _e:
-            logger.debug("git commit message auxiliary model failed; falling back to main model: %s", _e)
-
-        AIAgent = require_ai_agent_class()
-
-        agent = webui_agent(
-            AIAgent,
-            _bundle,
-            model=_main_model,
-            session_id=f"git-commit-message-{uuid.uuid4().hex[:8]}",
-            toolsets=[],
-        )
-        result = agent.run_conversation(
-            user_message=user_prompt,
-            system_message=system_prompt,
-            conversation_history=[],
-            task_id=f"git-commit-message-{uuid.uuid4().hex[:8]}",
-        )
-        return str(result.get("final_response") or "").strip()
-
-
-def _handle_git_commit_message(handler, body):
-    from api.workspace_git import (
-        GitWorkspaceError,
-        clean_generated_commit_message,
-        staged_commit_message_prompt,
-    )
-
-    try:
-        require(body, "session_id")
-        session = load_owned_session(handler, body["session_id"], load=get_session)
-        if session is None:
-            return True
-        workspace = Path(session.workspace)
-
-        prompt = staged_commit_message_prompt(workspace)
-        message = clean_generated_commit_message(
-            _llm_git_commit_message(prompt["system_prompt"], prompt["user_prompt"], session=session)
-        )
-        if not message:
-            raise GitWorkspaceError("No commit message was generated")
-        return j(handler, {"ok": True, "message": message, "truncated": bool(prompt.get("truncated"))})
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-    except AgentRuntimeChangedError as e:
-        return j(handler, agent_runtime_stale_payload(e), status=409)
-    except Exception as e:
-        logger.exception("git commit message generation failed")
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_git_commit_message_selected(handler, body):
-    from api.workspace_git import (
-        GitWorkspaceError,
-        clean_generated_commit_message,
-        selected_commit_message_prompt,
-    )
-
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session = load_owned_session(handler, body["session_id"], load=get_session)
-        if session is None:
-            return True
-        workspace = Path(session.workspace)
-
-        prompt = selected_commit_message_prompt(workspace, paths)
-        message = clean_generated_commit_message(
-            _llm_git_commit_message(prompt["system_prompt"], prompt["user_prompt"], session=session)
-        )
-        if not message:
-            raise GitWorkspaceError("No commit message was generated")
-        return j(handler, {"ok": True, "message": message, "truncated": bool(prompt.get("truncated"))})
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-    except AgentRuntimeChangedError as e:
-        return j(handler, agent_runtime_stale_payload(e), status=409)
-    except Exception as e:
-        logger.exception("selected git commit message generation failed")
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_git_commit(handler, body):
-    try:
-        require(body, "session_id", "message")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_commit
-
-        return j(handler, git_commit(workspace, body.get("message", "")))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_commit_selected(handler, body):
-    try:
-        require(body, "session_id", "message")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_commit_selected
-
-        return j(handler, git_commit_selected(workspace, body.get("message", ""), paths))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_remote_action(handler, body, action: str):
-    try:
-        require(body, "session_id")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if action in {"pull", "push"} and _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_fetch, git_pull, git_push
-
-        actions = {
-            "fetch": git_fetch,
-            "pull": git_pull,
-            "push": git_push,
-        }
-        return j(handler, actions[action](workspace))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_checkout(handler, body):
-    try:
-        require(body, "session_id", "ref", "mode")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_checkout
-
-        result = git_checkout(
-            workspace,
-            str(body.get("ref", "")),
-            str(body.get("mode", "local")),
-            new_branch=body.get("new_branch"),
-            track=bool(body.get("track")),
-            dirty_mode=str(body.get("dirty_mode", "block")),
-        )
-        return j(
-            handler,
-            {
-                "ok": True,
-                "git": result.get("status"),
-                "branches": result.get("branches"),
-                "current_branch": result.get("current_branch"),
-                "message": result.get("message", ""),
-            },
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_stash_checkout(handler, body):
-    try:
-        require(body, "session_id", "ref", "mode")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_stash_and_checkout
-
-        result = git_stash_and_checkout(
-            workspace,
-            str(body.get("ref", "")),
-            str(body.get("mode", "local")),
-            new_branch=body.get("new_branch"),
-            track=bool(body.get("track")),
-        )
-        return j(
-            handler,
-            {
-                "ok": True,
-                "git": result.get("status"),
-                "branches": result.get("branches"),
-                "current_branch": result.get("current_branch"),
-                "message": result.get("message", ""),
-                "stash_name": result.get("stash_name", ""),
-                "stashed": bool(result.get("stashed")),
-                "restored_stash": result.get("restored_stash"),
-                "restore_failed": bool(result.get("restore_failed")),
-                "restore_error": result.get("restore_error", ""),
-                "restore_stash": result.get("restore_stash"),
-            },
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
 
 
 def _handle_file_delete(handler, body):
@@ -25224,53 +23961,6 @@ def _handle_create_dir(handler, body):
         return bad(handler, _sanitize_error(e))
 
 
-def _handle_file_reveal(handler, body):
-    try:
-        require(body, "session_id", "path")
-    except ValueError as e:
-        return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
-    if s is None:
-        return True
-    try:
-        target = resolve_in_workspace(Path(s.workspace), body["path"])
-        if not target.exists():
-            # Include the resolved server-side path in the error message so
-            # the frontend toast can show *which* file the system expected.
-            # Useful when a stale session row still references a deleted file
-            # (#1764 — Cygnus's screenshot showed a "Failed to reveal: not
-            # found" toast that dropped the path entirely, leaving no clue
-            # what was missing).
-            return bad(handler, f"File not found: {target}", 404)
-
-        target_str = str(target)
-
-        # Optional Docker host/container path translation (mirrors _handle_file_open_vscode).
-        from api.config import get_config as _get_cfg  # noqa: PLC0415
-        vscode_cfg = _get_cfg().get("vscode", {})
-        if not isinstance(vscode_cfg, dict):
-            vscode_cfg = {}
-        container_prefix = vscode_cfg.get("container_path_prefix", "")
-        host_prefix = vscode_cfg.get("host_path_prefix", "")
-        if container_prefix and host_prefix:
-            _norm = container_prefix.rstrip('/') + '/'
-            if target_str.startswith(_norm) or target_str == container_prefix.rstrip('/'):
-                target_str = host_prefix + target_str[len(container_prefix):]
-
-        system = platform.system()
-        if system == "Darwin":
-            subprocess.Popen(["open", "-R", target_str])
-        elif system == "Windows":
-            subprocess.Popen(["explorer.exe", "/select," + target_str])
-        else:
-            # Linux / other — open parent directory
-            subprocess.Popen(["xdg-open", str(Path(target_str).parent)])
-
-        return j(handler, {"ok": True, "path": body["path"]})
-    except (ValueError, PermissionError, OSError) as e:
-        return bad(handler, _sanitize_error(e))
-
-
 def _handle_file_path(handler, body):
     """Resolve a relative workspace-rooted path into an absolute on-disk path.
 
@@ -25295,91 +23985,6 @@ def _handle_file_path(handler, body):
     try:
         target = resolve_in_workspace(Path(s.workspace), body["path"])
         return j(handler, {"ok": True, "path": str(target)})
-    except (ValueError, PermissionError, OSError) as e:
-        return bad(handler, _sanitize_error(e))
-
-
-def _handle_file_open_vscode(handler, body):
-    """Open a workspace file or folder in VS Code (#2735).
-
-    Reads optional ``vscode`` config block from config.yaml:
-
-        vscode:
-          command: code          # executable on PATH; defaults to "code"
-          host_path_prefix: /home/user/projects       # Docker host path
-          container_path_prefix: /app/workspace       # matching container path
-
-    If ``host_path_prefix`` and ``container_path_prefix`` are both set,
-    paths that begin with ``container_path_prefix`` are translated to the
-    host prefix before being handed to VS Code.  This lets users running
-    Hermes WebUI inside Docker still open files in their local editor.
-    """
-    try:
-        require(body, "session_id", "path")
-    except ValueError as e:
-        return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
-    if s is None:
-        return True
-    try:
-        target = resolve_in_workspace(Path(s.workspace), body["path"])
-        if not target.exists():
-            return bad(handler, f"File not found: {target}", 404)
-
-        target_str = str(target)
-
-        # Optional Docker host/container path translation
-        from api.config import get_config as _get_cfg  # noqa: PLC0415
-        vscode_cfg = _get_cfg().get("vscode", {})
-        if not isinstance(vscode_cfg, dict):
-            vscode_cfg = {}
-        container_prefix = vscode_cfg.get("container_path_prefix", "")
-        host_prefix = vscode_cfg.get("host_path_prefix", "")
-        if container_prefix and host_prefix:
-            _norm = container_prefix.rstrip('/') + '/'
-            if target_str.startswith(_norm) or target_str == container_prefix.rstrip('/'):
-                target_str = host_prefix + target_str[len(container_prefix):]
-
-        cmd = vscode_cfg.get("command", "code")
-        # Resolve the command to an absolute path so subprocess.Popen finds it
-        # even when the server process inherits a minimal PATH (e.g. when
-        # launched via start.sh on macOS where /usr/local/bin may be absent).
-        resolved_cmd = shutil.which(cmd)
-        if resolved_cmd is None:
-            # Try common VS Code installation paths as fallback.
-            # macOS: /usr/local/bin/code (symlink) or app bundle CLI
-            # Linux: /usr/bin/code or snap
-            # Windows: user-install under %LOCALAPPDATA%, system-install under %PROGRAMFILES%
-            _local_app_data = os.environ.get("LOCALAPPDATA", "")
-            _prog_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-            _prog_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
-            _vscode_fallbacks = [
-                # macOS
-                "/usr/local/bin/code",
-                "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-                # Linux
-                "/usr/bin/code",
-                "/snap/bin/code",
-                # Windows (user install)
-                os.path.join(_local_app_data, "Programs", "Microsoft VS Code", "bin", "code.cmd"),
-                # Windows (system install)
-                os.path.join(_prog_files, "Microsoft VS Code", "bin", "code.cmd"),
-                os.path.join(_prog_files_x86, "Microsoft VS Code", "bin", "code.cmd"),
-            ]
-            for fb in _vscode_fallbacks:
-                if fb and Path(fb).exists():
-                    resolved_cmd = fb
-                    break
-        if resolved_cmd is None:
-            return bad(
-                handler,
-                f"VS Code command not found: {cmd!r}. "
-                "Install VS Code and ensure the 'code' CLI is on PATH, "
-                "or set vscode.command in config.yaml to the full path.",
-            )
-        subprocess.Popen([resolved_cmd, target_str])
-
-        return j(handler, {"ok": True, "path": body["path"]})
     except (ValueError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
 
@@ -25691,10 +24296,9 @@ def _gateway_approval_failure(
     code: str,
     error: str,
     status: int,
-    enable_yolo: bool,
     relayed: bool = False,
 ) -> tuple[dict, int]:
-    """Build a failed relay response with authoritative session-YOLO state."""
+    """Build a failed relay response."""
     payload = {
         "ok": False,
         "choice": choice,
@@ -25702,8 +24306,6 @@ def _gateway_approval_failure(
         "code": code,
         "error": error,
     }
-    if enable_yolo:
-        payload["yolo_enabled"] = bool(is_session_yolo_enabled(sid))
     return payload, status
 
 
@@ -25711,14 +24313,11 @@ def _relay_gateway_run_approval(
     sid: str,
     mirror: dict,
     choice: str,
-    *,
-    enable_yolo: bool,
 ) -> tuple[dict, int]:
     """Relay one exact run-backed mirror under the shared `(session, run)` owner.
 
-    The mirror remains actionable unless the remote Runs API confirms success.
-    Both the approval-card endpoint and the ordinary session-YOLO endpoint use
-    this chokepoint so one tab cannot retire another tab's parked remote run.
+    The mirror remains actionable unless the remote Runs API confirms success,
+    so one tab cannot retire another tab's parked remote run.
     """
     from api.config import gateway_supports_approval_identity_v1
     from api.gateway_chat import gateway_run_endpoint
@@ -25734,7 +24333,6 @@ def _relay_gateway_run_approval(
             code="gateway_run_unavailable",
             error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
             status=409,
-            enable_yolo=enable_yolo,
         )
     if not claim_gateway_approval_relay_owner(sid, run_id, approval_id):
         return _gateway_approval_failure(
@@ -25743,7 +24341,6 @@ def _relay_gateway_run_approval(
             code="gateway_approval_in_progress",
             error=_GATEWAY_APPROVAL_RELAY_IN_PROGRESS,
             status=409,
-            enable_yolo=enable_yolo,
         )
 
     try:
@@ -25760,8 +24357,7 @@ def _relay_gateway_run_approval(
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=enable_yolo,
-            )
+                )
 
         base_url, api_key = gateway_run_endpoint(run_id)
         identity_v1 = bool(current_mirror.get(_GATEWAY_AGENT_IDENTITY_V1)) and (
@@ -25776,23 +24372,17 @@ def _relay_gateway_run_approval(
                     code="gateway_run_unavailable",
                     error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                     status=409,
-                    enable_yolo=enable_yolo,
-                )
+                        )
 
-        yolo_transition = begin_session_yolo_transition(sid) if enable_yolo else None
         relay_error = None
-        relay_succeeded = False
         try:
             HttpRunnerClient(base_url=base_url, api_key=api_key).respond_approval(
                 run_id,
                 approval_id if identity_v1 else "",
                 choice,
             )
-            relay_succeeded = True
         except (RunnerClientError, ValueError) as exc:
             relay_error = str(exc)
-        finally:
-            finish_session_yolo_transition(sid, yolo_transition, succeeded=relay_succeeded)
 
         if relay_error is not None:
             return _gateway_approval_failure(
@@ -25801,8 +24391,7 @@ def _relay_gateway_run_approval(
                 code="gateway_approval_relay_failed",
                 error=relay_error,
                 status=502,
-                enable_yolo=enable_yolo,
-                relayed=True,
+                    relayed=True,
             )
 
         # The outbound relay resumes the remote run. Retire the local projection
@@ -25818,132 +24407,9 @@ def _relay_gateway_run_approval(
             "ok": True,
             "choice": choice,
             "relayed": True,
-            **(
-                {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-                if enable_yolo
-                else {}
-            ),
         }, 200
     finally:
         release_gateway_approval_relay_owner(sid, run_id, approval_id)
-
-
-def _pending_approval_owner_state(
-    sid: str,
-    approval_id: str,
-    run_id: str = "",
-    mirror_token: str = "",
-) -> tuple[bool, bool]:
-    """Return `(exact_owner_exists, any_pending_exists)` under queue authority."""
-    approval_id = str(approval_id or "").strip()
-    run_id = str(run_id or "").strip()
-    mirror_token = str(mirror_token or "").strip()
-    with _lock:
-        reconcile_gateway_pending_mirror_locked(sid)
-        queue = _pending.get(sid)
-        entries = queue if isinstance(queue, list) else [queue] if queue else []
-        exact = False
-        for entry in entries:
-            if not isinstance(entry, dict) or str(entry.get("approval_id") or "") != approval_id:
-                continue
-            entry_run_id = str(entry.get("run_id") or "").strip()
-            entry_mirror_token = str(entry.get(_GATEWAY_MIRROR_TOKEN) or "").strip()
-            if run_id and entry_run_id != run_id:
-                continue
-            if mirror_token and entry_mirror_token != mirror_token:
-                continue
-            if (run_id or mirror_token) and not entry.get(_GATEWAY_MIRROR_FLAG):
-                continue
-            exact = True
-            break
-        return exact, bool(entries or _gateway_queues.get(sid))
-
-
-def _enable_session_yolo_and_release_pending(
-    sid: str,
-    *,
-    choice: str,
-    approval_id: str = "",
-    run_id: str = "",
-    mirror_token: str = "",
-    include_choice: bool = False,
-) -> tuple[dict, int]:
-    """Relay every parked remote approval, drain local waiters, then commit YOLO."""
-    approval_id = str(approval_id or "").strip()
-    run_id = str(run_id or "").strip()
-    mirror_token = str(mirror_token or "").strip()
-    has_exact_remote_owner = bool(run_id or mirror_token)
-    if has_exact_remote_owner and (not approval_id or not run_id or not mirror_token):
-        return _gateway_approval_failure(
-            sid,
-            choice,
-            code="gateway_run_unavailable",
-            error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-            status=409,
-            enable_yolo=True,
-        )
-
-    yolo_transition = None
-    try:
-        with gateway_yolo_handoff(sid):
-            yolo_transition = begin_session_yolo_transition(sid)
-            stale_cleared = False
-            if approval_id:
-                exact_owner, any_pending = _pending_approval_owner_state(
-                    sid,
-                    approval_id,
-                    run_id,
-                    mirror_token,
-                )
-                if not exact_owner and (has_exact_remote_owner or any_pending):
-                    return _gateway_approval_failure(
-                        sid,
-                        choice,
-                        code="gateway_run_unavailable",
-                        error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-                        status=409,
-                        enable_yolo=True,
-                    )
-                stale_cleared = not exact_owner
-
-            run_mirrors = gateway_pending_mirrors(sid)
-            relayed = 0
-            for mirror in run_mirrors:
-                relay_payload, relay_status = _relay_gateway_run_approval(
-                    sid,
-                    mirror,
-                    choice,
-                    enable_yolo=False,
-                )
-                if relay_status != 200 or not relay_payload.get("ok"):
-                    finish_session_yolo_transition(
-                        sid,
-                        yolo_transition,
-                        succeeded=False,
-                    )
-                    yolo_transition = None
-                    return {
-                        **relay_payload,
-                        "yolo_enabled": bool(is_session_yolo_enabled(sid)),
-                    }, relay_status
-                relayed += 1
-
-            resolve_gateway_pending_local_all(
-                sid,
-                choice,
-            )
-            finish_session_yolo_transition(sid, yolo_transition, succeeded=True)
-            yolo_transition = None
-            return {
-                "ok": True,
-                "yolo_enabled": bool(is_session_yolo_enabled(sid)),
-                **({"choice": choice} if include_choice or relayed else {}),
-                **({"relayed": True} if relayed else {}),
-                **({"stale_cleared": True} if stale_cleared else {}),
-            }, 200
-    finally:
-        if yolo_transition is not None:
-            finish_session_yolo_transition(sid, yolo_transition, succeeded=False)
 
 
 def _gateway_pending_approval_without_run_id(sid: str, approval_id: str) -> bool:
@@ -25995,20 +24461,11 @@ def _handle_approval_respond(handler, body):
     if choice not in ("once", "session", "always", "deny"):
         return bad(handler, f"Invalid choice: {choice}")
     approval_id = body.get("approval_id", "")
-    enable_yolo = body.get("yolo") is True
+    if body.get("yolo") is True:
+        # Session YOLO went with the Admin (ADR 0006): never auto-approve from here.
+        return bad(handler, "YOLO mode is not available in the web app", 400)
     requested_run_id = str(body.get("run_id") or "").strip()
     requested_mirror_token = str(body.get("mirror_token") or "").strip()
-
-    if enable_yolo:
-        payload, status = _enable_session_yolo_and_release_pending(
-            sid,
-            choice=choice,
-            approval_id=approval_id,
-            run_id=requested_run_id,
-            mirror_token=requested_mirror_token,
-            include_choice=True,
-        )
-        return j(handler, payload, status=status)
 
     if requested_run_id or requested_mirror_token:
         if not approval_id or not requested_run_id or not requested_mirror_token:
@@ -26018,7 +24475,6 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=False,
             )
             return j(handler, relay_payload, status=relay_status)
         exact_mirror = gateway_pending_mirror(
@@ -26034,14 +24490,12 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=False,
             )
             return j(handler, relay_payload, status=relay_status)
         relay_payload, relay_status = _relay_gateway_run_approval(
             sid,
             exact_mirror,
             choice,
-            enable_yolo=False,
         )
         return j(handler, relay_payload, status=relay_status)
 
@@ -26128,8 +24582,7 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=enable_yolo,
-            )
+                )
             return j(handler, relay_payload, status=relay_status)
         matched_mirror = (
             gateway_pending_mirror(sid, approval_id=approval_id, run_id=_candidate_run_id)
@@ -26147,44 +24600,14 @@ def _handle_approval_respond(handler, body):
                     code="gateway_run_unavailable",
                     error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                     status=409,
-                    enable_yolo=enable_yolo,
-                )
+                        )
                 return j(handler, relay_payload, status=relay_status)
         if _run_id:
-            if enable_yolo:
-                # The visible card path must serialize the same session-wide
-                # handoff as the ordinary /api/session/yolo route and the Runs
-                # stream. Revalidate the exact mirror after acquiring it so a
-                # later approval cannot be parked while this relay commits YOLO.
-                with gateway_yolo_handoff(sid):
-                    current_mirror = gateway_pending_mirror(
-                        sid,
-                        approval_id=approval_id,
-                        run_id=_run_id,
-                    )
-                    if current_mirror is None:
-                        relay_payload, relay_status = _gateway_approval_failure(
-                            sid,
-                            choice,
-                            code="gateway_run_unavailable",
-                            error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-                            status=409,
-                            enable_yolo=True,
-                        )
-                    else:
-                        relay_payload, relay_status = _relay_gateway_run_approval(
-                            sid,
-                            current_mirror,
-                            choice,
-                            enable_yolo=True,
-                        )
-            else:
-                relay_payload, relay_status = _relay_gateway_run_approval(
-                    sid,
-                    matched_mirror or {},
-                    choice,
-                    enable_yolo=False,
-                )
+            relay_payload, relay_status = _relay_gateway_run_approval(
+                sid,
+                matched_mirror or {},
+                choice,
+            )
             return j(handler, relay_payload, status=relay_status)
         if _candidate_run_id:
             relay_payload, relay_status = _gateway_approval_failure(
@@ -26193,8 +24616,7 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=enable_yolo,
-            )
+                )
             return j(handler, relay_payload, status=relay_status)
         # A no-run mirror is local visibility state only. Resolve it only while
         # the exact parked producer still exists; otherwise keep the card live
@@ -26204,17 +24626,10 @@ def _handle_approval_respond(handler, body):
                 sid, approval_id, choice
             )
             if handled_no_run_mirror and resolved_count == 1:
-                if enable_yolo:
-                    set_session_yolo_enabled(sid, True)
                 return j(handler, {
                     "ok": True,
                     "choice": choice,
                     "local_retired": True,
-                    **(
-                        {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-                        if enable_yolo
-                        else {}
-                    ),
                 })
             if handled_no_run_mirror:
                 relay_payload, relay_status = _gateway_approval_failure(
@@ -26223,8 +24638,7 @@ def _handle_approval_respond(handler, body):
                     code="gateway_run_unavailable",
                     error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                     status=409,
-                    enable_yolo=enable_yolo,
-                )
+                        )
                 return j(handler, relay_payload, status=relay_status)
     except Exception:
         pass  # fall through to local approval path
@@ -26257,28 +24671,14 @@ def _handle_approval_respond(handler, body):
         # card instead of dead-ending. When something IS still pending, keep
         # the protective ok:false. `stale_cleared` lets the frontend log/branch
         # without showing an error toast.
-        if enable_yolo:
-            set_session_yolo_enabled(sid, True)
         return j(handler, {
             "ok": True,
             "choice": choice,
             "stale_cleared": True,
-            **(
-                {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-                if enable_yolo
-                else {}
-            ),
         })
-    if ok and enable_yolo:
-        set_session_yolo_enabled(sid, True)
     return j(handler, {
         "ok": ok,
         "choice": choice,
-        **(
-            {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-            if ok and enable_yolo
-            else {}
-        ),
     })
 
 
@@ -28484,30 +26884,6 @@ def _mcp_profile_runtime_inventory(servers, purpose, *, include_tools=True):
     return server_summaries, tools, source, view.scope_label
 
 
-def _handle_mcp_tools_list(handler):
-    """List known MCP tools from already-available runtime inventory only."""
-    cfg = get_config_for_profile_home(get_active_hermes_home())
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    server_summaries, tools, source, runtime_scope = _mcp_profile_runtime_inventory(
-        servers, "/api/mcp/tools"
-    )
-    tools.sort(key=lambda row: (row.get("server", ""), row.get("name", "")))
-    unavailable_servers = [
-        summary["name"] for summary in server_summaries.values()
-        if summary.get("enabled") and not summary.get("active")
-    ]
-    return j(handler, {
-        "tools": tools,
-        "total": len(tools),
-        "source": source,
-        "inventory_scope": "already_known_runtime_only",
-        "runtime_scope": runtime_scope,
-        "unavailable_servers": unavailable_servers,
-    })
-
-
 def _webui_truthy(value) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -28986,66 +27362,6 @@ def _handle_notes_item(handler, parsed):
         return j(handler, {"source": "joplin", "error": str(exc)}, status=502)
 
 
-def _handle_mcp_servers_list(handler):
-    """List configured MCP servers with safe, read-only runtime visibility."""
-    cfg = get_config_for_profile_home(get_active_hermes_home())
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    server_summaries, _tools, _source, runtime_scope = _mcp_profile_runtime_inventory(
-        servers, "/api/mcp/servers", include_tools=False
-    )
-    return j(handler, {
-        "servers": list(server_summaries.values()),
-        "toggle_supported": True,
-        "reload_required": True,
-        "runtime_scope": runtime_scope,
-    })
-
-
-def _handle_mcp_server_delete(handler, name):
-    """Delete an MCP server by name."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    if not name:
-        return bad(handler, "name is required")
-    cfg = get_config()
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    if name not in servers:
-        return bad(handler, f"MCP server '{name}' not found", 404)
-    del servers[name]
-    cfg["mcp_servers"] = servers
-    _save_yaml_config_file(_get_config_path(), cfg)
-    reload_config()
-    return j(handler, {"ok": True, "deleted": name})
-
-
-def _handle_mcp_server_toggle(handler, name, body):
-    """Toggle enabled state for an MCP server (PATCH /api/mcp/servers/{name})."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    if not name:
-        return bad(handler, "name is required")
-    if "enabled" not in body:
-        return bad(handler, "enabled field is required")
-    enabled = bool(body["enabled"])
-    cfg = get_config()
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    if name not in servers:
-        return bad(handler, f"MCP server '{name}' not found", 404)
-    if not isinstance(servers[name], dict):
-        return bad(handler, f"MCP server '{name}' has invalid config", 400)
-    servers[name]["enabled"] = enabled
-    cfg["mcp_servers"] = servers
-    _save_yaml_config_file(_get_config_path(), cfg)
-    reload_config()
-    return j(handler, {"ok": True, "name": name, "enabled": enabled})
-
-
 _MASKED_PLACEHOLDER = "••••••"
 
 
@@ -29065,39 +27381,3 @@ def _strip_masked_values(submitted, existing):
             cleaned[k] = v
     return cleaned
 
-
-def _handle_mcp_server_update(handler, name, body):
-    """Add or update an MCP server."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    if not name:
-        return bad(handler, "name is required")
-    # Validate: must have url (http) or command (stdio)
-    server_cfg = {}
-    cfg = get_config()
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    existing_cfg = servers.get(name, {})
-    if body.get("url"):
-        server_cfg["url"] = body["url"].strip()
-        if body.get("headers"):
-            server_cfg["headers"] = _strip_masked_values(body["headers"], existing_cfg.get("headers", {}))
-    elif body.get("command"):
-        server_cfg["command"] = body["command"].strip()
-        if body.get("args"):
-            server_cfg["args"] = body["args"] if isinstance(body["args"], list) else [body["args"]]
-        if body.get("env"):
-            server_cfg["env"] = _strip_masked_values(body["env"], existing_cfg.get("env", {}))
-    else:
-        return bad(handler, "url or command is required")
-    if body.get("timeout") is not None:
-        try:
-            server_cfg["timeout"] = int(body["timeout"])
-        except (ValueError, TypeError):
-            pass
-    servers[name] = server_cfg
-    cfg["mcp_servers"] = servers
-    _save_yaml_config_file(_get_config_path(), cfg)
-    reload_config()
-    return j(handler, {"ok": True, "server": _server_summary(name, server_cfg)})

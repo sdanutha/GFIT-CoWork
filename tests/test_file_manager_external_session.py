@@ -32,10 +32,6 @@ ROUTES_PY = ROOT / "api" / "routes.py"
 
 
 FILE_HANDLERS = [
-    "_handle_escape_authorize",
-    "_handle_escape_list_dir",
-    "_handle_escape_file_read",
-    "_handle_escape_file_raw",
     "_handle_folder_download",
     "_handle_file_raw",
     "_handle_file_read",
@@ -44,9 +40,7 @@ FILE_HANDLERS = [
     "_handle_file_create",
     "_handle_file_rename",
     "_handle_create_dir",
-    "_handle_file_reveal",
     "_handle_file_path",
-    "_handle_file_open_vscode",
     "_handle_office_file_save",
     "_handle_file_move",
 ]

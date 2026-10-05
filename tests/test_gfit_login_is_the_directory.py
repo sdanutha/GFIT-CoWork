@@ -188,23 +188,6 @@ def test_the_login_status_page_and_settings_name_no_passkey(server):
         assert "passkey" not in shell.lower()
 
 
-def test_the_terminal_refusal_names_the_directory(server, monkeypatch):
-    # With login off, a request from a non-local client (through the trusted
-    # loopback proxy) may not open the embedded terminal.
-    monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", "1")
-    monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
-    with server(directory="") as srv:
-        status, body, _ = srv.client().post(
-            "/api/terminal/start", {}, headers={"X-Forwarded-For": "8.8.8.8"},
-        )
-        assert status == 403, body
-        message = body["error"]
-        assert "Directory" in message
-        assert "HERMES_WEBUI_DIRECTORY" in message
-        assert "passkey" not in message.lower()
-        assert "password" not in message.lower()
-
-
 # ── the shared password (ticket 05) ─────────────────────────────────────────
 
 LEFTOVER_PASSWORD = "the-old-shared-password"

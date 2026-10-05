@@ -126,8 +126,8 @@ def test_moa_resolve_endpoint_returns_200():
 def test_moa_not_in_agent_commands_webui():
     js_path = Path(__file__).resolve().parent.parent / "static" / "messages.js"
     source = js_path.read_text(encoding="utf-8")
-    match = re.search(r"_AGENT_COMMANDS_RUN_ON_WEBUI\s*=\s*new\s+Set\(\[([^\]]+)\]\)", source)
-    assert match, "_AGENT_COMMANDS_RUN_ON_WEBUI not found in messages.js"
+    match = re.search(r"_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI\s*=\s*new\s+Set\(\[([^\]]+)\]\)", source)
+    assert match, "_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI not found in messages.js"
     entries = match.group(1)
     assert "'moa'" not in entries and '"moa"' not in entries
 

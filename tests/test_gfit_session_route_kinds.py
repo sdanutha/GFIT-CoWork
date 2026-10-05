@@ -19,31 +19,15 @@ from tests.test_gfit_admin_gate_list import dispatched_routes
 from tests.test_gfit_session_route_answers import SESSION_ROUTES
 
 # Admin-only routes that name a session (a session id in the query or body).
-ADMIN_SESSION_ROUTES = {
-    ("GET", "/api/escape/file/raw"), ("GET", "/api/escape/file/read"), ("GET", "/api/escape/list"),
-    ("GET", "/api/terminal/output"),
-    ("POST", "/api/escape/authorize"), ("POST", "/api/file/open-vscode"), ("POST", "/api/file/reveal"),
-    *{("POST", f"/api/git/{verb}") for verb in (
-        "checkout", "commit", "commit-message", "commit-message-selected", "commit-selected", "discard",
-        "fetch", "pull", "push", "stage", "stash-checkout", "unstage")},
-    ("POST", "/api/session/worktree/remove"), ("POST", "/api/session/yolo"),
-    *{("POST", f"/api/terminal/{verb}") for verb in ("close", "input", "resize", "start")},
-}
+ADMIN_SESSION_ROUTES: set[tuple[str, str]] = set()
 
 # Admin-only routes that name no session, and why.
 _SERVER = "server-level: settings, providers, models, gateway, logs, process"
 ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
-    **{(m, r): "MCP servers" for m, r in (
-        ("DELETE", "/api/mcp/servers/"), ("GET", "/api/mcp/servers"), ("GET", "/api/mcp/tools"),
-        ("PATCH", "/api/mcp/servers/"), ("PUT", "/api/mcp/servers/"))},
     **{("GET", r): _SERVER for r in (
-        "/api/logs",
         "/api/provider/cost-history", "/api/provider/quota", "/api/providers")},
     **{("POST", r): _SERVER for r in (
-        "/api/commands/exec", "/api/gateway/restart",
-        "/api/gateway/start", "/api/gateway/stop", "/api/health/restart",
-        "/api/models/refresh", "/api/providers", "/api/providers/delete", "/api/providers/self-hosted",
-        "/api/shutdown")},
+        "/api/models/refresh", "/api/providers", "/api/providers/delete", "/api/providers/self-hosted")},
     **{(m, r): "onboarding" for m, r in (
         ("GET", "/api/onboarding/oauth/poll"), ("GET", "/api/onboarding/status"),
         ("POST", "/api/onboarding/complete"), ("POST", "/api/onboarding/oauth/cancel"),

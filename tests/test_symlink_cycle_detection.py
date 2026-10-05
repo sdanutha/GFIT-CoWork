@@ -118,23 +118,6 @@ class TestSymlinkCycleDetection:
         except urllib.error.HTTPError as e:
             assert e.code in (400, 404, 500)
 
-    def test_escape_authorized_listing_virtualizes_paths(self, cleanup_test_sessions, tmp_path_factory):
-        ws = tmp_path_factory.mktemp("ws")
-        target = tmp_path_factory.mktemp("target")
-        (target / "child.txt").write_text("data", encoding="utf-8")
-        (ws / "ext").symlink_to(target)
-
-        sid, _ = make_session(cleanup_test_sessions, ws)
-        auth, status = post("/api/escape/authorize", {"session_id": sid, "path": "ext"})
-        assert status == 200, auth
-        listed = get(f"/api/escape/list?session_id={sid}&token={auth['token']}&path=ext")
-        entries = {entry["name"]: entry for entry in listed["entries"]}
-        assert listed["path"] == "ext"
-        assert listed["read_only"] is True
-        assert entries["child.txt"]["path"] == "ext/child.txt"
-        assert entries["child.txt"]["escape_read_only"] is True
-        assert str(target) not in json.dumps(listed)
-
     def test_self_referencing_symlink_filtered(self, cleanup_test_sessions, tmp_path_factory):
         """Symlink pointing to the workspace root itself must be filtered out."""
         if not w._DIR_FD_OK:

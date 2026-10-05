@@ -231,8 +231,6 @@ function createEnvironment() {
   globalThis.stopApprovalPolling = () => {};
   globalThis.hideApprovalCard = () => {};
   globalThis.stopSessionStream = () => {};
-  globalThis._yoloEnabled = false;
-  globalThis._updateYoloPill = () => {};
   globalThis.stopClarifyPolling = () => {};
   globalThis.hideClarifyCard = () => {};
   globalThis._saveComposerDraftNow = () => Promise.resolve();
@@ -302,7 +300,6 @@ function createEnvironment() {
   globalThis.updateQueueBadge = () => {};
   globalThis.startApprovalPolling = () => {};
   globalThis.startClarifyPolling = () => {};
-  globalThis._fetchYoloState = () => {};
 
   globalThis._resolveSessionIdFromSidebarLineage = (sid) => sid;
   globalThis._resolveSessionLineage = (sid) => sid;

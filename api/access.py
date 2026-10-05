@@ -216,14 +216,8 @@ def user_may_call(method: str, path: str) -> bool:
 # stays the authority.
 SHELL_FEATURES: dict[str, tuple[str, str]] = {
     "provider_quota": ("GET", "/api/provider/quota"),
-    "mcp_servers": ("GET", "/api/mcp/servers"),
-    "terminal": ("POST", "/api/terminal/start"),
-    "logs": ("GET", "/api/logs"),
     "profiles_admin": ("POST", "/api/profile/create"),
     "settings": ("POST", "/api/settings"),
-    "gateway_restart": ("POST", "/api/gateway/restart"),
-    "yolo": ("POST", "/api/session/yolo"),
-    "reveal_on_server": ("POST", "/api/file/reveal"),
     "onboarding": ("GET", "/api/onboarding/status"),
 }
 
