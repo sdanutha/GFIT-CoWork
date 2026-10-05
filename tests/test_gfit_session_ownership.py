@@ -318,3 +318,80 @@ def test_the_request_asks_with_its_own_admission(world, monkeypatch):
     assert _kind(request_session_ownership()) == "user"
     access.clear_request_admission()
     assert _kind(request_session_ownership()) == "unconfined"
+
+
+# ── load_owned_session: the request's session, under session ownership ─────
+
+
+class _AnswerHandler:
+    """Just enough of a request handler to capture the answer written."""
+
+    def __init__(self):
+        self.status = None
+        self.body = bytearray()
+        self.headers = {}
+        self.wfile = self
+
+    def send_response(self, status):
+        self.status = status
+
+    def send_header(self, name, value):
+        pass
+
+    def end_headers(self):
+        pass
+
+    def write(self, data):
+        self.body.extend(data)
+
+    def answer(self):
+        return self.status, json.loads(bytes(self.body))
+
+
+def _load_as(monkeypatch, adapter, session_id, *, reading=True, **kwargs):
+    import api.session_ownership as ownership
+
+    monkeypatch.setattr(ownership, "request_session_ownership", lambda: adapter)
+    monkeypatch.setattr(ownership, "_request_is_a_read", lambda: reading)
+    handler = _AnswerHandler()
+    kwargs.setdefault("load", models.get_session)
+    return ownership.load_owned_session(handler, session_id, **kwargs), handler
+
+
+def test_a_user_loads_their_own_session(world, monkeypatch):
+    session, handler = _load_as(monkeypatch, UserSessionOwnership(ALICE), "alice-webui")
+    assert session.session_id == "alice-webui" and handler.status is None
+
+
+@pytest.mark.parametrize("session_id", ["bob-webui", "no-such-session"])
+def test_another_users_session_and_a_missing_one_get_the_same_404(world, monkeypatch, session_id):
+    session, handler = _load_as(monkeypatch, UserSessionOwnership(ALICE), session_id)
+    assert session is None
+    assert handler.answer() == (404, {"error": "Session not found"})
+
+
+def test_the_admin_reads_another_profiles_session_in_place(world, monkeypatch):
+    session, handler = _load_as(monkeypatch, ADMIN, "bob-webui", reading=True)
+    assert session.session_id == "bob-webui" and handler.status is None
+
+
+def test_the_admin_writing_another_profiles_session_gets_the_read_only_answer(world, monkeypatch):
+    session, handler = _load_as(monkeypatch, ADMIN, "bob-webui", reading=False)
+    status, body = handler.answer()
+    assert session is None and status == 403 and body["code"] == "session_read_only" and body["profile"] == BOB
+
+
+def test_the_admins_missing_session_is_404(world, monkeypatch):
+    session, handler = _load_as(monkeypatch, ADMIN, "no-such-session")
+    assert session is None and handler.answer() == (404, {"error": "Session not found"})
+
+
+def test_the_loader_and_its_options_are_the_callers(world, monkeypatch):
+    calls = []
+
+    def load(session_id, **options):
+        calls.append((session_id, options))
+        return "loaded"
+
+    session, _ = _load_as(monkeypatch, UserSessionOwnership(ALICE), "alice-webui", load=load, metadata_only=True)
+    assert session == "loaded" and calls == [("alice-webui", {"metadata_only": True})]

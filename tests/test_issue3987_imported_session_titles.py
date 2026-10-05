@@ -213,7 +213,7 @@ def test_regenerate_endpoint_only_blocks_read_only_imported_sessions():
     from tests._route_source import route_source
 
     block = route_source("POST", "/api/session/title/regenerate")
-    assert "_get_or_materialize_session(sid)" in block
+    assert "load=_get_or_materialize_session" in block
     assert "except PermissionError:" in block
 
 

@@ -65,6 +65,7 @@ from api.session_events import (
 from api.gateway_restart import restart_active_profile_gateway
 from api.session_ownership import (
     UNCONFINED as _UNCONFINED_OWNERSHIP,
+    load_owned_session,
     request_caller_reach,
     request_profile_reach,
     request_session_ownership,
@@ -610,9 +611,9 @@ def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
 def _guard_request_session_visibility(handler, parsed, body=None, method="GET") -> bool:
     """Ask session ownership about the session ids a request names.
 
-    Covers the top-level `session_id` in the query and body, and the id in a
-    `/api/sessions/<id>/events` path. Routes that accept session ids under
-    other keys ask session ownership themselves.
+    Covers the top-level `session_id` in the query and body, the id in a
+    `/api/sessions/<id>/events` path, and, on a route whose row names a
+    stream, the session that owns the `stream_id` in the query.
     """
     if not _guard_bound_profile_request(handler, parsed, body):
         return False
@@ -623,11 +624,16 @@ def _guard_request_session_visibility(handler, parsed, body=None, method="GET") 
     path_sid = _session_events_path_session_id(path)
     if path_sid is not None and not _session_id_visible_to_request_profile(handler, path_sid):
         return False
-    sid = parse_qs(getattr(parsed, "query", "") or "").get("session_id", [None])[0]
+    query = parse_qs(getattr(parsed, "query", "") or "")
+    sid = query.get("session_id", [None])[0]
     if not _session_id_visible_to_request_profile(handler, sid):
         return False
     if isinstance(body, dict) and not _session_id_visible_to_request_profile(handler, body.get("session_id")):
         return False
+    route = route_table.match(method, path)
+    if route is not None and route.names_stream:
+        if not _stream_id_visible_to_request_profile(handler, query.get("stream_id", [""])[0]):
+            return False
     return True
 
 
@@ -5396,22 +5402,14 @@ def _handle_session_anchor_scene(handler, body):
     except ValueError as exc:
         return bad(handler, str(exc), 400)
     try:
-        s = _get_or_materialize_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, sid, load=_get_or_materialize_session)
     except PermissionError:
         return bad(handler, "Read-only imported sessions cannot persist anchor scenes", 403)
-    # Active-profile visibility guard (parity with GET /api/session, routes.py:~8922).
-    # _get_or_materialize_session loads by id with no profile scoping, so without
-    # this an authenticated request under profile A could persist anchor scenes
-    # onto a session owned by profile B (cross-profile write). Reject as 404 —
-    # same shape the read path uses — and leave anchor_activity_scenes untouched.
-    # #7710: cross-profile writes are rejected with 409
-    # ``session_profile_mismatch`` so the client can offer to switch
-    # to the owning profile (mirrors the detail-load endpoint's
-    # contract at #13043 / #13493). 404 is preserved for the
-    # None-profile (unknown/legacy) case so the frontend self-heal
-    # path still fires for actually-missing sids.
+    if s is None:
+        return True
+    # A session materialized from CLI/state.db metadata is not in the WebUI
+    # store the accessor asked about, so ask session ownership again about the
+    # session as loaded (409 naming a known other Profile, #7710; else 404).
     _refusal = request_session_ownership().refuse_found_session(sid, s)
     if _refusal is not None:
         return _refusal.answer(handler, sid)
@@ -14369,10 +14367,9 @@ def _get_api_session_worktree_status(handler, parsed):
     sid = query.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required", status=400)
-    try:
-        s = get_session(sid, metadata_only=True)
-    except KeyError:
-        return bad(handler, "Session not found", status=404)
+    s = load_owned_session(handler, sid, load=get_session, metadata_only=True)
+    if s is None:
+        return True
     try:
         from api.worktrees import worktree_status_for_session
 
@@ -14413,9 +14410,12 @@ def _get_api_session_status(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
         return bad(handler, "Missing session_id")
+    s = load_owned_session(handler, sid, load=get_session, metadata_only=True)
+    if s is None:
+        return True
     try:
         from api.session_ops import session_status
-        _clear_stale_stream_state(get_session(sid, metadata_only=True))
+        _clear_stale_stream_state(s)
         return j(handler, session_status(sid))
     except KeyError:
         return bad(handler, "Session not found", 404)
@@ -14701,8 +14701,6 @@ def _get_api_commands_moa_resolve(handler, parsed):
 
 def _get_api_chat_stream_status(handler, parsed):
     stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
-    if not _stream_id_visible_to_request_profile(handler, stream_id):
-        return True
     active = stream_id in STREAMS
     payload = {"active": active, "stream_id": stream_id, "replay_available": False}
     try:
@@ -14719,8 +14717,6 @@ def _get_api_chat_cancel(handler, parsed):
     stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
     if not stream_id:
         return bad(handler, "stream_id required")
-    if not _stream_id_visible_to_request_profile(handler, stream_id):
-        return True
     gateway_stop_blocked = False
     try:
         from api.gateway_chat import (
@@ -16073,11 +16069,11 @@ def _post_api_session_rename(handler, parsed, body, diag):
     except ValueError as e:
         return bad(handler, str(e))
     try:
-        s = _get_or_materialize_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, body["session_id"], load=_get_or_materialize_session)
     except PermissionError:
         return bad(handler, "Read-only imported sessions cannot be renamed from WebUI", 403)
+    if s is None:
+        return True
     with _get_session_agent_lock(body["session_id"]):
         from api.session_ops import apply_session_title_rename
         apply_session_title_rename(s, body["title"])
@@ -16099,11 +16095,11 @@ def _post_api_session_title_regenerate(handler, parsed, body, diag):
     sid = body["session_id"]
     prefer_latest = bool(body.get("prefer_latest", False))
     try:
-        s = _get_or_materialize_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, sid, load=_get_or_materialize_session)
     except PermissionError:
         return bad(handler, "Read-only imported sessions cannot regenerate titles", 403)
+    if s is None:
+        return True
     next_title, reason, raw_preview = generate_session_title_for_session(s, prefer_latest=prefer_latest)
     if not next_title:
         return bad(handler, f"Could not generate a better title ({reason or 'empty'})", 422)
@@ -16127,8 +16123,10 @@ def _post_api_personality_set(handler, parsed, body, diag):
     if _session_is_subagent_view_only(sid):
         return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
     name = body["name"].strip()
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     try:
-        s = get_session(sid)
         s = _ensure_full_session_before_mutation(sid, s)
     except KeyError:
         return bad(handler, "Session not found", 404)
@@ -16183,10 +16181,9 @@ def _post_api_session_toolsets(handler, parsed, body, diag):
         toolsets = _validate_session_toolsets_shape(toolsets)
     except ValueError as e:
         return bad(handler, str(e), status=400)
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     with _get_session_agent_lock(sid):
         s.enabled_toolsets = toolsets
         s.save()
@@ -16209,10 +16206,9 @@ def _post_api_session_draft(handler, parsed, body, diag):
         sid = query.get("session_id", [""])[0] if parsed.query else ""
         if not sid:
             return bad(handler, "session_id is required", 400)
-        try:
-            s = get_session(sid)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, sid, load=get_session)
+        if s is None:
+            return True
         draft = getattr(s, "composer_draft", {}) or {}
         return j(handler, {"draft": draft})
     # POST
@@ -16239,10 +16235,9 @@ def _post_api_session_draft(handler, parsed, body, diag):
         files = []
     if isinstance(files, list) and len(files) > _MAX_DRAFT_FILES:
         files = files[:_MAX_DRAFT_FILES]
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     _draft_mark("after_get_session")
     unchanged = False
     with _get_session_agent_lock(sid):
@@ -16294,11 +16289,11 @@ def _post_api_session_update(handler, parsed, body, diag):
     except ValueError as e:
         return bad(handler, str(e))
     try:
-        s = _get_or_materialize_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, body["session_id"], load=_get_or_materialize_session)
     except PermissionError:
         return bad(handler, "Read-only imported sessions cannot be updated from WebUI", 403)
+    if s is None:
+        return True
     old_ws = getattr(s, "workspace", "")
     old_model = getattr(s, "model", None)
     old_provider = getattr(s, "model_provider", None)
@@ -16351,10 +16346,9 @@ def _post_api_session_worktree_remove(handler, parsed, body, diag):
     sid = sid.strip()
     if not is_safe_session_id(sid):
         return bad(handler, "Invalid session_id", 400)
-    try:
-        s = get_session(sid, metadata_only=True)
-    except KeyError:
-        return bad(handler, "Session not found", status=404)
+    s = load_owned_session(handler, sid, load=get_session, metadata_only=True)
+    if s is None:
+        return True
     force = bool(body.get("force", False))
     try:
         from api.worktrees import remove_worktree_for_session
@@ -16497,10 +16491,9 @@ def _post_api_session_clear(handler, parsed, body, diag):
         return bad(handler, str(e))
     if _session_is_subagent_view_only(body["session_id"]):
         return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     sid = body["session_id"]
     with _get_session_agent_lock(sid):
         had_sidecar_messages = bool(s.messages or [])
@@ -16592,10 +16585,9 @@ def _post_api_session_truncate(handler, parsed, body, diag):
         return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
     if body.get("keep_count") is None:
         return bad(handler, "Missing required field(s): keep_count")
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     # Validate keep_count before it reaches the destructive `messages[:keep]`
     # slice. A non-numeric value would raise ValueError and surface as a
     # confusing 500; a NEGATIVE value slices as `messages[:-N]`, which
@@ -17378,8 +17370,10 @@ def _post_api_session_pin(handler, parsed, body, diag):
         return bad(handler, str(e))
     if _session_is_subagent_view_only(body["session_id"]):
         return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     try:
-        s = get_session(body["session_id"])
         s = _ensure_full_session_before_mutation(body["session_id"], s)
     except KeyError:
         return bad(handler, "Session not found", 404)
@@ -17543,11 +17537,11 @@ def _post_api_session_move(handler, parsed, body, diag):
     except ValueError as e:
         return bad(handler, str(e))
     try:
-        s = _get_or_materialize_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, body["session_id"], load=_get_or_materialize_session)
     except PermissionError:
         return bad(handler, "Read-only imported sessions cannot be moved from WebUI", 403)
+    if s is None:
+        return True
     # #1614: refuse moves into a project owned by another profile.
     target_pid = body.get("project_id") or None
     if target_pid:
@@ -17946,13 +17940,9 @@ def _handle_session_export(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    _refusal = request_session_ownership().refuse_found_session(sid, s)
-    if _refusal is not None:
-        return _refusal.answer_not_found(handler)
+    s = load_owned_session(handler, sid, load=get_session, hide_owner=True)
+    if s is None:
+        return True
     # ``public_session_projection`` supersedes the narrower
     # ``redact_session_data`` path so export context_messages uses the same
     # alias-stripping boundary as the visible transcript.
@@ -18227,10 +18217,9 @@ def _handle_escape_authorize(handler, parsed, body: dict | None = None):
         return bad(handler, "session_id is required")
     if not rel:
         return bad(handler, "path is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         payload = authorize_escape_target(Path(s.workspace), sid, rel)
     except ValueError as exc:
@@ -18246,10 +18235,9 @@ def _handle_escape_list_dir(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel_path = qs.get("path", ["."])[0]
     try:
         payload = list_authorized_escape_dir(Path(s.workspace), sid, token, rel_path)
@@ -18271,10 +18259,9 @@ def _handle_escape_file_read(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel = qs.get("path", [""])[0]
     try:
         return j(handler, read_authorized_escape_file_content(Path(s.workspace), sid, token, rel))
@@ -18298,10 +18285,9 @@ def _handle_escape_file_raw(handler, parsed):
         return bad(handler, "session_id is required")
     if not token:
         return bad(handler, "token is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel = qs.get("path", [""])[0]
     force_download = qs.get("download", [""])[0] == "1"
     try:
@@ -18901,8 +18887,7 @@ def _stream_runner_run_events(handler, run_id: str, cursor: str | None = None) -
 def _handle_sse_stream(handler, parsed):
     qs = parse_qs(parsed.query)
     stream_id = qs.get("stream_id", [""])[0]
-    if not _stream_id_visible_to_request_profile(handler, stream_id):
-        return True
+    # The dispatch guard has asked session ownership about the stream's owner.
     # Resume cursor: explicit query params (after_event_id/after_seq/replay)
     # win; the Last-Event-ID header that spec-compliant SSE clients auto-send
     # on reconnect is the fallback. Presence is tracked separately from the
@@ -19013,11 +18998,9 @@ def _handle_sse_stream(handler, parsed):
 
 
 def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
-    # The dispatch guard has asked session ownership about the id in the path.
-    try:
-        session = get_session(session_id, metadata_only=True)
-    except KeyError:
-        return j(handler, {"error": "Session not found"}, status=404)
+    session = load_owned_session(handler, session_id, load=get_session, metadata_only=True)
+    if session is None:
+        return True
 
     # Parse the resume cursor and baseline the journal BEFORE committing SSE headers
     # (and thus before any run could complete mid-handler). Capturing after
@@ -21022,10 +21005,9 @@ def _handle_folder_download(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
 
     rel = qs.get("path", [""])[0]
     try:
@@ -21108,10 +21090,9 @@ def _handle_file_raw(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel = qs.get("path", [""])[0]
     force_download = qs.get("download", [""])[0] == "1"
     resolved = _file_raw_target(s, sid, rel)
@@ -21148,10 +21129,9 @@ def _handle_file_read(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel = qs.get("path", [""])[0]
     if not rel:
         return bad(handler, "path is required")
@@ -22680,10 +22660,9 @@ def _handle_btw(handler, body):
         return j(handler, stale_response, status=409)
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot be used for /btw from WebUI", 400)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     question = str(body["question"]).strip()
     if not question:
         return bad(handler, "question is required")
@@ -22741,10 +22720,9 @@ def _handle_background(handler, body):
     stale_response = _agent_runtime_barrier_response(runner_local_owned=False)
     if stale_response is not None:
         return j(handler, stale_response, status=409)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     prompt = str(body["prompt"]).strip()
     if not prompt:
         return bad(handler, "prompt is required")
@@ -24099,10 +24077,9 @@ def _handle_bg_task_complete_ack(handler, body):
     except ValueError as e:
         return bad(handler, str(e))
     sid = str(body.get("session_id") or "").strip()
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     # process_id accepted as transitional alias; see Deprecation response header
     # + maintainer decision on removal milestone / future Sunset header. Only
     # flag Deprecation when the alias was ACTUALLY used (i.e. process_id present
@@ -24137,17 +24114,12 @@ def _handle_session_compression_recovery_start(handler, body):
         return bad(handler, "session_id is required")
     if _session_is_subagent_view_only(sid):
         return bad(handler, "Subagent sessions are view-only and cannot start compression recovery from WebUI", 400)
-    try:
-        source = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    # #7710: same contract as the detail-load endpoint — 409
-    # ``session_profile_mismatch`` for a known other profile, 404 only for the
-    # None-profile self-heal path. Recovery continues only into this
-    # request's own sessions.
-    _refusal = request_session_ownership().refuse_found_session(sid, source)
-    if _refusal is not None:
-        return _refusal.answer(handler, sid)
+    # The accessor answers as the detail load does (#7710): 409
+    # ``session_profile_mismatch`` for a known other Profile, 404 otherwise.
+    # Recovery continues only into this request's own sessions.
+    source = load_owned_session(handler, sid, load=get_session)
+    if source is None:
+        return True
     recovery = compression_recovery_payload_for_session(source)
     if not recovery:
         return bad(handler, "Session does not have a compression recovery action.", 409)
@@ -24243,10 +24215,9 @@ def _handle_goal_command(handler, body):
         )
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot run /goal from WebUI", 400)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
 
     requested_profile = str(body.get("profile") or "").strip()
     if requested_profile:
@@ -24852,7 +24823,13 @@ def _handle_chat_sync(handler, body):
         return j(handler, stale_response, status=409)
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot be written from WebUI", 400)
-    s = get_session(body["session_id"])
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     msg = str(body.get("message", "")).strip()
     if not msg:
         return j(handler, {"error": "empty message"}, status=400)
@@ -25684,7 +25661,9 @@ def _handle_git_commit_message(handler, body):
 
     try:
         require(body, "session_id")
-        session = get_session(body["session_id"])
+        session = load_owned_session(handler, body["session_id"], load=get_session)
+        if session is None:
+            return True
         workspace = Path(session.workspace)
 
         prompt = staged_commit_message_prompt(workspace)
@@ -25717,7 +25696,9 @@ def _handle_git_commit_message_selected(handler, body):
     try:
         require(body, "session_id")
         paths = _git_paths_from_body(body)
-        session = get_session(body["session_id"])
+        session = load_owned_session(handler, body["session_id"], load=get_session)
+        if session is None:
+            return True
         workspace = Path(session.workspace)
 
         prompt = selected_commit_message_prompt(workspace, paths)
@@ -25875,10 +25856,9 @@ def _handle_file_delete(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25907,10 +25887,9 @@ def _handle_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25938,10 +25917,9 @@ def _handle_office_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25973,10 +25951,9 @@ def _handle_file_create(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -26000,10 +25977,9 @@ def _handle_file_rename(handler, body):
         require(body, "session_id", "path", "new_name")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         ws_root_resolved = ws_root.resolve()
@@ -26035,10 +26011,9 @@ def _handle_file_move(handler, body):
         require(body, "session_id", "path", "dest_dir")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         # resolve_in_workspace() returns paths under the RESOLVED root, so compute
@@ -26133,10 +26108,9 @@ def _handle_create_dir(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -26155,10 +26129,9 @@ def _handle_file_reveal(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         target = resolve_in_workspace(Path(s.workspace), body["path"])
         if not target.exists():
@@ -26216,10 +26189,9 @@ def _handle_file_path(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         target = resolve_in_workspace(Path(s.workspace), body["path"])
         return j(handler, {"ok": True, "path": str(target)})
@@ -26246,10 +26218,9 @@ def _handle_file_open_vscode(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         target = resolve_in_workspace(Path(s.workspace), body["path"])
         if not target.exists():
@@ -27336,8 +27307,10 @@ def _run_manual_compression_job(sid, body):
             from api import profiles as profiles_api
 
             with profiles_api.profile_env_for_background_worker(session, "manual compression", logger_override=logger):
-                _handle_session_compress(memory_handler, body)
+                _handle_session_compress(memory_handler, body, worker_session=session)
         else:
+            # Not found by the worker's own load: the handler answers as for a
+            # request (the stale-runtime and stream checks run first).
             _handle_session_compress(memory_handler, body)
         status = int(memory_handler.status or 500)
         payload = memory_handler.payload()
@@ -27409,10 +27382,9 @@ def _handle_session_compress_start(handler, body):
     sid = str(body.get("session_id") or "").strip()
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     if getattr(s, "active_stream_id", None):
         return bad(handler, "Session is still streaming; wait for the current turn to finish.", 409)
 
@@ -27501,7 +27473,10 @@ def _handle_session_compress_status(handler, sid):
         return j(handler, payload)
 
 
-def _handle_session_compress(handler, body):
+def _handle_session_compress(handler, body, *, worker_session=None):
+    """Compress a session now. *worker_session* is the session the background
+    compression job already loaded (it has no request caller to ask session
+    ownership); without it the request's session is loaded under session ownership."""
     def _anchor_message_key(m):
         if not isinstance(m, dict):
             return None
@@ -27572,10 +27547,9 @@ def _handle_session_compress(handler, body):
     # cheap bound-checking.
     focus_topic = str(body.get("focus_topic") or body.get("topic") or "").strip()[:500] or None
 
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = worker_session if worker_session is not None else load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
 
     if getattr(s, "active_stream_id", None):
         return bad(handler, "Session is still streaming; wait for the current turn to finish.", 409)

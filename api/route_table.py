@@ -20,8 +20,11 @@ runs:
   request names (``session_id`` in the query or body, the id in the session
   events path) before the handler runs. Pages, static assets and the routes
   served before login do not run it;
-- **body**: json when the server reads the request's JSON body before the
-  handler runs (and the session guard checks it), own when the handler
+- **names_stream**: whether the request names a stream by its ``stream_id``;
+  the session guard then asks session ownership about the session that owns
+  the stream;
+- **body**: ``json`` when the server reads the request's JSON body before the
+  handler runs (and the session guard checks it), ``own`` when the handler
   reads its own body (multipart uploads, raw reports).
 
 A pattern is an exact path, a path with ``<name>`` segments (each one matches
@@ -59,6 +62,7 @@ class Route:
     handler: str | None = None
     session_guard: bool = True
     body: str = "json"
+    names_stream: bool = False
 
     def __post_init__(self):
         if self.method not in METHODS:
@@ -174,9 +178,9 @@ ROUTES: tuple[Route, ...] = (
     _get("/api/commands", USER, handler="_get_api_commands"),
     _get("/api/commands/bundles", USER, handler="_get_api_commands_bundles"),
     _get("/api/commands/moa/resolve", USER, handler="_get_api_commands_moa_resolve"),
-    _get("/api/chat/stream/status", USER, session=READ, handler="_get_api_chat_stream_status"),
-    _get("/api/chat/cancel", USER, session=WRITE, handler="_get_api_chat_cancel"),
-    _get("/api/chat/stream", USER, session=READ, handler="_get_api_chat_stream"),
+    _get("/api/chat/stream/status", USER, session=READ, handler="_get_api_chat_stream_status", names_stream=True),
+    _get("/api/chat/cancel", USER, session=WRITE, handler="_get_api_chat_cancel", names_stream=True),
+    _get("/api/chat/stream", USER, session=READ, handler="_get_api_chat_stream", names_stream=True),
     _get("/api/terminal/output", ADMIN, session=READ, handler="_get_api_terminal_output"),
     _get("/api/sessions/gateway/stream", USER, handler="_get_api_sessions_gateway_stream"),
     _get("/api/sessions/events", USER, handler="_get_api_sessions_events"),
