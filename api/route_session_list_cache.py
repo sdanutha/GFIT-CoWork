@@ -2,12 +2,11 @@
 
 This module reads its state paths from ``api.config`` and its hooks from the
 modules that own them, at the point of use; it never imports the route module.
-The route module hands it what only the route module knows (the running cron
-jobs) through :data:`running_cron_jobs`.
+The route module registers what only the route module knows (the running cron
+jobs) with :func:`set_running_cron_jobs`.
 """
 
 import copy
-import os
 import re
 import threading
 import time
@@ -16,6 +15,7 @@ from pathlib import Path
 
 from api import config as _config
 from api import models as _models
+from api import profiles as _profiles
 from api.config import LOCK, SESSIONS
 from api.profiles import _profiles_match
 
@@ -239,16 +239,6 @@ def _session_list_cache_state_db_path():
     return _models._active_state_db_path()
 
 
-def _session_list_cache_gateway_session_metadata_path() -> Path:
-    try:
-        from api.profiles import get_active_hermes_home
-
-        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
-    except Exception:
-        hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser().resolve()
-    return hermes_home / "sessions" / "sessions.json"
-
-
 def _session_list_cache_active_stream_ids():
     return _models._active_stream_ids()
 
@@ -257,9 +247,15 @@ def _no_running_cron_jobs() -> dict[str, float]:
     return {}
 
 
-# Set by the route module, which owns the running cron jobs: a callable that
-# returns a {job_id: start_epoch} snapshot.
+# The route module owns the running cron jobs; it registers a callable that
+# returns a {job_id: start_epoch} snapshot (set_running_cron_jobs).
 running_cron_jobs = _no_running_cron_jobs
+
+
+def set_running_cron_jobs(snapshot) -> None:
+    """Register *snapshot*, a callable returning the running cron jobs."""
+    global running_cron_jobs
+    running_cron_jobs = snapshot
 
 
 def _session_list_cache_running_cron_jobs() -> dict[str, float]:
@@ -559,7 +555,7 @@ def _session_list_cache_source_stamp(key: tuple) -> tuple[tuple[int, int], tuple
     except Exception:
         state_db_wal_path = None
     try:
-        gateway_metadata_path = _session_list_cache_gateway_session_metadata_path()
+        gateway_metadata_path = _profiles.gateway_session_metadata_path()
     except Exception:
         gateway_metadata_path = None
     try:

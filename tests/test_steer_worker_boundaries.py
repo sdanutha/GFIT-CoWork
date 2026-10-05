@@ -25,7 +25,6 @@ def worker_scene(tmp_path, monkeypatch):
     session_dir.mkdir()
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     maps = {name: {} for name in (
         "SESSIONS", "STREAMS", "CANCEL_FLAGS", "AGENT_INSTANCES",
         "STREAM_PARTIAL_TEXT", "STREAM_REASONING_TEXT", "STREAM_LIVE_TOOL_CALLS",

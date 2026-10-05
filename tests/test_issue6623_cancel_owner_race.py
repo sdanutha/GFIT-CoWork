@@ -47,7 +47,6 @@ def _isolate_sessions(tmp_path, monkeypatch):
     index_file = session_dir / "_index.json"
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(config, "SESSION_INDEX_FILE", index_file, raising=False)
     models.SESSIONS.clear()
     config.STREAMS.clear()

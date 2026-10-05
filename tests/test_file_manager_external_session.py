@@ -439,7 +439,6 @@ def test_delete_serializes_with_workspace_recovery_and_sidecar_stays_deleted(
         original_replace(source, target)
 
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models_module, "_safe_replace", paused_replace)
     monkeypatch.setattr(models_module, "_write_session_index", lambda **_kwargs: None)
     monkeypatch.setattr(routes_module, "_check_csrf", lambda _handler: True)

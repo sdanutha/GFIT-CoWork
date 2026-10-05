@@ -273,7 +273,6 @@ def test_get_session_projects_marked_payload_conflict_in_full_and_limited_paths(
     _write_state_db(db_path, session_id, [(mirror, timestamp, state_payload)])
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     session = models.Session(
         session_id=session_id,
@@ -413,7 +412,6 @@ def test_truncation_watermark_keeps_proven_retained_image_row_only(
         )
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     session = models.Session(
         session_id=session_id,
@@ -596,7 +594,6 @@ def test_get_session_projects_parent_only_payload_conflict_without_losing_parent
     _write_state_db(db_path, session_id, [(mirror, timestamp, state_payload)])
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     parent = models.Session(
         session_id=parent_id,
@@ -768,7 +765,6 @@ def test_get_session_keeps_pending_agent_projection_private_but_in_context(
     session_dir.mkdir()
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db_path)
     session = models.Session(
         session_id=session_id,

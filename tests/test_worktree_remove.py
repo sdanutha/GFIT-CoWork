@@ -29,8 +29,6 @@ def _isolate_session_store(tmp_path, monkeypatch):
     session_dir.mkdir()
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     models.SESSIONS.clear()
     return session_dir
 

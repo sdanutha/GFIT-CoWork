@@ -142,7 +142,6 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
     monkeypatch.setattr("api.config.STATE_DIR", state)
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
     monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
-    monkeypatch.setattr("api.config.STATE_DIR", state)
     for name, value in (legacy_env or {}).items():
         monkeypatch.setenv(name, value)
     auth._sessions.clear()

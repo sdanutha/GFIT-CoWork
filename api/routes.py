@@ -271,6 +271,8 @@ def _running_cron_jobs_snapshot() -> dict[str, float]:
     """{job_id: start_epoch} of the cron jobs running now (for the session-list cache)."""
     with _RUNNING_CRON_LOCK:
         return dict(_RUNNING_CRON_JOBS)
+
+
 _CRON_CREATE_SNAPSHOT_LOCK = threading.Lock()
 _MANUAL_COMPRESSION_JOBS: dict[str, dict] = {}
 _MANUAL_COMPRESSION_JOBS_LOCK = threading.Lock()
@@ -1129,17 +1131,8 @@ def _safe_first(*values):
     return ""
 
 
-def _gateway_session_metadata_path():
-    try:
-        from api.profiles import get_active_hermes_home
-        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
-    except Exception:
-        hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser().resolve()
-    return hermes_home / "sessions" / "sessions.json"
-
-
 def _load_gateway_session_identity_map() -> dict[str, dict]:
-    path = _gateway_session_metadata_path()
+    path = api_profiles.gateway_session_metadata_path()
     if not path.exists():
         return {}
 
@@ -1189,7 +1182,7 @@ def _gateway_status_payload() -> dict:
     import datetime
 
     identity_map = _load_gateway_session_identity_map()
-    sessions_path = _gateway_session_metadata_path()
+    sessions_path = api_profiles.gateway_session_metadata_path()
 
     # Detect whether the gateway process is alive, independent of connected
     # messaging platforms. An empty identity_map means zero connected
@@ -1921,7 +1914,7 @@ def _clear_live_models_cache() -> None:
 from api import route_session_list_cache as _route_session_list_cache
 
 # The session-list cache marks running cron jobs' rows; only this module knows them.
-_route_session_list_cache.running_cron_jobs = lambda: _running_cron_jobs_snapshot()
+_route_session_list_cache.set_running_cron_jobs(_running_cron_jobs_snapshot)
 
 _SESSIONS_CACHE = _route_session_list_cache._SESSIONS_CACHE
 _SESSIONS_CACHE_INFLIGHT = _route_session_list_cache._SESSIONS_CACHE_INFLIGHT
@@ -2963,6 +2956,7 @@ from api.config import (
     _parse_provider_qualified_model_id,
 )
 from api import config as api_config
+from api import profiles as api_profiles
 from api import route_table
 from api.helpers import (
     require,
@@ -20511,8 +20505,7 @@ def _media_deny_reason(target: Path) -> str | None:
     )
     _state_dir = None
     try:
-        _STATE_DIR = api_config.STATE_DIR
-        _state_dir = Path(_STATE_DIR).resolve()
+        _state_dir = Path(api_config.STATE_DIR).resolve()
     except Exception:
         _state_dir = None
     _base_hermes_home = None

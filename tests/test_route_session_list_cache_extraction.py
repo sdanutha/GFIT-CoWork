@@ -51,16 +51,13 @@ def test_shared_cache_state_mutation():
         routes._session_list_cache_clear()
 
 
-def test_live_scalar_exports_follow_route_session_list_cache_state():
+def test_clearing_through_the_route_module_bumps_the_cache_invalidation_version():
     from api import route_session_list_cache as slc
     import api.routes as routes
 
-    before = routes._route_session_list_cache._SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION
+    before = slc._SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION
     routes._session_list_cache_clear()
-    after = routes._route_session_list_cache._SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION
-
-    assert after == slc._SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION
-    assert after == before + 1
+    assert slc._SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION == before + 1
 
 
 def test_no_circular_import():

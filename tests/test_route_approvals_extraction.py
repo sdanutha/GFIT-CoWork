@@ -51,7 +51,7 @@ def test_sse_helpers_importable_from_route_approvals():
 
 
 def test_sse_helper_identity():
-    """SSE helpers imported from routes must be the same callables from route_approvals."""
+    """The approval helpers the route module uses are route_approvals' own callables."""
     import api.route_approvals as ra
     import api.routes as r
     assert ra._approval_sse_unsubscribe is r._approval_sse_unsubscribe

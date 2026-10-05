@@ -743,7 +743,6 @@ def test_handle_chat_sync_writeback_dedupes_full_context_replay(tmp_path, monkey
     session_dir.mkdir(parents=True)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
-    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "get_session", models.get_session)
     monkeypatch.setattr(routes, "title_from", models.title_from)
     monkeypatch.setattr(config, "get_config", lambda: {"model": "test-model", "provider": "test-provider"})

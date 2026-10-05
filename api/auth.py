@@ -183,8 +183,8 @@ def _save_sessions(sessions: dict[str, float | dict]) -> None:
     truncated file.  Mirrors the same pattern as .signing_key persistence.
     """
     try:
-        _config.STATE_DIR.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=_config.STATE_DIR, suffix='.sessions.tmp')
+        _SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=_SESSIONS_FILE.parent, suffix='.sessions.tmp')
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(sessions, f)

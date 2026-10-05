@@ -73,7 +73,6 @@ def test_preserve_pre_compression_snapshot_clears_runtime_fields_while_restoring
 
 def test_preserve_pre_compression_snapshot_load_and_mark_branch_clears_runtime_fields(tmp_path, monkeypatch):
     monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
-    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     old_payload = {
         "session_id": "old_session",
         "title": "Archived parent",

@@ -51,8 +51,6 @@ def mock_env(tmp_path, monkeypatch):
     monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(routes, "SESSIONS", {})
-    monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
-    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     return sessions_dir, index_file
 
 

@@ -136,7 +136,6 @@ def test_continuation_lookup_uses_index_without_scanning_sidecars(tmp_path, monk
 
     monkeypatch.setattr(config, "SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
-    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file, raising=False)
     monkeypatch.setattr(routes, "SESSIONS", collections.OrderedDict(), raising=False)
     monkeypatch.setattr(
@@ -230,7 +229,6 @@ def test_stale_index_with_existing_candidate_falls_back_to_newer_sidecar(tmp_pat
 
     monkeypatch.setattr(config, "SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
-    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file, raising=False)
     monkeypatch.setattr(routes, "SESSIONS", collections.OrderedDict(), raising=False)
 
@@ -298,7 +296,6 @@ def test_stale_index_multihop_falls_back_to_missing_descendant_sidecar(tmp_path,
     )
 
     monkeypatch.setattr(config, "SESSION_DIR", tmp_path, raising=False)
-    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file, raising=False)
     monkeypatch.setattr(routes, "SESSIONS", collections.OrderedDict(), raising=False)
@@ -399,7 +396,6 @@ def test_indexed_continuation_lookup_keeps_profile_scope(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(config, "SESSION_DIR", tmp_path, raising=False)
-    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_DIR", tmp_path, raising=False)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file, raising=False)
     monkeypatch.setattr(routes, "SESSIONS", collections.OrderedDict(), raising=False)

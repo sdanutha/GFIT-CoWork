@@ -90,7 +90,6 @@ def test_session_list_cache_key_separates_profile_and_all_profiles():
 
 def test_session_list_cache_singleflight_rebuild_once(monkeypatch):
     routes._session_list_cache_clear()
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda _key: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda _key: ("stable",))
 
     started = threading.Event()
@@ -139,7 +138,6 @@ def test_session_list_cache_singleflight_rebuild_once(monkeypatch):
 
 def test_session_list_cache_follower_wait_stage_when_rebuild_inflight(monkeypatch):
     routes._session_list_cache_clear()
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda _key: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda _key: ("stable",))
 
     started = threading.Event()
@@ -223,11 +221,6 @@ def test_session_list_cache_source_changed_owner_rebuilds_while_follower_reuses_
     # visible immediately, but followers can still use stale while that rebuild
     # is blocked; otherwise sidebar polling can pile up behind a slow rebuild.
     monkeypatch.setattr(
-        routes,
-        "_session_list_cache_source_stamp",
-        lambda _key: ("changed",),
-    )
-    monkeypatch.setattr(
         "api.route_session_list_cache._session_list_cache_source_stamp",
         lambda _key: ("changed",),
     )
@@ -279,7 +272,6 @@ def test_session_list_cache_source_changed_owner_rebuilds_while_follower_reuses_
 
 def test_session_list_cache_owner_returns_stale_and_rebuilds_in_background(monkeypatch):
     routes._session_list_cache_clear()
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda _key: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda _key: ("stable",))
 
     key = routes._session_list_cache_key(
@@ -330,7 +322,6 @@ def test_session_list_cache_owner_returns_stale_and_rebuilds_in_background(monke
 
 def test_session_list_cache_stale_background_rebuild_failure_releases_owner(monkeypatch):
     routes._session_list_cache_clear()
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda _key: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda _key: ("stable",))
 
     key = routes._session_list_cache_key(
@@ -466,11 +457,8 @@ def test_session_list_cache_source_stamp_tracks_state_db_wal(tmp_path, monkeypat
 
     monkeypatch.setattr(routes, "_active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
-    monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
+    monkeypatch.setattr("api.profiles.gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
 
     key = routes._session_list_cache_key(
@@ -501,11 +489,8 @@ def test_session_list_cache_source_stamp_tracks_settings_file(tmp_path, monkeypa
 
     monkeypatch.setattr(routes, "_active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
-    monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
+    monkeypatch.setattr("api.profiles.gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
 
     key = routes._session_list_cache_key(
@@ -539,11 +524,8 @@ def test_session_list_cache_source_stamp_tracks_settings_write_version(
 
     monkeypatch.setattr(routes, "_active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
-    monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
+    monkeypatch.setattr("api.profiles.gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
 
     key = routes._session_list_cache_key(
@@ -630,11 +612,8 @@ def _build_stamp_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(routes, "_active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
-    monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
+    monkeypatch.setattr("api.profiles.gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     # Make the content fingerprint deterministic and unaffected by the dummy
     # text-file state.db (a real sqlite connect would just return None here).
@@ -755,7 +734,6 @@ def test_streaming_widens_cache_freshness_window(monkeypatch):
     routes._session_list_cache_clear()
     key = _streaming_ttl_key()
     # Keep the source stamp stable across the get() calls (no structural change).
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda k: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda k: ("stable",))
 
     routes._session_list_cache_set(key, _session_cache_payload("live"))
@@ -783,7 +761,6 @@ def test_streaming_window_still_evicts_past_streaming_ttl(monkeypatch):
     the hold-down is bounded, not indefinite."""
     routes._session_list_cache_clear()
     key = _streaming_ttl_key()
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda k: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda k: ("stable",))
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: {"turn-1"})
     monkeypatch.setattr("api.models._active_stream_ids", lambda: {"turn-1"})
@@ -799,7 +776,6 @@ def test_streaming_window_does_not_extend_idle_ttl(monkeypatch):
     an entry aged just past it must read stale (byte-for-byte idle behavior)."""
     routes._session_list_cache_clear()
     key = _streaming_ttl_key()
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda k: ("stable",))
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda k: ("stable",))
     monkeypatch.setattr(routes, "_active_stream_ids", lambda: set())
     monkeypatch.setattr("api.models._active_stream_ids", lambda: set())

@@ -33,7 +33,6 @@ def _run_streaming_with_fake_agent(
     session_dir.mkdir()
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     models.SESSIONS.clear()
     streaming.SESSIONS.clear()
     streaming.STREAMS.clear()
