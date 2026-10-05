@@ -26,8 +26,8 @@ def test_session_persists_model_context_separately_from_display_transcript(tmp_p
 
     import api.models as models
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
 
     original_display = [
         {"role": "user", "content": "original long prompt"},
@@ -741,8 +741,8 @@ def test_handle_chat_sync_writeback_dedupes_full_context_replay(tmp_path, monkey
     state_dir = tmp_path / "state"
     session_dir = state_dir / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "get_session", models.get_session)
     monkeypatch.setattr(routes, "title_from", models.title_from)

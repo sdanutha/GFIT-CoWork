@@ -62,3 +62,52 @@ def test_the_route_module_re_exports_nothing():
 def test_the_shim_guard_finds_both_kinds():
     source = "from api.x import (  # noqa: F401\n    a,\n)\n\ndef __getattr__(name):\n    return name\n"
     assert re_export_shims(source) == ["module __getattr__", "line 1"]
+
+
+# ── Behaviour: one patch of api.config moves the session store ──────────────
+
+
+def test_patching_the_config_module_moves_the_session_store(monkeypatch, tmp_path):
+    from tests._gfit_server import gfit_server
+
+    sessions = tmp_path / "moved-sessions"
+    sessions.mkdir()
+    monkeypatch.setattr("api.config.SESSION_DIR", sessions)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", sessions / "_index.json")
+    alice = "521740"
+    with gfit_server(monkeypatch, tmp_path, users={alice: "Alice"}, profile_names=[alice]) as server:
+        client = server.logged_in(alice)
+        status, payload, _ = client.post("/api/session/new", {})
+        assert status == 200, payload
+        sid = payload["session"]["session_id"]
+        status, payload, _ = client.post("/api/session/rename", {"session_id": sid, "title": "Moved"})
+        assert status == 200, payload
+    assert (sessions / f"{sid}.json").exists()
+    assert sid in (sessions / "_index.json").read_text(encoding="utf-8")
+
+
+def state_path_copies(source: str) -> list[str]:
+    """Module-level bindings of a state path name (by import or assignment)."""
+    names = {"STATE_DIR", "SESSION_DIR", "SESSION_INDEX_FILE", "SETTINGS_FILE", "PROJECTS_FILE",
+             "WORKSPACES_FILE", "LAST_WORKSPACE_FILE"}
+    found = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ImportFrom):
+            found += [alias.asname or alias.name for alias in node.names if (alias.asname or alias.name) in names]
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            found += [t.id for t in targets if isinstance(t, ast.Name) and t.id in names]
+    return found
+
+
+def test_no_module_but_the_config_module_holds_a_copy_of_a_state_path():
+    copies = {
+        str(path.relative_to(ROOT)): state_path_copies(path.read_text(encoding="utf-8"))
+        for path in (ROOT / "api").rglob("*.py")
+        if path.name != "config.py" or path.parent != ROOT / "api"
+    }
+    assert {module: names for module, names in copies.items() if names} == {}
+
+
+def test_the_copy_guard_finds_imports_and_assignments():
+    assert state_path_copies("from api.config import SESSION_DIR, LOCK\nSTATE_DIR = 1\n") == ["SESSION_DIR", "STATE_DIR"]

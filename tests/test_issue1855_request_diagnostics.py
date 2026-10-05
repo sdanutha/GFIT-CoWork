@@ -50,8 +50,8 @@ def test_all_sessions_reports_internal_index_stages(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, "_enrich_sidebar_lineage_metadata", lambda sessions: None)
     models.SESSIONS.clear()
 

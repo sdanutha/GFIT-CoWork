@@ -235,8 +235,8 @@ def test_chat_start_losing_regeneration_preserves_locked_send_winner(monkeypatch
     session.session_id = "route-race-6611"
     session.model_explicit_pick_signature = "before-regeneration"
     revision = plan_regeneration(session).revision
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     monkeypatch.setattr(runtime_adapter, "runtime_adapter_runner_enabled", lambda: False)
     monkeypatch.setattr(routes, "_get_or_materialize_session", lambda *_args, **_kwargs: session)
     monkeypatch.setattr(routes, "_agent_runtime_barrier_response", lambda **_kwargs: None)
@@ -484,8 +484,8 @@ def test_issue_artifact_rows_follow_production_regeneration_and_error_settlement
     session.messages.append(copy.deepcopy(rows[1]))
     assert [row["role"] for row in session.messages] == ["user", "assistant"]
     assert [row["content"] for row in session.messages if row["role"] == "user"] == [rows[0]["content"]]
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     session.save(touch_updated_at=False)
     reloaded = Session.load(session.session_id)
     assert reloaded is not None
@@ -526,8 +526,8 @@ def test_concurrent_normal_winner_survives_regeneration_409_in_memory_and_after_
     session.pending_user_message = "stale prompt"
     session.pending_started_at = 111.0
     session.pending_user_source = "webui"
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     session.save(touch_updated_at=False)
 
     winner_started = threading.Event()

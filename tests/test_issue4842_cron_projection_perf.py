@@ -119,7 +119,7 @@ def test_sidecar_metadata_cached_across_rebuilds(tmp_path):
         mock.patch("api.models.get_claude_code_sessions", return_value=[]),
         mock.patch("api.models.get_last_workspace", return_value=str(tmp_path)),
         mock.patch("api.models.ensure_cron_project", return_value="cron-pid"),
-        mock.patch("api.models.SESSION_DIR", session_dir),
+        mock.patch("api.config.SESSION_DIR", session_dir),
         mock.patch("api.models._read_metadata_json_prefix", side_effect=_counting_prefix),
     ):
         first = models._load_cli_sessions_uncached(tmp_path, db, _cli_profile=None)
@@ -154,7 +154,7 @@ def test_sidecar_cache_invalidates_on_rename(tmp_path):
         encoding="utf-8",
     )
 
-    with mock.patch("api.models.SESSION_DIR", session_dir):
+    with mock.patch("api.config.SESSION_DIR", session_dir):
         first = models._state_projection_sidecar_metadata(sid)
         assert first["title"] == "First"
         assert first["archived"] is False
@@ -183,7 +183,7 @@ def test_sidecar_metadata_returns_independent_copies(tmp_path):
         ' "updated_at": 2.0, "archived": false, "messages": []}' % sid,
         encoding="utf-8",
     )
-    with mock.patch("api.models.SESSION_DIR", session_dir):
+    with mock.patch("api.config.SESSION_DIR", session_dir):
         first = models._state_projection_sidecar_metadata(sid)
         first["title"] = "MUTATED"
         first["archived"] = True
@@ -197,7 +197,7 @@ def test_missing_sidecar_returns_default_without_caching_growth(tmp_path):
     models.clear_sidecar_metadata_cache()
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    with mock.patch("api.models.SESSION_DIR", session_dir):
+    with mock.patch("api.config.SESSION_DIR", session_dir):
         meta = models._state_projection_sidecar_metadata("cron_nope_999")
     # No sidecar means no opinion on archived (None), so the projection falls back
     # to the state.db row's archived flag (#7548) instead of forcing it to False.
@@ -280,7 +280,7 @@ def test_clear_cli_sessions_cache_also_clears_sidecar_cache(tmp_path):
         ' "updated_at": 2.0, "archived": false, "messages": []}' % sid,
         encoding="utf-8",
     )
-    with mock.patch("api.models.SESSION_DIR", session_dir):
+    with mock.patch("api.config.SESSION_DIR", session_dir):
         models._state_projection_sidecar_metadata(sid)
         assert len(models._SIDECAR_METADATA_CACHE) == 1
         models.clear_cli_sessions_cache()

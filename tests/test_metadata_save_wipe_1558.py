@@ -33,7 +33,7 @@ def temp_session_dir(tmp_path, monkeypatch):
     # api.models reads SESSION_DIR at import time; patch the module-level binding.
     import api.models as _m
     from collections import OrderedDict
-    monkeypatch.setattr(_m, "SESSION_DIR", sd)
+    monkeypatch.setattr("api.config.SESSION_DIR", sd)
     monkeypatch.setattr(_m, "SESSIONS", OrderedDict())
     yield sd
 
@@ -304,7 +304,7 @@ def test_recover_all_sessions_on_startup_rebuilds_missing_index_without_restores
 
     sid = _make_session_on_disk(temp_session_dir, n_msgs=42)
     missing_index = temp_session_dir / "_index.json"
-    monkeypatch.setattr(_m, "SESSION_INDEX_FILE", missing_index)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", missing_index)
     assert not missing_index.exists()
 
     from api.session_recovery import recover_all_sessions_on_startup
@@ -328,7 +328,7 @@ def test_recover_all_sessions_on_startup_rebuilds_index_after_orphan_restore(tem
 
     stale_index = temp_session_dir / "_index.json"
     stale_index.write_text(json.dumps([]), encoding="utf-8")
-    monkeypatch.setattr(_m, "SESSION_INDEX_FILE", stale_index)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", stale_index)
 
     from api.session_recovery import recover_all_sessions_on_startup
     result = recover_all_sessions_on_startup(temp_session_dir, rebuild_index=True)

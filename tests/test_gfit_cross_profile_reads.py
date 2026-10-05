@@ -67,7 +67,7 @@ def usage_index(monkeypatch, tmp_path):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     (session_dir / "_index.json").write_text(json.dumps(rows), encoding="utf-8")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     return {"alice_ts": alice_ts, "bob_ts": bob_ts}
 
 

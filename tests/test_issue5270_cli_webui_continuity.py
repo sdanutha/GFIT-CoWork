@@ -85,13 +85,13 @@ def _install_cli_continuity_env(monkeypatch, tmp_path):
     index_file = session_dir / "_index.json"
     state_db = tmp_path / "state.db"
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, "SESSIONS", OrderedDict(), raising=False)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: state_db, raising=False)
     monkeypatch.setattr(config, "SESSION_DIR", session_dir, raising=False)
     monkeypatch.setattr(config, "SESSION_INDEX_FILE", index_file, raising=False)
-    monkeypatch.setattr(streaming, "SESSION_DIR", session_dir, raising=False)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir, raising=False)
     monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path, raising=False)
     monkeypatch.setattr(routes, "SESSION_INDEX_FILE", index_file, raising=False)
 

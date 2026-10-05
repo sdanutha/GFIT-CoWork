@@ -145,7 +145,7 @@ def fake_hermes_home(tmp_path, monkeypatch):
 
     projects_file = tmp_path / "projects.json"
     monkeypatch.setattr(cfg, "PROJECTS_FILE", projects_file)
-    monkeypatch.setattr(models, "PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, "_projects_migrated", True)
     projects_file.write_text("[]", encoding="utf-8")
 
@@ -1410,7 +1410,7 @@ def test_sidecar_carried_assignment_does_not_spend_an_unassigned_slot(
     -> 17 number, in the guarantee this file's docstring claims to pin.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     rows = [_session(f"cli-{index:02d}", BASE_TS + index) for index in range(23)]
@@ -1527,7 +1527,7 @@ def test_sidecar_moves_below_the_window_still_deliver_the_full_window(
     them.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     rows = [_session(f"cli-{index:02d}", BASE_TS + index) for index in range(total)]
@@ -1584,7 +1584,7 @@ def test_refill_follows_recency_not_session_id_order(
     widen in the wrong direction and miss cli-22.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     total = 30
@@ -1623,7 +1623,7 @@ def test_refill_stops_at_the_cap_when_the_cap_is_all_there_is(
     query would only re-read the same rows.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     rows = [_session(f"cli-{index:02d}", BASE_TS + index) for index in range(20)]
@@ -1669,7 +1669,7 @@ def test_unassigned_refill_query_count_is_bounded(
     ``models.UNASSIGNED_CLI_REFILL_MAX_QUERIES`` unassigned queries.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     rows = [_session(f"cli-{index:02d}", BASE_TS + index) for index in range(80)]
@@ -1716,7 +1716,7 @@ def _refill_cost(fake_hermes_home, tmp_path, monkeypatch, *, total, moved_indexe
     rows were read, sidecar-stat()ed and (on the gateway stream) serialised.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     rows = [_session(f"cli-{index:03d}", BASE_TS + index) for index in range(total)]
@@ -1820,7 +1820,7 @@ def test_unassigned_refill_stops_widening_on_an_exhausted_database(
     re-querying up to its iteration cap on every sidebar build.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     rows = [_session(f"cli-{index:02d}", BASE_TS + index) for index in range(25)]
@@ -1870,7 +1870,7 @@ def test_refill_handles_state_db_and_sidecar_assignments_together(
     an unassigned slot, and the widening must not double-count it either.
     """
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a", "project-b")
 
     state_assigned = {"cli-29", "cli-28", "cli-27"}
@@ -1932,7 +1932,7 @@ def test_unassigned_refill_boundary_is_the_documented_scan_ceiling(
     """
     ceiling = models.UNASSIGNED_CLI_REFILL_SCAN_CEILING
     session_dir = tmp_path / "sessions"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     _register_projects(tmp_path, "project-a")
 
     total = ceiling + 10

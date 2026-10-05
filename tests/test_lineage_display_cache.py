@@ -35,10 +35,10 @@ def lineage(hermes_home, monkeypatch):
     import api.routes as routes
     from api.models import Session
 
-    monkeypatch.setattr(routes, "SESSION_DIR", hermes_home / "sessions")
+    monkeypatch.setattr("api.config.SESSION_DIR", hermes_home / "sessions")
     import api.models as models
 
-    monkeypatch.setattr(models, "SESSION_DIR", hermes_home / "sessions")
+    monkeypatch.setattr("api.config.SESSION_DIR", hermes_home / "sessions")
     # Fresh cache per test.
     routes._lineage_display_cache.clear()
 
@@ -169,8 +169,8 @@ def test_incomplete_multihop_parent_signatures_disable_cache(hermes_home, monkey
     import api.routes as routes
     from api.models import Session
 
-    monkeypatch.setattr(routes, "SESSION_DIR", hermes_home / "sessions")
-    monkeypatch.setattr(models, "SESSION_DIR", hermes_home / "sessions")
+    monkeypatch.setattr("api.config.SESSION_DIR", hermes_home / "sessions")
+    monkeypatch.setattr("api.config.SESSION_DIR", hermes_home / "sessions")
     routes._lineage_display_cache.clear()
 
     grandparent = Session(

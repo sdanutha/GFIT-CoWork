@@ -270,8 +270,8 @@ def test_gateway_chat_health_payload_is_documented_as_operator_diagnostic_only()
 def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     captured = {}
@@ -408,8 +408,8 @@ def test_gateway_chat_worker_records_turn_journal_completion(tmp_path, monkeypat
     """
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -469,8 +469,8 @@ def test_gateway_chat_worker_classifies_terminal_provider_error_without_text(tmp
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
     error_text = (
         'HTTP 400: {"detail":"Invalid Request: Invalid model format or no credentials '
@@ -661,8 +661,8 @@ def test_gateway_chat_worker_persists_reasoning_and_tool_state_on_terminal_error
 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     error_text = (
@@ -732,8 +732,8 @@ def test_gateway_chat_worker_persists_reasoning_and_tool_state_on_terminal_error
 def test_gateway_chat_worker_preserves_reasoning_delta_whitespace_and_persists_reasoning(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -794,8 +794,8 @@ def test_gateway_chat_worker_preserves_reasoning_delta_whitespace_and_persists_r
 def test_gateway_chat_worker_reads_reasoning_content_deltas_from_chat_completions(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -847,8 +847,8 @@ def test_gateway_chat_worker_reads_reasoning_content_deltas_from_chat_completion
 def test_gateway_chat_worker_emits_goal_continue_for_goal_related_turn(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -931,8 +931,8 @@ def test_gateway_goal_eval_keeps_runtime_active_after_success_writeback_before_d
     """Persisted idle flags can precede terminal emission while STREAMS is still active."""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -1026,8 +1026,8 @@ def test_gateway_goal_eval_keeps_runtime_active_after_success_writeback_before_d
 def test_gateway_chat_worker_skips_goal_judge_for_non_goal_turn(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -1099,8 +1099,8 @@ def test_gateway_chat_worker_skips_goal_judge_for_non_goal_turn(tmp_path, monkey
 def test_gateway_chat_worker_normalizes_prefill_slice_before_system_prefix(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     captured = {}
@@ -1170,8 +1170,8 @@ def test_gateway_chat_worker_normalizes_prefill_slice_before_system_prefix(tmp_p
 def test_gateway_chat_worker_backfills_context_only_turns_into_display(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -1233,8 +1233,8 @@ def test_gateway_chat_worker_backfills_context_only_turns_into_display(tmp_path,
 def test_gateway_chat_worker_preserves_old_visible_turns_when_context_is_compacted(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -1311,8 +1311,8 @@ def test_gateway_chat_worker_keeps_repeated_identical_visible_turns(tmp_path, mo
     backfill dedup suppress the second visible turn."""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     class FakeResponse:
@@ -1378,8 +1378,8 @@ def test_gateway_chat_worker_keeps_repeated_identical_visible_turns(tmp_path, mo
 def test_gateway_chat_worker_forwards_image_attachments_as_multimodal_parts(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     image_bytes = base64.b64decode(
@@ -1651,8 +1651,8 @@ def test_gateway_runs_api_classifies_terminal_provider_error(tmp_path, monkeypat
     error_text = "HTTP 400: Invalid model format or no credentials for provider"
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
     events = []
     q = MagicMock()

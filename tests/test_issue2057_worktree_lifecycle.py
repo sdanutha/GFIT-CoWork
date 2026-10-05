@@ -26,9 +26,9 @@ def _capture_post(monkeypatch, body):
 def _isolate_session_store(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(routes, "SESSION_INDEX_FILE", session_dir / "_index.json")
     SESSIONS.clear()
     return session_dir

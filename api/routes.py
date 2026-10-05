@@ -2908,8 +2908,6 @@ def _get_cached_session_list_payload(
 
 from api.config import (
     APP_NAME,
-    STATE_DIR,
-    SESSION_DIR,
     DEFAULT_WORKSPACE,
     DEFAULT_MODEL,
     SESSIONS,
@@ -2943,7 +2941,6 @@ from api.config import (
     load_settings,
     persisted_speech_settings_keys,
     save_settings,
-    SETTINGS_FILE,
     set_hermes_default_model,
     canonical_model_provider_lane,
     model_with_provider_context,
@@ -8171,10 +8168,10 @@ def _session_index_marks_was_webui(sid: str) -> bool:
     ``is_cli_session``/``read_only`` markers — are NOT treated as deleted
     WebUI sessions, even when the sidecar is absent.
     """
-    if not SESSION_INDEX_FILE.exists():
+    if not api_config.SESSION_INDEX_FILE.exists():
         return False
     try:
-        entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+        entries = json.loads(api_config.SESSION_INDEX_FILE.read_bytes())
     except Exception:
         return False
     for entry in entries if isinstance(entries, list) else []:
@@ -8677,7 +8674,7 @@ def _is_pre_compression_snapshot_id(session_id: str) -> bool:
     if not sid or not all(c in "0123456789abcdefghijklmnopqrstuvwxyz_" for c in sid):
         return False
     try:
-        path = SESSION_DIR / f"{sid}.json"
+        path = api_config.SESSION_DIR / f"{sid}.json"
         if not path.exists():
             return False
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -9367,7 +9364,7 @@ def _display_merge_cache_key(
     sid = str(getattr(session, "session_id", "") or "")
     if not sid or not is_safe_session_id(sid):
         return None
-    self_sig = _sidecar_stat_signature(SESSION_DIR / f"{sid}.json")
+    self_sig = _sidecar_stat_signature(api_config.SESSION_DIR / f"{sid}.json")
     if self_sig is None:
         return None
     # Lineage parents: reuse the signatures recorded by the (already memoized)
@@ -9667,9 +9664,8 @@ def _state_db_rows_fingerprint(rows) -> str | None:
 
 def _sidecar_file_exceeds_threshold(session_id, threshold_bytes) -> bool:
     """Check if the sidecar JSON file for ``session_id`` exceeds ``threshold_bytes``."""
-    from api.config import SESSION_DIR
     try:
-        p = SESSION_DIR / f"{session_id}.json"
+        p = api_config.SESSION_DIR / f"{session_id}.json"
         return os.path.isfile(p) and os.path.getsize(p) > threshold_bytes
     except Exception:
         return False
@@ -9794,7 +9790,7 @@ def _webui_sidecar_lineage_messages_for_display(session, *, max_hops: int = 20) 
     sid = str(getattr(session, "session_id", "") or "")
     self_sig = None
     if sid and is_safe_session_id(sid):
-        self_sig = _sidecar_stat_signature(SESSION_DIR / f"{sid}.json")
+        self_sig = _sidecar_stat_signature(api_config.SESSION_DIR / f"{sid}.json")
     if cache_allowed and self_sig is not None:
         with _lineage_display_cache_lock:
             entry = _lineage_display_cache.get(sid)
@@ -9835,7 +9831,7 @@ def _webui_sidecar_lineage_messages_for_display(session, *, max_hops: int = 20) 
         if parent_id in seen or not is_safe_session_id(parent_id):
             parent_signatures_complete = False
             break
-        parent_path = SESSION_DIR / f"{parent_id}.json"
+        parent_path = api_config.SESSION_DIR / f"{parent_id}.json"
         parent_sig_before = _sidecar_stat_signature(parent_path)
         parent = Session.load(parent_id)
         if not parent:
@@ -10610,7 +10606,6 @@ from api.models import (
     new_session,
     all_sessions,
     title_from,
-    SESSION_INDEX_FILE,
     _active_state_db_path,
     load_projects,
     save_projects,
@@ -10705,10 +10700,10 @@ def _pre_compression_continuation_session_id(session) -> str | None:
         return rows
 
     def _child_rows_from_index(seen_ids: set[str]) -> list | None:
-        if not SESSION_INDEX_FILE.exists():
+        if not api_config.SESSION_INDEX_FILE.exists():
             return None
         try:
-            entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+            entries = json.loads(api_config.SESSION_INDEX_FILE.read_bytes())
         except Exception:
             return None
         if not isinstance(entries, list):
@@ -10716,7 +10711,7 @@ def _pre_compression_continuation_session_id(session) -> str | None:
         try:
             persisted_sidecar_ids = {
                 path.stem
-                for path in SESSION_DIR.glob("*.json")
+                for path in api_config.SESSION_DIR.glob("*.json")
                 if not path.name.startswith("_") and is_safe_session_id(path.stem)
             }
         except Exception:
@@ -10748,7 +10743,7 @@ def _pre_compression_continuation_session_id(session) -> str | None:
     def _child_rows_from_sidecars(seen_ids: set[str]) -> list:
         rows = []
         try:
-            for path in SESSION_DIR.glob("*.json"):
+            for path in api_config.SESSION_DIR.glob("*.json"):
                 if path.name.startswith("_"):
                     continue
                 child_sid = path.stem
@@ -10771,7 +10766,7 @@ def _pre_compression_continuation_session_id(session) -> str | None:
             return False
         if not isinstance(row, dict):
             return True
-        return (SESSION_DIR / f"{child_sid}.json").exists()
+        return (api_config.SESSION_DIR / f"{child_sid}.json").exists()
 
     def _resolve_from_rows(rows: list) -> str | None:
         children_by_parent: dict[str, list] = {}
@@ -12027,7 +12022,7 @@ def _handle_insights(handler, parsed) -> bool:
 
     # Walk session index (fast, no full JSON parse)
     sessions_data = []
-    idx_path = SESSION_DIR / "_index.json"
+    idx_path = api_config.SESSION_DIR / "_index.json"
     if idx_path.exists():
         try:
             idx = json.loads(idx_path.read_text(encoding="utf-8"))
@@ -14386,7 +14381,7 @@ def _get_api_session_lineage_report(handler, parsed):
 
 def _get_api_session_recovery_audit(handler, parsed):
     from api.session_recovery import audit_session_recovery
-    return j(handler, audit_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path()))
+    return j(handler, audit_session_recovery(api_config.SESSION_DIR, state_db_path=_active_state_db_path()))
 
 
 def _get_api_session_status(handler, parsed):
@@ -15519,7 +15514,7 @@ def _post_api_extensions_sidecar_proxy_consent(handler, parsed, body, diag):
 
 def _post_api_session_recovery_repair_safe(handler, parsed, body, diag):
     from api.session_recovery import repair_safe_session_recovery
-    result = repair_safe_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path())
+    result = repair_safe_session_recovery(api_config.SESSION_DIR, state_db_path=_active_state_db_path())
     return j(handler, result, status=200 if result.get("clean") else 409)
 
 
@@ -16377,8 +16372,8 @@ def _post_api_session_delete(handler, parsed, body, diag):
         with LOCK:
             SESSIONS.pop(sid, None)
         try:
-            p = (SESSION_DIR / f"{sid}.json").resolve()
-            p.relative_to(SESSION_DIR.resolve())
+            p = (api_config.SESSION_DIR / f"{sid}.json").resolve()
+            p.relative_to(api_config.SESSION_DIR.resolve())
         except Exception:
             return bad(handler, "Invalid session_id", 400)
         sidecar_deleted = False
@@ -17662,9 +17657,9 @@ def _post_api_projects_delete(handler, parsed, body, diag):
     # lands without a competing write. (If the streaming session isn't in the
     # cache for some reason, fall back to a direct save.) Guard each per-session
     # update so one slow/failing session can't abort the whole request.
-    if SESSION_INDEX_FILE.exists():
+    if api_config.SESSION_INDEX_FILE.exists():
         try:
-            index = json.loads(SESSION_INDEX_FILE.read_bytes())
+            index = json.loads(api_config.SESSION_INDEX_FILE.read_bytes())
             active_ids = _active_stream_ids()
             deferred_to_stream = []
             for entry in index:
@@ -20516,7 +20511,7 @@ def _media_deny_reason(target: Path) -> str | None:
     )
     _state_dir = None
     try:
-        from api.config import STATE_DIR as _STATE_DIR
+        _STATE_DIR = api_config.STATE_DIR
         _state_dir = Path(_STATE_DIR).resolve()
     except Exception:
         _state_dir = None
@@ -22529,7 +22524,7 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
     phase1_removed_ids = set()
 
     # Phase 1: Clean orphan session files (existing behavior).
-    for p in SESSION_DIR.glob("*.json"):
+    for p in api_config.SESSION_DIR.glob("*.json"):
         if p.name.startswith("_"):
             continue
         try:
@@ -22561,18 +22556,18 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
     #
     # Holds _INDEX_WRITE_LOCK for the full read-modify-write cycle to
     # prevent races with concurrent Session.save() / prune_session_from_index().
-    if SESSION_INDEX_FILE.exists():
+    if api_config.SESSION_INDEX_FILE.exists():
         try:
             from api.models import _INDEX_WRITE_LOCK, _safe_replace
 
             with _INDEX_WRITE_LOCK:
                 index_file_data = json.loads(
-                    SESSION_INDEX_FILE.read_bytes()
+                    api_config.SESSION_INDEX_FILE.read_bytes()
                 )
                 if isinstance(index_file_data, list):
                     live_ids = {
                         p.stem
-                        for p in SESSION_DIR.glob("*.json")
+                        for p in api_config.SESSION_DIR.glob("*.json")
                         if not p.name.startswith("_")
                     }
                     with LOCK:
@@ -22594,7 +22589,7 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
                         # Ghost not added to survivors — removed from index.
 
                     if cleaned > 0 and len(survivors) < len(index_file_data):
-                        _tmp = SESSION_INDEX_FILE.with_suffix(
+                        _tmp = api_config.SESSION_INDEX_FILE.with_suffix(
                             f".tmp.{os.getpid()}.{threading.current_thread().ident}"
                         )
                         _payload = json.dumps(survivors, ensure_ascii=False, indent=2)
@@ -22603,7 +22598,7 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
                                 f.write(_payload)
                                 f.flush()
                                 os.fsync(f.fileno())
-                            _safe_replace(_tmp, SESSION_INDEX_FILE)
+                            _safe_replace(_tmp, api_config.SESSION_INDEX_FILE)
                             phase2_rewrote_index = True
                         except Exception:
                             try:
@@ -22621,8 +22616,8 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
     # index, delete the index to force a fresh rebuild from disk on the
     # next sidebar poll.  When Phase 2 succeeded the index is already
     # correct, so keep it (avoids a wasteful rebuild).
-    if phase1_touched and not phase2_rewrote_index and SESSION_INDEX_FILE.exists():
-        SESSION_INDEX_FILE.unlink(missing_ok=True)
+    if phase1_touched and not phase2_rewrote_index and api_config.SESSION_INDEX_FILE.exists():
+        api_config.SESSION_INDEX_FILE.unlink(missing_ok=True)
 
     return j(handler, {"ok": True, "cleaned": cleaned})
 
@@ -22770,7 +22765,7 @@ def _handle_background(handler, body):
             # clutter the sidebar or SESSION_DIR. The index is pruned on the
             # next rebuild via _index_entry_exists().
             try:
-                (SESSION_DIR / f"{bg_sid}.json").unlink(missing_ok=True)
+                (api_config.SESSION_DIR / f"{bg_sid}.json").unlink(missing_ok=True)
             except Exception:
                 pass
         except Exception:

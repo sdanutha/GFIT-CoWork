@@ -139,7 +139,7 @@ def test_chat_start_clears_expired_post_compression_estimate(tmp_path, monkeypat
 def test_estimate_lineage_matrix(tmp_path, monkeypatch):
     from api import models
 
-    monkeypatch.setattr(models, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     direct = models.Session(session_id="issue4685-direct", post_compression_context_tokens_estimate=4_096)
     direct.save()
     restored = models.Session.load("issue4685-direct")

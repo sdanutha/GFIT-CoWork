@@ -68,7 +68,7 @@ def _isolate_projects(tmp_path, monkeypatch):
 
     projects_file = tmp_path / "projects.json"
     monkeypatch.setattr(cfg, "PROJECTS_FILE", projects_file)
-    monkeypatch.setattr(models, "PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, "_projects_migrated", True)
     monkeypatch.setattr(models, "_CRON_PROJECT_LOCK", threading.Lock())
     monkeypatch.setattr(models, "_WEBHOOK_PROJECT_LOCK", threading.Lock())

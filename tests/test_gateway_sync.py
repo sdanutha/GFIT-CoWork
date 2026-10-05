@@ -9,6 +9,7 @@ Tests are ordered TDD-style:
   5. Watcher detects new sessions inserted into state.db
   6. Settings UI has renamed label
 """
+import api.config
 import json
 import os
 import pathlib
@@ -2240,7 +2241,7 @@ def test_deleted_webui_session_stays_out_of_sidebar_projection(cleanup_test_sess
         _insert_gateway_session(conn, session_id=sid, source='webui', title='Deleted WebUI Ghost')
         _m._record_webui_deleted_session_tombstone(sid)
         # Tombstone should win: ensure no live sidecar exists for this sid.
-        assert not (_m.SESSION_DIR / f'{sid}.json').exists()
+        assert not (api.config.SESSION_DIR / f'{sid}.json').exists()
 
         post('/api/settings', {'show_cli_sessions': True})
         data, status = get('/api/sessions')

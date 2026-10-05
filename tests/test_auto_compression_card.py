@@ -1157,8 +1157,8 @@ def test_session_model_round_trips_context_engine_metadata(tmp_path, monkeypatch
     state_dir = tmp_path / "state"
     session_dir = state_dir / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
 
     session = Session(
         session_id="lcm_metadata",

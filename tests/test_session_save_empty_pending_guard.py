@@ -11,8 +11,8 @@ def test_empty_active_pending_save_cannot_overwrite_existing_messages(tmp_path, 
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(config, "SESSION_INDEX_FILE", index_file, raising=False)
     models.SESSIONS.clear()
 

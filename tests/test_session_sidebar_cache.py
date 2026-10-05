@@ -468,9 +468,9 @@ def test_session_list_cache_source_stamp_tracks_state_db_wal(tmp_path, monkeypat
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
 
     key = routes._session_list_cache_key(
@@ -503,9 +503,9 @@ def test_session_list_cache_source_stamp_tracks_settings_file(tmp_path, monkeypa
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
 
     key = routes._session_list_cache_key(
@@ -541,9 +541,9 @@ def test_session_list_cache_source_stamp_tracks_settings_write_version(
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
 
     key = routes._session_list_cache_key(
@@ -632,9 +632,9 @@ def _build_stamp_env(tmp_path, monkeypatch):
     monkeypatch.setattr("api.models._active_state_db_path", lambda: str(state_db))
     monkeypatch.setattr(routes, "_gateway_session_metadata_path", lambda: gateway)
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_gateway_session_metadata_path", lambda: gateway)
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
     monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes, "SETTINGS_FILE", settings_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     monkeypatch.setattr("api.config.SETTINGS_FILE", settings_file)
     # Make the content fingerprint deterministic and unaffected by the dummy
     # text-file state.db (a real sqlite connect would just return None here).

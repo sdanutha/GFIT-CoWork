@@ -16,8 +16,9 @@ import threading
 import time
 from pathlib import Path
 
+from api import config as _config
 from api import directory
-from api.config import STATE_DIR, load_settings
+from api.config import load_settings
 from api.helpers import request_declares_body
 
 logger = logging.getLogger(__name__)
@@ -92,14 +93,14 @@ def _warn_auth_persistence_failure(prefix: str, artifact: Path, exc: Exception, 
         '%s at %s (STATE_DIR=%s): %s: %s; %s',
         prefix,
         artifact,
-        STATE_DIR,
+        _config.STATE_DIR,
         exc.__class__.__name__,
         exc,
         consequence,
     )
 
 
-_SESSIONS_FILE = STATE_DIR / '.sessions.json'
+_SESSIONS_FILE = _config.STATE_DIR / '.sessions.json'
 def _session_expiry(record) -> float | None:
     if isinstance(record, dict):
         expiry = record.get('expiry', record.get('expires_at'))
@@ -182,8 +183,8 @@ def _save_sessions(sessions: dict[str, float | dict]) -> None:
     truncated file.  Mirrors the same pattern as .signing_key persistence.
     """
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=STATE_DIR, suffix='.sessions.tmp')
+        _config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=_config.STATE_DIR, suffix='.sessions.tmp')
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(sessions, f)
@@ -210,7 +211,7 @@ _SESSIONS_LOCK = threading.Lock()
 
 def _load_key(filename: str) -> bytes:
     """Load a 32-byte key from STATE_DIR, generating and persisting one if missing."""
-    key_file = STATE_DIR / filename
+    key_file = _config.STATE_DIR / filename
     try:
         if key_file.exists():
             raw = key_file.read_bytes()
@@ -232,7 +233,7 @@ def _load_key(filename: str) -> bytes:
         )
     key = secrets.token_bytes(32)
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _config.STATE_DIR.mkdir(parents=True, exist_ok=True)
         key_file.write_bytes(key)
         key_file.chmod(0o600)
     except OSError as e:

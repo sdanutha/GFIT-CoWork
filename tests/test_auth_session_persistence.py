@@ -5,6 +5,7 @@ systemd, container) invalidates all active browser sessions and floods clients
 with 401s until they clear cookies. The HMAC signing key already persists to
 STATE_DIR; this PR persists the session table using the same pattern.
 """
+import api.config
 import importlib
 import json
 import os
@@ -38,7 +39,7 @@ class TestSessionPersistence(unittest.TestCase):
         # WARNING), and the warning's "STATE_DIR=..." never contains _TEST_STATE.
         # Patching the actual bindings the code reads makes every test in this
         # class self-contained. Saved values are restored in tearDown.
-        self._saved_state_dir = auth.STATE_DIR
+        self._saved_state_dir = api.config.STATE_DIR
         self._saved_sessions_file = auth._SESSIONS_FILE
         auth.STATE_DIR = _TEST_STATE
         auth._SESSIONS_FILE = _TEST_STATE / '.sessions.json'

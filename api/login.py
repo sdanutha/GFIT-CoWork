@@ -23,9 +23,9 @@ import threading
 import time
 from typing import NamedTuple
 
+from api import config as _config
 from api import auth, trusted_proxy
 from api.access import REFUSED_NO_PROFILE, REFUSED_PROFILE_NOT_ACTIVE
-from api.config import STATE_DIR
 from api.directory import DIRECTORY_ENV, DirectoryUnavailable, get_directory, is_directory_enabled
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ _REFUSALS = {
 
 
 # ── Rate limit: wrong passwords per person, kept across restarts ───────────
-_LOGIN_ATTEMPTS_FILE = STATE_DIR / '.login_attempts.json'
+_LOGIN_ATTEMPTS_FILE = _config.STATE_DIR / '.login_attempts.json'
 _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW = 60  # seconds
 

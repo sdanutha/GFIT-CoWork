@@ -33,7 +33,7 @@ def test_ensure_cron_project_creates_per_profile(tmp_path, monkeypatch):
 
     projects_file = tmp_path / 'projects.json'
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
     profiles._invalidate_root_profile_cache()
@@ -61,7 +61,7 @@ def test_ensure_cron_project_idempotent_per_profile(tmp_path, monkeypatch):
 
     projects_file = tmp_path / 'projects.json'
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
     profiles._invalidate_root_profile_cache()
@@ -86,7 +86,7 @@ def test_ensure_cron_project_back_tags_legacy_untagged(tmp_path, monkeypatch):
         {'project_id': legacy_pid, 'name': 'Cron Jobs', 'color': '#6366f1', 'created_at': 1.0}
     ]))
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)  # skip the load_projects auto-migration
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
     profiles._invalidate_root_profile_cache()
@@ -115,7 +115,7 @@ def test_ensure_cron_project_renamed_root_matches_default(tmp_path, monkeypatch)
          'profile': 'default', 'created_at': 1.0}
     ]))
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
 
@@ -154,8 +154,8 @@ def test_load_projects_backfills_from_session_index(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
     monkeypatch.setattr(cfg, 'SESSION_INDEX_FILE', index_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'SESSION_INDEX_FILE', index_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, '_projects_migrated', False)
     monkeypatch.setattr(models, '_PROJECTS_MIGRATION_LOCK', threading.Lock())
 
@@ -185,8 +185,8 @@ def test_load_projects_backfills_to_default_when_no_sessions(tmp_path, monkeypat
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
     # Index doesn't exist
     monkeypatch.setattr(cfg, 'SESSION_INDEX_FILE', tmp_path / 'no-index.json')
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'SESSION_INDEX_FILE', tmp_path / 'no-index.json')
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / 'no-index.json')
     monkeypatch.setattr(models, '_projects_migrated', False)
     monkeypatch.setattr(models, '_PROJECTS_MIGRATION_LOCK', threading.Lock())
 
@@ -205,7 +205,7 @@ def test_load_projects_idempotent_after_first_migrate(tmp_path, monkeypatch):
          'profile': 'haku', 'created_at': 1.0},
     ]))
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', False)
     monkeypatch.setattr(models, '_PROJECTS_MIGRATION_LOCK', threading.Lock())
 

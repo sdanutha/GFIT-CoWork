@@ -428,8 +428,8 @@ def test_issue6751_sync_chat_agent_receives_original_api_content_bytes(monkeypat
     state_dir = tmp_path / "state"
     session_dir = state_dir / "sessions"
     session_dir.mkdir(parents=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "get_session", models.get_session)
     monkeypatch.setattr(routes, "title_from", models.title_from)
@@ -522,8 +522,8 @@ def test_issue6751_json_import_strips_internal_aliases_before_persistence(monkey
     session_dir = state_dir / "sessions"
     session_dir.mkdir(parents=True)
     sessions = OrderedDict()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(models, "SESSIONS", sessions)
     monkeypatch.setattr(routes, "SESSIONS", sessions)
     monkeypatch.setattr(routes, "resolve_trusted_workspace", lambda value, **_kw: tmp_path)
@@ -620,8 +620,8 @@ def test_issue6751_json_import_nested_tool_calls_are_removed_at_agent_boundary(
     session_dir = state_dir / "sessions"
     session_dir.mkdir(parents=True)
     sessions = OrderedDict()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(models, "SESSIONS", sessions)
     monkeypatch.setattr(routes, "SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "SESSIONS", sessions)
@@ -779,8 +779,8 @@ def test_issue6751_json_import_rejects_non_list_session_tool_calls(monkeypatch, 
     session_dir = state_dir / "sessions"
     session_dir.mkdir(parents=True)
     sessions = OrderedDict()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", state_dir / "session_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(models, "SESSIONS", sessions)
     monkeypatch.setattr(routes, "SESSION_INDEX_FILE", state_dir / "session_index.json")
     monkeypatch.setattr(routes, "SESSIONS", sessions)

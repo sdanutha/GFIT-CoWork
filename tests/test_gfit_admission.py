@@ -34,8 +34,8 @@ def deployment(monkeypatch, tmp_path):
     state.mkdir()
     hermes_home = tmp_path / "hermes"
     (hermes_home / "profiles").mkdir(parents=True)
-    monkeypatch.setattr(roster, "STATE_DIR", state)
-    monkeypatch.setattr(auth, "STATE_DIR", state)
+    monkeypatch.setattr("api.config.STATE_DIR", state)
+    monkeypatch.setattr("api.config.STATE_DIR", state)
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)

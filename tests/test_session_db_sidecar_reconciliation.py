@@ -67,8 +67,8 @@ def test_recovered_sidecar_derives_message_count_from_materialized_rows(tmp_path
     sidecar = tmp_path / f"{sid}.json"
     assert json.loads(sidecar.read_text(encoding="utf-8"))["message_count"] == 5
 
-    monkeypatch.setattr(models, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     active_empty = models.Session(
         session_id=sid,
         title="Recovered from DB",
@@ -95,7 +95,7 @@ def test_recovered_sidecar_derives_message_count_from_materialized_rows(tmp_path
 
 def test_recover_missing_sidecars_from_state_db_skips_deleted_webui_tombstone(tmp_path, monkeypatch):
     import api.models as _m
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     sid = _make_state_db(tmp_path / "state.db", sid="deleted_webui_001")
     _write_index(tmp_path, [
         {
@@ -120,7 +120,7 @@ def test_recover_missing_sidecars_index_only_no_tombstone_is_repairable(tmp_path
     still be recovered from state.db — the index heuristic alone must not
     suppress repair (#5504 Codex/Opus finding; matches origin/master behavior)."""
     import api.models as _m
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     sid = _make_state_db(tmp_path / "state.db", sid="crashed_webui_001")
     _write_index(tmp_path, [
         {
@@ -138,7 +138,7 @@ def test_recover_missing_sidecars_index_only_no_tombstone_is_repairable(tmp_path
 
 def test_audit_reports_deleted_webui_tombstone_is_unsafe(tmp_path, monkeypatch):
     import api.models as _m
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     sid = _make_state_db(tmp_path / "state.db", sid="deleted_webui_001")
     _write_index(tmp_path, [
         {
@@ -178,7 +178,7 @@ def test_audit_no_double_count_when_bak_and_state_db_row_both_survive(tmp_path, 
     used to emit it)."""
     import api.models as _m
     import json as _json
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     sid = _make_state_db(tmp_path / "state.db", sid="deleted_both_001")
     # Plant a surviving orphan .bak (no live sidecar) for the same sid.
     (tmp_path / f"{sid}.json.bak").write_text(
@@ -204,7 +204,7 @@ def test_recover_missing_sidecars_skips_durable_delete_tombstone_without_index(t
     import api.models as _m
 
     sid = _make_state_db(tmp_path / "state.db", sid="durable_deleted_001")
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     _m._record_webui_deleted_session_tombstone(sid)
 
     result = recover_missing_sidecars_from_state_db(tmp_path, tmp_path / "state.db")
@@ -237,7 +237,7 @@ def test_audit_skips_index_missing_file_when_durable_delete_tombstone_survives(t
             "session_source": "webui",
         }
     ])
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     _m._record_webui_deleted_session_tombstone(sid)
 
     report = audit_session_recovery(tmp_path)
@@ -265,7 +265,7 @@ def test_audit_skips_orphan_backup_when_durable_delete_tombstone_survives(tmp_pa
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     _m._record_webui_deleted_session_tombstone(sid)
 
     report = audit_session_recovery(tmp_path, state_db_path=tmp_path / "state.db")
@@ -382,7 +382,7 @@ def test_materialized_sidecar_round_trips_through_session_load(tmp_path, monkeyp
 
     sid = _make_state_db(tmp_path / "state.db", sid="rt_001", messages=3)
 
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
 
     result = recover_missing_sidecars_from_state_db(tmp_path, tmp_path / "state.db")
     assert result["materialized"] == 1

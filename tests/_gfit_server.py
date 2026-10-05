@@ -139,10 +139,10 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
 
     # Isolate auth state. The Upstream login methods are off in GFIT-CoWork
     # (ticket 09), so nothing else needs switching off.
-    monkeypatch.setattr(auth, "STATE_DIR", state)
+    monkeypatch.setattr("api.config.STATE_DIR", state)
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
     monkeypatch.setattr(login, "_LOGIN_ATTEMPTS_FILE", state / ".login_attempts.json")
-    monkeypatch.setattr(roster, "STATE_DIR", state)
+    monkeypatch.setattr("api.config.STATE_DIR", state)
     for name, value in (legacy_env or {}).items():
         monkeypatch.setenv(name, value)
     auth._sessions.clear()

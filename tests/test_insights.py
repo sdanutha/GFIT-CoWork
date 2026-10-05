@@ -45,7 +45,7 @@ def _call_insights(monkeypatch, tmp_path, entries, days="7", now=None):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     (session_dir / "_index.json").write_text(json.dumps(entries), encoding="utf-8")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     if now is not None:
         monkeypatch.setattr(time, "time", lambda: now)
 
@@ -350,7 +350,7 @@ def _call_insights_with_state_db(monkeypatch, tmp_path, entries, state_rows, day
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     (session_dir / "_index.json").write_text(json.dumps(entries), encoding="utf-8")
-    monkeypatch.setattr(routes, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     if now is not None:
         monkeypatch.setattr(time, "time", lambda: now)
 

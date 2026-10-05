@@ -86,7 +86,7 @@ def test_cli_archived_session_without_sidecar_retains_archived_state(tmp_path, m
     except Exception:
         pass
     monkeypatch.setattr("api.models._active_state_db_path", lambda: db_path)
-    monkeypatch.setattr("api.models.SESSION_DIR", tmp_path / "webui_sessions")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path / "webui_sessions")
     (tmp_path / "webui_sessions").mkdir(parents=True, exist_ok=True)
 
     cli_sessions = get_cli_sessions(source_filter="cron")

@@ -172,7 +172,7 @@ def test_older_agent_keeps_sidecar_recovery(tmp_path, monkeypatch, method, kind)
                             parent_session_id='legacyparent', pre_compression_snapshot=False,
                             updated_at=2, created_at=1)
     monkeypatch.setattr(routes, 'SESSIONS', {'legacychild': child})
-    monkeypatch.setattr(routes, 'SESSION_DIR', tmp_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
     assert durable_compression_continuation(session) == (False, None)
     assert OldDB.closed
     assert routes._pre_compression_continuation_session_id(session) == 'legacychild'
