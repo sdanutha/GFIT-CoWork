@@ -33,7 +33,7 @@ class TestSessionPersistence(unittest.TestCase):
         # regardless of import/reload order. pytest-shard distributes individual
         # test items, so a shard may run a key/session test WITHOUT any of the
         # _simulate_restart() tests that (as a reload side effect) rebind
-        # auth.STATE_DIR to _TEST_STATE. Without this, auth.STATE_DIR keeps
+        # the state dir to _TEST_STATE. Without this, api.config.STATE_DIR keeps
         # conftest's TEST_STATE_DIR: _load_key() then reads the wrong dir (so the
         # sentinel key is "missing", no OSError fires, and assertLogs sees no
         # WARNING), and the warning's "STATE_DIR=..." never contains _TEST_STATE.
@@ -41,7 +41,7 @@ class TestSessionPersistence(unittest.TestCase):
         # class self-contained. Saved values are restored in tearDown.
         self._saved_state_dir = api.config.STATE_DIR
         self._saved_sessions_file = auth._SESSIONS_FILE
-        auth.STATE_DIR = _TEST_STATE
+        api.config.STATE_DIR = _TEST_STATE
         auth._SESSIONS_FILE = _TEST_STATE / '.sessions.json'
         auth._sessions.clear()
         auth._PBKDF2_KEY_CACHE = None
@@ -52,7 +52,7 @@ class TestSessionPersistence(unittest.TestCase):
                 path.unlink()
 
     def tearDown(self) -> None:
-        auth.STATE_DIR = self._saved_state_dir
+        api.config.STATE_DIR = self._saved_state_dir
         auth._SESSIONS_FILE = self._saved_sessions_file
         auth._sessions.clear()
         auth._PBKDF2_KEY_CACHE = None
