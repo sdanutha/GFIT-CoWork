@@ -25,10 +25,17 @@ CAPTURED = json.loads(
 
 
 
+# Routes ADR 0006 opened to Users on purpose (they act in the User's own Profile).
+_OPENED_TO_USERS = {("POST", "/api/settings")}
+
+
 def _intended(method, path, user_may, kind):
-    """The one answer the table changes on purpose: a session page's static
-    assets and manifest name no session. The old list said READ only because
-    its ``/session/*`` prefix also caught them."""
+    """The answers the table changes on purpose: a session page's static
+    assets and manifest name no session (the old list said READ only because
+    its ``/session/*`` prefix also caught them), and the routes ADR 0006
+    opened to Users."""
+    if (method, path) in _OPENED_TO_USERS:
+        return True, kind
     if path.startswith("/session/static/") or path in ("/session/manifest.json", "/session/manifest.webmanifest"):
         return user_may, None
     return user_may, kind

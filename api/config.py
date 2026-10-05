@@ -11805,6 +11805,70 @@ def _read_raw_settings_file() -> dict:
     return loaded if isinstance(loaded, dict) else {}
 
 
+# ── Settings: the Deployment's file and each Profile's own (ADR 0006) ──────
+#
+# settings.json in the state directory holds the Deployment's settings, which
+# the Operator edits on the server. A User's own choices (theme, voice,
+# composer buttons, ...) live in their Profile, in
+# ``{profile_home}/webui_state/settings.json``, hold only personal keys, and
+# are laid over the Deployment's settings for that User's requests. A request
+# with no User (the login page, a worker thread) sees the Deployment's
+# settings alone. A Profile with no file of its own starts from the
+# Deployment's settings, so values saved before settings were per Profile
+# carry over.
+
+_PERSONAL_SETTINGS_FILENAME = "settings.json"
+
+
+class SettingsRefused(PermissionError):
+    """A User tried to change settings that belong to the Deployment."""
+
+    def __init__(self, keys):
+        self.keys = sorted(keys)
+        super().__init__(
+            "These settings are set for the whole Deployment by its Operator: " + ", ".join(self.keys))
+
+
+def _settings_profile() -> str | None:
+    """The Profile whose own settings apply to this request, or None."""
+    try:
+        from api.profiles import request_profile_name
+    except ImportError:
+        return None
+    name = request_profile_name()
+    return name if name and name != "default" else None
+
+
+def _personal_settings_file(profile: str) -> Path:
+    from api.profiles import get_hermes_home_for_profile
+
+    return get_hermes_home_for_profile(profile) / "webui_state" / _PERSONAL_SETTINGS_FILENAME
+
+
+def _read_personal_settings(profile: str) -> dict:
+    """Profile *profile*'s own settings: personal keys only, {} when there are none."""
+    path = _personal_settings_file(profile)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        logger.debug("Failed to load the settings of Profile %s from %s", profile, path)
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {k: v for k, v in loaded.items() if k in PERSONAL_SETTINGS_KEYS}
+
+
+def _read_stored_settings() -> dict:
+    """The stored settings for this request: the Deployment's, then the User's own over them."""
+    stored = _read_raw_settings_file()
+    profile = _settings_profile()
+    if profile:
+        stored = {**stored, **_read_personal_settings(profile)}
+    return stored
+
+
 def _extract_persisted_speech_keys(stored: dict) -> set[str]:
     if not isinstance(stored, dict):
         return set()
@@ -11812,7 +11876,7 @@ def _extract_persisted_speech_keys(stored: dict) -> set[str]:
 
 
 def persisted_speech_settings_keys() -> list[str]:
-    return sorted(_extract_persisted_speech_keys(_read_raw_settings_file()))
+    return sorted(_extract_persisted_speech_keys(_read_stored_settings()))
 
 
 def _settings_payload_for_write(settings: dict, persisted_speech_keys: set[str]) -> dict:
@@ -11828,9 +11892,13 @@ def _settings_payload_for_write(settings: dict, persisted_speech_keys: set[str])
 
 
 def load_settings() -> dict:
-    """Load settings from disk, merging with defaults for any missing keys."""
+    """Load settings from disk, merging with defaults for any missing keys.
+
+    For a User's request the User's own settings are laid over the
+    Deployment's (see ``_read_stored_settings``).
+    """
     settings = dict(_SETTINGS_DEFAULTS)
-    stored = _read_raw_settings_file()
+    stored = _read_stored_settings()
     if isinstance(stored, dict):
         if (
             "worklog_details_expanded_default" not in stored
@@ -11942,6 +12010,28 @@ _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
     # existing BCP-47 validation at save-time still applies.
     "language",
 }
+# Settings that belong to the whole Deployment: the Operator sets them in
+# settings.json on the server and a User cannot change them. They either act
+# outside any one User's request (worker threads, the shared API key, the
+# state database) or weaken a safeguard. Every other allowed key is personal.
+_SETTINGS_DEPLOYMENT_KEYS = frozenset({
+    "default_workspace",
+    "onboarding_completed",
+    "sync_to_insights",
+    "api_redact_enabled",
+    "dashboard_plugins",
+    "auth_disabled_acknowledged",
+    "provider_cost_budget",
+    "bot_name",
+    "auto_title_refresh_every",
+    "inflight_state_max_sessions",
+    "inflight_state_max_messages",
+    "inflight_state_max_tool_calls",
+    "inflight_state_max_string_chars",
+    "inflight_state_max_json_chars",
+})
+PERSONAL_SETTINGS_KEYS = frozenset(_SETTINGS_ALLOWED_KEYS - _SETTINGS_DEPLOYMENT_KEYS)
+
 _SETTINGS_ENUM_VALUES = {
     "send_key": {"enter", "ctrl+enter", "shift+enter"},
     "sidebar_density": {"compact", "detailed"},
@@ -12099,11 +12189,18 @@ def _coerce_provider_cost_budget(value: Any) -> float | None:
 
 
 def save_settings(settings: dict) -> dict:
-    """Save settings to disk. Returns the merged settings. Ignores unknown keys."""
-    raw_settings = _read_raw_settings_file()
+    """Save settings to disk. Returns the merged settings. Ignores unknown keys.
+
+    For a User's request only personal keys may be given (SettingsRefused
+    otherwise), and they are written to the User's Profile, not to the
+    Deployment's file.
+    """
+    profile = _settings_profile()
+    raw_settings = _read_stored_settings()
     persisted_speech_keys = _extract_persisted_speech_keys(raw_settings)
     current = load_settings()
     applied_speech_keys: set[str] = set()
+    applied_keys: set[str] = set()
     if (
         "worklog_details_expanded_default" not in settings
         and "activity_feed_expanded_default" in settings
@@ -12119,6 +12216,10 @@ def save_settings(settings: dict) -> dict:
         settings["default_message_mode"] = settings.get("busy_input_mode")
     settings.pop("busy_input_mode", None)
     settings.pop("simplified_tool_calling", None)
+    if profile:
+        refused = {k for k in settings if k in _SETTINGS_ALLOWED_KEYS and k not in PERSONAL_SETTINGS_KEYS}
+        if refused:
+            raise SettingsRefused(refused)
     pending_theme = current.get("theme")
     pending_skin = current.get("skin")
     theme_was_explicit = False
@@ -12216,6 +12317,7 @@ def save_settings(settings: dict) -> dict:
             if k in _SETTINGS_BOOL_KEYS:
                 v = bool(v)
             current[k] = v
+            applied_keys.add(k)
             if key_is_speech:
                 applied_speech_keys.add(k)
     theme_value = pending_theme
@@ -12225,6 +12327,11 @@ def save_settings(settings: dict) -> dict:
         if raw_theme not in _SETTINGS_THEME_VALUES:
             skin_value = None
     current["theme"], current["skin"] = _normalize_appearance(theme_value, skin_value)
+    if theme_was_explicit or skin_was_explicit:
+        applied_keys.update(("theme", "skin"))
+
+    if profile:
+        return _save_personal_settings(profile, current, applied_keys)
 
     current["default_workspace"] = str(
         resolve_default_workspace(current.get("default_workspace"))
@@ -12244,6 +12351,20 @@ def save_settings(settings: dict) -> dict:
     global DEFAULT_WORKSPACE
     if "default_workspace" in current:
         DEFAULT_WORKSPACE = resolve_default_workspace(current["default_workspace"])
+    current["default_model"] = get_effective_default_model()
+    return current
+
+
+def _save_personal_settings(profile: str, current: dict, applied_keys: set[str]) -> dict:
+    """Write the personal keys a User just changed into their Profile; return the settings."""
+    personal = _read_personal_settings(profile)
+    personal.update({k: current[k] for k in applied_keys if k in PERSONAL_SETTINGS_KEYS})
+    path = _personal_settings_file(profile)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_settings_text(path, json.dumps(personal, ensure_ascii=False, indent=2))
+    global _SETTINGS_WRITE_VERSION
+    with _SETTINGS_WRITE_LOCK:
+        _SETTINGS_WRITE_VERSION += 1
     current["default_model"] = get_effective_default_model()
     return current
 

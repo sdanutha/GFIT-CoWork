@@ -26,7 +26,7 @@ ADMIN = "521740"
 
 # What a User's web app may not call today, so must not show or poll.
 REFUSED_TO_A_USER = {"dashboard", "provider_quota", "mcp_servers", "terminal", "logs", "kanban",
-                     "profiles_admin", "settings", "gateway_restart", "yolo", "share_session",
+                     "profiles_admin", "gateway_restart", "yolo", "share_session",
                      "reveal_on_server", "onboarding"}
 
 

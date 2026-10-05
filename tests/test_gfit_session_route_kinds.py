@@ -48,7 +48,7 @@ ADMIN_NAMES_NO_SESSION: dict[tuple[str, str], str] = {
         "/api/extensions/sidecar-proxy-consent", "/api/extensions/toggle", "/api/gateway/restart",
         "/api/gateway/start", "/api/gateway/stop", "/api/health/restart", "/api/model/set",
         "/api/models/refresh", "/api/providers", "/api/providers/delete", "/api/providers/self-hosted",
-        "/api/reasoning", "/api/settings", "/api/shutdown", "/api/csp-report")},
+        "/api/reasoning", "/api/shutdown", "/api/csp-report")},
     **{(m, r): "onboarding" for m, r in (
         ("GET", "/api/onboarding/oauth/poll"), ("GET", "/api/onboarding/status"),
         ("POST", "/api/onboarding/complete"), ("POST", "/api/onboarding/oauth/cancel"),

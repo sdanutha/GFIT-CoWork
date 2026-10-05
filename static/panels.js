@@ -8885,8 +8885,6 @@ function _preferencesPayloadFromUi(){
   if(terminalAutoExpandCb) payload.terminal_auto_expand_on_output=terminalAutoExpandCb.checked;
   const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
   if(workspaceTodosTabCb) payload.workspace_todos_tab=workspaceTodosTabCb.checked;
-  const apiRedactCb=$('settingsApiRedact');
-  if(apiRedactCb) payload.api_redact_enabled=apiRedactCb.checked;
   const showCliCb=$('settingsShowCliSessions');
   if(showCliCb) payload.show_cli_sessions=showCliCb.checked;
   const showClaudeCodeCb=$('settingsShowClaudeCodeSessions');
@@ -8902,8 +8900,6 @@ function _preferencesPayloadFromUi(){
   if(showKanbanCb) payload.show_kanban_sessions=!!(showCliCb&&showCliCb.checked&&showKanbanCb.checked);
   const showPreviousMessagingCb=$('settingsShowPreviousMessagingSessions');
   if(showPreviousMessagingCb) payload.show_previous_messaging_sessions=showPreviousMessagingCb.checked;
-  const syncCb=$('settingsSyncInsights');
-  if(syncCb) payload.sync_to_insights=syncCb.checked;
   const soundCb=$('settingsSoundEnabled');
   if(soundCb) payload.sound_enabled=soundCb.checked;
   const rtlCb=$('settingsRtl');
@@ -8914,16 +8910,12 @@ function _preferencesPayloadFromUi(){
   if(sidebarDensitySel) payload.sidebar_density=sidebarDensitySel.value;
   const pinnedLimitField=$('settingsPinnedSessionsLimit');
   if(pinnedLimitField) payload.pinned_sessions_limit=parseInt(pinnedLimitField.value,10);
-  const autoTitleRefreshSel=$('settingsAutoTitleRefresh');
-  if(autoTitleRefreshSel) payload.auto_title_refresh_every=parseInt(autoTitleRefreshSel.value,10);
   const defaultMessageModeSel=$('settingsDefaultMessageMode');
   if(defaultMessageModeSel) payload.default_message_mode=defaultMessageModeSel.value;
   const showBusyPlaceholderHintCb=$('settingsShowBusyPlaceholderHint');
   if(showBusyPlaceholderHintCb) payload.show_busy_placeholder_hint=showBusyPlaceholderHintCb.checked;
   const newChatOnWorkspaceSwitchCb=$('settingsNewChatOnWorkspaceSwitch');
   if(newChatOnWorkspaceSwitchCb) payload.new_chat_on_workspace_switch=newChatOnWorkspaceSwitchCb.checked;
-  const botNameField=$('settingsBotName');
-  if(botNameField) payload.bot_name=botNameField.value;
   Object.assign(payload,_speechPreferencesPayloadFromUi());
   return payload;
 }
@@ -9527,8 +9519,6 @@ async function loadSettingsPanel(){
         _schedulePreferencesAutosave();
       },{once:false});
     }
-    const apiRedactCb=$('settingsApiRedact');
-    if(apiRedactCb){apiRedactCb.checked=settings.api_redact_enabled!==false;apiRedactCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const showCliCb=$('settingsShowCliSessions');
     if(showCliCb){showCliCb.checked=settings.show_cli_sessions!==false;showCliCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const showClaudeCodeCb=$('settingsShowClaudeCodeSessions');
@@ -9565,8 +9555,6 @@ async function loadSettingsPanel(){
     }
     const showPreviousMessagingCb=$('settingsShowPreviousMessagingSessions');
     if(showPreviousMessagingCb){showPreviousMessagingCb.checked=!!settings.show_previous_messaging_sessions;showPreviousMessagingCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const syncCb=$('settingsSyncInsights');
-    if(syncCb){syncCb.checked=!!settings.sync_to_insights;syncCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const soundCb=$('settingsSoundEnabled');
     if(soundCb){soundCb.checked=!!settings.sound_enabled;soundCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     // Right-to-left chat layout (#1721 salvage) — Settings-only, no composer button.
@@ -9744,12 +9732,6 @@ async function loadSettingsPanel(){
       sidebarDensitySel.value=settings.sidebar_density==='detailed'?'detailed':'compact';
       sidebarDensitySel.addEventListener('change',_schedulePreferencesAutosave,{once:false});
     }
-    const autoTitleRefreshSel=$('settingsAutoTitleRefresh');
-    if(autoTitleRefreshSel){
-      const val=String(settings.auto_title_refresh_every||'0');
-      autoTitleRefreshSel.value=['0','5','10','20'].includes(val)?val:'0';
-      autoTitleRefreshSel.addEventListener('change',_schedulePreferencesAutosave,{once:false});
-    }
     // Default message mode
     const defaultMessageModeSel=$('settingsDefaultMessageMode');
     if(defaultMessageModeSel){
@@ -9771,16 +9753,6 @@ async function loadSettingsPanel(){
       newChatOnWorkspaceSwitchCb.checked=!!settings.new_chat_on_workspace_switch;
       window._newChatOnWorkspaceSwitch=newChatOnWorkspaceSwitchCb.checked;
       newChatOnWorkspaceSwitchCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});
-    }
-    // Bot name — debounced autosave (text input)
-    const botNameField=$('settingsBotName');
-    if(botNameField){
-      botNameField.value=settings.bot_name||'Hermes';
-      let botNameTimer=null;
-      botNameField.addEventListener('input',()=>{
-        if(botNameTimer) clearTimeout(botNameTimer);
-        botNameTimer=setTimeout(_schedulePreferencesAutosave,500);
-      },{once:false});
     }
     // Show auth buttons only when auth is active
     try{
@@ -11738,7 +11710,8 @@ function _applySavedSettingsUi(saved, body, opts){
   if(Object.prototype.hasOwnProperty.call(body,'structured_code_default_view')){
     _applyStructuredCodeViewSettings(body.structured_code_default_view,body.structured_code_auto_tree_lines,false);
   }
-  window._botName=body.bot_name||'Hermes';
+  // The assistant's name is the Deployment's; the save answer carries it.
+  window._botName=(saved&&saved.bot_name)||window._botName||'Hermes';
   if(typeof applyBotName==='function') applyBotName();
   else if(typeof _applyBusyComposerPlaceholder==='function') _applyBusyComposerPlaceholder();
   if(typeof setLocale==='function') setLocale(language);
@@ -12345,7 +12318,6 @@ async function saveSettings(andClose){
   body.fade_text_effect=fadeTextEffect;
   body.terminal_auto_expand_on_output=!!($('settingsTerminalAutoExpand')||{}).checked;
   body.workspace_todos_tab=!!window._workspaceTodosTab;
-  body.api_redact_enabled=!!($('settingsApiRedact')||{}).checked;
   body.show_cli_sessions=showCliSessions;
   // Persist the opt-out child independently; the read path applies the parent gate.
   body.show_claude_code_sessions=showClaudeCodeSessions;
@@ -12356,16 +12328,12 @@ async function saveSettings(andClose){
   body.show_kanban_sessions=showCliSessions&&showKanbanSessions;
   body.show_previous_messaging_sessions=showPreviousMessagingSessions;
   body.pinned_sessions_limit=pinnedSessionsLimit;
-  body.sync_to_insights=!!($('settingsSyncInsights')||{}).checked;
   body.sound_enabled=!!($('settingsSoundEnabled')||{}).checked;
   body.rtl=!!($('settingsRtl')||{}).checked;
   body.notifications_enabled=!!($('settingsNotificationsEnabled')||{}).checked;
   body.show_thinking=window._showThinking!==false;
   body.sidebar_density=sidebarDensity;
   body.default_message_mode=defaultMessageMode;
-  body.auto_title_refresh_every=(($('settingsAutoTitleRefresh')||{}).value||'0');
-  const botName=(($('settingsBotName')||{}).value||'').trim();
-  body.bot_name=botName||'Hermes';
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(body)});
     if(modelChanged && model){

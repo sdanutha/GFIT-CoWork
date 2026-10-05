@@ -7278,8 +7278,7 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 /* GFIT-CoWork: the web app shows only the features its caller may use. The
    server stamps them on <html data-gfit-may="..."> from the Admin gate
    (api/access.py SHELL_FEATURES) and refuses the others anyway; hiding them is
-   cosmetic. With login off there is no stamp and everything shows. Settings
-   are Deployment-wide, so the whole panel is the Admin's. */
+   cosmetic. With login off there is no stamp and everything shows. */
 html[data-gfit-may]:not([data-gfit-may~="logs"]) [data-panel="logs"],
 html[data-gfit-may]:not([data-gfit-may~="kanban"]) [data-panel="kanban"],
 html[data-gfit-may]:not([data-gfit-may~="profiles_admin"]) [data-panel="profiles"],

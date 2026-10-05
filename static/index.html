@@ -1312,13 +1312,6 @@
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_terminal_auto_expand">Expand the collapsed terminal panel automatically when a running command emits new output.</div>
             </div>
             <div class="settings-field">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="checkbox" id="settingsApiRedact" checked style="width:15px;height:15px;accent-color:var(--accent)">
-                <span data-i18n="settings_label_api_redact">Redact sensitive data in API responses</span>
-              </label>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_api_redact">Self-hosted users can disable for transparency (not recommended for shared instances).</div>
-            </div>
-            <div class="settings-field">
               <label for="settingsSidebarDensity" data-i18n="settings_label_sidebar_density">Sidebar density</label>
               <select id="settingsSidebarDensity" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
                 <option value="compact" data-i18n="settings_sidebar_density_compact">Compact</option>
@@ -1330,16 +1323,6 @@
               <label for="settingsPinnedSessionsLimit" data-i18n="settings_label_pinned_limit">Pinned conversations limit</label>
               <input type="number" id="settingsPinnedSessionsLimit" min="1" max="99" step="1" inputmode="numeric" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_pinned_limit">Maximum number of active conversations that can be pinned in the sidebar. Default is 3.</div>
-            </div>
-            <div class="settings-field">
-              <label for="settingsAutoTitleRefresh" data-i18n="settings_label_auto_title_refresh">Adaptive title refresh</label>
-              <select id="settingsAutoTitleRefresh" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
-                <option value="0" data-i18n="settings_auto_title_refresh_off">Off</option>
-                <option value="5" data-i18n="settings_auto_title_refresh_5">Every 5 exchanges</option>
-                <option value="10" data-i18n="settings_auto_title_refresh_10">Every 10 exchanges</option>
-                <option value="20" data-i18n="settings_auto_title_refresh_20">Every 20 exchanges</option>
-              </select>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_auto_title_refresh">Automatically re-generates the session title based on the latest exchange, keeping it relevant as the conversation evolves. Requires an LLM title generation model to be configured.</div>
             </div>
           <div class="settings-field" data-settings-search="busy input mode message default while running queue interrupt steer">
               <label for="settingsDefaultMessageMode" data-i18n="settings_label_default_message_mode">Default message mode</label>
@@ -1405,18 +1388,6 @@
                 <span data-i18n="settings_label_previous_messaging_sessions">Show previous messaging sessions</span>
               </label>
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_previous_messaging_sessions">Show older Discord, Telegram, Slack, and Weixin sessions that were replaced by reset or compression.</div>
-            </div>
-            <div class="settings-field">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="checkbox" id="settingsSyncInsights" style="width:15px;height:15px;accent-color:var(--accent)">
-                <span data-i18n="settings_label_sync_insights">Sync usage to /insights</span>
-              </label>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_sync_insights">Mirrors GFIT-CoWork token usage to state.db so <code>hermes /insights</code> includes browser session data. Off by default.</div>
-            </div>
-            <div class="settings-field">
-              <label for="settingsBotName" data-i18n="settings_label_bot_name">Default assistant name</label>
-              <div style="font-size:11px;color:var(--muted);margin-bottom:6px" data-i18n="settings_desc_bot_name">Used for the default profile only. Other profiles use their own profile names.</div>
-              <input type="text" id="settingsBotName" placeholder="Hermes" maxlength="64" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
             </div>
             <button class="sm-btn" onclick="saveSettings()" style="margin-top:12px;width:100%;padding:8px;font-weight:600" data-i18n="settings_save_btn">Save Settings</button>
             <div id="settingsPreferencesAutosaveStatus" class="settings-autosave-status" aria-live="polite"></div>

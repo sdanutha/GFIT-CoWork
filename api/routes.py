@@ -17201,12 +17201,13 @@ def _post_api_settings(handler, parsed, body, diag):
     ack = body.pop("_auth_disabled_acknowledged", None)
     if ack is not None and not is_directory_enabled():
         body["auth_disabled_acknowledged"] = bool(ack)
-    elif is_directory_enabled():
-        body["auth_disabled_acknowledged"] = False
 
-    from api.config import get_max_tokens_status, set_max_tokens
+    from api.config import SettingsRefused, get_max_tokens_status, set_max_tokens
 
-    saved = save_settings(body)
+    try:
+        saved = save_settings(body)
+    except SettingsRefused as e:
+        return bad(handler, str(e), 403)
     saved["persisted_speech_keys"] = persisted_speech_settings_keys()
     if max_tokens_provided:
         max_tokens_status = set_max_tokens(max_tokens_value)

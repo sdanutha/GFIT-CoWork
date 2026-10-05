@@ -54,7 +54,6 @@ ADMIN_ONLY = [
     ("PUT", "/api/mcp/servers/x", {}),
     ("DELETE", "/api/mcp/servers/x", {}),
     # Deployment-wide settings
-    ("POST", "/api/settings", {"theme": "dark"}),
     # onboarding
     ("GET", "/api/onboarding/status", None),
     ("POST", "/api/onboarding/setup", {}),
@@ -100,7 +99,6 @@ ADMIN_SAFE = [
     ("GET", "/api/onboarding/status", None),
     ("GET", "/api/mcp/servers", None),
     ("GET", "/api/escape/list", None),
-    ("POST", "/api/settings", {"send_key": "enter"}),
     ("GET", "/api/session/recovery/audit", None),
     ("POST", "/api/sessions/cleanup_zero_message", {}),  # the test teardown calls it too
     ("POST", "/api/file/reveal", {"session_id": "no-such-session", "path": "."}),  # never opens anything

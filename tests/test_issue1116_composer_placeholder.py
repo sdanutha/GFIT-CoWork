@@ -62,18 +62,6 @@ class TestComposerPlaceholderProfile:
             "boot should apply the profile-aware assistant name after active profile resolution"
         )
 
-    def test_settings_copy_names_default_assistant_scope(self):
-        """The preference copy must say that only the default profile is renamed."""
-        index_src = _src("index.html")
-        i18n_src = _src("i18n.js")
-        assert "Default assistant name" in index_src
-        assert "Used for the default profile only. Other profiles use their own profile names." in index_src
-        assert "settings_label_bot_name: 'Default assistant name'" in i18n_src
-        assert (
-            "settings_desc_bot_name: 'Used for the default profile only. "
-            "Other profiles use their own profile names.'"
-        ) in i18n_src
-
     def test_switchToProfile_calls_applyBotName(self):
         """switchToProfile() must call applyBotName() after switching."""
         src = _src("panels.js")
