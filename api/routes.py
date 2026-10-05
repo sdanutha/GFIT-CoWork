@@ -265,6 +265,12 @@ except Exception:
 # Track job IDs currently being executed so the frontend can poll status.
 _RUNNING_CRON_JOBS: dict[str, float] = {}  # job_id → start_timestamp
 _RUNNING_CRON_LOCK = threading.Lock()
+
+
+def _running_cron_jobs_snapshot() -> dict[str, float]:
+    """{job_id: start_epoch} of the cron jobs running now (for the session-list cache)."""
+    with _RUNNING_CRON_LOCK:
+        return dict(_RUNNING_CRON_JOBS)
 _CRON_CREATE_SNAPSHOT_LOCK = threading.Lock()
 _MANUAL_COMPRESSION_JOBS: dict[str, dict] = {}
 _MANUAL_COMPRESSION_JOBS_LOCK = threading.Lock()
@@ -1918,6 +1924,9 @@ def _clear_live_models_cache() -> None:
 
 
 from api import route_session_list_cache as _route_session_list_cache
+
+# The session-list cache marks running cron jobs' rows; only this module knows them.
+_route_session_list_cache.running_cron_jobs = lambda: _running_cron_jobs_snapshot()
 
 _SESSIONS_CACHE = _route_session_list_cache._SESSIONS_CACHE
 _SESSIONS_CACHE_INFLIGHT = _route_session_list_cache._SESSIONS_CACHE_INFLIGHT

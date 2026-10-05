@@ -1,4 +1,10 @@
-"""Session-list cache helpers extracted from api.routes."""
+"""Session-list cache helpers extracted from api.routes.
+
+This module reads its state paths from ``api.config`` and its hooks from the
+modules that own them, at the point of use; it never imports the route module.
+The route module hands it what only the route module knows (the running cron
+jobs) through :data:`running_cron_jobs`.
+"""
 
 import copy
 import os
@@ -8,8 +14,9 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from api.config import LOCK, SESSION_DIR, SESSIONS, SETTINGS_FILE
-from api.models import _active_state_db_path, _active_stream_ids
+from api import config as _config
+from api import models as _models
+from api.config import LOCK, SESSIONS
 from api.profiles import _profiles_match
 
 
@@ -221,47 +228,18 @@ def get_session_list_cache_snapshot() -> dict[str, object]:
 
 
 def _session_list_cache_session_dir() -> Path:
-    try:
-        import api.routes as _routes
-
-        value = getattr(_routes, "SESSION_DIR", SESSION_DIR)
-        return Path(value)
-    except Exception:
-        return SESSION_DIR
+    return Path(_config.SESSION_DIR)
 
 
 def _session_list_cache_settings_file() -> Path:
-    try:
-        import api.routes as _routes
-
-        value = getattr(_routes, "SETTINGS_FILE", SETTINGS_FILE)
-        return Path(value)
-    except Exception:
-        return SETTINGS_FILE
+    return Path(_config.SETTINGS_FILE)
 
 
 def _session_list_cache_state_db_path():
-    try:
-        import api.routes as _routes
-
-        override = getattr(_routes, "_active_state_db_path", None)
-        if callable(override) and override is not _session_list_cache_state_db_path:
-            return override()
-    except Exception:
-        pass
-    return _active_state_db_path()
+    return _models._active_state_db_path()
 
 
 def _session_list_cache_gateway_session_metadata_path() -> Path:
-    try:
-        import api.routes as _routes
-
-        override = getattr(_routes, "_gateway_session_metadata_path", None)
-        if callable(override) and override is not _session_list_cache_gateway_session_metadata_path:
-            return Path(override())
-    except Exception:
-        pass
-
     try:
         from api.profiles import get_active_hermes_home
 
@@ -272,47 +250,33 @@ def _session_list_cache_gateway_session_metadata_path() -> Path:
 
 
 def _session_list_cache_active_stream_ids():
-    try:
-        import api.routes as _routes
+    return _models._active_stream_ids()
 
-        override = getattr(_routes, "_active_stream_ids", None)
-        if callable(override) and override is not _session_list_cache_active_stream_ids:
-            return override()
-    except Exception:
-        pass
-    return _active_stream_ids()
+
+def _no_running_cron_jobs() -> dict[str, float]:
+    return {}
+
+
+# Set by the route module, which owns the running cron jobs: a callable that
+# returns a {job_id: start_epoch} snapshot.
+running_cron_jobs = _no_running_cron_jobs
 
 
 def _session_list_cache_running_cron_jobs() -> dict[str, float]:
     """Return {job_id: start_epoch} for cron jobs currently tracked as running.
 
-    Cron liveness lives only in the in-memory ``_RUNNING_CRON_JOBS`` dict in
-    api.routes (#6728): the sidebar polls /api/sessions (not /api/crons/status),
-    so without this overlay a still-running cron job's session row looks
-    completed the moment it appends a message. Fail closed to an empty dict.
+    Cron liveness lives only in the route module's in-memory registry (#6728):
+    the sidebar polls /api/sessions (not /api/crons/status), so without this
+    overlay a still-running cron job's session row looks completed the moment
+    it appends a message. Fail closed to an empty dict.
     """
     try:
-        import api.routes as _routes
-
-        jobs = getattr(_routes, "_RUNNING_CRON_JOBS", None)
-        lock = getattr(_routes, "_RUNNING_CRON_LOCK", None)
-        if jobs is None or lock is None:
-            return {}
-        with lock:
-            return dict(jobs)
+        return dict(running_cron_jobs())
     except Exception:
         return {}
 
 
 def _session_list_cache_resolved_source_stamp(key: tuple):
-    try:
-        import api.routes as _routes
-
-        override = getattr(_routes, "_session_list_cache_source_stamp", None)
-        if callable(override) and override is not _session_list_cache_source_stamp:
-            return override(key)
-    except Exception:
-        pass
     return _session_list_cache_source_stamp(key)
 
 
@@ -541,14 +505,6 @@ def _session_list_cache_streaming_freeze_marker():
 
 
 def _session_list_cache_state_db_fingerprint(state_db_path: Path | None):
-    try:
-        import api.routes as _routes
-
-        override = getattr(_routes, "_session_list_cache_state_db_fingerprint", None)
-        if callable(override) and override is not _session_list_cache_state_db_fingerprint:
-            return override(state_db_path)
-    except Exception:
-        pass
     return _session_list_cache_state_db_fingerprint_impl(state_db_path)
 
 
@@ -644,17 +600,7 @@ def _session_list_cache_source_stamp(key: tuple) -> tuple[tuple[int, int], tuple
 
 def _session_list_cache_settings_write_version() -> int:
     try:
-        import api.routes as _routes
-
-        override = getattr(_routes, "_session_list_cache_settings_write_version", None)
-        if callable(override) and override is not _session_list_cache_settings_write_version:
-            return int(override())
-    except Exception:
-        pass
-    try:
-        from api.config import _SETTINGS_WRITE_VERSION
-
-        return int(_SETTINGS_WRITE_VERSION)
+        return int(_config._SETTINGS_WRITE_VERSION)
     except Exception:
         return 0
 
