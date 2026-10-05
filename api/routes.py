@@ -480,18 +480,13 @@ def _visible_pinned_lineage_ids(session_rows) -> set[str]:
 # when the active profile is `'default'`. _is_root_profile() is the
 # canonical check.
 
-# Canonical helper now lives in api.profiles so out-of-process consumers
-# (mcp_server.py) can import it without duplicating the visibility model.
-# Re-exported here so existing `_profiles_match(...)` call sites in this
-# module keep resolving without per-call-site refactors.
-from api.profiles import (  # noqa: F401, E402  (re-export)
+from api.profiles import (  # noqa: E402
     _profiles_match,
     _is_root_profile,
     _SKILLS_STATS_CACHE,
     get_active_profile_name,
     get_active_profile_name as _get_active_profile_name,
     get_active_hermes_home,
-    list_profiles_api,
     profile_scope_for_detached_worker,
 )
 
@@ -2008,19 +2003,6 @@ def _session_list_cache_key(
         archived_limit=archived_limit,
         archived_offset=archived_offset,
     ) + (bool(show_claude_code_sessions),)
-
-_ROUTE_SESSION_LIST_CACHE_DYNAMIC_EXPORTS = {
-    "_SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION",
-    "_SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION",
-    "_session_list_cache_settings_write_version",
-}
-
-
-def __getattr__(name):
-    if name in _ROUTE_SESSION_LIST_CACHE_DYNAMIC_EXPORTS:
-        return getattr(_route_session_list_cache, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 def _prune_orphaned_webui_zero_message_sessions(rows, *, diag_stage=None):
     """#4985 second-pass orphan prune for native-WebUI rows whose ``state.db.messages`` is empty.
@@ -10938,27 +10920,20 @@ from api.oauth import (
     start_onboarding_oauth_flow,
 )
 
-# Approval system -- state and helpers live in api.route_approvals; imported
-# here for backward compatibility so existing call sites continue to resolve.
-from api.route_approvals import (  # noqa: F401 — re-exports for backward compat
-    _submit_pending_raw,
+# Approval system -- state and helpers live in api.route_approvals.
+from api.route_approvals import (
     approve_session,
     approve_permanent,
     save_permanent_allowlist,
-    is_approved,
     _pending,
     _lock,
     _permanent_approved,
     _gateway_queues,
     resolve_gateway_approval,
-    enable_session_yolo,
-    disable_session_yolo,
     is_session_yolo_enabled,
     _approval_sse_subscribers,
-    _approval_sse_subscribe,
     _approval_sse_unsubscribe,
     _approval_sse_notify_locked,
-    _approval_sse_notify,
     _GATEWAY_AGENT_IDENTITY_V1,
     _GATEWAY_MIRROR_FLAG,
     _GATEWAY_MIRROR_TOKEN,
@@ -10978,7 +10953,6 @@ from api.route_approvals import (  # noqa: F401 — re-exports for backward comp
     resolve_gateway_pending_local_all,
     resolve_gateway_pending_local_no_run_mirror,
     set_session_yolo_enabled,
-    submit_gateway_pending_mirror,
     submit_pending,
 )
 

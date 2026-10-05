@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import api.profiles as profiles
+import api.route_approvals as route_approvals
 import api.routes as routes
 
 
@@ -54,7 +55,7 @@ def test_attention_summary_purges_stale_gateway_mirror():
         }
         with routes._lock:
             routes._gateway_queues[sid] = [SimpleNamespace(data=dict(approval))]
-        routes.submit_gateway_pending_mirror(sid, approval)
+        route_approvals.submit_gateway_pending_mirror(sid, approval)
 
         with routes._lock:
             assert routes._pending[sid]
@@ -79,7 +80,7 @@ def test_attention_summary_keeps_live_gateway_mirror():
         }
         with routes._lock:
             routes._gateway_queues[sid] = [SimpleNamespace(data=dict(approval))]
-        routes.submit_gateway_pending_mirror(sid, approval)
+        route_approvals.submit_gateway_pending_mirror(sid, approval)
 
         assert routes._session_attention_summary(sid) == {
             "kind": "approval",

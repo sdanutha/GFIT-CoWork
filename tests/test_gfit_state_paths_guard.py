@@ -41,3 +41,24 @@ def test_the_import_guard_finds_each_spelling():
     assert imports_of_the_route_module("from api.routes import x\n") == [1]
     assert imports_of_the_route_module("from api import routes\n") == [1]
     assert imports_of_the_route_module("from api import models\n") == []
+
+
+def re_export_shims(source: str) -> list[str]:
+    """A module-level ``__getattr__``, or an import kept only to re-export (``noqa: F401``)."""
+    found = []
+    tree = ast.parse(source)
+    if any(isinstance(node, ast.FunctionDef) and node.name == "__getattr__" for node in tree.body):
+        found.append("module __getattr__")
+    for number, line in enumerate(source.splitlines(), start=1):
+        if line.lstrip().startswith(("from ", "import ")) and "noqa: F401" in line:
+            found.append(f"line {number}")
+    return found
+
+
+def test_the_route_module_re_exports_nothing():
+    assert re_export_shims((ROOT / "api" / "routes.py").read_text(encoding="utf-8")) == []
+
+
+def test_the_shim_guard_finds_both_kinds():
+    source = "from api.x import (  # noqa: F401\n    a,\n)\n\ndef __getattr__(name):\n    return name\n"
+    assert re_export_shims(source) == ["module __getattr__", "line 1"]
