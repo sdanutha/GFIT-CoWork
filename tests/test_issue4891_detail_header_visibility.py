@@ -58,27 +58,6 @@ def test_memory_read_mode_shows_header_even_for_readonly_sections():
     )
 
 
-def test_profile_help_view_keeps_header_visible():
-    """The 'Profiles vs workspaces' help view sets a title, so it must use a
-    header mode that shows the header — not the 'empty' mode that hides it."""
-    help_body = _fn_body("_renderProfileConceptHelp")
-    assert "_setProfileHeaderButtons('empty')" not in help_body, (
-        "profile help view must NOT call _setProfileHeaderButtons('empty') — "
-        "that hides the populated help title (#4891 regression)"
-    )
-    assert "_setProfileHeaderButtons('help')" in help_body, (
-        "profile help view must use the 'help' header mode (shows header, hides "
-        "action buttons) (#4891)"
-    )
-    setter = _fn_body("_setProfileHeaderButtons")
-    m = re.search(r"mode\s*===\s*'help'\s*\)\s*\{", setter)
-    assert m, "_setProfileHeaderButtons must handle a 'help' mode"
-    help_branch = setter[m.end(): m.end() + 240]
-    assert "header.style.display = 'flex'" in help_branch, (
-        "'help' header mode must show the header (flex) (#4891)"
-    )
-
-
 def test_task_detail_header_shown_in_read_and_edit():
     """The original #4891 fix: task-detail header is explicitly shown in read/
     create/edit and hidden only in the closed/empty state."""

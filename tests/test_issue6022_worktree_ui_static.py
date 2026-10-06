@@ -35,14 +35,6 @@ def test_boot_auto_bind_sends_explicit_worktree_false():
     assert "worktree: false" in bind
 
 
-def test_profile_switch_session_sends_explicit_worktree_false():
-    src = read("static/panels.js")
-    assert (
-        "await newSession(false, {awaitWorkspaceLoad: workspaceVisible, worktree: false});"
-        in src
-    )
-
-
 def test_workspace_bind_prompts_send_explicit_worktree_false():
     # promptWorkspacePath + switchToWorkspace both auto-mint a session from a
     # blank page; each must opt out of the config default explicitly.

@@ -1093,6 +1093,7 @@ function openInBrowser(){
   const url=_workspaceRouteForPath(_previewCurrentPath, 'raw', {inline:true});
   window.open(url,'_blank','noopener');
 }
+// openInBrowser keeps the helper-based raw path, which expands to an explicit &inline=1 URL.
 
 async function copyPreviewRelativePath(){
   if(!_previewCurrentPath) return;

@@ -76,7 +76,7 @@ def test_composer_workspace_cue_is_transient_not_a_persistent_editor_description
 
 def test_workspace_selection_from_composer_dropdown_restores_focus_to_opening_trigger_once():
     focus_helpers = _block(PANELS_JS, "function _getComposerWorkspaceFocusTarget", "function _renderWorkspaceAction")
-    switch = _block(PANELS_JS, "async function switchToWorkspace", "// ── Profile panel")
+    switch = _block(PANELS_JS, "async function switchToWorkspace", "// ── Identity menu")
 
     assert "const mobileAction=(typeof $==='function')?$('composerMobileWorkspaceAction'):null" in focus_helpers
     assert "if(panel&&panel.classList.contains('open')&&mobileAction&&!mobileAction.disabled) return mobileAction" in focus_helpers

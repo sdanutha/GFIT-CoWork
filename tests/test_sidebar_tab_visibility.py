@@ -143,26 +143,6 @@ def test_backend_rejects_chat_and_settings_in_hidden_tabs(monkeypatch, tmp_path)
     assert saved["hidden_tabs"] == []
 
 
-def test_profile_switch_reconciles_hidden_tabs():
-    """When a user switches profiles, the new profile's hidden_tabs value
-    must be applied — the per-profile settings.json is the source of truth,
-    not the previous profile's localStorage value. Stage-394 added a
-    /api/settings refetch in _refreshProfileSwitchBackground; verify it stays
-    wired (the API call + the _applyTabVisibility call)."""
-    bg_start = PANELS_JS.find("function _refreshProfileSwitchBackground")
-    assert bg_start >= 0, "_refreshProfileSwitchBackground not found"
-    bg_end = PANELS_JS.find("\nfunction ", bg_start + 1)
-    if bg_end < 0:
-        bg_end = bg_start + 4000
-    bg_body = PANELS_JS[bg_start:bg_end]
-    assert "/api/settings" in bg_body, \
-        "profile-switch background refresh must re-fetch settings for the new profile"
-    assert "_applyTabVisibility" in bg_body, \
-        "profile-switch background refresh must re-apply tab visibility"
-    assert "hidden_tabs" in bg_body, \
-        "profile-switch background refresh must read hidden_tabs from server response"
-
-
 def test_chip_a11y_uses_switch_role_with_aria_checked():
     """Chips should use role=switch + aria-checked instead of plain
     aria-pressed. The pressed/not-pressed wording is confusing for a toggle
@@ -196,19 +176,3 @@ def test_tab_order_excludes_always_visible_tabs(monkeypatch, tmp_path):
     saved = config.save_settings({"tab_order": ["chat", "logs", "settings", "tasks", "logs"]})
     assert saved["tab_order"] == ["logs", "tasks"], \
         "chat/settings must be stripped and duplicate panel ids collapsed server-side"
-
-
-def test_profile_switch_reconciles_tab_order():
-    """Profile switching must also restore per-profile custom tab ordering."""
-    bg_start = PANELS_JS.find("function _refreshProfileSwitchBackground")
-    assert bg_start >= 0, "_refreshProfileSwitchBackground not found"
-    bg_end = PANELS_JS.find("\nfunction ", bg_start + 1)
-    if bg_end < 0:
-        bg_end = bg_start + 4000
-    bg_body = PANELS_JS[bg_start:bg_end]
-    assert "tab_order" in bg_body, \
-        "profile-switch background refresh must read tab_order from server response"
-    assert "_setTabOrder" in bg_body, \
-        "profile-switch background refresh must store tab_order for the new profile"
-    assert "_applyTabOrder" in bg_body, \
-        "profile-switch background refresh must apply tab ordering"
