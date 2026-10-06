@@ -384,7 +384,6 @@ class TestSessionIDValidation:
         import sys
         sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
         from api.models import Session
-        from api.config import SESSION_DIR
         valid_hex = "deadbeef" * 8  # 64 hex chars
         # Should not raise — returns None only if file doesn't exist (it won't)
         result = Session.load(valid_hex)

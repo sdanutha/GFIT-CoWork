@@ -1,6 +1,5 @@
 """Native-image turns keep model context private from the visible transcript."""
 
-import api.config
 import json
 import shutil
 import sqlite3

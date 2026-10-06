@@ -35,7 +35,7 @@ from api.config import (
     STREAM_REASONING_TEXT, STREAM_LIVE_TOOL_CALLS,
     STREAM_GOAL_RELATED, PENDING_GOAL_CONTINUATION,
     STREAM_LAST_EVENT_ID,
-    LOCK, SESSIONS, SESSIONS_MAX,
+    LOCK, SESSIONS,
     _get_session_agent_lock, _alias_session_agent_lock,
     _set_thread_env, _clear_thread_env,
     register_active_run, update_active_run, unregister_active_run,

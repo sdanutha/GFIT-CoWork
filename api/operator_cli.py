@@ -110,11 +110,11 @@ def run(argv: list[str]) -> int:
             return 0
         if args.action == "create":
             options = {"clone_from": args.clone_from} if args.clone_from else {}
-            view = roster.create_profile(args.name, args.display_name, **options)
+            roster.create_profile(args.name, args.display_name, **options)
         elif args.action == "disable":
-            view = roster.disable_profile(args.name)
+            roster.disable_profile(args.name)
         elif args.action == "enable":
-            view = roster.enable_profile(args.name)
+            roster.enable_profile(args.name)
         else:
             if args.confirm != args.name:
                 print("Confirm the deletion: --confirm must repeat the Profile name.", file=sys.stderr)

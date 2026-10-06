@@ -11,7 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import api.config
 import gc
 import io
 import json
