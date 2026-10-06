@@ -10419,17 +10419,8 @@ function syncTopbar(){
   if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
   if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
   // modelSelect already set above
-  // Update profile chip label.
-  // The chip is the profile-SWITCHER trigger (it fronts the profile dropdown) and
-  // governs where the next message / new chat routes — both follow the client
-  // active profile (the hermes_profile cookie, set only by /api/profile/switch).
-  // It must therefore reflect S.activeProfile, NOT the loaded session's profile.
-  // #3331 briefly keyed this on S.session.profile so the label would track the
-  // session being browsed, but loadSession() never updates S.activeProfile, so
-  // opening a cross-profile session made the chip disagree with the dropdown
-  // checkmark and lie about message routing (#3635). #3331's legitimate work —
-  // scoping project/session operations to the session's own profile — is
-  // unaffected by this line.
+  // Update the Profile chip label: the request's Profile (S.activeProfile, the
+  // User's own), never the loaded session's (#3331/#3635).
   const profileLabel=$('profileChipLabel');
   if(profileLabel) profileLabel.textContent=profileChipText();
   const titleLabel=$('titlebarProfileLabel');
@@ -20449,8 +20440,6 @@ function _showWorkspaceRootContextMenu(e){
   createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
   menu.appendChild(createSep);
 
-  // acts on the server machine (api/access.py SHELL_FEATURES)
-
 
   menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
     menu.remove();
@@ -20900,8 +20889,6 @@ function _showFileContextMenu(e, item){
   renameItem.onmouseleave=()=>renameItem.style.background='';
   renameItem.onclick=()=>{menu.remove();_inlineRenameFileItem(item);};
   menu.appendChild(renameItem);
-
-// acts on the server machine (api/access.py SHELL_FEATURES)
 
 
   // Copy file path — resolves the absolute on-disk path on the server (so the
