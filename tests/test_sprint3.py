@@ -190,7 +190,8 @@ def test_session_delete_rejects_absolute_path_payload(tmp_path):
     victim = tmp_path / "victim.json"
     victim.write_text("TOPSECRET", encoding="utf-8")
     result, status = post("/api/session/delete", {"session_id": str(victim.with_suffix(""))})
-    assert status == 400
+    # Refused before the route (not an id the User owns, 404) or by it (400).
+    assert status in (400, 404)
     assert victim.exists(), "absolute-path payload must not delete arbitrary files"
 
 
@@ -199,7 +200,7 @@ def test_session_delete_rejects_traversal_payload(tmp_path):
     victim.write_text("TOPSECRET", encoding="utf-8")
     traversal = f"../../../../{victim.with_suffix('').as_posix().lstrip('/')}"
     result, status = post("/api/session/delete", {"session_id": traversal})
-    assert status == 400
+    assert status in (400, 404)
     assert victim.exists(), "traversal payload must not delete arbitrary files"
 
 
@@ -241,19 +242,17 @@ def test_chat_start_rejects_workspace_outside_trusted_root(tmp_path):
         shutil.rmtree(outside, ignore_errors=True)
 
 
-def test_workspace_add_allows_external_valid_paths(tmp_path):
-    """Adding a path outside home is now allowed when the user explicitly provides it.
-    The strict trust check (resolve_trusted_workspace) is only applied when *using*
-    an existing workspace, not when registering a new one (validate_workspace_to_add)."""
+def test_workspace_add_refuses_a_path_outside_the_users_workspace(tmp_path):
+    """A User's Workspaces live inside their own Workspace folder (ADR 0002):
+    registering any other folder is refused, and nothing is saved."""
     outside = tmp_path / "outside-add"
     outside.mkdir(parents=True, exist_ok=True)
     result, status = post("/api/workspaces/add", {"path": str(outside), "name": "Outside"})
-    # Explicit registration of an external path is now allowed
-    assert status == 200, f"Expected 200, got {status}: {result}"
-    # Verify it was actually saved
+    assert status == 400, f"Expected 400, got {status}: {result}"
+    assert "outside your Workspace" in result.get("error", "")
     wss_result, ws_status = get("/api/workspaces")
     paths = [w["path"] for w in wss_result.get("workspaces", [])]
-    assert str(outside.resolve()) in paths
+    assert str(outside.resolve()) not in paths
 
 
 def test_workspace_add_rejects_system_paths():

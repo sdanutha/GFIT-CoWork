@@ -7,7 +7,7 @@ import json
 import urllib.error
 import urllib.request
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, deployment_settings
 
 
 def get(path):
@@ -43,54 +43,20 @@ def test_settings_default_bot_name():
 
 # ── Round-trip ────────────────────────────────────────────────────────────
 
-def test_settings_set_bot_name():
-    """POST /api/settings with bot_name should persist and round-trip."""
-    try:
-        d, status = post("/api/settings", {"bot_name": "TestBot"})
+def test_settings_report_the_deployments_bot_name():
+    """The assistant's name is the Deployment's: the Operator sets it, every User sees it."""
+    with deployment_settings(bot_name="TestBot <&>"):
+        d, status = get("/api/settings")
         assert status == 200
-        assert d.get("bot_name") == "TestBot"
-        d2, _ = get("/api/settings")
-        assert d2.get("bot_name") == "TestBot"
-    finally:
-        post("/api/settings", {"bot_name": "Hermes"})
+        assert d.get("bot_name") == "TestBot <&>"
 
 
-def test_settings_bot_name_special_chars():
-    """bot_name with safe special characters should persist correctly."""
-    try:
-        d, status = post("/api/settings", {"bot_name": "My Assistant 2.0"})
-        assert status == 200
-        d2, _ = get("/api/settings")
-        assert d2.get("bot_name") == "My Assistant 2.0"
-    finally:
-        post("/api/settings", {"bot_name": "Hermes"})
+def test_a_user_cannot_change_the_bot_name():
+    d, status = post("/api/settings", {"bot_name": "TestBot"})
+    assert status == 403
+    assert "Operator" in d.get("error", "")
+    assert get("/api/settings")[0].get("bot_name") != "TestBot"
 
-
-# ── Server-side sanitization ──────────────────────────────────────────────
-
-def test_settings_empty_bot_name_defaults_to_hermes():
-    """Posting an empty bot_name should default to 'Hermes' server-side."""
-    try:
-        d, status = post("/api/settings", {"bot_name": ""})
-        assert status == 200
-        assert d.get("bot_name") == "Hermes"
-        d2, _ = get("/api/settings")
-        assert d2.get("bot_name") == "Hermes"
-    finally:
-        post("/api/settings", {"bot_name": "Hermes"})
-
-
-def test_settings_whitespace_bot_name_defaults_to_hermes():
-    """Posting a whitespace-only bot_name should default to 'Hermes'."""
-    try:
-        d, status = post("/api/settings", {"bot_name": "   "})
-        assert status == 200
-        assert d.get("bot_name") == "Hermes"
-    finally:
-        post("/api/settings", {"bot_name": "Hermes"})
-
-
-# ── Login page rendering ──────────────────────────────────────────────────
 
 def test_login_page_shows_app_name():
     """GET /login shows the web app's name (GFIT-CoWork) in title and h1."""
@@ -102,34 +68,26 @@ def test_login_page_shows_app_name():
 
 def test_login_page_ignores_custom_bot_name():
     """The assistant name is not the web app's name: /login keeps GFIT-CoWork."""
-    try:
-        post("/api/settings", {"bot_name": "Aria"})
+    with deployment_settings(bot_name="Aria"):
         html, status = get_raw("/login")
         assert status == 200
         assert "<title>GFIT-CoWork" in html
         assert "<h1>GFIT-CoWork</h1>" in html
         assert "Aria" not in html
-    finally:
-        post("/api/settings", {"bot_name": "Hermes"})
 
 
 def test_login_page_empty_name_does_not_crash():
     """Login page must not 500 even if somehow bot_name is empty in settings."""
-    # Force an empty value by patching settings file directly — skipped here
-    # because the server-side guard in POST /api/settings prevents storing empty.
-    # Instead, verify that /login returns 200 reliably.
-    html, status = get_raw("/login")
+    with deployment_settings(bot_name=""):
+        html, status = get_raw("/login")
     assert status == 200
     assert "Sign in" in html
 
 
 def test_login_page_xss_escaped():
     """bot_name with HTML special chars should be escaped in the login page."""
-    try:
-        post("/api/settings", {"bot_name": "<script>alert(1)</script>"})
+    with deployment_settings(bot_name="<script>alert(1)</script>"):
         html, status = get_raw("/login")
         assert status == 200
         # Raw tag must not appear unescaped
         assert "<script>alert(1)</script>" not in html
-    finally:
-        post("/api/settings", {"bot_name": "Hermes"})

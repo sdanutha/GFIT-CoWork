@@ -47,13 +47,23 @@ def post(path, body=None):
         return json.loads(e.read()), e.code
 
 
+def _user_workspace_dir() -> pathlib.Path:
+    """A fresh folder inside the test User's Workspace: the only folders their
+    sessions may use (ADR 0002). Symlink targets stay outside it on purpose."""
+    import uuid
+
+    from tests._pytest_port import TEST_USER_WORKSPACE
+
+    path = TEST_USER_WORKSPACE / f"symlink-{uuid.uuid4().hex[:10]}"
+    path.mkdir(parents=True)
+    return path
+
+
 def make_session(created_list, ws=None):
     body = {}
     if ws:
-        # tmp_path_factory creates dirs under /var/folders or /tmp which sit
-        # outside the user home tree, so they aren't trusted by default.
-        # Register the workspace first via the explicit add API (intent-trusted)
-        # before requesting a session against it.
+        # Register the workspace first via the explicit add API before
+        # requesting a session against it.
         post("/api/workspaces/add", {"path": str(ws)})
         body["workspace"] = str(ws)
     d, _ = post("/api/session/new", body)
@@ -67,7 +77,7 @@ class TestSymlinkCycleDetection:
 
     def test_external_symlink_emitted_as_display_only(self, cleanup_test_sessions, tmp_path_factory):
         """External symlink dirs are emitted with target_outside_workspace=True (display-only)."""
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         target = tmp_path_factory.mktemp("target")
         (target / "file.txt").write_text("hello")
         link = ws / "ext"
@@ -88,7 +98,7 @@ class TestSymlinkCycleDetection:
         """Internal symlink dirs should appear with type='symlink', is_dir=True."""
         if not w._DIR_FD_OK:
             pytest.skip("internal symlink listing is platform-dependent without dir_fd")
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         target = ws / "target"
         target.mkdir()
         (target / "file.txt").write_text("hello")
@@ -106,7 +116,7 @@ class TestSymlinkCycleDetection:
 
     def test_external_symlink_not_browsable(self, cleanup_test_sessions, tmp_path_factory):
         """Listing inside an external symlink dir is blocked at the workspace boundary."""
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         target = tmp_path_factory.mktemp("target")
         (target / "inner.txt").write_text("data")
         (ws / "ext").symlink_to(target)
@@ -122,7 +132,7 @@ class TestSymlinkCycleDetection:
         """Symlink pointing to the workspace root itself must be filtered out."""
         if not w._DIR_FD_OK:
             pytest.skip("cycle filtering is platform-dependent without dir_fd")
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         (ws / "file.txt").write_text("data")
         (ws / "loop").symlink_to(ws)
 
@@ -135,7 +145,7 @@ class TestSymlinkCycleDetection:
         """Symlink pointing to a parent of the workspace must be filtered out."""
         if not w._DIR_FD_OK:
             pytest.skip("cycle filtering is platform-dependent without dir_fd")
-        parent = tmp_path_factory.mktemp("parent")
+        parent = _user_workspace_dir()
         ws = parent / "workspace"
         ws.mkdir()
         (ws / "file.txt").write_text("data")
@@ -149,7 +159,7 @@ class TestSymlinkCycleDetection:
 
     def test_mutual_symlink_loop_filtered(self, cleanup_test_sessions, tmp_path_factory):
         """Mutually recursive symlinks should be skipped instead of raising RuntimeError."""
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         (ws / "a").symlink_to(ws / "b")
         (ws / "b").symlink_to(ws / "a")
 
@@ -161,7 +171,7 @@ class TestSymlinkCycleDetection:
 
     def test_symlink_cycle_in_subdir(self, cleanup_test_sessions, tmp_path_factory):
         """External symlink subpaths must be blocked instead of traversed."""
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         target = tmp_path_factory.mktemp("target")
         (target / "subdir").mkdir()
         # Create a symlink inside target that points back to workspace
@@ -186,7 +196,7 @@ class TestSymlinkCycleDetection:
         """Internal symlink to a file should have is_dir=False and include size."""
         if not w._DIR_FD_OK:
             pytest.skip("internal symlink metadata is platform-dependent without dir_fd")
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         real = ws / "real"
         real.mkdir()
         (real / "data.txt").write_text("hello world")
@@ -202,7 +212,7 @@ class TestSymlinkCycleDetection:
 
     def test_external_symlink_file_emitted_as_display_only(self, cleanup_test_sessions, tmp_path_factory):
         """External symlink files are emitted with target_outside_workspace=True (display-only)."""
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         real = tmp_path_factory.mktemp("real")
         (real / "data.txt").write_text("hello world")
         (ws / "link.txt").symlink_to(real / "data.txt")
@@ -217,7 +227,7 @@ class TestSymlinkCycleDetection:
 
     def test_path_traversal_still_blocked(self, cleanup_test_sessions, tmp_path_factory):
         """Raw .. traversal must still be blocked even with symlink support."""
-        ws = tmp_path_factory.mktemp("ws")
+        ws = _user_workspace_dir()
         sid, _ = make_session(cleanup_test_sessions, ws)
         try:
             get(f"/api/list?session_id={sid}&path=../../../etc")

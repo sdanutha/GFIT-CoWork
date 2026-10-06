@@ -5544,10 +5544,7 @@ def _check_csrf(handler) -> bool:
         return True  # non-browser clients (curl, MCP, agent) have no Origin/Referer
 
     from api.auth import CSRF_HEADER_NAME, parse_cookie, verify_csrf_token
-    from api.directory import is_directory_enabled
 
-    if not is_directory_enabled():
-        return True
     cookie_val = parse_cookie(handler)
     submitted = handler.headers.get(CSRF_HEADER_NAME) or handler.headers.get("X-CSRF-Token")
     if verify_csrf_token(cookie_val or "", submitted or ""):
@@ -10519,20 +10516,15 @@ button:hover{background:rgba(124,185,255,.25)}
 
 def _handle_directory_login(handler, body) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
-    from api.helpers import build_profile_cookie
     from api.login import attempt_login, rate_limit_key
 
     outcome = attempt_login(body.get("username"), body.get("password"), rate_limit_key(handler))
     if outcome.status != 200:
         return j(handler, {"error": outcome.error}, status=outcome.status)
-    return _send_login_success(
-        handler,
-        outcome.session_cookie,
-        build_profile_cookie(outcome.bound_profile, session_cookie_value=outcome.session_cookie),
-    )
+    return _send_login_success(handler, outcome.session_cookie)
 
 
-def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bool:
+def _send_login_success(handler, session_cookie: str) -> bool:
     """Answer a successful login: ``{"ok": true}`` plus the session cookie."""
     from api.auth import set_auth_cookie
 
@@ -10543,8 +10535,6 @@ def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bo
     handler.send_header("Cache-Control", "no-store")
     _security_headers(handler)
     set_auth_cookie(handler, session_cookie)
-    for cookie in extra_cookies:
-        handler.send_header("Set-Cookie", cookie)
     handler.end_headers()
     handler.wfile.write(payload)
     return True
@@ -12921,12 +12911,10 @@ def _get_app_shell(handler, parsed):
         csrf_token = ""
         try:
             from api.auth import csrf_token_for_session, parse_cookie, verify_session
-            from api.directory import is_directory_enabled
 
-            if is_directory_enabled():
-                cookie_val = parse_cookie(handler)
-                if cookie_val and verify_session(cookie_val):
-                    csrf_token = csrf_token_for_session(cookie_val) or ""
+            cookie_val = parse_cookie(handler)
+            if cookie_val and verify_session(cookie_val):
+                csrf_token = csrf_token_for_session(cookie_val) or ""
         except Exception:
             csrf_token = ""
 
@@ -12984,20 +12972,9 @@ def _get_login(handler, parsed):
 
 def _get_api_auth_status(handler, parsed):
     from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
-    from api.directory import is_directory_enabled
-    logged_in = False
-    session_info = None
-    auth_enabled = is_directory_enabled()
-    if auth_enabled:
-        session_info = ensure_request_session(handler)
-        logged_in = bool(session_info)
-    payload = {
-        "auth_enabled": auth_enabled,
-        "logged_in": logged_in,
-        "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
-    }
-    if auth_enabled:
-        payload["directory_auth_enabled"] = True
+
+    session_info = ensure_request_session(handler)
+    payload = {"logged_in": bool(session_info)}
     if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
         from api.login import session_identity
 
@@ -13227,9 +13204,6 @@ def _get_api_settings(handler, parsed):
         settings["max_tokens"] = None
         settings["max_tokens_effective"] = None
         settings["max_tokens_fallback"] = None
-    # Auth-state field for the frontend's unauthenticated warning
-    from api.directory import is_directory_enabled
-    settings["auth_enabled"] = is_directory_enabled()
     # Inject the running version so the UI badge stays in sync with git tags
     # without any manual release step.
     try:
@@ -15569,19 +15543,10 @@ def _post_api_memory_write(handler, parsed, body, diag):
 
 # ── Settings (POST) ──
 def _post_api_settings(handler, parsed, body, diag):
-    from api.directory import is_directory_enabled
-
-    if "bot_name" in body:
-        body["bot_name"] = (str(body["bot_name"]) or "").strip() or "Hermes"
-
+    # bot_name is the Deployment's (ADR 0006): save_settings refuses it from a User.
     max_tokens_provided = "max_tokens" in body
     max_tokens_status = None
     max_tokens_value = body.pop("max_tokens", None) if max_tokens_provided else None
-
-    # Handle auth_disabled_acknowledged setting
-    ack = body.pop("_auth_disabled_acknowledged", None)
-    if ack is not None and not is_directory_enabled():
-        body["auth_disabled_acknowledged"] = bool(ack)
 
     from api.config import SettingsRefused, get_max_tokens_status, set_max_tokens
 
@@ -15627,7 +15592,6 @@ def _post_api_settings(handler, parsed, body, diag):
         except Exception:
             pass
 
-    saved["auth_enabled"] = is_directory_enabled()
     return j(handler, saved)
 
 
@@ -15999,17 +15963,12 @@ def _post_api_session_import_cli(handler, parsed, body, diag):
 
 # ── Auth endpoints (POST) ──
 def _post_api_auth_login(handler, parsed, body, diag):
-    from api.directory import is_directory_enabled
-
-    if not is_directory_enabled():
-        return j(handler, {"ok": True, "message": "Auth not enabled"})
     # GFIT-CoWork: the Directory is the only way in (ADR 0004).
     return _handle_directory_login(handler, body)
 
 
 def _post_api_auth_logout(handler, parsed, body, diag):
     from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
-    from api.helpers import clear_profile_cookie
 
     cookie_val = parse_cookie(handler)
     if cookie_val:
@@ -16021,7 +15980,6 @@ def _post_api_auth_logout(handler, parsed, body, diag):
     handler.send_header("Cache-Control", "no-store")
     _security_headers(handler)
     clear_auth_cookie(handler)
-    clear_profile_cookie(handler)
     handler.end_headers()
     handler.wfile.write(body)
     return True
@@ -17985,13 +17943,11 @@ def _handle_tts(handler, parsed):
         return _bad(handler, "text too long (max 5000 characters)", 400)
 
     from api.auth import parse_cookie, verify_session
-    from api.directory import is_directory_enabled
-    cv = None
-    if is_directory_enabled():
-        cv = parse_cookie(handler)
-        if not (cv and verify_session(cv)):
-            from api.helpers import bad as _bad
-            return _bad(handler, "unauthorized", 401)
+
+    cv = parse_cookie(handler)
+    if not (cv and verify_session(cv)):
+        from api.helpers import bad as _bad
+        return _bad(handler, "unauthorized", 401)
 
     # High-quality per-client rate limiting for TTS.
     if not hasattr(_handle_tts, "_tts_limiter"):
@@ -18613,7 +18569,7 @@ def _handle_media(handler, parsed):
 
     Security:
     - Path must resolve to an allowed root (hermes home, /tmp, common dirs)
-    - Auth-gated when auth is enabled
+    - Auth-gated
     - Safe preview MIME types can render inline when requested; SVG always downloads
     - SVG always served as attachment (XSS risk)
     - No path traversal: resolved path must stay within an allowed root
@@ -18622,21 +18578,19 @@ def _handle_media(handler, parsed):
     """
     import os as _os
     from api.auth import parse_cookie, verify_session
-    from api.directory import is_directory_enabled
     _HOME = Path(_os.path.expanduser("~"))
     _HERMES_HOME = Path(_os.getenv("HERMES_HOME", str(_HOME / ".hermes"))).expanduser()
 
     # Auth check
-    if is_directory_enabled():
-        cv = parse_cookie(handler)
-        if not (cv and verify_session(cv)):
-            body = b'{"error":"Authentication required"}'
-            handler.send_response(401)
-            handler.send_header("Content-Type", "application/json")
-            handler.send_header("Content-Length", str(len(body)))
-            handler.end_headers()
-            handler.wfile.write(body)
-            return
+    cv = parse_cookie(handler)
+    if not (cv and verify_session(cv)):
+        body = b'{"error":"Authentication required"}'
+        handler.send_response(401)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+        return
 
     qs = parse_qs(parsed.query)
     raw_path = qs.get("path", [""])[0].strip()
@@ -26161,8 +26115,13 @@ def _handle_session_import(handler, body):
     if not isinstance(raw_tool_calls, list):
         return bad(handler, 'JSON "tool_calls" must be an array')
     title = body.get("title", "Imported session")
+    from api.workspace_policy import request_workspace_policy
+
     try:
-        workspace = str(resolve_trusted_workspace(body.get("workspace", str(DEFAULT_WORKSPACE))))
+        # No workspace named: the caller's default (a User's own Workspace),
+        # never the Deployment's, which a User may not use.
+        requested = body.get("workspace") or request_workspace_policy().default_workspace()
+        workspace = str(resolve_trusted_workspace(requested))
     except (TypeError, ValueError) as e:
         return bad(handler, str(e))
     model = body.get("model", DEFAULT_MODEL)

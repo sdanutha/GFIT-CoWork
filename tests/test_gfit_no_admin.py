@@ -193,7 +193,7 @@ def test_startup_warns_about_a_leftover_admin_list(monkeypatch):
     monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
     monkeypatch.setenv(LEFTOVER_ADMIN_USERS_ENV, "521740")
 
-    check = startup_check("127.0.0.1")
+    check = startup_check()
 
     assert check.serve is True
     assert any(LEFTOVER_ADMIN_USERS_ENV in line and "no Admin" in line for line in check.lines)
@@ -207,7 +207,7 @@ def test_startup_says_nothing_without_an_admin_list(monkeypatch, value):
     else:
         monkeypatch.setenv(LEFTOVER_ADMIN_USERS_ENV, value)
 
-    assert not any(LEFTOVER_ADMIN_USERS_ENV in line for line in startup_check("127.0.0.1").lines)
+    assert not any(LEFTOVER_ADMIN_USERS_ENV in line for line in startup_check().lines)
 
 
 def test_a_login_stored_with_the_role_member_keeps_working(srv, monkeypatch):

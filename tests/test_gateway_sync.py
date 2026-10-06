@@ -22,23 +22,19 @@ import urllib.request
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent.resolve()
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, TEST_USER, TEST_USER_WORKSPACE
 
 
-def get(path, *, profile=None):
+def get(path):
     headers = {}
-    if profile:
-        headers["Cookie"] = f"hermes_profile={profile}"
     req = urllib.request.Request(BASE + path, headers=headers)
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.loads(r.read()), r.status
 
 
-def post(path, body=None, *, profile=None):
+def post(path, body=None):
     data = json.dumps(body or {}).encode()
     headers = {"Content-Type": "application/json"}
-    if profile:
-        headers["Cookie"] = f"hermes_profile={profile}"
     req = urllib.request.Request(BASE + path, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -65,10 +61,12 @@ def _get_test_state_dir():
 
 
 def _get_profile_state_dir(profile=None):
+    """A Profile's home; by default the test User's, whose state the server's requests read."""
     state_dir = _get_test_state_dir()
     if isinstance(profile, str) and profile.strip():
         return state_dir / 'profiles' / profile.strip()
-    return state_dir
+    from tests._pytest_port import TEST_PROFILE_HOME
+    return TEST_PROFILE_HOME
 
 
 def _get_state_db_path(profile=None):
@@ -1477,6 +1475,7 @@ def test_imported_cli_session_metadata_survives_compact(cleanup_test_sessions):
     sid = 'gw_imported_metadata_001'
     cleanup_test_sessions.append(sid)
     s = Session(
+        profile=TEST_USER,
         session_id=sid,
         title='Imported Telegram Chat',
         messages=[{'role': 'user', 'content': 'hello from telegram', 'timestamp': time.time()}],
@@ -1513,66 +1512,6 @@ def test_import_cli_preserves_messaging_source_metadata(cleanup_test_sessions):
         assert session.get('raw_source') == 'weixin'
         assert session.get('session_source') == 'messaging'
         assert session.get('source_label') == 'Weixin'
-    finally:
-        try:
-            _remove_test_sessions(conn, sid)
-            conn.close()
-        except Exception:
-            pass
-
-
-def test_import_cli_named_profile_requires_explicit_all_profiles_opt_in(cleanup_test_sessions):
-    """Unqualified import_cli should not read a named profile's state.db."""
-    named_profile = 'issue1611-import'
-    conn = _ensure_state_db(profile=named_profile)
-    sid = 'gw_named_profile_import_001'
-    cleanup_test_sessions.append(sid)
-    try:
-        _insert_gateway_session(
-            conn,
-            session_id=sid,
-            source='telegram',
-            title='Named Profile Telegram Session',
-        )
-
-        data, status = post('/api/session/import_cli', {'session_id': sid})
-        assert status == 404, data
-    finally:
-        try:
-            _remove_test_sessions(conn, sid)
-            conn.close()
-        except Exception:
-            pass
-
-
-def test_import_cli_all_profiles_opt_in_reads_named_profile_state_db(cleanup_test_sessions):
-    """Explicit all-profiles imports should resolve messages from the named profile store."""
-    named_profile = 'issue1611-import'
-    conn = _ensure_state_db(profile=named_profile)
-    sid = 'gw_named_profile_import_001'
-    cleanup_test_sessions.append(sid)
-    try:
-        _insert_gateway_session(
-            conn,
-            session_id=sid,
-            source='telegram',
-            title='Named Profile Telegram Session',
-        )
-
-        data, status = post('/api/session/import_cli', {
-            'session_id': sid,
-            'all_profiles': True,
-            'profile': named_profile,
-        })
-        assert status == 200, data
-        session = data.get('session', {})
-        messages = session.get('messages', [])
-
-        assert session.get('session_id') == sid
-        assert session.get('profile') == named_profile
-        assert session.get('source_tag') == 'telegram'
-        assert session.get('session_source') == 'messaging'
-        assert [m.get('content') for m in messages] == ['Hello from Telegram', 'Hi there!']
     finally:
         try:
             _remove_test_sessions(conn, sid)
@@ -1623,6 +1562,7 @@ def test_sessions_response_backfills_imported_messaging_source_metadata(cleanup_
             session_key='agent:test:weixin:legacy-import-backfill',
         )
         s = Session(
+            profile=TEST_USER,
             session_id=sid,
             title='Legacy Imported Weixin',
             messages=[{'role': 'user', 'content': 'hello', 'timestamp': time.time()}],
@@ -1662,6 +1602,7 @@ def test_sessions_response_keeps_only_latest_messaging_session_per_source(cleanu
         _insert_gateway_session(conn, session_id=new_sid, source='weixin', title='New Weixin', started_at=time.time())
 
         old = Session(
+            profile=TEST_USER,
             session_id=old_sid,
             title='Old Imported Weixin',
             messages=[{'role': 'user', 'content': 'old', 'timestamp': time.time() - 100}],
@@ -1729,7 +1670,7 @@ def test_sessions_response_distinguishes_same_user_different_chat_identity_from_
     sid_dm = 'gw_tg_same_user_dm'
     sid_group = 'gw_tg_same_user_group'
     cleanup_test_sessions.extend([sid_dm, sid_group])
-    sessions_file = _get_test_state_dir() / 'sessions' / 'sessions.json'
+    sessions_file = _get_profile_state_dir() / 'sessions' / 'sessions.json'
     original_sessions_json = None
     if sessions_file.exists():
         original_sessions_json = sessions_file.read_text()
@@ -1793,6 +1734,7 @@ def test_messaging_projection_keeps_no_identity_continuation_when_gateway_source
     parent_sid = "webui_pre_compression_snapshot"
     cleanup_test_sessions.append(parent_sid)
     Session(
+        profile=TEST_USER,
         session_id=parent_sid,
         title="Archived pre-compression snapshot",
         model="openai/gpt-5",
@@ -1856,6 +1798,7 @@ def test_session_load_exposes_continuation_for_pre_compression_snapshot(cleanup_
     cleanup_test_sessions.extend([parent_sid, child_sid])
 
     parent = Session(
+        profile=TEST_USER,
         session_id=parent_sid,
         title="Mobile reload parent",
         model="openai/gpt-5",
@@ -1865,6 +1808,7 @@ def test_session_load_exposes_continuation_for_pre_compression_snapshot(cleanup_
         pre_compression_snapshot=True,
     )
     child = Session(
+        profile=TEST_USER,
         session_id=child_sid,
         title="Mobile reload child",
         model="openai/gpt-5",
@@ -1894,6 +1838,7 @@ def test_session_load_exposes_multihop_continuation_for_repeated_compression(cle
     cleanup_test_sessions.extend([root_sid, middle_sid, child_sid])
 
     root = Session(
+        profile=TEST_USER,
         session_id=root_sid,
         title="Mobile reload root snapshot",
         model="openai/gpt-5",
@@ -1903,6 +1848,7 @@ def test_session_load_exposes_multihop_continuation_for_repeated_compression(cle
         pre_compression_snapshot=True,
     )
     middle = Session(
+        profile=TEST_USER,
         session_id=middle_sid,
         title="Mobile reload middle snapshot",
         model="openai/gpt-5",
@@ -1913,6 +1859,7 @@ def test_session_load_exposes_multihop_continuation_for_repeated_compression(cle
         pre_compression_snapshot=True,
     )
     child = Session(
+        profile=TEST_USER,
         session_id=child_sid,
         title="Mobile reload final child",
         model="openai/gpt-5",
@@ -2267,6 +2214,7 @@ def test_imported_cron_sessions_hidden_from_sidebar_by_default(cleanup_test_sess
     sid = 'cron_imported_20260427'
     cleanup_test_sessions.append(sid)
     s = Session(
+        profile=TEST_USER,
         session_id=sid,
         title='Hourly Cron Import',
         messages=[{'role': 'user', 'content': 'run hourly job', 'timestamp': time.time()}],
@@ -2444,6 +2392,7 @@ def test_session_prefers_state_db_messages_over_stale_local_snapshot(cleanup_tes
         conn.commit()
 
         s = Session(
+            profile=TEST_USER,
             session_id=sid,
             title='Legacy Local Telegram Snapshot',
             workspace=str(pathlib.Path.home() / '.hermes'),
@@ -2516,6 +2465,7 @@ def test_messaging_session_message_count_matches_deduped_display_messages(cleanu
         # advertised count must match the returned display coordinate space, not
         # the raw state.db row count.
         s = Session(
+            profile=TEST_USER,
             session_id=sid,
             title='Legacy Discord Snapshot',
             workspace='/tmp/hermes-webui-test',
@@ -2572,6 +2522,7 @@ def test_sessions_prefers_state_db_metadata_for_messaging_overlap(cleanup_test_s
         ]
         from api.models import Session
         local = Session(
+            profile=TEST_USER,
             session_id=sid,
             title='Stale Sidebar',
             messages=stale,
@@ -2662,15 +2613,14 @@ def test_importing_older_gateway_session_preserves_original_timestamps_and_order
         )
         assert rename_status == 200, rename
         from api.models import Session
-        from tests.conftest import TEST_WORKSPACE
         newer_webui_session = Session(
             session_id=newer_webui_sid,
             title='Newer WebUI Session',
-            workspace=str(TEST_WORKSPACE),
+            workspace=str(TEST_USER_WORKSPACE),
             model='openai/gpt-5',
             created_at=newer_webui['session']['created_at'],
             updated_at=time.time(),
-            profile='default',
+            profile=TEST_USER,
             messages=[{
                 'role': 'user',
                 'content': 'newer visible row',

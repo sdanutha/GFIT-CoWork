@@ -6453,13 +6453,6 @@ async function loadSettingsPanel(){
       window._newChatOnWorkspaceSwitch=newChatOnWorkspaceSwitchCb.checked;
       newChatOnWorkspaceSwitchCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});
     }
-    // Show auth buttons only when auth is active
-    try{
-      const authStatus=await api('/api/auth/status');
-      _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
-      _updateAuthWarningBadge(authStatus);
-      _updateAuthDisabledWarning(authStatus);
-    }catch(e){}
     _syncHermesPanelSessionActions();
     loadPluginsPanel(); // load plugin/hook visibility in background
     switchSettingsSection(_settingsSection);
@@ -6685,45 +6678,9 @@ async function _loadPluginPage(path, label) {
 // loaded yet (e.g. during early Settings open) cannot break the save flow.
 
 
-function _setSettingsAuthButtonsVisible(active){
-  const signOutBtn=$('btnSignOut');
-  if(signOutBtn) signOutBtn.style.display=active?'':'none';
-}
 
-function _updateAuthWarningBadge(authStatus){
-  const badges=['authWarningBadgeDesktop','authWarningBadgeMobile'];
-  const authDisabled=!authStatus||!authStatus.auth_enabled;
-  const acknowledged=!!(authStatus&&authStatus.auth_disabled_acknowledged);
-  badges.forEach(function(id){
-    const el=$(id);
-    if(!el) return;
-    if(!authDisabled){ el.style.display='none'; return; }
-    el.style.display='block';
-    el.style.background=acknowledged?'#e8a030':'#e05';
-  });
-}
 
-function _updateAuthDisabledWarning(authStatus){
-  const el=$('settingsAuthDisabledWarning');
-  if(!el) return;
-  const authDisabled=!authStatus||!authStatus.auth_enabled;
-  if(!authDisabled){ el.style.display='none'; return; }
-  el.style.display='block';
-  const cb=$('settingsAuthDisabledAck');
-  if(cb) cb.checked=!!(authStatus&&authStatus.auth_disabled_acknowledged);
-}
 
-async function _setAuthDisabledAck(checked){
-  try{
-    await _enqueueSettingsPost({method:'POST',body:JSON.stringify({_auth_disabled_acknowledged:!!checked})});
-    try{
-      const authStatus=await api('/api/auth/status');
-      _updateAuthWarningBadge(authStatus);
-    }catch(e){}
-  }catch(e){
-    showToast(t('auth_ack_save_failed')+e.message);
-  }
-}
 
 function _applySavedSettingsUi(saved, body, opts){
   const {sendKey,showTokenUsage,showConversationOutline,showBusyPlaceholderHint,showTps,fadeTextEffect,showCliSessions,theme,skin,language,sidebarDensity,fontSize}=opts;
@@ -6797,7 +6754,6 @@ function _applySavedSettingsUi(saved, body, opts){
     if(showCliSessions) startGatewaySSE();
     else if(typeof stopGatewaySSE==='function') stopGatewaySSE();
   }
-  _setSettingsAuthButtonsVisible(!!saved.auth_enabled);
   _settingsDirty=false;
   _settingsThemeOnOpen=theme;
   _settingsSkinOnOpen=skin||'default';

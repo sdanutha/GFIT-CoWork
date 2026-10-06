@@ -51,11 +51,9 @@ def test_profile_cookie_naming_another_profile_is_ignored(alice):
     assert status == 200
 
 
-def test_profile_cookie_signed_for_another_profile_is_ignored(alice):
-    from api.auth import _resolve_cookie_name, sign_profile_cookie_value
-
-    session = alice.cookies[_resolve_cookie_name()]
-    alice.cookies["hermes_profile"] = sign_profile_cookie_value(BOB, session)
+def test_a_profile_cookie_from_before_naming_another_profile_is_ignored(alice):
+    # The Profile cookie went with Profile switching (ADR 0006); an old one is ignored.
+    alice.cookies["hermes_profile"] = BOB
     assert _active_profile(alice) == ALICE
 
 

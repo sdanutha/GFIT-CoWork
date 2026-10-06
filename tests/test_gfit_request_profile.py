@@ -1,36 +1,42 @@
 """GFIT-CoWork: one answer to "which Profile does this request run in?" -- the Admission.
 
-- With a Directory session the request runs in its Admission's Profile, the
-  User's own, whatever cookie the browser sends. Nobody switches Profile:
-  there is no switch route (ADR 0006).
-- With login turned off (no Directory session) the authenticated
-  ``hermes_profile`` cookie picks it, as Upstream did.
-- A Directory session with no recorded Admission, and a request with neither
-  cookie nor Admission, have none (the process's Profile).
+- A request runs in its Admission's Profile, the User's own, whatever the
+  browser sends (a ``hermes_profile`` cookie, from before ADR 0006, is
+  ignored). Nobody switches Profile: there is no switch route.
+- A request with no Admission (a public route, a worker thread) runs in no
+  Profile of its own: the process's.
+- There is no mode with login turned off, so nothing else picks the Profile.
 
-Table tests on :func:`api.access.profile_for_request` (no server), and HTTP
-tests against an in-process server (see ``tests/_gfit_server.py``).
+HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
 
 import pytest
 
-from api.access import ROLE_USER, Admitted, profile_for_request
+from api import access, profiles
+from api.access import ROLE_USER, Admitted
 from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
 
 
-@pytest.mark.parametrize("admission,directory_session,cookie,expected", [
-    (Admitted(ROLE_USER, ALICE), True, BOB, ALICE),
-    (Admitted(ROLE_USER, ALICE), True, None, ALICE),
-    (None, True, ALICE, None),  # a Directory session with no Admission: none
-    (None, False, ALICE, ALICE),  # login off: the cookie
-    (None, False, None, None),  # login off, no cookie; or a worker thread
+class _Handler:
+    headers = {"Cookie": f"hermes_profile={BOB}"}
+
+
+@pytest.mark.parametrize("admission,expected", [
+    (Admitted(ROLE_USER, ALICE), ALICE),
+    (None, None),
 ])
-def test_the_requests_profile(admission, directory_session, cookie, expected):
-    assert profile_for_request(admission, directory_session=directory_session, cookie_profile=cookie) == expected
+def test_the_requests_profile_is_its_admissions(monkeypatch, admission, expected):
+    profiles.clear_request_profile()
+    monkeypatch.setattr(access._request, "admission", admission, raising=False)
+    try:
+        access.settle_request(_Handler())
+        assert getattr(profiles._tls, "profile", None) == expected
+    finally:
+        profiles.clear_request_profile()
 
 
 @pytest.fixture
@@ -51,14 +57,6 @@ def test_a_user_runs_in_their_own_profile_whatever_cookie_is_sent(srv):
     alice.cookies["hermes_profile"] = BOB
 
     assert _active(alice) == ALICE
-
-
-def test_with_login_off_the_cookie_picks_the_profile(monkeypatch, tmp_path):
-    with _gfit_server(monkeypatch, tmp_path, users={}, profile_names=[ALICE], directory="") as srv:
-        client = srv.client()
-        assert _active(client) == "default"
-        client.cookies["hermes_profile"] = ALICE
-        assert _active(client) == ALICE
 
 
 # ── Nobody switches Profile ─────────────────────────────────────────────────

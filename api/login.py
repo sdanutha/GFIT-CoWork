@@ -13,7 +13,6 @@ password nor anything derived from it is logged or stored.
 """
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
 import os
@@ -241,18 +240,6 @@ _LEFTOVER_ENV = (
 _LEFTOVER_CONFIG_KEYS = ("webui_passkey_enabled", "webui_oidc")
 
 
-def _is_loopback_host(host: str) -> bool:
-    if host.strip().lower() == "localhost":
-        return True
-    try:
-        ip = ipaddress.ip_address(host.strip().strip("[]"))
-    except ValueError:
-        # Any other hostname may resolve to a network address: treat it as one.
-        return False
-    mapped = getattr(ip, "ipv4_mapped", None)
-    return ip.is_loopback or bool(mapped and mapped.is_loopback)
-
-
 def _leftover_login_settings() -> list[str]:
     found = [f"{name} (environment)" for name in _LEFTOVER_ENV if os.getenv(name, "").strip()]
     from api.config import get_config, load_settings
@@ -288,13 +275,13 @@ def _leftover_admin_users_line() -> list[str]:
     ]
 
 
-def startup_check(host: str) -> StartupCheck:
-    """Decide from the bind address and the Directory whether the server may serve.
+def startup_check() -> StartupCheck:
+    """Decide from the Directory whether the server may serve.
 
-    ``lines`` is what startup prints. A network
-    address with no Directory would serve with login off, so the server must
-    not start. The loopback address with no Directory serves with login off,
-    for local development and the test suite.
+    ``lines`` is what startup prints. With no Directory nobody could log in,
+    and there is no mode with login turned off (ADR 0006), so the server does
+    not start, whatever the address. Local development and tests use the
+    in-memory Directory.
     """
     lines = [
         f"[!!] Ignoring {setting}: Upstream login is gone; the Directory replaces it."
@@ -302,17 +289,10 @@ def startup_check(host: str) -> StartupCheck:
     ] + _leftover_admin_users_line()
     if is_directory_enabled():
         return StartupCheck(True, lines)
-    if not _is_loopback_host(host):
-        lines += [
-            f"[!!] Refusing to start: no Directory is configured, so binding to {host} would serve with login off.",
-            "     Anyone who reaches the port could use every Profile, the terminal and the agent.",
-            f"     To serve on a network address, {_DIRECTORY_HINT}.",
-            "     For local development without login, bind to 127.0.0.1.",
-        ]
-        return StartupCheck(False, lines)
     lines += [
-        "  [tip] Login is off: no Directory is configured. Any process on this machine",
-        "        can use every Profile through the local API.",
-        f"        To turn login on, {_DIRECTORY_HINT}.",
+        "[!!] Refusing to start: no Directory is configured, so nobody could log in.",
+        f"     To use the company AD, {_DIRECTORY_HINT}.",
+        "     For local development, set HERMES_WEBUI_DIRECTORY=memory and",
+        "     HERMES_WEBUI_DIRECTORY_USERS to a JSON file of test users (see TESTING.md).",
     ]
-    return StartupCheck(True, lines)
+    return StartupCheck(False, lines)

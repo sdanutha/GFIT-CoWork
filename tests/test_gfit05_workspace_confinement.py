@@ -246,3 +246,16 @@ def test_writing_inside_the_workspace_works(srv, alice, session):
     status, body, _ = alice.post("/api/file/create", {"session_id": session, "path": "sub/a.txt", "content": "hi"})
     assert status == 200, body
     assert (_workspace(srv, ALICE) / "sub" / "a.txt").read_text() == "hi"
+
+
+# ── Importing a session ──────────────────────────────────────────────────────
+
+def test_a_session_imported_without_a_workspace_lands_in_the_users_workspace(srv, alice):
+    # Found when the shared test server started logging in (remove-admin 04b):
+    # the import defaulted to the Deployment's Workspace, which a User may not use.
+    status, body, _ = alice.post("/api/session/import", {
+        "title": "imported", "messages": [{"role": "user", "content": "hi"}],
+    })
+
+    assert status == 200, body
+    assert Path(body["session"]["workspace"]).resolve() == _workspace(srv, ALICE)

@@ -11,7 +11,7 @@ import urllib.error
 
 import pytest
 
-from tests.conftest import TEST_BASE, TEST_STATE_DIR, _post, make_session_tracked
+from tests.conftest import TEST_BASE, TEST_PROFILE_HOME, TEST_USER, _post, make_session_tracked
 
 
 def _get(path, headers=None):
@@ -219,8 +219,8 @@ def test_status_returns_summary(cleanup_test_sessions):
     assert r['title'] == 'test'
     assert r['message_count'] == 3
     assert 'model' in r
-    assert r['profile'] == 'default'
-    assert r['hermes_home'] == str(TEST_STATE_DIR)
+    assert r['profile'] == TEST_USER
+    assert r['hermes_home'] == str(TEST_PROFILE_HOME)
     assert 'workspace' in r
     assert 'created_at' in r
     assert 'updated_at' in r
@@ -236,18 +236,11 @@ def test_status_returns_summary(cleanup_test_sessions):
     assert r['total_tokens'] == 0
 
 
-def test_status_returns_profile_specific_hermes_home(cleanup_test_sessions):
+def test_a_session_in_another_profile_cannot_be_started():
+    # A User's request is bound to their own Profile (ADR 0002, ADR 0006).
     data = _post(TEST_BASE, '/api/session/new', {'profile': 'research'})
-    sid = data['session']['session_id']
-    cleanup_test_sessions.append(sid)
-
-    r = _get(
-        f'/api/session/status?session_id={sid}',
-        headers={'Cookie': 'hermes_profile=research'},
-    )
-
-    assert r['profile'] == 'research'
-    assert r['hermes_home'] == str(TEST_STATE_DIR / 'profiles' / 'research')
+    assert 'session' not in data
+    assert 'forbidden' in str(data.get('error', '')).lower()
 
 
 def test_status_unknown_returns_404():

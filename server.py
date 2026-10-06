@@ -547,10 +547,10 @@ def main() -> None:
 
     print_startup_config()
 
-    # Login is the Directory: a network address with no Directory would serve
-    # with login off, so refuse before touching any state.
+    # Login is the Directory, and there is no mode with login turned off:
+    # with no Directory, refuse before touching any state.
     from api.login import startup_check
-    login_check = startup_check(HOST)
+    login_check = startup_check()
     for line in login_check.lines:
         print(line, flush=True)
     if not login_check.serve:

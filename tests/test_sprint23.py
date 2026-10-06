@@ -32,16 +32,16 @@ def make_session(created_list):
 
 def _make_session_visible(sid):
     from api.models import Session
-    from tests.conftest import TEST_WORKSPACE
+    from tests._pytest_port import TEST_USER, TEST_USER_WORKSPACE
 
     session = Session(
         session_id=sid,
         title="Compact Usage",
-        workspace=str(TEST_WORKSPACE),
+        workspace=str(TEST_USER_WORKSPACE),
         model="test",
         created_at=1.0,
         updated_at=1.0,
-        profile="default",
+        profile=TEST_USER,
         messages=[{"role": "user", "content": "visible row", "timestamp": 1.0}],
         tool_calls=[],
     )

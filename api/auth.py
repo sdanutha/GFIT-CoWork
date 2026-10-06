@@ -322,16 +322,6 @@ def verify_session(cookie_value: str) -> bool:
     return True
 
 
-def _queue_pending_cookie(handler, cookie_header: str) -> None:
-    if not cookie_header:
-        return
-    pending = getattr(handler, '_pending_set_cookies', None)
-    if pending is None:
-        pending = []
-        handler._pending_set_cookies = pending
-    pending.append(cookie_header)
-
-
 def _auth_cookie_header(cookie_value, handler=None) -> str:
     cookie = http.cookies.SimpleCookie()
     name = _resolve_cookie_name()
@@ -354,12 +344,6 @@ def _clear_auth_cookie_header() -> str:
     cookie[name]['samesite'] = 'Lax'
     cookie[name]['max-age'] = '0'
     return cookie[name].OutputString()
-
-
-def _build_profile_cookie_header(name: str, session_cookie_value: str | None) -> str:
-    from api.helpers import build_profile_cookie
-
-    return build_profile_cookie(name, session_cookie_value=session_cookie_value)
 
 
 def get_session_info(cookie_value: str) -> dict | None:
@@ -402,28 +386,11 @@ def reset_request_auth_state(handler) -> None:
     for name in (
         '_request_session',
         '_request_session_rejected',
-        # Clear any auth cookie queued by a prior request but not yet flushed.
-        # The handler is reused across HTTP/1.1 keep-alive requests, so a stale
-        # queued Set-Cookie would otherwise cross the request boundary and be
-        # emitted by a later response. Reset it at the per-request boundary
-        # (server.py do_GET/do_POST).
-        '_pending_set_cookies',
     ):
         try:
             delattr(handler, name)
         except AttributeError:
             pass
-
-
-def _sync_profile_cookie(handler, bound_profile: str | None, cookie_value: str) -> None:
-    """Keep the browser's profile cookie on the Admission's Profile (the request's
-    Profile itself is set by :func:`api.access.settle_request`)."""
-    if bound_profile is None:
-        return
-    from api.helpers import get_profile_cookie
-
-    if get_profile_cookie(handler) != bound_profile:
-        _queue_pending_cookie(handler, _build_profile_cookie_header(bound_profile, cookie_value))
 
 
 def ensure_request_session(handler) -> dict | None:
@@ -463,7 +430,6 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
         invalidate_session(cookie_value)
         handler._request_session_rejected = True
         return _remember_request_session(handler, None)
-    _sync_profile_cookie(handler, admission.profile, cookie_value)
     return _remember_request_session(handler, info)
 
 
@@ -503,53 +469,6 @@ def _session_token_from_cookie_value(cookie_value: str) -> str | None:
         return None
     token, _sig = cookie_value.rsplit('.', 1)
     return token or None
-
-
-def sign_profile_cookie_value(profile_name: str, session_cookie_value: str | None) -> str:
-    """Return a profile cookie value authenticated for one WebUI session.
-
-    The active-profile cookie is client-controlled, so when auth is enabled it
-    must not be trusted as a bare profile name. Binding the selected profile to
-    the HttpOnly session token prevents a client from forging
-    ``hermes_profile=<other-profile>`` and bypassing profile visibility guards.
-    """
-    if not session_cookie_value or not verify_session(session_cookie_value):
-        raise ValueError("active auth session is required to sign profile cookie")
-    token = _session_token_from_cookie_value(session_cookie_value)
-    if not token:
-        raise ValueError("active auth session is required to sign profile cookie")
-    sig = hmac.new(
-        _signing_key(),
-        f"profile:{token}:{profile_name}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return f"{profile_name}.{sig}"
-
-
-def verify_profile_cookie_value(cookie_value: str, session_cookie_value: str | None) -> str | None:
-    """Verify a session-bound profile cookie and return its profile name."""
-    if not cookie_value or '.' not in cookie_value:
-        return None
-    if not session_cookie_value or not verify_session(session_cookie_value):
-        return None
-    profile_name, sig = cookie_value.rsplit('.', 1)
-    token = _session_token_from_cookie_value(session_cookie_value)
-    if not profile_name or not token or not sig:
-        return None
-    # Defense-in-depth: validate the profile-name pattern here too, not only in
-    # get_profile_cookie(), so any future caller of this verifier can't return an
-    # unvalidated name. (#4023 Opus hardening.)
-    from api.profiles import _PROFILE_ID_RE
-    if profile_name != 'default' and not _PROFILE_ID_RE.fullmatch(profile_name):
-        return None
-    expected = hmac.new(
-        _signing_key(),
-        f"profile:{token}:{profile_name}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    if hmac.compare_digest(str(sig), expected):
-        return profile_name
-    return None
 
 
 def csrf_token_for_session(cookie_value: str) -> str | None:
@@ -656,9 +575,9 @@ def _safe_login_inner_next(query: str | None) -> str:
 
 def check_auth(handler, parsed) -> bool:
     """Check if request is authorized. Returns True if OK.
-    If not authorized, sends 401 (API) or 302 redirect (page) and returns False."""
-    if not directory.is_directory_enabled():
-        return True
+    If not authorized, sends 401 (API) or 302 redirect (page) and returns False.
+    There is no mode with login turned off (ADR 0006): with no Directory
+    configured nobody has a session, so only public paths are served."""
     # Paths served before login: the route table's PUBLIC rows.
     from api.route_table import is_public
 

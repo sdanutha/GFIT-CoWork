@@ -121,6 +121,8 @@ def _start_server(port: int, cert: str = None, key: str = None) -> subprocess.Po
     if key:
         env["HERMES_WEBUI_TLS_KEY"] = key
     env["HERMES_WEBUI_STATE_DIR"] = str(Path(tempfile.mkdtemp()))
+    from tests._pytest_port import directory_env
+    env.update(directory_env(env["HERMES_WEBUI_STATE_DIR"]))
     proc = subprocess.Popen(
         [os.sys.executable, str(ROOT / "server.py")],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

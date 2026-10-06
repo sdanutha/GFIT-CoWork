@@ -122,7 +122,7 @@ def test_the_deployment_settings_are_the_ones_named():
     # Adding a setting means deciding whose it is: change this list on purpose.
     assert config._SETTINGS_DEPLOYMENT_KEYS == {
         "default_workspace", "onboarding_completed", "sync_to_insights", "api_redact_enabled",
-        "dashboard_plugins", "auth_disabled_acknowledged", "bot_name",
+        "dashboard_plugins", "bot_name",
         "auto_title_refresh_every", "inflight_state_max_sessions", "inflight_state_max_messages",
         "inflight_state_max_tool_calls", "inflight_state_max_string_chars", "inflight_state_max_json_chars",
     }

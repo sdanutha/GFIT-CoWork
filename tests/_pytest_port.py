@@ -69,3 +69,75 @@ if _under_prod and not _under_temp:
 # Default model injected by conftest — tests that mutate the default model
 # must restore to this value so later tests see a consistent baseline.
 TEST_DEFAULT_MODEL = os.environ.get('HERMES_WEBUI_DEFAULT_MODEL', 'openai/gpt-5.4-mini')
+
+
+# The shared test server's test User and their Profile (conftest.py): every
+# request the test process sends to BASE goes as this User, bound to this
+# Profile, so state a test seeds for the server's requests belongs here.
+TEST_USER = os.environ.get('HERMES_WEBUI_TEST_USER', '100001')
+TEST_PROFILE_HOME = pathlib.Path(os.environ.get(
+    'HERMES_WEBUI_TEST_PROFILE_HOME', str(TEST_STATE_DIR / 'profiles' / TEST_USER)
+))
+# The test User's own web settings (settings belong to each Profile, ADR 0006).
+TEST_USER_SETTINGS_FILE = TEST_PROFILE_HOME / 'webui_state' / 'settings.json'
+# The test User's Workspace folder: every session of theirs works inside it.
+TEST_USER_WORKSPACE = TEST_PROFILE_HOME / 'workspace'
+
+
+def directory_env(state_dir) -> dict:
+    """Environment that gives a server subprocess a login (the in-memory Directory).
+
+    There is no mode with login turned off (ADR 0006): a server with no
+    Directory refuses to start. A test that starts its own server.py and only
+    needs public paths (/health, /login) passes this, with no users.
+    """
+    import json
+
+    users = pathlib.Path(state_dir) / 'directory-users.json'
+    users.parent.mkdir(parents=True, exist_ok=True)
+    if not users.exists():
+        users.write_text(json.dumps({}), encoding='utf-8')
+    return {'HERMES_WEBUI_DIRECTORY': 'memory', 'HERMES_WEBUI_DIRECTORY_USERS': str(users)}
+
+
+import contextlib as _contextlib
+
+
+@_contextlib.contextmanager
+def deployment_settings(**overrides):
+    """Set Deployment settings (TEST_STATE_DIR/settings.json) for the block, as the Operator would.
+
+    Settings that belong to the whole Deployment (the assistant's name, ...)
+    are not a User's to change over HTTP (ADR 0006), and the login page, served
+    before login, reads only these.
+    """
+    import json
+
+    path = TEST_STATE_DIR / 'settings.json'
+    original = path.read_text(encoding='utf-8') if path.exists() else None
+    current = json.loads(original) if original else {}
+    path.write_text(json.dumps({**current, **overrides}), encoding='utf-8')
+    try:
+        yield path
+    finally:
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(original, encoding='utf-8')
+
+
+def new_session_id() -> str:
+    """A new session of the test User's on the shared server.
+
+    A session id the User does not own, made-up ids included, is "not found"
+    before any route runs (ADR 0002), so a test of a route's own answers names
+    a session the test User owns.
+    """
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(
+        BASE + '/api/session/new', data=b'{}', headers={'Content-Type': 'application/json'},
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())['session']['session_id']

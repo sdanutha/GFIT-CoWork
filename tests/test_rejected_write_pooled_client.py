@@ -20,6 +20,7 @@ stale tab gets 410, not 403).
 
 import contextlib
 import http.client
+import os
 import socket
 import threading
 import urllib.parse
@@ -33,6 +34,24 @@ _PORT = urllib.parse.urlparse(BASE).port
 _BODY = b'{"stale": true}'
 
 
+def _test_user_cookie() -> str:
+    """The shared test server's login for the test User (conftest.py).
+
+    Login is always on (ADR 0006): a request with no session is refused 401
+    before the rejection under test, so these raw requests carry it. The
+    auth-path cases below run their own server and send their own cookies.
+    """
+    return os.environ["HERMES_WEBUI_TEST_COOKIE"]
+
+
+def _as_test_user(request: bytes) -> bytes:
+    """*request* with the test User's session cookie after its request line."""
+    if b"\r\nCookie:" in request.split(b"\r\n\r\n", 1)[0]:
+        return request
+    line, rest = request.split(b"\r\n", 1)
+    return line + b"\r\nCookie: " + _test_user_cookie().encode() + b"\r\n" + rest
+
+
 def _reject_with_body_then_pooled_followup() -> tuple[int, str | None, int]:
     """POST a deprecated endpoint with a body, then GET on the same pool."""
     conn = http.client.HTTPConnection("127.0.0.1", _PORT, timeout=10)
@@ -41,14 +60,14 @@ def _reject_with_body_then_pooled_followup() -> tuple[int, str | None, int]:
             "POST",
             "/api/process-complete-ack",
             body=_BODY,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "Cookie": _test_user_cookie()},
         )
         resp = conn.getresponse()
         reject_status = resp.status
         close_header = resp.getheader("Connection")
         resp.read()
 
-        conn.request("GET", "/api/health/agent")
+        conn.request("GET", "/api/health/agent", headers={"Cookie": _test_user_cookie()})
         follow = conn.getresponse()
         follow_status = follow.status
         follow.read()
@@ -111,6 +130,8 @@ def _pipelined_after(
     `port`/`follow` exist for the auth-enabled cases below, which need their own
     server instance and a PUBLIC follow-up path.
     """
+    if port is None:
+        request, follow = _as_test_user(request), _as_test_user(follow)
     sock = socket.create_connection(("127.0.0.1", port or _PORT), timeout=10)
     try:
         sock.sendall(request + follow)
@@ -493,8 +514,8 @@ _PUBLIC_FOLLOWING_GET = (
 def _own_server():
     """The production Handler on a private port.
 
-    The shared test server runs with auth disabled and out of process, so the
-    auth/CSRF-token rejections and the deterministic restart/limiter outcomes need
+    The shared test server runs out of process with one logged-in test User,
+    so the auth/CSRF-token rejections and the deterministic restart/limiter outcomes need
     an instance this process can configure. It is the same `server.Handler` class
     the real server binds, driven over a real socket.
     """
@@ -512,25 +533,32 @@ def _own_server():
 
 
 @pytest.fixture
-def auth_on(monkeypatch):
-    """Turn GFIT-CoWork Directory login on for this test, with one Admin."""
+def auth_on(monkeypatch, tmp_path):
+    """Turn GFIT-CoWork Directory login on for this test, with one User and their Profile."""
     import api.auth as auth
+    import api.profiles as profiles
 
+    hermes_home = tmp_path / "hermes"
+    (hermes_home / "profiles" / _USER).mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)
+    profiles._invalidate_root_profile_cache()
+    profiles._invalidate_list_profiles_cache()
+    monkeypatch.setattr("api.config.STATE_DIR", tmp_path / "state")
     monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
-    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", _ADMIN)
     from api.directory import is_directory_enabled
 
     assert is_directory_enabled(), "the auth-path regression needs auth enabled"
     return auth
 
 
-_ADMIN = "600001"
+_USER = "600001"
 
 
-def _admin_session(auth) -> str:
+def _user_session(auth) -> str:
     """A valid Directory session (the only kind GFIT-CoWork honours)."""
     return auth.create_session(
-        auth_type=auth.DIRECTORY_AUTH_TYPE, username=_ADMIN, bound_profile="default", role="admin",
+        auth_type=auth.DIRECTORY_AUTH_TYPE, username=_USER, bound_profile=_USER, role="user",
     )
 
 
@@ -586,7 +614,7 @@ def test_auth_rejection_with_a_body_still_closes_the_pooled_socket(auth_on):
 
 @pytest.mark.parametrize("framing", _BODYLESS_FRAMING, ids=_BODYLESS_IDS)
 def test_bodyless_csrf_origin_rejection_keeps_the_pooled_socket_alive(framing):
-    """`_check_csrf()` origin mismatch, on the shared server (auth off)."""
+    """`_check_csrf()` origin mismatch, on the shared server."""
     answered = _pipelined_after(
         b"POST /api/session/new HTTP/1.1\r\nHost: 127.0.0.1\r\n"
         b"Origin: http://evil.invalid\r\n" + framing + b"\r\n",
@@ -618,7 +646,7 @@ def _authenticated_same_origin_post(port, cookie_name, cookie, framing, body=b""
 @pytest.mark.parametrize("framing", _BODYLESS_FRAMING, ids=_BODYLESS_IDS)
 def test_bodyless_csrf_token_rejection_keeps_the_pooled_socket_alive(framing, auth_on):
     """A real session, a same-origin POST, and no CSRF token -> token_mismatch."""
-    cookie = _admin_session(auth_on)
+    cookie = _user_session(auth_on)
     try:
         with _own_server() as port:
             answered = _pipelined_after(
@@ -636,7 +664,7 @@ def test_bodyless_csrf_token_rejection_keeps_the_pooled_socket_alive(framing, au
 
 
 def test_csrf_token_rejection_with_a_body_still_closes_the_pooled_socket(auth_on):
-    cookie = _admin_session(auth_on)
+    cookie = _user_session(auth_on)
     try:
         with _own_server() as port:
             answered = _pipelined_after(

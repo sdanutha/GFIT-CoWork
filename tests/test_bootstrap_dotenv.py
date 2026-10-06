@@ -225,20 +225,6 @@ class TestLeakedDirectoryIsolation:
         finally:
             os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
 
-    def test_conftest_guard_preserves_intentional_empty_override(self):
-        """ctl.sh-style override semantics: an explicitly empty value means
-        'keep login off' and must survive the strip."""
-        strip = self._load_guard()
-
-        sentinel = object()
-        os.environ["HERMES_WEBUI_DIRECTORY"] = ""
-        try:
-            strip()
-            assert os.environ.get("HERMES_WEBUI_DIRECTORY", sentinel) == ""
-        finally:
-            os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
-
-
 class TestLeakedHermesCommandIsolation:
     """#7168 re-gate round 7: a local repo .env carrying HERMES_COMMAND leaks
     into os.environ via bootstrap import-time _load_repo_dotenv() and

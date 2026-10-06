@@ -44,16 +44,16 @@ def make_session(created_list):
 
 def _make_session_visible(sid):
     from api.models import Session
-    from tests.conftest import TEST_WORKSPACE
+    from tests._pytest_port import TEST_USER, TEST_USER_WORKSPACE
 
     session = Session(
         session_id=sid,
         title="regression-test-delete-R8",
-        workspace=str(TEST_WORKSPACE),
+        workspace=str(TEST_USER_WORKSPACE),
         model="test",
         created_at=time.time(),
         updated_at=time.time(),
-        profile="default",
+        profile=TEST_USER,
         messages=[{"role": "user", "content": "visible row", "timestamp": time.time()}],
         tool_calls=[],
     )
@@ -178,11 +178,12 @@ def test_aiagent_imported_in_streaming(cleanup_test_sessions):
 # ── R5: SSE loop did not break on cancel event (Sprint 10 bug) ───────────────
 
 def test_cancel_nonexistent_stream_returns_not_cancelled(cleanup_test_sessions):
-    """R5a: Cancel endpoint works and returns cancelled:false for unknown stream."""
-    data, status = get("/api/chat/cancel?stream_id=nonexistent_test_xyz")
-    assert status == 200
-    assert data["ok"] is True
-    assert data["cancelled"] is False
+    """R5a: a stream the User cannot place is "not found" (ADR 0002), never cancelled."""
+    try:
+        get("/api/chat/cancel?stream_id=nonexistent_test_xyz")
+        raise AssertionError("an unknown stream was answered")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 
 def test_server_py_sse_loop_breaks_on_cancel(cleanup_test_sessions):

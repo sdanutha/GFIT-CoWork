@@ -70,13 +70,13 @@ def assert_answers_like_a_missing_route(srv, method, path, body=None):
 
 # ── trusted-header login (ticket 02) ────────────────────────────────────────
 
-def test_a_leftover_trusted_header_setting_does_not_turn_login_on(server):
+def test_without_a_directory_a_leftover_trusted_header_setting_lets_nobody_in(server):
     with server(directory="", legacy_env=TRUSTED_HEADER_ENV) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
+        assert body["logged_in"] is False, body
         status, _, set_cookies = client.get("/api/sessions", headers=TRUSTED_HEADERS)
-        assert status == 200
+        assert status == 401
         assert not _session_cookies(set_cookies)
 
 
@@ -116,12 +116,12 @@ def test_the_oidc_routes_are_gone(server, directory, path):
         assert_answers_like_a_missing_route(srv, "GET", path)
 
 
-def test_a_leftover_oidc_setting_does_not_turn_login_on(server):
+def test_without_a_directory_a_leftover_oidc_setting_lets_nobody_in(server):
     with server(directory="", legacy_env=OIDC_ENV) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
-        assert client.get("/api/sessions")[0] == 200
+        assert body["logged_in"] is False, body
+        assert client.get("/api/sessions")[0] == 401
 
 
 def test_the_login_status_and_page_name_no_oidc(server):
@@ -159,12 +159,12 @@ def test_the_passkey_routes_are_gone(server, directory, path):
         assert_answers_like_a_missing_route(srv, "POST", path, {})
 
 
-def test_a_leftover_passkey_setting_does_not_turn_login_on(server):
+def test_without_a_directory_a_leftover_passkey_setting_lets_nobody_in(server):
     with server(directory="", legacy_env=PASSKEY_ENV) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
-        assert client.get("/api/sessions")[0] == 200
+        assert body["logged_in"] is False, body
+        assert client.get("/api/sessions")[0] == 401
 
 
 def test_the_login_status_page_and_settings_name_no_passkey(server):
@@ -205,15 +205,15 @@ def stored_password(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("leftover", ["environment", "settings"])
-def test_a_leftover_password_does_not_turn_login_on(server, leftover, request):
+def test_without_a_directory_a_leftover_password_lets_nobody_in(server, leftover, request):
     legacy_env = PASSWORD_ENV if leftover == "environment" else None
     if leftover == "settings":
         request.getfixturevalue("stored_password")
     with server(directory="", legacy_env=legacy_env) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
-        assert client.get("/api/sessions")[0] == 200
+        assert body["logged_in"] is False, body
+        assert client.get("/api/sessions")[0] == 401
 
 
 @pytest.mark.parametrize("leftover", ["environment", "settings"])
@@ -237,17 +237,16 @@ def test_with_a_directory_a_leftover_password_opens_no_way_in(server, leftover, 
 
 
 def test_setting_a_password_in_settings_does_nothing(server, stored_password):
-    # With no Directory, Settings is open: a password sent to it is ignored
-    # like any unknown setting, and neither turns login on nor logs anyone in.
+    # With no Directory nobody has a session, so Settings refuses the request
+    # outright; nobody is logged in and the stored hash is left as it was.
     with server(directory="") as srv:
         client = srv.client()
         status, saved, set_cookies = client.post(
             "/api/settings", {"_set_password": "a-new-password", "_current_password": "x"},
         )
-        assert status == 200, saved
+        assert status == 401, saved
         assert not _session_cookies(set_cookies)
-        assert not set(PASSWORD_FIELDS) & set(saved), saved
-        assert client.get("/api/auth/status")[1]["auth_enabled"] is False
+        assert client.get("/api/auth/status")[1]["logged_in"] is False
         stored = stored_password.read_text(encoding="utf-8")
         assert "a-stored-upstream-hash" in stored  # left on disk, unchanged
 

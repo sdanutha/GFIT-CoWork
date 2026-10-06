@@ -164,6 +164,16 @@ if _under_prod and not _under_temp:
 
 TEST_WORKSPACE = TEST_STATE_DIR / 'test-workspace'
 
+# The shared test server has login on, as every Deployment does (ADR 0006):
+# the in-memory Directory holds one test User, who owns one Profile. Every
+# request the test process sends to the server goes as that User (see
+# ``_TestUserCookies`` below), so it is bound to TEST_PROFILE_HOME exactly as
+# a real User's request is bound to their Profile.
+TEST_USER = '100001'
+TEST_USER_PASSWORD = 'test-user-password'
+TEST_PROFILE_HOME = TEST_STATE_DIR / 'profiles' / TEST_USER
+TEST_USER_WORKSPACE = TEST_PROFILE_HOME / 'workspace'
+
 # Publish at module level so api.config, _pytest_port.py, and any test module
 # importing stateful API code during collection see the isolated test paths.
 #
@@ -172,6 +182,8 @@ TEST_WORKSPACE = TEST_STATE_DIR / 'test-workspace'
 # ~/.hermes state tree before the server subprocess fixture starts.
 os.environ['HERMES_WEBUI_TEST_PORT'] = str(TEST_PORT)
 os.environ['HERMES_WEBUI_TEST_STATE_DIR'] = str(TEST_STATE_DIR)
+os.environ['HERMES_WEBUI_TEST_USER'] = TEST_USER
+os.environ['HERMES_WEBUI_TEST_PROFILE_HOME'] = str(TEST_PROFILE_HOME)
 os.environ['HERMES_WEBUI_STATE_DIR'] = str(TEST_STATE_DIR)
 os.environ['HERMES_WEBUI_DEFAULT_WORKSPACE'] = str(TEST_WORKSPACE)
 os.environ['HERMES_HOME'] = str(TEST_STATE_DIR)
@@ -222,11 +234,8 @@ def _strip_leaked_login_env() -> None:
     test imports bootstrap mid-session (e.g. tests/test_bootstrap_foreground.py
     via its import_bootstrap fixture), a local .env configuring the Directory
     leaks into the process environment OUTSIDE monkeypatch's undo scope. Every
-    later test then sees is_directory_enabled() True and no-handler cookie helpers
-    raise spurious "build_profile_cookie requires a request handler" errors
-    (the #5588 failure shape). Tests that legitimately turn login on set the
-    var themselves AFTER this strip; an intentionally-empty value ("") is
-    preserved so ctl.sh-style override semantics keep working.
+    later test then sees a Directory it did not set up. Tests that need one
+    set the var themselves AFTER this strip.
 
     HERMES_COMMAND gets the same treatment (#7168 re-gate round 7): a local
     .env carrying HERMES_COMMAND leaks past bootstrap imports and redirects
@@ -236,8 +245,7 @@ def _strip_leaked_login_env() -> None:
     HERMES_COMMAND override, so stripping a leaked value restores exact
     upstream semantics.
     """
-    if os.environ.get("HERMES_WEBUI_DIRECTORY") != "":
-        os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
+    os.environ.pop("HERMES_WEBUI_DIRECTORY", None)
     os.environ.pop("HERMES_COMMAND", None)
 
 
@@ -969,6 +977,16 @@ def test_server():
     # Isolated cron state
     (TEST_STATE_DIR / 'cron').mkdir(parents=True, exist_ok=True)
 
+    # The test User's Profile, with the same skills, and the Directory that
+    # admits them.
+    TEST_PROFILE_HOME.mkdir(parents=True)
+    _seed_test_skills(real_skills, TEST_PROFILE_HOME / 'skills')
+    (TEST_PROFILE_HOME / 'cron').mkdir(parents=True, exist_ok=True)
+    directory_users = TEST_STATE_DIR / 'directory-users.json'
+    directory_users.write_text(json.dumps({
+        TEST_USER: {'password': TEST_USER_PASSWORD, 'display_name': 'Test User'},
+    }), encoding='utf-8')
+
     # Expose TEST_STATE_DIR to the test process itself so that tests which write
     # directly to state.db (e.g. test_gateway_sync.py) always use the same path
     # as the server.  Other test files (test_auth_sessions.py) may override
@@ -1057,7 +1075,8 @@ def test_server():
         # causing onboarding writes (config.yaml, .env) to land in the production
         # ~/.hermes/profiles/webui/ and overwrite real API keys.
         "HERMES_BASE_HOME":               str(TEST_STATE_DIR),
-        "HERMES_WEBUI_DIRECTORY":         "",
+        "HERMES_WEBUI_DIRECTORY":         "memory",
+        "HERMES_WEBUI_DIRECTORY_USERS":   str(directory_users),
     })
 
     # Pass agent dir if discovered so server.py doesn't have to re-discover
@@ -1117,8 +1136,11 @@ def test_server():
             f"  log       : {_server_log}\n"
         )
 
+    _log_in_the_test_user()
+
     yield proc
 
+    urllib.request.install_opener(None)
     proc.terminate()
     try:
         proc.wait(timeout=5)
@@ -1126,6 +1148,86 @@ def test_server():
         _kill_process_tree(proc.pid)
 
     _rmtree_retry(TEST_STATE_DIR)
+
+
+# ── The test User's session ──────────────────────────────────────────────────
+
+class _TestUserCookies(urllib.request.BaseHandler):
+    """Send every request to the shared test server as the test User.
+
+    Adds the User's session cookie, and on unsafe methods the CSRF token the
+    app shell gives that session, the way the browser does. A request that
+    sets its own ``Cookie`` header (a test of another caller, or of no caller)
+    is left alone. Requests to any other host are left alone.
+    """
+
+    handler_order = 400
+
+    def __init__(self, cookie_header: str, csrf_token: str):
+        self.cookie_header = cookie_header
+        self.csrf_token = csrf_token
+
+    def _is_test_server(self, request) -> bool:
+        return request.full_url.startswith(TEST_BASE + "/") or request.full_url == TEST_BASE
+
+    def http_request(self, request):
+        if self._is_test_server(request) and not request.has_header("Cookie"):
+            request.add_unredirected_header("Cookie", self.cookie_header)
+            if request.get_method() not in ("GET", "HEAD", "OPTIONS"):
+                request.add_unredirected_header("X-hermes-csrf-token", self.csrf_token)
+        return request
+
+
+def _log_in_the_test_user() -> None:
+    """Log the test User in to the shared server and send every later request as them."""
+    import http.cookies
+    import re
+
+    login = urllib.request.Request(
+        TEST_BASE + "/api/auth/login",
+        data=json.dumps({"username": TEST_USER, "password": TEST_USER_PASSWORD}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(login, timeout=15) as response:
+        jar = http.cookies.SimpleCookie()
+        for header in response.headers.get_all("Set-Cookie") or []:
+            jar.load(header)
+    cookie_header = "; ".join(f"{name}={morsel.value}" for name, morsel in jar.items())
+    assert cookie_header, "the test User's login set no session cookie"
+    shell = urllib.request.Request(TEST_BASE + "/", headers={"Cookie": cookie_header})
+    with urllib.request.urlopen(shell, timeout=15) as response:
+        html = response.read().decode("utf-8", "replace")
+    match = re.search(r'csrfToken:"([^"]+)"', html)
+    assert match, "the app shell carried no CSRF token for the test User"
+    urllib.request.install_opener(urllib.request.build_opener(_TestUserCookies(cookie_header, match.group(1))))
+    os.environ["HERMES_WEBUI_TEST_COOKIE"] = cookie_header
+    os.environ["HERMES_WEBUI_TEST_CSRF"] = match.group(1)
+
+
+@pytest.fixture
+def request_has_user_session(monkeypatch, tmp_path):
+    """For tests that call a route handler directly with a stand-in handler.
+
+    The dispatcher only reaches a User route after the login check, and some
+    handlers check the session again. This gives every stand-in request a real
+    Directory session cookie for the test User (a session made in this process,
+    kept in a temporary sessions file), so those handlers see what a logged-in
+    request carries. The session is checked for real; nothing is bypassed.
+    """
+    import api.auth as auth
+
+    monkeypatch.setattr(auth, "_SESSIONS_FILE", tmp_path / ".sessions.json")
+    cookie = auth.create_session(
+        auth_type=auth.DIRECTORY_AUTH_TYPE, username=TEST_USER, bound_profile=TEST_USER, role="user",
+    )
+    real_parse_cookie = auth.parse_cookie
+    monkeypatch.setattr(
+        auth, "parse_cookie",
+        lambda handler: (real_parse_cookie(handler) if hasattr(handler, "headers") else None) or cookie,
+    )
+    yield cookie
+    auth.invalidate_session(cookie)
 
 
 # ── Test base URL ─────────────────────────────────────────────────────────────

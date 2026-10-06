@@ -10,6 +10,7 @@ Covers:
 6. /api/media endpoint: integration test via live server (requires 8788)
 """
 from __future__ import annotations
+import pytest
 
 import json
 import os
@@ -23,7 +24,10 @@ import urllib.parse
 import urllib.request
 
 from tests._pytest_port import BASE, TEST_STATE_DIR
-from tests.conftest import TEST_WORKSPACE
+from tests.conftest import TEST_USER_WORKSPACE
+
+# The dispatcher reaches these handlers only for a logged-in request (ADR 0006).
+pytestmark = pytest.mark.usefixtures("request_has_user_session")
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 UI_JS = (REPO_ROOT / "static" / "ui.js").read_text(encoding="utf-8")
@@ -34,11 +38,12 @@ WORKSPACE_JS = (REPO_ROOT / "static" / "workspace.js").read_text(encoding="utf-8
 def _media_fixture_dir() -> pathlib.Path:
     # Dot-prefixed so the persistent fixture dir stays OUT of
     # /api/workspaces/suggest's default (non-hidden) results — otherwise it
-    # pollutes the shared TEST_WORKSPACE and breaks sibling tests that assert an
+    # pollutes the shared test Workspace and breaks sibling tests that assert an
     # exact workspace-suggestion set (e.g. test_sprint5
     # test_workspace_suggest_hidden_dirs_only_when_requested). Kept under
-    # TEST_WORKSPACE (a MEDIA_ALLOWED_ROOT) and Windows-portable (no /tmp).
-    fixture_dir = TEST_WORKSPACE / ".media-fixtures"
+    # the test User's Workspace (the only folder their media requests may
+    # read, ADR 0002) and Windows-portable (no /tmp).
+    fixture_dir = TEST_USER_WORKSPACE / ".media-fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     return fixture_dir
 

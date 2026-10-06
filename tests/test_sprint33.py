@@ -54,59 +54,6 @@ def test_prompt_dialog_honors_custom_label_and_danger_state():
     assert "opts.danger?'alertdialog':'dialog'" in src
 
 
-def test_auth_disabled_warning_uses_status_payload_without_extra_settings_fetch():
-    src = read("static/panels.js")
-    match = re.search(r"function _updateAuthDisabledWarning\(authStatus\)\{(.*?)\n\}", src, re.DOTALL)
-    assert match, "_updateAuthDisabledWarning(authStatus) not found"
-    body = match.group(1)
-    assert "authStatus&&authStatus.auth_disabled_acknowledged" in body
-    assert "api('/api/settings')" not in body
-
-
-def test_acknowledgement_save_failure_uses_i18n_toast():
-    src = read("static/panels.js")
-    match = re.search(r"async function _setAuthDisabledAck\(checked\)\{(.*?)\n\}", src, re.DOTALL)
-    assert match, "_setAuthDisabledAck(checked) not found"
-    body = match.group(1)
-    assert "showToast(t('auth_ack_save_failed')+e.message)" in body
-    assert "Failed to update acknowledgement" not in body
-
-
-AUTH_SAFETY_LOCALE_KEYS = (
-    "auth_status_unauthenticated",
-    "auth_warning_badge",
-    "auth_disabled_warning_message",
-    "auth_acknowledged_label",
-    "auth_ack_save_failed",
-)
-
-
-def _i18n_locale_blocks(src):
-    heads = list(re.finditer(r"^  (?:(?:'([^']+)')|([A-Za-z][A-Za-z0-9_]*)):\s*\{", src, re.M))
-    blocks = {}
-    for i, head in enumerate(heads):
-        locale = head.group(1) or head.group(2)
-        end = heads[i + 1].start() if i + 1 < len(heads) else src.find("\n};", head.end())
-        assert end != -1, f"could not find end of locale block {locale}"
-        blocks[locale] = src[head.end():end]
-    return blocks
-
-
-def test_auth_safety_keys_exist_once_per_locale():
-    src = read("static/i18n.js")
-    blocks = _i18n_locale_blocks(src)
-    assert "pt" in blocks
-    assert "zh-Hant" in blocks
-    for locale, block in blocks.items():
-        missing = [key for key in AUTH_SAFETY_LOCALE_KEYS if f"{key}:" not in block]
-        duplicated = [
-            key for key in AUTH_SAFETY_LOCALE_KEYS
-            if len(re.findall(rf"\b{re.escape(key)}\s*:", block)) != 1
-        ]
-        assert not missing, f"{locale} missing auth-safety locale keys: {missing}"
-        assert not duplicated, f"{locale} has duplicated auth-safety locale keys: {duplicated}"
-
-
 def test_no_native_confirm_calls_remain_in_static_js():
     for path in (REPO / "static").glob("*.js"):
         src = path.read_text(encoding="utf-8")

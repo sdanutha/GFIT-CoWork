@@ -11665,7 +11665,6 @@ _SETTINGS_DEFAULTS = {
     "sidebar_density": "compact",  # compact | detailed
     "auto_title_refresh_every": "0",  # adaptive title refresh: 0=off, 5/10/20=every N exchanges
     "default_message_mode": "steer",  # behavior when sending while agent is running: queue | interrupt | steer
-    "auth_disabled_acknowledged": False,  # user acknowledged unauthenticated risk
 }
 _SETTINGS_SPEECH_KEYS = {
     "tts_enabled",
@@ -11698,6 +11697,8 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     "show_quota_chip",
     "hide_composer_quota_chip",
     "provider_cost_budget",
+    # There is no mode with login turned off (ADR 0006).
+    "auth_disabled_acknowledged",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -12003,7 +12004,6 @@ _SETTINGS_DEPLOYMENT_KEYS = frozenset({
     "sync_to_insights",
     "api_redact_enabled",
     "dashboard_plugins",
-    "auth_disabled_acknowledged",
     "bot_name",
     "auto_title_refresh_every",
     "inflight_state_max_sessions",
@@ -12075,7 +12075,6 @@ _SETTINGS_BOOL_KEYS = {
     "transparent_stream_event_timestamps",
     "auto_scroll_follow",
     "worklog_details_expanded_default",
-    "auth_disabled_acknowledged",
     "hide_composer_attach",
     "hide_composer_saved_prompts",
     "hide_composer_mic",

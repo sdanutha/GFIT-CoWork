@@ -3,7 +3,7 @@ Sprint 8 Tests: Edit/regenerate, clear conversation, truncate, reconnect banner 
 """
 import json, pathlib, urllib.error, urllib.parse, urllib.request
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, new_session_id
 
 def get(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:
@@ -70,7 +70,7 @@ def test_session_truncate_requires_session_id(cleanup_test_sessions):
     assert status == 400
 
 def test_session_truncate_requires_keep_count(cleanup_test_sessions):
-    data, status = post("/api/session/truncate", {"session_id": "xyz"})
+    data, status = post("/api/session/truncate", {"session_id": new_session_id()})
     assert status == 400
 
 def test_session_truncate_unknown_session_404(cleanup_test_sessions):

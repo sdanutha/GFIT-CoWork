@@ -5,15 +5,15 @@ Admission runs again on every request from a Directory session and its answer
 tests pin what a client sees for each caller: the route gate, Profile binding
 and Workspace confinement. They also show that one request's
 caller never carries over to the next request on the same keep-alive connection
-(one handler object and thread). With login turned off there is no caller:
-nothing is pinned or confined.
+(one handler object and thread). There is no mode with login turned off
+(ADR 0006): a server with no Directory lets nobody in, whatever the request
+sends.
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
 
 import http.client
 import json
-from pathlib import Path
 
 import pytest
 
@@ -33,7 +33,7 @@ def srv(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def login_off(monkeypatch, tmp_path):
+def no_directory(monkeypatch, tmp_path):
     with _gfit_server(
         monkeypatch, tmp_path, users={}, profile_names=[USER, OTHER_USER], directory="",
     ) as s:
@@ -145,26 +145,27 @@ def test_the_requests_admission_ends_with_the_request(srv, conn, monkeypatch, me
     assert seen == [(path, ("user", USER)), ("/api/auth/status", None)]
 
 
-# ── Login turned off ─────────────────────────────────────────────────────────
+# ── No Directory: nobody gets in ─────────────────────────────────────────────
 
-def test_with_login_off_a_request_is_not_pinned(login_off):
-    client = login_off.client()
-    client.cookies["hermes_profile"] = USER
-    status, body, _ = client.get("/api/profiles")
-    assert status == 200, body
-    assert {USER, OTHER_USER} <= {p["name"] for p in body["profiles"]}
+@pytest.mark.parametrize("method,path,body", [
+    ("GET", "/api/profiles", None),
+    ("GET", "/api/sessions", None),
+    ("POST", "/api/workspaces/add", {"path": "/tmp"}),
+    ("POST", "/api/session/new", {}),
+    ("GET", "/", None),
+])
+def test_with_no_directory_no_request_is_served(no_directory, method, path, body):
+    client = no_directory.client()
+    client.cookies["hermes_profile"] = USER  # a Profile cookie from before ADR 0006 opens nothing
+    status, _, _ = client.request(method, path, body)
+    assert status in (302, 401), (method, path, status)
 
 
-def test_with_login_off_a_request_is_not_confined(login_off, tmp_path):
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "note.txt").write_text("outside every Profile")
-    client = login_off.client()
-    client.cookies["hermes_profile"] = USER
-
-    status, body, _ = client.post("/api/workspaces/add", {"path": str(outside)})
-    assert status == 200, body
-    assert str(outside.resolve()) in {str(Path(w["path"]).resolve()) for w in body["workspaces"]}
+def test_with_no_directory_only_public_paths_answer(no_directory):
+    client = no_directory.client()
+    assert client.get("/health")[0] == 200
+    assert client.get("/login")[0] == 200
+    assert client.get("/api/auth/status")[1] == {"logged_in": False}
 
 
 # ── A Directory session with no Admission is not admitted ────────────────────

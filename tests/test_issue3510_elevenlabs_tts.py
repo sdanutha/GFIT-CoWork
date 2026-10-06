@@ -12,6 +12,9 @@ import pytest
 
 import api.routes as routes
 
+# The dispatcher reaches these handlers only for a logged-in request (ADR 0006).
+pytestmark = pytest.mark.usefixtures("request_has_user_session")
+
 
 class _FakeHandler:
     def __init__(self, body: bytes, command: str = "POST", headers=None, client="9.9.9.9"):

@@ -522,8 +522,8 @@ def request_profile_name() -> str | None:
 def set_request_profile(name: str) -> None:
     """Set the per-request profile context for this thread.
 
-    Called by server.py at the start of each request when a hermes_profile
-    cookie is present.  Always paired with clear_request_profile() in a
+    Called once per request with the Admission's Profile
+    (:func:`api.access.settle_request`).  Always paired with clear_request_profile() in a
     finally block so the thread-local is released after the request.
     """
     _tls.profile = name

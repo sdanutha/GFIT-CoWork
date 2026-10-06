@@ -3,7 +3,7 @@ import urllib.error
 import urllib.request
 
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, deployment_settings
 
 
 def get(path):
@@ -31,18 +31,14 @@ def post(path, body=None):
 DIRECTORY_SUBTITLE = "Sign in with your employee ID and password"
 
 
-def _current_language():
-    settings, status = get("/api/settings")
-    assert status == 200
-    return settings.get("language") or "en"
+def _deployment_language(language):
+    """The login page is served before login, so it speaks the Deployment's
+    language; a User's own language choice belongs to their Profile (ADR 0006)."""
+    return deployment_settings(language=language)
 
 
 def test_login_page_uses_simplified_chinese_for_zh_cn_alias():
-    prev_lang = _current_language()
-    try:
-        saved, status = post("/api/settings", {"language": "zh-CN"})
-        assert status == 200
-        assert saved.get("language") == "zh-CN"
+    with _deployment_language("zh-CN"):
         html, status2 = get_raw("/login")
         assert status2 == 200
         assert 'lang="zh-CN"' in html
@@ -50,18 +46,10 @@ def test_login_page_uses_simplified_chinese_for_zh_cn_alias():
         # GFIT-CoWork: the subtitle is the Directory copy, English until the
         # other locales are translated (phase 2).
         assert DIRECTORY_SUBTITLE in html
-    finally:
-        restored, restore_status = post("/api/settings", {"language": prev_lang})
-        assert restore_status == 200
-        assert restored.get("language") == prev_lang
 
 
 def test_login_page_uses_traditional_chinese_for_zh_hant():
-    prev_lang = _current_language()
-    try:
-        saved, status = post("/api/settings", {"language": "zh-Hant"})
-        assert status == 200
-        assert saved.get("language") == "zh-Hant"
+    with _deployment_language("zh-Hant"):
         html, status2 = get_raw("/login")
         assert status2 == 200
         assert 'lang="zh-TW"' in html
@@ -69,18 +57,10 @@ def test_login_page_uses_traditional_chinese_for_zh_hant():
         # other locales are translated (phase 2).
         assert DIRECTORY_SUBTITLE in html
         assert "\u5bc6\u78bc\u932f\u8aa4" in html
-    finally:
-        restored, restore_status = post("/api/settings", {"language": prev_lang})
-        assert restore_status == 200
-        assert restored.get("language") == prev_lang
 
 
 def test_login_page_uses_russian_for_ru():
-    prev_lang = _current_language()
-    try:
-        saved, status = post("/api/settings", {"language": "ru"})
-        assert status == 200
-        assert saved.get("language") == "ru"
+    with _deployment_language("ru"):
         html, status2 = get_raw("/login")
         assert status2 == 200
         assert 'lang="ru-RU"' in html
@@ -89,7 +69,3 @@ def test_login_page_uses_russian_for_ru():
         # other locales are translated (phase 2).
         assert DIRECTORY_SUBTITLE in html
         assert "\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c" in html
-    finally:
-        restored, restore_status = post("/api/settings", {"language": prev_lang})
-        assert restore_status == 200
-        assert restored.get("language") == prev_lang

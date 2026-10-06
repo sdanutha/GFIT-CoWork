@@ -9,6 +9,9 @@ import pytest
 
 import api.routes as routes
 
+# The dispatcher reaches these handlers only for a logged-in request (ADR 0006).
+pytestmark = pytest.mark.usefixtures("request_has_user_session")
+
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 

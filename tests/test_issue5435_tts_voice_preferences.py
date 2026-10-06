@@ -6,7 +6,7 @@ import pathlib
 import urllib.error
 import urllib.request
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, TEST_USER_SETTINGS_FILE
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")
@@ -66,8 +66,8 @@ def _extract_balanced_block(src, marker):
 
 
 def _settings_file_snapshot():
-    cfg = importlib.import_module("api.config")
-    path = cfg.SETTINGS_FILE
+    # The server's requests are the test User's: their settings are their Profile's.
+    path = TEST_USER_SETTINGS_FILE
     original = path.read_text(encoding="utf-8") if path.exists() else None
     return path, original
 
@@ -182,8 +182,10 @@ def test_unrelated_settings_save_does_not_materialize_absent_speech_defaults():
 
 
 def test_startup_workspace_repair_write_drops_merged_speech_defaults():
-    path, original = _settings_file_snapshot()
+    # In this process, with no request: the Deployment's settings file.
     cfg = importlib.import_module("api.config")
+    path = cfg.SETTINGS_FILE
+    original = path.read_text(encoding="utf-8") if path.exists() else None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(

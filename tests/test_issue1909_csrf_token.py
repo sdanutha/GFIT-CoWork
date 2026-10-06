@@ -146,10 +146,11 @@ def test_login_route_remains_csrf_exempt(monkeypatch):
         raise AssertionError("/api/auth/login must not require a pre-login CSRF token")
 
     monkeypatch.setattr(routes, "_check_csrf", fail_if_called)
-    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
+    monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", "memory")
 
+    # No credentials: the Directory refuses them (401), not the CSRF check (403).
     routes.handle_post(handler, SimpleNamespace(path="/api/auth/login"))
-    assert handler.status == 200
+    assert handler.status == 401
 
 
 def test_index_shell_includes_csrf_fetch_and_sendbeacon_injection():
