@@ -99,6 +99,9 @@ class TestResolveModelProviderHealsLegacyLocal:
             assert base_url == "http://127.0.0.1:11434/v1"
             assert model_id == "qwen2.5-coder:14b"
         finally:
+            # Undo the config-path patch first, so the reload lands on the real
+            # config.yaml rather than leaving the cache on the temp file.
+            monkeypatch.undo()
             cfg.reload_config()
 
     def test_provider_local_uppercase_also_normalised(self, tmp_path, monkeypatch):
@@ -117,6 +120,9 @@ class TestResolveModelProviderHealsLegacyLocal:
             _, provider, _ = cfg.resolve_model_provider("my-model")
             assert provider == "custom"
         finally:
+            # Undo the config-path patch first, so the reload lands on the real
+            # config.yaml rather than leaving the cache on the temp file.
+            monkeypatch.undo()
             cfg.reload_config()
 
     def test_other_providers_pass_through_unchanged(self, tmp_path, monkeypatch):
@@ -134,6 +140,9 @@ class TestResolveModelProviderHealsLegacyLocal:
             _, provider, _ = cfg.resolve_model_provider("claude-sonnet-4.6")
             assert provider == "anthropic"
         finally:
+            # Undo the config-path patch first, so the reload lands on the real
+            # config.yaml rather than leaving the cache on the temp file.
+            monkeypatch.undo()
             cfg.reload_config()
 
 
@@ -171,6 +180,9 @@ class TestSetHermesDefaultModelNeverPersistsLocal:
             )
             assert persisted == "custom"
         finally:
+            # Undo the config-path patch first, so the reload lands on the real
+            # config.yaml rather than leaving the cache on the temp file.
+            monkeypatch.undo()
             cfg.reload_config()
 
 
@@ -192,3 +204,21 @@ class TestAliasTableHasLocalEntry:
         assert cfg._PROVIDER_ALIASES.get("local") == "custom", (
             "_PROVIDER_ALIASES must map 'local' → 'custom' for #1384"
         )
+
+
+# ── 5. These tests leave the config cache on the real config.yaml ─────────
+
+
+def test_the_tests_above_leave_the_config_cache_on_the_real_config_path():
+    """Each test above points ``_get_config_path`` at a temp file and reloads.
+
+    Its cleanup must reload only after that patch is undone: a reload while the
+    patch is still active left ``_cfg_path`` on the deleted temp file, so the
+    next test's first config read saw a "changed path", reloaded, and rebound
+    ``config.cfg`` over whatever that test had set (test_issue1426 lost its
+    OpenRouter provider in the full suite).
+    """
+    real = cfg._get_config_path()
+    assert cfg._cfg_path in (None, real), (
+        f"the config cache was left on {cfg._cfg_path}, not {real}"
+    )
