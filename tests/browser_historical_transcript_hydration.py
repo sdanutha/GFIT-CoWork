@@ -17,6 +17,8 @@ import tempfile
 from pathlib import Path
 
 from browser_conversation_lifecycle import (
+    gate_user_env,
+    log_in_gate_user,
     _activity_snapshot,
     _capture_page_errors,
     _expand_settled_worklog,
@@ -164,20 +166,14 @@ def main() -> int:
     for key in list(env):
         if key.endswith("_API_KEY"):
             env.pop(key, None)
-    for key in (
-        "API_SERVER_KEY",
-        "HERMES_WEBUI_DIRECTORY",
-        "HERMES_WEBUI_EXTENSION_DIR",
-        "HERMES_WEBUI_EXTENSION_MANIFEST",
-    ):
-        env.pop(key, None)
+    env.pop("API_SERVER_KEY", None)
     env.update({
         "HERMES_WEBUI_HOST": "127.0.0.1",
         "HERMES_WEBUI_STATE_DIR": str(state_dir / "webui-state"),
         "HERMES_HOME": str(state_dir / "hermes-home"),
         "HERMES_BASE_HOME": str(state_dir / "hermes-home"),
         "HERMES_CONFIG_PATH": str(state_dir / "hermes-home" / "config.yaml"),
-        "HERMES_WEBUI_SKIP_ONBOARDING": "1",
+        **gate_user_env(state_dir, state_dir / "hermes-home"),
         "HERMES_WEBUI_AGENT_DIR": str(agent_dir),
         "HERMES_WEBUI_DEFAULT_WORKSPACE": str(workspace_dir),
         "NO_PROXY": "127.0.0.1,localhost",
@@ -195,6 +191,7 @@ def main() -> int:
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         context = browser.new_context(base_url=base_url)
+        log_in_gate_user(context)
         page = context.new_page()
         errors = _capture_page_errors(page)
         page.goto("/", wait_until="domcontentloaded")

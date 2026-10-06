@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright
 
-from browser_conversation_lifecycle import _start_webui_server, _terminate_process
+from browser_conversation_lifecycle import _start_webui_server, _terminate_process, gate_user_env, log_in_gate_user
 
 ROOT = Path(os.environ.get('WEBUI_TEST_ROOT', Path(__file__).resolve().parent.parent))
 
@@ -71,8 +71,9 @@ def main():
         env = {k:os.environ[k] for k in ('PATH','SYSTEMROOT','TMPDIR') if k in os.environ}
         env.update(HOME=temp, HERMES_HOME=temp, HERMES_BASE_HOME=temp,
                    HERMES_WEBUI_STATE_DIR=str(state/'webui'), HERMES_CONFIG_PATH=str(state/'config.yaml'),
-                   HERMES_WEBUI_HOST='127.0.0.1', HERMES_WEBUI_SKIP_ONBOARDING='1',
-                   HERMES_WEBUI_AGENT_DIR=str(state/'no-agent'))
+                   HERMES_WEBUI_HOST='127.0.0.1',
+                   HERMES_WEBUI_AGENT_DIR=str(state/'no-agent'),
+                   **gate_user_env(state, state))
         proc, log, _, base = _start_webui_server(ROOT, env, state)
         results = []
         try:
@@ -84,6 +85,7 @@ def main():
                             for width in [1280,390]:
                                 context = browser.new_context(viewport={'width':width,'height':844},bypass_csp=True)
                                 context.add_init_script(INIT)
+                                log_in_gate_user(context, base)
                                 page = context.new_page()
 
                                 errors=[]
