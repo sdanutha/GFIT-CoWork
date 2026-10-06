@@ -188,10 +188,9 @@ ROW_TABLE = [
 def test_may_this_row_go_to_me(world, row, user, root, bobs, every):
     assert UserSessionOwnership(ALICE).may_list_row(row) is user
     # The User's own Profile wins over any view the request asks for.
-    assert UserSessionOwnership(ALICE).may_list_row(row, active_profile=BOB, all_profiles=True) is user
+    assert UserSessionOwnership(ALICE).may_list_row(row, active_profile=BOB) is user
     assert UNCONFINED.may_list_row(row) is root
     assert UNCONFINED.may_list_row(row, active_profile=BOB) is bobs
-    assert UNCONFINED.may_list_row(row, all_profiles=True) is every
     assert REFUSING.may_list_row(row) is False
 
 

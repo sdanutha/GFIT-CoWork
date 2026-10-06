@@ -134,26 +134,3 @@ def test_import_cli_existing_same_profile_still_refreshes(monkeypatch):
 
     assert "ok" in cap, f"expected success, got {cap}"
     assert cap["ok"]["session"]["id"] == "own_001"
-
-
-def test_import_cli_all_profiles_requires_matching_profile(monkeypatch):
-    """An explicit all_profiles import for a foreign session must still match the
-    requested profile — a mismatched profile 404s rather than reading."""
-    foreign = _FakeSession("foreign_002", "other")
-    monkeypatch.setattr(routes.Session, "load", staticmethod(lambda sid: foreign))
-    monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
-    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
-    monkeypatch.setattr(
-        routes, "get_cli_session_messages",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("foreign read attempted")),
-    )
-    cap = _capture(monkeypatch)
-
-    # all_profiles=1 but requested profile "haku" != stored "other" → 404.
-    routes._handle_session_import_cli(
-        _FakeHandler(cookie_profile="default"),
-        {"session_id": "foreign_002", "all_profiles": 1, "profile": "haku"},
-    )
-
-    assert "bad" in cap, f"expected 404, got {cap}"
-    assert cap["bad"][1] == 404

@@ -19,4 +19,6 @@ Supersedes in part ADR 0002 (server-level features open to the Admin) and ADR 00
 - Web app settings (theme, voice, composer buttons and so on) belong to each Profile and its User may change them; they are no longer one file shared by the whole Deployment.
 - A Deployment that still sets `HERMES_WEBUI_ADMIN_USERS` starts as usual and logs a warning that the setting is ignored. It grants nothing: a former Admin with no Profile of their own is refused at login, and an old Admin cookie fails Admission on its next request.
 - The route table has only User routes and public ones (the login page and what it needs); a route with no row is refused. A test keeps it that way.
+- There is no mode with login turned off: a server with no Directory refuses to start, on any address. Local development and the test suite use the in-memory Directory; the shared test server logs in one test User bound to their own Profile, so the tests exercise the production Admission (TESTING.md, "How the automated tests log in").
+- A request's Profile is its Admission's and nothing else: the Profile cookie, Profile switching and every all-Profiles view (the session list, search, projects and cron "other Profiles" toggles, the all-Profiles CLI import) are gone.
 - Handing over a departed User's work is done on the server, not by reading their Profile in the web app.

@@ -293,7 +293,6 @@ def _payload_for_rows_webui(
 
     payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -950,7 +949,6 @@ def _run_payload(pruned: list[str], *, show_cli_sessions: bool = True):
     # the monkeypatched lambda below.
     payload = builder(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=show_cli_sessions,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

@@ -262,7 +262,6 @@ def test_archived_webhook_projection_reaches_sidebar_payload(monkeypatch):
 
     default_payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -273,7 +272,6 @@ def test_archived_webhook_projection_reaches_sidebar_payload(monkeypatch):
 
     payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -332,7 +330,6 @@ def test_archived_cron_sidecar_suppresses_raw_unarchived_cron_row(monkeypatch):
 
     default_payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=True,
@@ -344,7 +341,6 @@ def test_archived_cron_sidecar_suppresses_raw_unarchived_cron_row(monkeypatch):
 
     payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=True,

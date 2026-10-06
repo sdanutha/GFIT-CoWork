@@ -89,43 +89,6 @@ def test_profiles_match_active_none_treated_as_default():
 # ── _all_profiles_query_flag ───────────────────────────────────────────────
 
 
-def test_all_profiles_query_flag_true_values():
-    """1, true, yes, on (case-insensitive) all enable aggregate mode."""
-    from api.routes import _all_profiles_query_flag
-    for v in ('1', 'true', 'TRUE', 'yes', 'YES', 'on'):
-        u = urlparse(f'/api/sessions?all_profiles={v}')
-        assert _all_profiles_query_flag(u) is True, f"value {v!r} should be true"
-
-
-def test_all_profiles_query_flag_false_values():
-    """0, empty, garbage, missing — all default to scoped mode (False)."""
-    from api.routes import _all_profiles_query_flag
-    for path in ('/api/sessions', '/api/sessions?all_profiles=0',
-                 '/api/sessions?all_profiles=', '/api/sessions?all_profiles=lol'):
-        u = urlparse(path)
-        assert _all_profiles_query_flag(u) is False, f"path {path!r} should be false"
-
-
-def test_all_profiles_enabled_in_normal_mode(monkeypatch):
-    """The aggregate toggle still works outside isolated-profile mode."""
-    import api.profiles as profiles
-    import api.routes as routes
-
-    monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: False)
-    reach = routes.request_profile_reach("default", all_profiles=routes._all_profiles_query_flag(urlparse('/api/sessions?all_profiles=1')))
-    assert reach.every_profile is True
-
-
-def test_all_profiles_disabled_in_isolated_mode(monkeypatch):
-    """An isolated deployment must ignore all_profiles=1 aggregate requests."""
-    import api.profiles as profiles
-    import api.routes as routes
-
-    monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: True)
-    reach = routes.request_profile_reach("default", all_profiles=routes._all_profiles_query_flag(urlparse('/api/sessions?all_profiles=1')))
-    assert reach.every_profile is False
-
-
 # ── No client-side CLI bypass ──────────────────────────────────────────────
 
 
@@ -151,44 +114,6 @@ def test_static_sessions_js_no_cli_session_bypass():
     )
 
 
-def test_static_sessions_js_uses_all_profiles_query_when_toggle_on():
-    """Frontend must request /api/sessions?all_profiles=1 when _showAllProfiles is true.
-
-    Without this, flipping the toggle just re-renders client-cached rows that
-    may not contain cross-profile data (since the server scoped on first fetch).
-    """
-    from pathlib import Path
-
-    repo_root = Path(__file__).parent.parent
-    src = (repo_root / 'static' / 'sessions.js').read_text(encoding='utf-8')
-
-    assert "if(_showAllProfiles) qs.set('all_profiles','1');" in src, (
-        "Expected session-list fetch query to flip on the all-profiles toggle state"
-    )
-    assert "const projectQS = _showAllProfiles ? '?all_profiles=1' : '';" in src, (
-        "Expected project fetch path to flip on the all-profiles toggle state"
-    )
-    assert "api('/api/sessions' + sessionListQS" in src, (
-        "Expected /api/sessions fetch to use the variant query"
-    )
-    assert "api('/api/projects' + projectQS" in src, (
-        "Expected /api/projects fetch to use the variant query"
-    )
-
-
-def test_static_sessions_js_marks_all_profiles_imports_with_profile():
-    """All-profiles row opens must opt into cross-profile import explicitly."""
-    from pathlib import Path
-
-    repo_root = Path(__file__).parent.parent
-    src = (repo_root / 'static' / 'sessions.js').read_text(encoding='utf-8')
-
-    assert "function _externalImportPayload(session)" in src
-    assert "payload.all_profiles = true;" in src
-    assert "payload.profile = session.profile;" in src
-    assert "JSON.stringify(_externalImportPayload(s))" in src or "JSON.stringify(_externalImportPayload(session))" in src
-
-
 # ── SHOULD-FIX #2: profile filter must run BEFORE messaging-source dedupe ──
 # Bug shape (Opus pre-release advisor): _messaging_source_key is profile-blind,
 # so if profiles A and B both have a session for the same Slack identity, a
@@ -212,7 +137,7 @@ def test_keep_latest_messaging_runs_after_profile_filter():
     block = src[builder_idx:next_def]
 
     # The view's Profile filter is session ownership's (unconfined) row rule.
-    filter_idx = block.find('may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)')
+    filter_idx = block.find('may_list_row(s, active_profile=active_profile)')
     # The dedupe call can be either single-line `(scoped)` or multi-line
     # `(\n    scoped,\n    show_previous_messaging_sessions=…,\n)`; match the
     # function name + the first arg position rather than coupling to the call
@@ -770,38 +695,6 @@ def _post_json(path: str, body: dict) -> tuple[dict, int]:
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read()), resp.status
 
-
-def test_all_profiles_query_includes_named_profile_cli_sessions():
-    """all_profiles=1 should aggregate agent sessions from non-active named profiles."""
-    conn = _ensure_agent_state_db("issue1611-named")
-    sid = "issue1611_named_profile_cli_001"
-    try:
-        _insert_agent_session(
-            conn,
-            sid,
-            source="telegram",
-            title="Named Profile Telegram Session",
-        )
-        _post_json("/api/settings", {"show_cli_sessions": True})
-
-        scoped, scoped_status = _get_json("/api/sessions")
-        assert scoped_status == 200
-        assert sid not in {row.get("session_id") for row in scoped.get("sessions", [])}
-
-        aggregate, aggregate_status = _get_json("/api/sessions?all_profiles=1")
-        assert aggregate_status == 200
-        session = next(
-            row for row in aggregate.get("sessions", [])
-            if row.get("session_id") == sid
-        )
-        assert session.get("profile") == "issue1611-named"
-        assert aggregate.get("all_profiles") is True
-    finally:
-        try:
-            _post_json("/api/settings", {"show_cli_sessions": False})
-        finally:
-            _delete_agent_session(conn, sid)
-            conn.close()
 
 # ── Cleanup ────────────────────────────────────────────────────────────────
 

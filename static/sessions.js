@@ -1674,14 +1674,11 @@ function _markPollingCompletionUnreadTransitions(sessions) {
         const meta = (typeof _cronCompletionUnreadMetaForSession === 'function')
           ? _cronCompletionUnreadMetaForSession(s)
           : null;
-        // Defense: never re-create a cron unread for a non-active profile while
-        // the sidebar is single-profile (stale pre-switch payloads).
-        const allProfilesOn = (typeof _showAllProfiles !== 'undefined' && !!_showAllProfiles);
+        // Defense: never re-create a cron unread for a non-active profile.
         if (
           meta
           && meta.source === 'cron'
           && meta.profile
-          && !allProfilesOn
           && typeof _cronMarkerProfileMatchesActive === 'function'
           && !_cronMarkerProfileMatchesActive(meta.profile, (typeof S !== 'undefined' && S && S.activeProfile) || 'default')
         ) {
@@ -2064,16 +2061,6 @@ function _rearmActiveSessionStream(){
   if(activeSid) startSessionStream(activeSid);
 }
 
-function _sessionProfileMismatchFromError(e){
-  if(!e || e.status!==409 || !e.body) return null;
-  try{
-    const body=JSON.parse(e.body);
-    if(body && body.code==='session_profile_mismatch' && body.profile){
-      return {profile:String(body.profile), session_id:String(body.session_id||'')};
-    }
-  }catch(_){ }
-  return null;
-}
 
 
 async function loadSession(sid){
@@ -2832,12 +2819,7 @@ function _isExternalSession(session) {
 }
 
 function _externalImportPayload(session) {
-  const payload = {session_id: session.session_id};
-  if (_showAllProfiles && session && typeof session.profile === 'string' && session.profile) {
-    payload.all_profiles = true;
-    payload.profile = session.profile;
-  }
-  return payload;
+  return {session_id: session.session_id};
 }
 
 async function _openSidebarSession(session, loadOpts={}){
@@ -2919,7 +2901,6 @@ function _sessionListQueryString() {
   const qs = new URLSearchParams();
   qs.set('sidebar_source', _requestedSessionSidebarSource());
   if(_sessionListExcludeHiddenEnabled()) qs.set('exclude_hidden','1');
-  if(_showAllProfiles) qs.set('all_profiles','1');
   if(_showArchived){
     qs.set('include_archived','1');
     if(!_sessionArchivePagingFilterActive()){
@@ -4279,7 +4260,7 @@ const SESSION_ARCHIVED_PAGE_SIZE = 100;
 const SESSION_ARCHIVED_MAX_LOADED_LIMIT = 2000;
 let _allSessions = [];  // cached for search filter
 let _sidebarReferenceSessions = [];  // hidden archived ancestor rows used only for nesting/suppression
-let _allSessionsScope = null;  // {profile, allProfiles} the cache was loaded under (#4167)
+let _allSessionsScope = null;  // {profile, sidebarSource, excludeHidden} the cache was loaded under (#4167)
 let _sessionAttentionSoundPrimed = false;
 const _sessionAttentionSoundState = new Map();
 let _renamingSid = null;  // session_id currently being renamed (blocks list re-renders)
@@ -4295,10 +4276,6 @@ let _allProjects = [];  // cached project list
 // double-underscore prefixes provide.
 const NO_PROJECT_FILTER = '__none__';
 let _activeProject = null;  // project_id filter (null = show all, NO_PROJECT_FILTER = unassigned only)
-const SHOW_ALL_PROFILES_STORAGE_KEY = 'hermes-show-all-profiles';
-let _showAllProfiles = false;  // false = filter to active profile only
-  // true while cross-profile sidebar click switches profile before loadSession()
-let _otherProfileCount = 0;       // count of sessions from other profiles (server-reported)
 let _archivedWebuiCount = 0;      // archived WebUI sessions not fetched until requested
 let _archivedCliCount = 0;        // archived non-WebUI sessions not fetched until requested
 let _archivedRowsLoadedLimit = SESSION_ARCHIVED_PAGE_SIZE;
@@ -4306,19 +4283,6 @@ let _serverWebuiSessionCount = null;  // explicit server count for WebUI session
 let _serverCliSessionCount = null;    // explicit server count for CLI sessions
 let _sessionSourceFilter = 'webui';  // 'webui' keeps WebUI chats separate from read-only CLI sessions
 
-function _restoreShowAllProfiles(){
-  try{
-    const raw=localStorage.getItem(SHOW_ALL_PROFILES_STORAGE_KEY);
-    _showAllProfiles = raw === '1' || raw === 'true';
-  }catch(_e){ _showAllProfiles = false; }
-}
-
-function _setShowAllProfiles(enabled){
-  _showAllProfiles=!!enabled;
-  try{ localStorage.setItem(SHOW_ALL_PROFILES_STORAGE_KEY,_showAllProfiles?'1':'0'); }catch(_e){}
-}
-
-_restoreShowAllProfiles();
 _restoreSessionSourceFilter();
 let _sessionActionMenu = null;
 let _sessionActionAnchor = null;
@@ -5453,8 +5417,7 @@ function _sessionListRenderSignature(){
       _sessionSourceFilter,
       !!_sessionSelectMode,
       (window._sidebarDensity==='detailed'?'d':'c'),
-      !!_showAllProfiles,
-      _otherProfileCount,_archivedWebuiCount,_archivedCliCount,
+      _archivedWebuiCount,_archivedCliCount,
       _serverWebuiSessionCount,_serverCliSessionCount,
     ]);
   }catch(_){ return null; }
@@ -5464,7 +5427,6 @@ function _applySessionListPayload(sessData, projData, opts){
   // active profile so the "Show N from other profiles" toggle can render
   // without a second round-trip. Stashed on the module for renderSessionListFromCache.
   const applyOpts = (opts && typeof opts === 'object') ? opts : {};
-  _otherProfileCount = sessData.other_profile_count || 0;
   _archivedWebuiCount = Number(sessData.archived_webui_count ?? sessData.archived_count ?? 0);
   _archivedCliCount = Number(sessData.archived_cli_count ?? 0);
   _serverWebuiSessionCount = Object.prototype.hasOwnProperty.call(sessData, 'webui_session_count')
@@ -5501,7 +5463,6 @@ function _applySessionListPayload(sessData, projData, opts){
     profile: (typeof sessData.active_profile === 'string' && sessData.active_profile)
       ? sessData.active_profile
       : (S.activeProfile || 'default'),
-    allProfiles: !!_showAllProfiles,
     sidebarSource: _requestedSessionSidebarSource(),
     excludeHidden: _sessionListExcludeHiddenEnabled(),
   };
@@ -5697,13 +5658,11 @@ async function _runRenderSessionListRefresh(opts, _gen){
     // (#4167 review item 3).
     const _curScope = {
       profile: S.activeProfile || 'default',
-      allProfiles: !!_showAllProfiles,
       sidebarSource: _requestedSessionSidebarSource(),
       excludeHidden: _sessionListExcludeHiddenEnabled(),
     };
     const _scopeMatches = _allSessionsScope
       && _allSessionsScope.profile === _curScope.profile
-      && _allSessionsScope.allProfiles === _curScope.allProfiles
       && _allSessionsScope.sidebarSource === _curScope.sidebarSource
       && _allSessionsScope.excludeHidden === _curScope.excludeHidden;
     if (_scopeMatches) {
@@ -5721,8 +5680,7 @@ async function _runRenderSessionListRefresh(opts, _gen){
 async function _loadSidebarSessionListPayload(sessionListQS, sessionRequestOpts){
   const projectPromise = (async() => {
     try{
-      const projectQS = _showAllProfiles ? '?all_profiles=1' : '';
-      return await api('/api/projects' + projectQS,{timeoutToast:false});
+      return await api('/api/projects',{timeoutToast:false});
     }catch(projectError){
       console.warn('renderProjectsList',projectError);
       return {projects:_allProjects||[]};
@@ -7947,25 +7905,6 @@ function renderSessionListFromCache(){
     bar.appendChild(addBtn);
     list.appendChild(bar);
   }
-  // Profile filter toggle (show sessions from other profiles).
-  // Cross-profile rows live SERVER-SIDE behind ?all_profiles=1, so the toggle
-  // must trigger a refetch — there's no client-cached aggregate to slice through.
-  // The server is authoritative for the count (renamed-root cross-alias is
-  // server-side). A naive strict-equality client fallback would mis-count.
-  const otherProfileCount = _otherProfileCount;
-  if(otherProfileCount>0&&!_showAllProfiles){
-    const pfToggle=document.createElement('div');
-    pfToggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
-    pfToggle.textContent='Show '+otherProfileCount+' from other profiles';
-    pfToggle.onclick=()=>{_setShowAllProfiles(true);renderSessionList({deferWhileInteracting:false});};
-    list.appendChild(pfToggle);
-  } else if(_showAllProfiles){
-    const pfToggle=document.createElement('div');
-    pfToggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
-    pfToggle.textContent='Show active profile only';
-    pfToggle.onclick=()=>{_setShowAllProfiles(false);renderSessionList({deferWhileInteracting:false});};
-    list.appendChild(pfToggle);
-  }
   // Show/hide archived toggle if there are archived sessions. Archived rows
   // are fetched on demand so large histories do not bloat every sidebar poll.
   if(archivedCount>0||_showArchived){
@@ -8348,7 +8287,6 @@ function renderSessionListFromCache(){
       const sourceLabel=_getChannelLabel(s);
       if(sourceLabel&&(s.is_cli_session||_isMessagingSession(s))) metaBits.push(sourceLabel);
       if(readOnly) metaBits.push('read-only');
-      if(_showAllProfiles&&s.profile) metaBits.push(s.profile);
       const meta=document.createElement('div');
       meta.className='session-meta';
       meta.textContent=metaBits.join(' · ');
@@ -9091,14 +9029,6 @@ async function _handleActiveSessionStorageEvent(e){
   if(typeof renderSessionListFromCache==='function') renderSessionListFromCache();
 }
 
-async function _handleShowAllProfilesStorageEvent(e){
-  if(!e || e.key !== SHOW_ALL_PROFILES_STORAGE_KEY) return;
-  const next=e.newValue==='1'||e.newValue==='true';
-  if(_showAllProfiles===next) return;
-  _showAllProfiles=next;
-  if(typeof renderSessionList==='function') await renderSessionList({deferWhileInteracting:false});
-}
-
 function _handleUnreadStorageEvent(e){
   if(!e || !e.key) return;
   // A concurrent WebUI client on the same origin/profile changed one of the
@@ -9122,7 +9052,6 @@ function _handleUnreadStorageEvent(e){
 if(typeof window!=='undefined'){
   window.addEventListener('storage', (e) => {
     void _handleActiveSessionStorageEvent(e);
-    void _handleShowAllProfilesStorageEvent(e);
     void _handleUnreadStorageEvent(e);
   });
   window.addEventListener('popstate', () => {

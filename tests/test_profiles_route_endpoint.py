@@ -24,6 +24,5 @@ def test_profiles_route_returns_active_profile(monkeypatch):
         "payload": {
             "profiles": expected_profiles,
             "active": "default",
-            "single_profile_mode": False,
         },
     }

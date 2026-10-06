@@ -91,16 +91,12 @@ class ProfileReach:
 
     The answer to :meth:`profile_reach` (a view) and :meth:`caller_reach` (the
     caller). *every_profile* is true when every Profile may be read; otherwise
-    *profiles* names the ones that may. *counts_other_profiles* says whether an
-    "N from other Profiles" count may be shown. *single_profile* says whether
-    the web app should treat the caller as single-Profile (no Profile picker,
-    no all-Profiles view).
+    *profiles* names the ones that may. There is no all-Profiles view (ADR
+    0006): a view is always one Profile's.
     """
 
     every_profile: bool
     profiles: frozenset = frozenset()
-    counts_other_profiles: bool = False
-    single_profile: bool = False
 
     def __post_init__(self):
         if self.every_profile and self.profiles:
@@ -116,7 +112,7 @@ class ProfileReach:
 
 
 EVERY_PROFILE = ProfileReach(every_profile=True)
-NO_PROFILE = ProfileReach(every_profile=False, single_profile=True)
+NO_PROFILE = ProfileReach(every_profile=False)
 
 
 def _names_nothing(session_id) -> bool:
@@ -242,11 +238,10 @@ class UserSessionOwnership:
             return False
         return not session_id or self._owns(session_id)
 
-    def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
+    def may_list_row(self, row, *, active_profile=None) -> bool:
         """A row of the User's Profile; never a Profile-less one.
 
-        *active_profile* and *all_profiles* are an unconfined view; the User's
-        own Profile wins.
+        *active_profile* is an unconfined view's; the User's own Profile wins.
         """
         from api.profiles import _profiles_match
 
@@ -259,13 +254,13 @@ class UserSessionOwnership:
         """No: a User's request is answered by this adapter alone, never by a route's own rules."""
         return False
 
-    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
-        """Exactly the User's own Profile, whatever was asked; other Profiles are never counted."""
+    def profile_reach(self, active_profile=None) -> ProfileReach:
+        """Exactly the User's own Profile, whatever was asked."""
         return self.caller_reach()
 
     def caller_reach(self) -> ProfileReach:
         """The User's own Profile."""
-        return ProfileReach(every_profile=False, profiles=frozenset({self.profile}), single_profile=True)
+        return ProfileReach(every_profile=False, profiles=frozenset({self.profile}))
 
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found (a record, or a listed row): the User's own, else 404."""
@@ -296,22 +291,11 @@ class _UnconfinedSessionOwnership:
         chat start's placeholder retag) on top of this adapter's answers."""
         return True
 
-    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
-        """Today's rules: the active Profile, or every Profile when asked for.
+    def profile_reach(self, active_profile=None) -> ProfileReach:
+        """The active Profile (a view is always one Profile's)."""
+        from api.profiles import get_active_profile_name
 
-        Upstream's isolated profile mode (a process serving one Profile) keeps
-        the request on the active Profile and counts no other.
-        """
-        from api.profiles import _is_isolated_profile_mode, get_active_profile_name
-
-        single = _is_isolated_profile_mode()
-        if all_profiles and not single:
-            return EVERY_PROFILE
-        active = active_profile or get_active_profile_name()
-        return ProfileReach(
-            every_profile=False, profiles=frozenset({active}),
-            counts_other_profiles=not single, single_profile=single,
-        )
+        return ProfileReach(every_profile=False, profiles=frozenset({active_profile or get_active_profile_name()}))
 
     def caller_reach(self) -> ProfileReach:
         """Every Profile: no caller confines this request, whatever Upstream's posture.
@@ -340,15 +324,10 @@ class _UnconfinedSessionOwnership:
     def may_receive_event(self, event) -> bool:
         return True
 
-    def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
-        """Every Profile's rows in the all-Profiles view, else the active Profile's.
-
-        A row with no Profile counts as the root Profile's.
-        """
+    def may_list_row(self, row, *, active_profile=None) -> bool:
+        """The active Profile's rows. A row with no Profile counts as the root Profile's."""
         from api.profiles import _profiles_match, get_active_profile_name
 
-        if all_profiles:
-            return True
         profile = row.get("profile") if isinstance(row, dict) else None
         return _profiles_match(profile, active_profile or get_active_profile_name())
 
@@ -400,7 +379,7 @@ class _RefusingSessionOwnership:
     def keeps_upstream_rules(self) -> bool:
         return False
 
-    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+    def profile_reach(self, active_profile=None) -> ProfileReach:
         return NO_PROFILE
 
     def caller_reach(self) -> ProfileReach:
@@ -446,9 +425,9 @@ def request_session_ownership():
     return ownership_for(request_admission(), directory_session=request_has_directory_session())
 
 
-def request_profile_reach(active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
-    """This request's Profile reach in a view: its active Profile, or all Profiles when asked."""
-    return request_session_ownership().profile_reach(active_profile, all_profiles=all_profiles)
+def request_profile_reach(active_profile=None) -> ProfileReach:
+    """This request's Profile reach in a view: one Profile, the caller's."""
+    return request_session_ownership().profile_reach(active_profile)
 
 
 def request_caller_reach() -> ProfileReach:

@@ -376,7 +376,6 @@ def test_sessions_route_keeps_state_db_webui_row_with_stale_cli_json_when_cli_hi
 
         payload = routes._build_session_list_cache_payload(
             active_profile="default",
-            all_profiles=False,
             show_cli_sessions=False,
             show_previous_messaging_sessions=False,
             show_cron_sessions=False,
@@ -669,7 +668,6 @@ def test_sessions_route_preserves_visible_child_lineage_when_archived_parent_fil
 
         default_payload = routes._build_session_list_cache_payload(
             active_profile="default",
-            all_profiles=False,
             show_cli_sessions=False,
             show_previous_messaging_sessions=False,
             show_cron_sessions=False,
@@ -685,7 +683,6 @@ def test_sessions_route_preserves_visible_child_lineage_when_archived_parent_fil
 
         archived_payload = routes._build_session_list_cache_payload(
             active_profile="default",
-            all_profiles=False,
             show_cli_sessions=False,
             show_previous_messaging_sessions=False,
             show_cron_sessions=False,

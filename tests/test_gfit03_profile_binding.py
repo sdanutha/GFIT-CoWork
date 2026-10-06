@@ -90,11 +90,10 @@ def test_profile_switch_is_403(alice):
     assert _active_profile(alice) == ALICE
 
 
-def test_profile_list_shows_only_own_profile_in_single_profile_mode(alice):
+def test_profile_list_shows_only_own_profile(alice):
     status, body, _ = alice.get("/api/profiles")
     assert status == 200, body
     assert [p["name"] for p in body["profiles"]] == [ALICE]
-    assert body["single_profile_mode"] is True
 
 
 def _new_session_with_a_message(client) -> str:
@@ -187,7 +186,7 @@ def test_member_sees_only_own_cron_jobs(srv, alice, fake_cron):
         status, body, _ = alice.get(path)
         assert status == 200, body
         assert [j["id"] for j in body["jobs"]] == [f"job-{ALICE}"]
-        assert body["other_profile_count"] == 0
+        assert "other_profile_count" not in body  # no all-Profiles view (ADR 0006)
 
 
 def test_member_b_cannot_clean_up_member_a_empty_sessions(alice, bob):

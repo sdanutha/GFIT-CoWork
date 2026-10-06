@@ -40,7 +40,6 @@ def _session_cache_diag_stage_names(diag: RequestDiagnostics) -> list[str]:
 def _session_cache_key() -> tuple:
     return routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

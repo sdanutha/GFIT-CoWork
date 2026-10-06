@@ -21,8 +21,8 @@ def _api_crons_branch() -> str:
 
 
 def _cross_profile_helper() -> str:
-    """Return the source of _cron_jobs_cross_profile."""
-    marker = ROUTES.index("def _cron_jobs_cross_profile(")
+    """Return the source of _cron_jobs_for_profile (the active Profile's jobs, ADR 0006)."""
+    marker = ROUTES.index("def _cron_jobs_for_profile(")
     nxt = ROUTES.index("\ndef ", marker + 1)
     return ROUTES[marker:nxt]
 

@@ -169,7 +169,6 @@ def test_sessions_api_can_limit_archived_rows_without_hiding_visible_rows(monkey
 def test_archived_limit_varies_session_list_cache_key():
     base = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -178,7 +177,6 @@ def test_archived_limit_varies_session_list_cache_key():
     )
     larger = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -221,7 +219,6 @@ def test_sessions_api_internal_typeerror_is_not_hidden_by_legacy_fallback(monkey
     with pytest.raises(TypeError, match="internal include_lineage_metadata"):
         routes._build_session_list_cache_payload(
             active_profile="default",
-            all_profiles=False,
             show_cli_sessions=False,
             show_previous_messaging_sessions=False,
             show_cron_sessions=False,

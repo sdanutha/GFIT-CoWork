@@ -155,8 +155,7 @@ def test_a_users_list_counts_no_other_profile_after_another_user_filled_the_cach
     for path in ("/api/sessions", "/api/sessions?all_profiles=1"):
         ids, body = _listed(clients[ALICE], path)
         assert _only_own(ids, sids, ALICE)
-        assert body["all_profiles"] is False
-        assert body["other_profile_count"] == 0
+        assert "other_profile_count" not in body  # no all-Profiles view (ADR 0006)
 
 
 def test_session_search_reads_only_the_profiles_a_request_may_read(three_sessions):
@@ -173,7 +172,6 @@ def test_the_profile_list_shows_what_the_request_may_read(srv):
     status, body, _ = srv.logged_in(ALICE).get("/api/profiles")
     assert status == 200, body
     assert [p["name"] for p in body["profiles"]] == [ALICE]
-    assert body["single_profile_mode"] is True
 
 
 def _cli_session_in(srv, uid, sid):
@@ -202,21 +200,6 @@ def _cli_session_in(srv, uid, sid):
         )
     conn.close()
     return sid
-
-
-def test_all_profiles_cli_import_finds_nothing_in_another_users_profile(srv):
-    import uuid
-
-    from api.models import Session
-
-    sid = _cli_session_in(srv, BOB, f"bob_cli_{uuid.uuid4().hex[:10]}")
-    alice = srv.logged_in(ALICE)
-
-    for body in ({"session_id": sid, "all_profiles": True, "profile": ALICE},
-                 {"session_id": sid, "all_profiles": True}):
-        status, payload, _ = alice.post("/api/session/import_cli", body)
-        assert status in (403, 404), payload
-    assert Session.load(sid) is None
 
 
 # ── Ticket 03: a cron job's working folder ──────────────────────────────────
@@ -364,8 +347,7 @@ def test_a_users_project_list_shows_only_their_own_projects(srv):
     for path in ("/api/projects", "/api/projects?all_profiles=1"):
         ids, body = _project_ids(clients[ALICE], path)
         assert projects[ALICE] in ids and not ids & others
-        assert body["all_profiles"] is False
-        assert body["other_profile_count"] == 0
+        assert "other_profile_count" not in body
 
 
 def test_another_profiles_project_is_not_found(srv):
@@ -560,19 +542,6 @@ def test_isolated_mode_cron_picker_still_offers_default(isolated_mode):
 
 
 # ── Review fixes: a User imports their own CLI session with all Profiles ─────
-
-def test_a_user_imports_their_own_cli_session_with_all_profiles(srv):
-    import uuid
-
-    sid = _cli_session_in(srv, ALICE, f"alice_cli_{uuid.uuid4().hex[:10]}")
-
-    status, payload, _ = srv.logged_in(ALICE).post(
-        "/api/session/import_cli", {"session_id": sid, "all_profiles": True, "profile": ALICE},
-    )
-
-    assert status == 200, payload
-    assert payload["session"]["profile"] == ALICE
-
 
 # ── Review fixes: a refused Profile-home lookup is "not found", not a 500 ────
 

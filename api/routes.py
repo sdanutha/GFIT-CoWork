@@ -462,7 +462,7 @@ def _visible_pinned_lineage_ids(session_rows) -> set[str]:
 # Sessions and projects are stored in the WebUI sidecar without per-row
 # isolation by default — they're tagged with a `profile` field but every
 # query saw all rows. The fix scopes both endpoints to the active profile
-# by default, with `?all_profiles=1` opting into aggregate mode.
+# (a User's own; there is no all-Profiles view, ADR 0006).
 #
 # Renamed-root profile handling (#1612): a row tagged `profile='default'`
 # matches the active root regardless of the root's display name, and a row
@@ -478,17 +478,6 @@ from api.profiles import (  # noqa: E402
     get_active_profile_name as _get_active_profile_name,
     profile_scope_for_detached_worker,
 )
-
-
-def _all_profiles_query_flag(parsed_url) -> bool:
-    """Return True if the request URL has `?all_profiles=1` (or true/yes).
-
-    Centralizes the opt-in parsing so /api/sessions and /api/projects use
-    the same shape. Accepts 1/true/yes (case-insensitive) for ergonomics.
-    """
-    qs = parse_qs(parsed_url.query)
-    raw = qs.get('all_profiles', [''])[0].strip().lower()
-    return raw in ('1', 'true', 'yes', 'on')
 
 
 def _query_flag(parsed_url, name: str) -> bool:
@@ -1353,78 +1342,20 @@ def _ensure_agent_cron_import_path() -> None:
                     sys.modules.pop(name, None)
 
 
-def _cron_jobs_cross_profile(active_profile: str) -> tuple[list[dict], list[dict]]:
-    """Return active-profile rows plus foreign rows for the Tasks panel.
+def _cron_jobs_for_profile(active_profile: str) -> list[dict]:
+    """The Tasks panel's rows: the active Profile's cron jobs (one Profile's view, ADR 0006).
 
-    Row ownership is intentionally distinct from a cron job's persisted
-    ``profile`` field. The persisted field controls where the job executes;
-    ``owner_profile`` tells the UI which profile home the row came from.
+    ``owner_profile`` tells the UI which Profile home the row came from; it is
+    distinct from a job's persisted ``profile`` field, which controls where the
+    job executes.
     """
     from cron.jobs import list_jobs
-    from api.profiles import (
-        cron_profile_context_for_home,
-        get_hermes_home_for_profile,
-        list_profiles_api,
-    )
+    from api.profiles import cron_profile_context_for_home, get_hermes_home_for_profile
 
-    def _home_key(path: Path) -> str:
-        try:
-            return str(Path(path).expanduser().resolve(strict=False))
-        except Exception:
-            return str(Path(path).expanduser())
-
-    names: list[str] = []
-    seen_names: set[str] = set()
-
-    def _add_name(raw_name) -> None:
-        name = str(raw_name or "").strip()
-        if not name:
-            return
-        folded = name.casefold()
-        if folded in seen_names:
-            return
-        seen_names.add(folded)
-        names.append(name)
-
-    # Only the Profiles this request may read are scanned at all.
-    readable = request_caller_reach()
-    _add_name(active_profile)
-    for row in list_profiles_api():
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or "").strip()
-        if not name or not readable.includes(name):
-            continue
-        if row.get("visible") is False and not _profiles_match(name, active_profile):
-            continue
-        _add_name(name)
-
-    active_jobs: list[dict] = []
-    other_jobs: list[dict] = []
-    seen_homes: set[str] = set()
-    for owner_profile in names:
-        home = Path(get_hermes_home_for_profile(owner_profile))
-        home_key = _home_key(home)
-        if home_key in seen_homes:
-            continue
-        seen_homes.add(home_key)
-        is_active = _profiles_match(owner_profile, active_profile)
-        try:
-            with cron_profile_context_for_home(home):
-                jobs = _cron_jobs_for_api(list_jobs(include_disabled=True))
-        except Exception:
-            if not is_active:
-                continue
-            raise
-        for job in jobs:
-            row = dict(job)
-            row["owner_profile"] = owner_profile
-            row["read_only"] = not is_active
-            if is_active:
-                active_jobs.append(row)
-            else:
-                other_jobs.append(row)
-    return active_jobs, other_jobs
+    home = Path(get_hermes_home_for_profile(active_profile))
+    with cron_profile_context_for_home(home):
+        jobs = _cron_jobs_for_api(list_jobs(include_disabled=True))
+    return [{**dict(job), "owner_profile": active_profile, "read_only": False} for job in jobs]
 
 
 def _available_cron_profile_names() -> set[str]:
@@ -1816,7 +1747,6 @@ def _callable_accepts_kwarg(callable_obj, kwarg_name: str) -> bool:
 
 def _session_list_cache_key(
     active_profile: str | None,
-    all_profiles: bool,
     show_cli_sessions: bool,
     show_previous_messaging_sessions: bool,
     show_cron_sessions: bool,
@@ -1833,7 +1763,7 @@ def _session_list_cache_key(
 ) -> tuple:
     return _route_session_list_cache_key(
         active_profile=active_profile,
-        all_profiles=all_profiles,
+        all_profiles=False,  # there is no all-Profiles view (ADR 0006)
         show_cli_sessions=show_cli_sessions,
         show_previous_messaging_sessions=show_previous_messaging_sessions,
         show_cron_sessions=show_cron_sessions,
@@ -2065,7 +1995,6 @@ def _prune_orphaned_webui_zero_message_sessions(rows, *, diag_stage=None):
 
 def _build_session_list_cache_payload(
     active_profile: str | None,
-    all_profiles: bool,
     show_cli_sessions: bool,
     show_previous_messaging_sessions: bool,
     show_cron_sessions: bool,
@@ -2136,16 +2065,12 @@ def _build_session_list_cache_payload(
         if _callable_accepts_kwarg(get_cli_sessions, "include_claude_code"):
             cli = get_cli_sessions(
                 source_filter=source_filter,
-                all_profiles=all_profiles,
                 include_claude_code=show_claude_code_sessions,
             )
         else:
             # Focused tests sometimes monkeypatch routes.get_cli_sessions with
             # the historical two-keyword signature.
-            cli = get_cli_sessions(
-                source_filter=source_filter,
-                all_profiles=all_profiles,
-            )
+            cli = get_cli_sessions(source_filter=source_filter)
         diag_stage("merge_cli_sessions")
         cli_by_id = {s["session_id"]: s for s in cli}
         # #3238/#4591: reconcile orphaned imported sidecars. When a CLI or
@@ -2302,11 +2227,7 @@ def _build_session_list_cache_payload(
         reverse=True,
     )
     # ── Profile scoping (#1611) ────────────────────────────────────────
-    # Default: filter to the active profile. ?all_profiles=1 opts into
-    # the aggregate view used by the "All profiles" sidebar toggle.
-    # The other_profile_count is always returned so the UI can render
-    # the "Show N from other profiles" affordance without sending the
-    # cross-profile rows by default.
+    # The list is one Profile's: there is no all-Profiles view (ADR 0006).
     #
     # IMPORTANT: scope BEFORE _keep_latest_messaging_session_per_source.
     # _messaging_source_key is profile-blind (#1614 follow-up): if the
@@ -2316,16 +2237,14 @@ def _build_session_list_cache_payload(
     # source. Filter first so the dedupe operates only within the active
     # profile's rows.
     diag_stage("profile_scope")
-    # The cached payload is keyed by the view (active Profile, all_profiles),
+    # The cached payload is keyed by the view (the active Profile),
     # not by the caller, and may be rebuilt on a thread with no Admission, so
     # the view is scoped with the unconfined rule here. The caller's own
     # adapter filters the rows after the cache (_rows_for_caller).
     scoped = [
         s for s in merged
-        if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+        if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile)
     ]
-    # Whether this count may be shown is the caller's answer, after the cache.
-    other_profile_count = 0 if all_profiles else len(merged) - len(scoped)
     diag_stage("messaging_dedupe")
     archived_scoped = _keep_latest_messaging_session_per_source(
         list(scoped),
@@ -2436,9 +2355,7 @@ def _build_session_list_cache_payload(
         "include_archived": include_archived,
         "archived_limit": archived_limit,
         "archived_offset": archived_offset,
-        "all_profiles": all_profiles,
         "active_profile": active_profile,
-        "other_profile_count": other_profile_count,
         "settings": {
             "show_cli_sessions": show_cli_sessions,
             "show_previous_messaging_sessions": show_previous_messaging_sessions,
@@ -2467,23 +2384,20 @@ def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     """The cached session list with only the rows session ownership lets this caller see.
 
     The cache is keyed by the view, not the caller; this is the caller's own
-    answer, including whether the other Profiles' count may be shown (*reach*).
-    The cached payload is never changed.
+    answer. The cached payload is never changed.
     """
     ownership = request_session_ownership()
-    all_profiles = reach.every_profile
 
     def keep(rows):
         return [
             row for row in rows or []
-            if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
+            if ownership.may_list_row(row, active_profile=active_profile)
         ]
 
     return {
         **payload,
         "sessions": keep(payload.get("sessions")),
         "sidebar_reference_sessions": keep(payload.get("sidebar_reference_sessions")),
-        "other_profile_count": payload.get("other_profile_count", 0) if reach.counts_other_profiles else 0,
     }
 
 
@@ -2519,9 +2433,7 @@ def _session_list_payload_to_response(payload: dict) -> dict:
         "archived_webui_count": int(payload.get("archived_webui_count", 0)),
         "archived_cli_count": int(payload.get("archived_cli_count", 0)),
         "include_archived": bool(payload.get("include_archived", False)),
-        "all_profiles": bool(payload.get("all_profiles", False)),
         "active_profile": payload.get("active_profile"),
-        "other_profile_count": int(payload.get("other_profile_count", 0)),
         "server_time": time.time(),
         "server_tz": time.strftime("%z"),
     }
@@ -2744,7 +2656,6 @@ def _get_cached_session_list_payload(
 
 from api.config import (
     APP_NAME,
-    DEFAULT_WORKSPACE,
     DEFAULT_MODEL,
     SESSIONS,
     SESSIONS_MAX,
@@ -7421,11 +7332,11 @@ def _lookup_gateway_session_identity(session_id: str) -> dict:
     return metadata if isinstance(metadata, dict) else {}
 
 
-def _lookup_cli_session_metadata(session_id: str, *, all_profiles: bool = False) -> dict:
+def _lookup_cli_session_metadata(session_id: str) -> dict:
     if not session_id:
         return {}
     try:
-        for row in get_cli_sessions(all_profiles=all_profiles):
+        for row in get_cli_sessions():
             if row.get("session_id") == session_id:
                 return row
     except Exception:
@@ -7845,15 +7756,6 @@ def _claim_or_synthesize_cli_session(sid: str, cli_meta: dict = None):
     return build_session(sid, cli_meta, msgs, read_only_flag=False), "materialized"
 
 
-def _request_wants_all_profiles_import(body) -> bool:
-    if not isinstance(body, dict):
-        return False
-    value = body.get("all_profiles")
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
 def _normalize_import_profile_value(value):
     profile = str(value or "").strip()
     if not profile:
@@ -7896,16 +7798,11 @@ def _load_branch_source_or_refuse(handler, sid: str):
     return source
 
 
-def _resolve_cli_import_metadata(session_id: str, *, requested_profile=None, allow_all_profiles: bool = False) -> dict:
+def _resolve_cli_import_metadata(session_id: str, *, requested_profile=None) -> dict:
     cli_meta = _lookup_cli_session_metadata(session_id)
     if cli_meta and (not requested_profile or _profiles_match(cli_meta.get("profile"), requested_profile)):
         return cli_meta
-    if not allow_all_profiles:
-        return {}
-    cli_meta = _lookup_cli_session_metadata(session_id, all_profiles=True)
-    if cli_meta and requested_profile and not _profiles_match(cli_meta.get("profile"), requested_profile):
-        return {}
-    return cli_meta or {}
+    return {}
 
 
 def _messaging_session_identity(session: dict, raw_source: str) -> str:
@@ -13331,8 +13228,7 @@ def _get_api_sessions(handler, parsed):
         show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
         agent_session_source_filter = settings.get("agent_session_source_filter")
         active_profile = profiles_api.get_active_profile_name()
-        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-        all_profiles = reach.every_profile
+        reach = request_profile_reach(active_profile)
         include_archived = _query_flag(parsed, "include_archived")
         exclude_hidden = _query_flag(parsed, "exclude_hidden")
         archived_limit = _query_positive_int(parsed, "archived_limit", default=None, maximum=2000)
@@ -13344,7 +13240,6 @@ def _get_api_sessions(handler, parsed):
         # visible-row filter in the shared cache builder for both cache hits and misses.
         key = _session_list_cache_key(
             active_profile=active_profile,
-            all_profiles=all_profiles,
             show_cli_sessions=show_cli_sessions,
             show_claude_code_sessions=show_claude_code_sessions,
             show_previous_messaging_sessions=show_previous_messaging_sessions,
@@ -13366,7 +13261,6 @@ def _get_api_sessions(handler, parsed):
             key=key,
             builder=lambda: _build_session_list_view(
                 active_profile=active_profile,
-                all_profiles=all_profiles,
                 show_cli_sessions=show_cli_sessions,
                 show_claude_code_sessions=show_claude_code_sessions,
                 show_previous_messaging_sessions=show_previous_messaging_sessions,
@@ -13393,22 +13287,13 @@ def _get_api_sessions(handler, parsed):
 
 def _get_api_projects(handler, parsed):
     # ── Profile scoping (#1614) ────────────────────────────────────────
-    # Default: filter to the active profile. ?all_profiles=1 returns the
-    # aggregate list so settings/admin UIs can still see everything.
+    # The active Profile's projects (one Profile's view, ADR 0006).
     from api import profiles as profiles_api
 
     active_profile = profiles_api.get_active_profile_name()
-    all_projects = load_projects()
-    reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-    all_profiles = reach.every_profile
-    scoped = [p for p in all_projects if reach.includes(p.get("profile"))]
-    other_profile_count = len(all_projects) - len(scoped) if reach.counts_other_profiles else 0
-    return j(handler, {
-        "projects": scoped,
-        "all_profiles": all_profiles,
-        "active_profile": active_profile,
-        "other_profile_count": other_profile_count,
-    })
+    reach = request_profile_reach(active_profile)
+    scoped = [p for p in load_projects() if reach.includes(p.get("profile"))]
+    return j(handler, {"projects": scoped, "active_profile": active_profile})
 
 
 def _get_api_prompts(handler, parsed):
@@ -13675,9 +13560,7 @@ def _get_api_session_stream(handler, parsed):
 
 
 # ── Cron API (GET) ──
-# Cron reads are active-profile-scoped by default. The list route now
-# aggregates per visible profile home so the UI can surface hidden-row
-# counts and, when opted in, read-only foreign rows.
+# Cron reads are the active Profile's (a User's own, ADR 0006).
 def _get_api_crons(handler, parsed):
     # #4768: in split-container / minimal Docker deployments the WebUI image may
     # not ship the agent's `cron` package on its import path. Degrade gracefully
@@ -13688,21 +13571,12 @@ def _get_api_crons(handler, parsed):
     _ensure_agent_cron_import_path()
     active_profile = _get_active_profile_name() or "default"
     try:
-        active_jobs, other_jobs = _cron_jobs_cross_profile(active_profile)
+        jobs = _cron_jobs_for_profile(active_profile)
     except ModuleNotFoundError as exc:
         if exc.name in ("cron", "cron.jobs"):
             return j(handler, {"jobs": [], "cron_unavailable": True})
         raise
-    reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-    all_profiles = reach.every_profile
-    jobs = active_jobs + other_jobs if all_profiles else active_jobs
-    hidden_other_count = len(other_jobs) if reach.counts_other_profiles else 0
-    return j(handler, {
-        "jobs": jobs,
-        "all_profiles": all_profiles,
-        "active_profile": active_profile,
-        "other_profile_count": hidden_other_count,
-    })
+    return j(handler, {"jobs": jobs, "active_profile": active_profile})
 
 
 def _get_api_crons_output(handler, parsed):
@@ -13848,9 +13722,9 @@ def _get_api_profiles(handler, parsed):
         diag.stage("active_profile_lookup") if diag else None
         active = profiles_api.get_active_profile_name()
         diag.stage("isolated_mode_check") if diag else None
-        # The Profile list is an all-Profiles view: the cached rows are
-        # everyone's, and this request's reach picks the ones it may see.
-        reach = request_profile_reach(active, all_profiles=True)
+        # The cached rows are everyone's; the caller's reach picks the ones
+        # it may see (a User: their own Profile).
+        reach = request_caller_reach()
         profiles_payload = roster.label_rows([
             row for row in profiles_api.list_profiles_api()
             if isinstance(row, dict) and reach.includes(row.get("name"))
@@ -13860,7 +13734,6 @@ def _get_api_profiles(handler, parsed):
             {
                 "profiles": profiles_payload,
                 "active": active,
-                "single_profile_mode": reach.single_profile,
             },
         )
     finally:
@@ -16230,11 +16103,10 @@ def _handle_sessions_search(handler, parsed):
     content_search = qs.get("content", ["1"])[0] == "1"
     from api.profiles import get_active_profile_name
     active_profile = get_active_profile_name()
-    all_profiles = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed)).every_profile
     ownership = request_session_ownership()
     sessions = [
         s for s in all_sessions()
-        if ownership.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+        if ownership.may_list_row(s, active_profile=active_profile)
     ]
     # Reject a malformed depth instead of letting int() raise ValueError and
     # surface as a confusing 500. Clamp to >= 0 so a negative value can't reach
@@ -16263,7 +16135,6 @@ def _handle_sessions_search(handler, parsed):
             safe_sessions.append(item)
         return j(handler, {
             "sessions": safe_sessions,
-            "all_profiles": all_profiles,
             "active_profile": active_profile,
         })
     results = []
@@ -16303,7 +16174,6 @@ def _handle_sessions_search(handler, parsed):
         "sessions": results,
         "query": q,
         "count": len(results),
-        "all_profiles": all_profiles,
         "active_profile": active_profile,
     })
 
@@ -25848,42 +25718,23 @@ def _handle_session_import_cli(handler, body):
     requested_profile = _normalize_import_profile_value((body or {}).get("profile"))
     if requested_profile == "":
         return bad(handler, "invalid profile", 400)
-    allow_all_profiles = _request_wants_all_profiles_import(body)
-    caller_reach = request_caller_reach()
-    if allow_all_profiles and caller_reach.every_profile and not request_profile_reach(all_profiles=True).every_profile:
-        return bad(handler, "all_profiles import is not allowed in isolated profile mode", 403)
-    if allow_all_profiles and not requested_profile:
-        return bad(handler, "profile is required for all_profiles import", 400)
-    if requested_profile and not caller_reach.includes(requested_profile):
-        # A User's all-Profiles import finds only sessions in their own Profile.
+    if requested_profile and not request_caller_reach().includes(requested_profile):
+        # A User imports only sessions of their own Profile.
         return bad(handler, "Session not found in CLI store", 404)
 
     # Check if already imported — refresh messages from CLI store if new ones arrived
     existing = Session.load(sid)
     if existing:
-        # Cross-profile boundary: an unqualified (non-all-profiles) request must not
-        # read or refresh a session that belongs to another profile, even though the
-        # WebUI session store (SESSION_DIR) is a single global directory. This mirrors
-        # the /api/session detail and /api/session/export profile-scoping gates.
-        # An explicit all_profiles import is still allowed, but only when the request's
-        # profile matches the stored session's profile.
+        # Cross-profile boundary: a request must not read or refresh a session
+        # that belongs to another profile, even though the WebUI session store
+        # (SESSION_DIR) is a single global directory. This mirrors the
+        # /api/session detail and /api/session/export profile-scoping gates.
         existing_profile = getattr(existing, "profile", None)
-        if allow_all_profiles:
-            if requested_profile and not _profiles_match(existing_profile, requested_profile):
-                return bad(handler, "Session not found in CLI store", 404)
-        else:
-            # #7710: same contract as the detail-load endpoint —
-            # 409 ``session_profile_mismatch`` for a known other
-            # profile, 404 only for the None-profile self-heal path.
-            _refusal = request_session_ownership().refuse_found_session(sid, existing)
-            if _refusal is not None:
-                return _refusal.answer(handler, sid, not_found="Session not found in CLI store")
+        _refusal = request_session_ownership().refuse_found_session(sid, existing)
+        if _refusal is not None:
+            return _refusal.answer(handler, sid, not_found="Session not found in CLI store")
         refresh_profile = requested_profile or existing_profile
-        cli_meta = _resolve_cli_import_metadata(
-            sid,
-            requested_profile=refresh_profile,
-            allow_all_profiles=allow_all_profiles,
-        )
+        cli_meta = _resolve_cli_import_metadata(sid, requested_profile=refresh_profile)
         fresh_msgs = get_cli_session_messages(
             sid,
             profile=(cli_meta or {}).get("profile") or refresh_profile,
@@ -25960,12 +25811,8 @@ def _handle_session_import_cli(handler, body):
         )
 
     # Fetch messages from CLI store
-    cli_meta = _resolve_cli_import_metadata(
-        sid,
-        requested_profile=requested_profile,
-        allow_all_profiles=allow_all_profiles,
-    )
-    profile = cli_meta.get("profile") if cli_meta else (requested_profile if allow_all_profiles else None)
+    cli_meta = _resolve_cli_import_metadata(sid, requested_profile=requested_profile)
+    profile = cli_meta.get("profile") if cli_meta else None
     msgs = get_cli_session_messages(sid, profile=profile)
     if not msgs:
         return bad(handler, "Session not found in CLI store", 404)
@@ -25994,10 +25841,7 @@ def _handle_session_import_cli(handler, body):
     # read-only source (return the read-only stub payload, do not import), and
     # keep them out of the _isExternalSession frontend gates (is_cli_session=False).
     _sa_child = _is_subagent_child_session_id(sid)
-    # Also treat a resolved-metadata subagent source as view-only: with
-    # all_profiles=true, cli_meta is resolved from the requested (possibly
-    # non-active) profile, so the active-profile state.db check (_sa_child)
-    # can miss it (#5307 cross-profile edge).
+    # Also treat a resolved-metadata subagent source as view-only (#5307).
     _cli_sa = (cli_source_tag or cli_raw_source or "").strip().lower() == "subagent"
     _sa_child = _sa_child or _cli_sa
     _read_only_view = cli_read_only or _sa_child

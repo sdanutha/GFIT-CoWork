@@ -480,45 +480,6 @@ class TestProfileMutationsInIsolatedMode:
 
         assert _profiles_mod._home_for_scheduled_cron_job({"id": "job2698", "profile": "other"}) == temp_single_profile
 
-    def test_cli_import_all_profiles_is_rejected_in_isolated_mode(self, monkeypatch):
-        """Direct all_profiles CLI imports must not bypass isolated-profile boundaries."""
-        import api.routes as routes
-
-        captured = {}
-
-        class _Handler:
-            def __init__(self):
-                self.wfile = io.BytesIO()
-
-            def send_response(self, status):
-                self.status = status
-
-            def send_header(self, key, value):
-                pass
-
-            def end_headers(self):
-                pass
-
-        import api.profiles as profiles
-
-        # The route asks session ownership, which reads Upstream's posture from api.profiles.
-        monkeypatch.setattr(profiles, "_is_isolated_profile_mode", lambda: True)
-        monkeypatch.setattr(
-            routes,
-            "bad",
-            lambda h, m, c=400: (captured.__setitem__("bad", (m, c)), True)[1],
-        )
-
-        routes._handle_session_import_cli(
-            _Handler(),
-            {"session_id": "foreign-cli-2698", "all_profiles": 1, "profile": "other"},
-        )
-
-        assert captured["bad"] == (
-            "all_profiles import is not allowed in isolated profile mode",
-            403,
-        )
-
     def test_scheduler_publishes_isolated_profile_after_foreign_job_profile(self, temp_single_profile, monkeypatch):
         """Scheduled cron completion must publish the isolated profile identity."""
         events = []

@@ -7,8 +7,6 @@ let _currentCronDetailKey = '';
 let _cronMode = 'empty'; // 'empty' | 'read' | 'create' | 'edit'
 let _cronPreFormDetail = null; // snapshot of prior selection when entering a form
 let _cronModelPickerTouched = false; // true once the user changes the model picker in the current form
-let _showAllCronProfiles = false;
-let _cronOtherProfileCount = 0;
 let _currentWorkspaceDetail = null; // { path, name, is_default }
 let _workspaceMode = 'empty'; // 'empty' | 'read' | 'create' | 'edit'
 let _workspacePreFormDetail = null;
@@ -844,24 +842,6 @@ function _findCronJob(jobOrId){
     null;
 }
 
-function _appendCronProfileToggle(parent){
-  if (!parent || (!_showAllCronProfiles && _cronOtherProfileCount <= 0)) return;
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'padding:10px 0 0';
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'sm-btn';
-  btn.style.cssText = 'width:100%;justify-content:center';
-  btn.textContent = _showAllCronProfiles
-    ? 'Show active profile only'
-    : `Show ${_cronOtherProfileCount} from other profiles`;
-  btn.onclick = async () => {
-    _showAllCronProfiles = !_showAllCronProfiles;
-    await loadCrons();
-  };
-  wrap.appendChild(btn);
-  parent.appendChild(wrap);
-}
 
 async function loadCronProfiles(){
   if (_cronProfilesCache) return _cronProfilesCache;
@@ -979,14 +959,8 @@ async function loadCrons(animate) {
   }
   try {
     await loadCronProfiles();
-    const allProfilesQS = _showAllCronProfiles ? '?all_profiles=1' : '';
-    const data = await api('/api/crons' + allProfilesQS);
+    const data = await api('/api/crons');
     _cronList = data.jobs || [];
-    _cronOtherProfileCount = Number(data.other_profile_count || 0);
-    if (_showAllCronProfiles && !_cronList.some(job => job && job.read_only)) {
-      _showAllCronProfiles = false;
-      _cronOtherProfileCount = 0;
-    }
     box.innerHTML = '';
     // Partition active vs paused so paused jobs don't drown the list (#4026).
     // _cronList stays the single source of truth — only the render is split,
@@ -1026,11 +1000,8 @@ async function loadCrons(animate) {
       parent.appendChild(item);
     };
     if (!_cronList.length) {
-      const emptyText = (!_showAllCronProfiles && _cronOtherProfileCount > 0)
-        ? 'No cron jobs in the active profile.'
-        : (t('cron_no_jobs') || 'No jobs yet');
+      const emptyText = t('cron_no_jobs') || 'No jobs yet';
       box.innerHTML = `<div style="padding:16px;color:var(--muted);font-size:12px">${esc(emptyText)}</div>`;
-      _appendCronProfileToggle(box);
       if (_cronMode !== 'create' && _cronMode !== 'edit') _clearCronDetail();
       return;
     }
@@ -1056,7 +1027,6 @@ async function loadCrons(animate) {
       for (const entry of _pausedJobs) _appendCronItem(inner, entry);
       box.appendChild(details);
     }
-    _appendCronProfileToggle(box);
     // Re-render current detail with fresh data if we have one and we're not in a form
     if (_currentCronDetail && _cronMode !== 'create' && _cronMode !== 'edit') {
       const refreshed = _cronList.find(j => _cronJobKey(j) === _currentCronDetailKey);

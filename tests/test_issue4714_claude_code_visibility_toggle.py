@@ -196,7 +196,6 @@ def test_session_list_cache_key_changes_with_claude_code_toggle():
     """Cache keys must encode the Claude Code toggle."""
     key_false = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_claude_code_sessions=False,
         show_previous_messaging_sessions=False,
@@ -204,7 +203,6 @@ def test_session_list_cache_key_changes_with_claude_code_toggle():
     )
     key_true = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_claude_code_sessions=True,
         show_previous_messaging_sessions=False,
@@ -217,14 +215,12 @@ def test_session_list_cache_key_default_keeps_claude_code_enabled():
     """Helper callers that omit the flag should match the config default."""
     key_default = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
     )
     key_true = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_claude_code_sessions=True,
         show_previous_messaging_sessions=False,

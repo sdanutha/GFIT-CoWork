@@ -74,6 +74,5 @@ def test_a_users_profile_list_is_their_own_profile_alone(srv):
     status, body, _ = srv.logged_in(ALICE).get("/api/profiles")
 
     assert status == 200, body
-    assert body["single_profile_mode"] is True
     assert [p["name"] for p in body["profiles"]] == [ALICE]
     assert "may_switch_profile" not in body

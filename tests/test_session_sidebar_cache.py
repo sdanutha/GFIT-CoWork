@@ -37,57 +37,6 @@ def _session_cache_payload(marker: str, *, all_profiles: bool = False) -> dict:
     }
 
 
-def test_session_list_cache_key_separates_profile_and_all_profiles():
-    routes._session_list_cache_clear()
-
-    calls = []
-
-    def builder_profile_a():
-        calls.append("default")
-        return _session_cache_payload("a")
-
-    def builder_profile_a_all():
-        calls.append("default_all")
-        return _session_cache_payload("a_all", all_profiles=True)
-
-    def builder_profile_b():
-        calls.append("other")
-        return _session_cache_payload("b")
-
-    key_a = routes._session_list_cache_key(
-        active_profile="default",
-        all_profiles=False,
-        show_cli_sessions=False,
-        show_previous_messaging_sessions=False,
-        show_cron_sessions=False,
-    )
-    key_a_all = routes._session_list_cache_key(
-        active_profile="default",
-        all_profiles=True,
-        show_cli_sessions=False,
-        show_previous_messaging_sessions=False,
-        show_cron_sessions=False,
-    )
-    key_b = routes._session_list_cache_key(
-        active_profile="other",
-        all_profiles=False,
-        show_cli_sessions=False,
-        show_previous_messaging_sessions=False,
-        show_cron_sessions=False,
-    )
-
-    assert routes._get_cached_session_list_payload(key=key_a, builder=builder_profile_a) == _session_cache_payload("a")
-    assert calls == ["default"]
-    assert routes._get_cached_session_list_payload(key=key_a, builder=builder_profile_a) == _session_cache_payload("a")
-    assert calls == ["default"]
-    assert routes._get_cached_session_list_payload(key=key_b, builder=builder_profile_b) == _session_cache_payload("b")
-    assert calls == ["default", "other"]
-    assert routes._get_cached_session_list_payload(key=key_a_all, builder=builder_profile_a_all) == _session_cache_payload("a_all", all_profiles=True)
-    assert calls == ["default", "other", "default_all"]
-    assert routes._get_cached_session_list_payload(key=key_a, builder=builder_profile_a) == _session_cache_payload("a")
-    assert calls == ["default", "other", "default_all"]
-
-
 def test_session_list_cache_singleflight_rebuild_once(monkeypatch):
     routes._session_list_cache_clear()
     monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda _key: ("stable",))
@@ -107,7 +56,6 @@ def test_session_list_cache_singleflight_rebuild_once(monkeypatch):
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -145,7 +93,6 @@ def test_session_list_cache_follower_wait_stage_when_rebuild_inflight(monkeypatc
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -203,7 +150,6 @@ def test_session_list_cache_source_changed_owner_rebuilds_while_follower_reuses_
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -276,7 +222,6 @@ def test_session_list_cache_owner_returns_stale_and_rebuilds_in_background(monke
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -326,7 +271,6 @@ def test_session_list_cache_stale_background_rebuild_failure_releases_owner(monk
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -386,21 +330,12 @@ def test_session_list_cache_invalidated_on_session_list_publish():
 
     key_a = routes._session_list_cache_key(
         active_profile="profile-a",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
     )
     key_b = routes._session_list_cache_key(
         active_profile="profile-b",
-        all_profiles=False,
-        show_cli_sessions=False,
-        show_previous_messaging_sessions=False,
-        show_cron_sessions=False,
-    )
-    key_a_all = routes._session_list_cache_key(
-        active_profile="profile-a",
-        all_profiles=True,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -408,12 +343,10 @@ def test_session_list_cache_invalidated_on_session_list_publish():
 
     routes._session_list_cache_set(key_a, _session_cache_payload("a"))
     routes._session_list_cache_set(key_b, _session_cache_payload("b"))
-    routes._session_list_cache_set(key_a_all, _session_cache_payload("a_all", all_profiles=True))
 
     session_events.publish_session_list_changed("session_pin", profile="profile-a")
 
     assert routes._session_list_cache_get(key_a)[0] is None
-    assert routes._session_list_cache_get(key_a_all)[0] is None
     assert routes._session_list_cache_get(key_b)[0] is not None
 
 
@@ -422,7 +355,6 @@ def test_session_list_cache_rebuild_retries_after_invalidation():
 
     key = routes._session_list_cache_key(
         active_profile="profile-a",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -463,7 +395,6 @@ def test_session_list_cache_source_stamp_tracks_state_db_wal(tmp_path, monkeypat
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -495,7 +426,6 @@ def test_session_list_cache_source_stamp_tracks_settings_file(tmp_path, monkeypa
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -530,7 +460,6 @@ def test_session_list_cache_source_stamp_tracks_settings_write_version(
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -626,7 +555,6 @@ def _build_stamp_env(tmp_path, monkeypatch):
 
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -713,7 +641,6 @@ def test_source_stamp_still_tracks_wal_when_idle(tmp_path, monkeypatch):
 def _streaming_ttl_key():
     return routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

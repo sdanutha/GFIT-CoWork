@@ -56,32 +56,26 @@ def _readable(reach):
     return EVERY if reach.every_profile else set(reach.profiles)
 
 
-# (adapter, all Profiles asked, isolated mode) -> (readable, counts others, single-Profile)
+# (adapter, isolated mode) -> readable in a view. A view is always one
+# Profile's: there is no all-Profiles view (ADR 0006).
 CASES = [
-    ("user", False, False, ({ALICE}, False, True)),
-    ("user", True, False, ({ALICE}, False, True)),
-    ("former admin", False, False, (set(), False, True)),
-    ("former admin", True, False, (set(), False, True)),
-    ("login off", False, False, ({"default"}, True, False)),
-    ("login off", True, False, (EVERY, False, False)),
-    ("login off", False, True, ({BOB}, False, True)),
-    ("login off", True, True, ({BOB}, False, True)),
-    ("refusing", False, False, (set(), False, True)),
-    ("refusing", True, False, (set(), False, True)),
+    ("user", False, {ALICE}),
+    ("former admin", False, set()),
+    ("login off", False, {"default"}),  # no caller: a worker thread's view
+    ("login off", True, {BOB}),
+    ("refusing", False, set()),
 ]
 
 
-@pytest.mark.parametrize("adapter,all_profiles,isolated,expected", CASES)
-def test_which_profiles_a_request_may_read(world, monkeypatch, adapter, all_profiles, isolated, expected):
+@pytest.mark.parametrize("adapter,isolated,expected", CASES)
+def test_which_profiles_a_request_may_read(world, monkeypatch, adapter, isolated, expected):
     if isolated:
         _isolated_mode(monkeypatch, world, BOB)
     active = BOB if isolated else "default"
     if adapter == "user":
         active = ALICE  # the request's Admission sets a User's active Profile
 
-    reach = ADAPTERS[adapter]().profile_reach(active, all_profiles=all_profiles)
-
-    assert (_readable(reach), reach.counts_other_profiles, reach.single_profile) == expected
+    assert _readable(ADAPTERS[adapter]().profile_reach(active)) == expected
 
 
 # (adapter, isolated mode) -> readable at all, whatever the view
@@ -112,8 +106,8 @@ def test_which_profiles_a_caller_may_read_at_all(world, monkeypatch, adapter, is
     ("former admin", None, False),
     ("refusing", ALICE, False),
 ])
-def test_an_all_profiles_reach_includes_only_readable_rows(world, adapter, row_profile, expected):
-    reach = ADAPTERS[adapter]().profile_reach("default", all_profiles=True)
+def test_a_view_asked_for_another_profile_includes_only_readable_rows(world, adapter, row_profile, expected):
+    reach = ADAPTERS[adapter]().profile_reach("default")
 
     assert reach.includes(row_profile) is expected
 
