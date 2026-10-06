@@ -17,7 +17,6 @@ import pytest
 
 from tests._gfit_server import gfit_server as _gfit_server
 
-ADMIN = "521740"
 USER = "600001"
 UNKNOWN = "/api/gfit-unclassified-probe"
 
@@ -48,24 +47,22 @@ EXTENSIONS_REMOVED = [
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
     with _gfit_server(
-        monkeypatch, tmp_path, users={ADMIN: "Admin", USER: "User"},
-        profile_names=[USER], admins=ADMIN,
+        monkeypatch, tmp_path, users={USER: "User"}, profile_names=[USER],
     ) as s:
         yield s
 
 
-@pytest.mark.parametrize("who,expected", [(ADMIN, 404), (USER, 403)])
 @pytest.mark.parametrize("method,path,body", REMOVED + GALLERY_REMOVED + EXTENSIONS_REMOVED)
-def test_removed_route_answers_like_an_unknown_route(srv, who, expected, method, path, body):
-    client = srv.logged_in(who)
+def test_removed_route_answers_like_an_unknown_route(srv, method, path, body):
+    client = srv.logged_in(USER)
     unknown_status, unknown_payload, _ = client.request(method, UNKNOWN, body)
     status, payload, _ = client.request(method, path, body)
-    assert status == unknown_status == expected, (who, method, path, payload)
-    assert payload == unknown_payload, (who, method, path, payload)
+    assert status == unknown_status == 403, (method, path, payload)
+    assert payload == unknown_payload, (method, path, payload)
 
 
 def test_settings_report_both_versions_and_no_update_settings(srv):
-    status, body, _ = srv.logged_in(ADMIN).get("/api/settings")
+    status, body, _ = srv.logged_in(USER).get("/api/settings")
     assert status == 200
     assert body["webui_version"]
     assert body["agent_version"]

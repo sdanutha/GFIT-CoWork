@@ -319,7 +319,6 @@ def test_session_event_profile_filter_tolerates_default_root_aliases():
     assert "activeProfileIsDefault:true" in UI_JS
     assert "const activeProfileState = await _resolveActiveProfileBootstrapState();" in BOOT_JS
     assert "S.activeProfileIsDefault = activeProfileState.isDefault;" in BOOT_JS
-    assert "S.activeProfileIsDefault = !!data.is_default;" in PANELS_JS
 
 
 def test_session_list_render_signature_serializes_full_rows_not_a_narrow_allowlist():
@@ -365,22 +364,20 @@ def test_session_list_render_signature_changes_on_pending_running_and_attention(
     assert "JSON.stringify([" in block
 
 
-def test_session_list_render_signature_does_not_skip_recovering_from_skeleton_or_error():
-    """The render-skip must never fire when recovering from a skeleton or the
-    'Could not load conversations' banner — both are rendered OUTSIDE the
-    signature path, so an identical-signature match (empty/same-shaped profile,
-    or a transient fetch failure healing with identical rows) would leave the
-    skeleton/error DOM on screen instead of the real list. (Codex #5467 re-gate)
+def test_session_list_render_signature_does_not_skip_recovering_from_an_error():
+    """The render-skip must never fire when recovering from the 'Could not load
+    conversations' banner — it is rendered OUTSIDE the signature path, so an
+    identical-signature match (a transient fetch failure healing with identical
+    rows) would leave the error DOM on screen instead of the real list. (Codex
+    #5467 re-gate; the profile-switch skeleton went with Profile switching.)
     """
     start = SESSIONS_JS.find("function _applySessionListPayload(")
     assert start != -1
     body = SESSIONS_JS[start:start + 12000]
-    assert "const _hadSessionListSkeleton = _sessionListSkeletonActive;" in body
     assert "const _hadSessionListLoadError = !!_sessionListLoadError;" in body
-    assert "const _mustForceRender = _hadSessionListSkeleton || _hadSessionListLoadError;" in body
+    assert "const _mustForceRender = _hadSessionListLoadError;" in body
     assert "!_mustForceRender" in body, "the force flag must gate the identical-signature skip"
-    # captured BEFORE the respective clears
-    assert body.index("const _hadSessionListSkeleton") < body.index("_sessionListSkeletonActive = false;")
+    # captured BEFORE the clear
     assert body.index("const _hadSessionListLoadError") < body.index("_sessionListLoadError = null;")
 
 

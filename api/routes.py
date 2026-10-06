@@ -579,9 +579,8 @@ def _stream_id_visible_to_request_profile(
 def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
     """A Bound request (a GFIT-CoWork User's) may name only its own Profile.
 
-    Session ownership answers (``may_switch_profile``, ``may_name_profile``).
-    Refuses with 403 a profile switch, and a ``profile`` in the query string or
-    body that names another Profile. The request itself already runs in the
+    Session ownership answers (``may_name_profile``). Refuses with 403 a
+    ``profile`` in the query string or body that names another Profile. The request itself already runs in the
     bound Profile; refusing makes a forged request fail loudly instead of
     being quietly retargeted.
     """
@@ -589,10 +588,7 @@ def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
     named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
     if isinstance(body, dict) and body.get("profile") not in (None, ""):
         named.append(body.get("profile"))
-    switching = getattr(parsed, "path", "") == "/api/profile/switch"
-    if (switching and not ownership.may_switch_profile()) or any(
-        not ownership.may_name_profile(value) for value in named
-    ):
+    if any(not ownership.may_name_profile(value) for value in named):
         bad(handler, "Profile access forbidden", 403)
         return False
     return True
@@ -2477,17 +2473,9 @@ def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     ownership = request_session_ownership()
     all_profiles = reach.every_profile
 
-    def for_caller(row):
-        # A row this caller may only read (the Admin's view of another
-        # Profile's session) is marked, on a copy: cached rows never change.
-        reason = ownership.read_only_reason(row)
-        if not reason:
-            return row
-        return {**row, "read_only": True, "read_only_reason": reason, "owner_profile": row.get("profile")}
-
     def keep(rows):
         return [
-            for_caller(row) for row in rows or []
+            row for row in rows or []
             if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
         ]
 
@@ -10529,37 +10517,6 @@ button:hover{background:rgba(124,185,255,.25)}
 </body></html>"""
 
 
-def _directory_session_role(handler) -> str | None:
-    """The GFIT-CoWork role (``admin``/``user``) of this request's Directory session, if any.
-
-    The role is the request's Admission: a session with none has no role.
-    """
-    from api.access import request_admission
-    from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
-
-    info = ensure_request_session(handler)
-    if not info or info.get("auth_type") != DIRECTORY_AUTH_TYPE:
-        return None
-    admission = request_admission()
-    return admission.role if admission is not None else None
-
-
-def _app_shell_for_role(html: str, role) -> str:
-    """The app shell for the caller's role (GFIT-CoWork).
-
-    ``<html>`` carries the role and the features the caller may use
-    (``data-gfit-may``, from :func:`api.access.shell_features`): the stylesheet
-    hides the others and the scripts do not call them (cosmetic; the server
-    gate is the source of truth).
-    """
-    from api.access import shell_features
-
-    if role:
-        may = " ".join(shell_features(role))
-        html = html.replace("<html ", f'<html data-gfit-role="{role}" data-gfit-may="{may}" ', 1)
-    return html
-
-
 def _handle_directory_login(handler, body) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
     from api.helpers import build_profile_cookie
@@ -12322,22 +12279,6 @@ def _render_index_shell_base() -> str:
     return base
 
 
-def _mark_read_only_for_caller(session: dict, found) -> None:
-    """Mark a loaded session read-only when session ownership says it is, for
-    this caller (the Admin's view of another Profile's session), with the reason
-    and the owner, so the web app's read-only handling applies before any write."""
-    reason = request_session_ownership().read_only_reason(found)
-    if not reason:
-        return
-    from api import roster
-
-    owner = str(session.get("profile") or "")
-    session["read_only"] = True
-    session["read_only_reason"] = reason
-    session["owner_profile"] = owner
-    session["owner_label"] = roster.view(owner).get("label") if owner else ""
-
-
 def _handle_session_get(handler, parsed) -> bool:
     """GET /api/session — full session payload (messages, tool calls, lineage...). Extracted verbatim from handle_get; every early-return path calls _diag.finish() (see the tier2c note inside)."""
     import time as _time
@@ -12797,7 +12738,6 @@ def _handle_session_get(handler, parsed) -> bool:
         ):
             raw["is_cli_session"] = False
             raw["read_only"] = True
-        _mark_read_only_for_caller(raw, s)
         imported_turn_marker = any(
             isinstance(row, dict) and row.get("_active_turn_token")
             for row in _all_msgs
@@ -12927,7 +12867,6 @@ def _handle_session_get(handler, parsed) -> bool:
         }
         attach_todo_state(sess, msgs)
         sess = _merge_cli_sidebar_metadata(sess, cli_meta)
-        _mark_read_only_for_caller(sess, sess)
         return j(handler, {"session": public_session_projection(sess)})
 
 
@@ -12997,11 +12936,7 @@ def _get_app_shell(handler, parsed):
         html = _render_index_shell_base().replace(
             "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
         )
-        return t(
-            handler,
-            _app_shell_for_role(html, _directory_session_role(handler)),
-            content_type="text/html; charset=utf-8",
-        )
+        return t(handler, html, content_type="text/html; charset=utf-8")
     except Exception as exc:
         return _serve_shell_unavailable(handler, exc)
 
@@ -13069,8 +13004,6 @@ def _get_api_auth_status(handler, parsed):
         payload["auth_type"] = session_info.get("auth_type")
         payload["user"] = session_info.get("username")
         payload["bound_profile"] = session_info.get("bound_profile")
-
-        payload["role"] = _directory_session_role(handler)
         payload.update(session_identity(session_info))
     return j(handler, payload)
 
@@ -13954,7 +13887,6 @@ def _get_api_profiles(handler, parsed):
                 "profiles": profiles_payload,
                 "active": active,
                 "single_profile_mode": reach.single_profile,
-                "may_switch_profile": request_session_ownership().may_switch_profile(),
             },
         )
     finally:
@@ -14224,19 +14156,6 @@ def _resolve_new_session_workspace(body, visible_prev_session_id, profile=None):
             get_last_workspace,
         )
     return str(workspace)
-
-
-def _profile_refused(handler, refusal):
-    """Answer a refused Profile management action (``roster.ProfileRefused``) with its HTTP status."""
-    from api import roster
-
-    status = {
-        roster.REFUSED_BAD_REQUEST: 400,
-        roster.REFUSED_FORBIDDEN: 403,
-        roster.REFUSED_NOT_FOUND: 404,
-        roster.REFUSED_CONFLICT: 409,
-    }.get(refusal.kind, 500)
-    return bad(handler, _sanitize_error(refusal), status)
 
 
 def handle_post(handler, parsed) -> bool:
@@ -15646,115 +15565,6 @@ def _post_api_skills_toggle(handler, parsed, body, diag):
 # ── Memory (POST) ──
 def _post_api_memory_write(handler, parsed, body, diag):
     return _handle_memory_write(handler, body)
-
-
-# ── Profile API (POST) ──
-def _post_api_profile_switch(handler, parsed, body, diag):
-    name = body.get("name", "").strip()
-    if not name:
-        return bad(handler, "name is required")
-    try:
-        from api.profiles import switch_profile, _validate_profile_name
-        from api.helpers import build_profile_cookie
-        if name != 'default':
-            _validate_profile_name(name)
-        # A Directory session never gets here: the Bound guard refuses the
-        # switch (session ownership's may_switch_profile). Only login off
-        # switches, so the side effects below follow a real switch.
-        # process_wide=False: don't mutate the process-global _active_profile.
-        # Per-client profile is managed via cookie + thread-local (#798).
-        result = switch_profile(name, process_wide=False)
-        # Invalidate the models cache so the very next /api/models request
-        # rebuilds from the new profile's config.yaml rather than returning
-        # the old profile's cached model list (#1200 — profile-switch model bug).
-        # The per-profile disk snapshot is fingerprint-guarded, so keep it.
-        from api.config import invalidate_models_cache
-        invalidate_models_cache(delete_disk=False)
-        try:
-            from api.gateway_watcher import restart_watcher_for_profile
-            restart_watcher_for_profile(name)
-        except Exception as exc:
-            logger.warning("Failed to restart gateway watcher for profile %s: %s", name, exc)
-        return j(handler, result, extra_headers={
-            'Set-Cookie': build_profile_cookie(name, handler),
-        })
-    except PermissionError as e:
-        return bad(handler, _sanitize_error(e), 403)
-    except (ValueError, FileNotFoundError) as e:
-        return bad(handler, _sanitize_error(e), 404)
-    except RuntimeError as e:
-        return bad(handler, str(e), 409)
-
-
-def _post_api_profile_create(handler, parsed, body, diag):
-    name = body.get("name", "").strip()
-    if not name:
-        return bad(handler, "name is required")
-    display_name = body.get("display_name")
-    if display_name is not None and not isinstance(display_name, str):
-        return bad(handler, "display_name must be text")
-    clone_from = body.get("clone_from")
-    if clone_from is not None:
-        clone_from = str(clone_from).strip()
-    base_url = body.get("base_url", "").strip() if body.get("base_url") else None
-    api_key = body.get("api_key", "").strip() if body.get("api_key") else None
-    default_model = body.get("default_model", "").strip() if body.get("default_model") else None
-    model_provider = body.get("model_provider", "").strip() if body.get("model_provider") else None
-    if base_url and not base_url.startswith(("http://", "https://")):
-        return bad(handler, "base_url must start with http:// or https://")
-    from api import roster
-
-    try:
-        profile = roster.create_profile(
-            name,
-            display_name or "",
-            clone_from=clone_from,
-            clone_config=bool(body.get("clone_config", False)),
-            base_url=base_url,
-            api_key=api_key,
-            default_model=default_model,
-            model_provider=model_provider,
-        )
-    except roster.ProfileRefused as e:
-        return _profile_refused(handler, e)
-    return j(handler, {"ok": True, "profile": profile})
-
-
-def _post_api_profile_enable_or_disable(handler, parsed, body, diag):
-    name = body.get("name", "").strip()
-    if not name:
-        return bad(handler, "name is required")
-    from api import roster
-
-    from api import roster_watch
-
-    action = roster.disable_profile if parsed.path == "/api/profile/disable" else roster.enable_profile
-    try:
-        profile = action(name)
-    except roster.ProfileRefused as e:
-        return _profile_refused(handler, e)
-    roster_watch.check()
-    return j(handler, {"ok": True, "profile": profile})
-
-
-def _post_api_profile_delete(handler, parsed, body, diag):
-    name = body.get("name", "").strip()
-    if not name:
-        return bad(handler, "name is required")
-    # Deleting is permanent: the caller confirms by repeating the name.
-    if str(body.get("confirm") or "").strip() != name:
-        return bad(handler, "Confirm the deletion: send confirm set to the Profile name")
-    from api import roster, roster_watch
-
-    try:
-        from api.profiles import named_profile_exists
-
-        if name != "default" and named_profile_exists(name) and roster.view(name)["status"] != "disabled":
-            roster.disable_profile(name)
-            roster_watch.check()
-        return j(handler, roster.delete_profile(name))
-    except roster.ProfileRefused as e:
-        return _profile_refused(handler, e)
 
 
 # ── Settings (POST) ──

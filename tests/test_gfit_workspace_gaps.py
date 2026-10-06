@@ -25,16 +25,15 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 OUTSIDE_WORKSPACE_MESSAGE = "That path is outside your Workspace."
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 
@@ -42,11 +41,6 @@ def srv(monkeypatch, tmp_path):
 @pytest.fixture
 def alice(srv):
     return srv.logged_in(ALICE)
-
-
-@pytest.fixture
-def admin(srv):
-    return srv.logged_in(ADMIN)
 
 
 def _workspace(srv, uid) -> Path:
@@ -92,15 +86,6 @@ def test_registering_with_create_inside_the_workspace_works(srv, alice):
     assert status == 200, body
     assert sub.is_dir()
     assert str(sub) in {w["path"] for w in body["workspaces"]}
-
-
-def test_admin_can_register_with_create_outside_every_profile(srv, admin, tmp_path):
-    target = tmp_path / "admin-made" / "deep"
-
-    status, body, _ = admin.post("/api/workspaces/add", {"path": str(target), "create": True})
-
-    assert status == 200, body
-    assert target.is_dir()
 
 
 # ── 02: Extracting an archive into the session's attachments ────────────────
@@ -152,15 +137,6 @@ def test_extracting_into_another_users_session_is_not_found(srv, alice, attachme
 
     assert status == 404, body
     assert not (attachments / bob_sid).exists()
-
-
-def test_admin_can_extract_an_archive(admin, attachments):
-    sid = _new_session(admin)
-
-    status, body, _ = _extract(admin, sid, _zip({"a.txt": "one"}))
-
-    assert status == 200, body
-    assert (attachments / sid / "pack" / "a.txt").read_text() == "one"
 
 
 # ── 03: A User's worktree stays inside their Workspace ──────────────────────
@@ -272,23 +248,6 @@ def test_a_worktree_the_agent_places_outside_the_workspace_is_refused(
     assert _git(repo, "branch", "--list", "hermes/hermes-test") == ""
 
 
-@needs_git
-def test_admin_worktree_in_a_larger_repository_is_unchanged(srv, admin, agent_worktrees, tmp_path):
-    calls, _ = agent_worktrees
-    repo = tmp_path / "admin-repo"
-    _git_init(repo)
-    sub = repo / "sub"
-    sub.mkdir()
-    status, body, _ = admin.post("/api/workspaces/add", {"path": str(sub)})
-    assert status == 200, body
-
-    status, body, _ = admin.post("/api/session/new", {"workspace": str(sub), "worktree": True})
-
-    assert status == 200, body
-    assert calls == [repo.resolve()]
-    assert Path(body["session"]["workspace"]).resolve() == repo.resolve() / ".worktrees" / "hermes-test"
-
-
 # ── 04: Rollback cannot probe the server's folders ──────────────────────────
 
 ROLLBACK_ROUTES = [
@@ -323,18 +282,6 @@ def test_rollback_answers_the_same_for_existing_and_missing_outside_folders(
 
 def test_rollback_lists_checkpoints_for_the_users_own_workspace(srv, alice):
     status, body, _ = alice.get(f"/api/rollback/list?workspace={q(_workspace(srv, ALICE))}")
-
-    assert status == 200, body
-    assert body["checkpoints"] == []
-
-
-def test_admin_rollback_on_a_registered_workspace_is_unchanged(admin, tmp_path):
-    ws = tmp_path / "admin-ws"
-    ws.mkdir()
-    status, body, _ = admin.post("/api/workspaces/add", {"path": str(ws)})
-    assert status == 200, body
-
-    status, body, _ = admin.get(f"/api/rollback/list?workspace={q(ws)}")
 
     assert status == 200, body
     assert body["checkpoints"] == []

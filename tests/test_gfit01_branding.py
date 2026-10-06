@@ -66,7 +66,7 @@ def test_english_locale_names_the_web_app_gfit_cowork():
     i18n = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
     en = i18n.split("\n  it: {", 1)[0]
     assert "Hermes WebUI" not in en and "Hermes Web UI" not in en
-    assert f"onboarding_title: 'Welcome to {BRAND}'" in en
+    assert f"offline_network_detail: '{BRAND} is unreachable from this browser right now.'" in en
     # Hermes Agent keeps its own name.
     assert "Hermes Agent" in en or "Hermes gateway" in en
 

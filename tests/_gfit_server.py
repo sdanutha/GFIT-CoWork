@@ -112,12 +112,12 @@ class GfitServer:
 
 
 @contextlib.contextmanager
-def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins="", directory="memory", legacy_env=None):
+def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), directory="memory", legacy_env=None):
     """Start an in-process GFIT-CoWork server with Directory login on.
 
     *users* maps employee ID -> display name; every one of them has the
     password :data:`PASSWORD`. A Profile is created for each of *profile_names*.
-    *admins* is the ``HERMES_WEBUI_ADMIN_USERS`` value. *directory* is the
+    *directory* is the
     ``HERMES_WEBUI_DIRECTORY`` kind (empty turns Directory login off).
     *legacy_env* sets environment variables configuring Upstream login methods.
     """
@@ -136,7 +136,7 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), admins=
     }))
     monkeypatch.setenv("HERMES_WEBUI_DIRECTORY", directory)
     monkeypatch.setenv("HERMES_WEBUI_DIRECTORY_USERS", str(users_file))
-    monkeypatch.setenv("HERMES_WEBUI_ADMIN_USERS", admins)
+    monkeypatch.delenv("HERMES_WEBUI_ADMIN_USERS", raising=False)
 
     # Isolate auth state. The Upstream login methods are off in GFIT-CoWork
     # (ticket 09), so nothing else needs switching off.

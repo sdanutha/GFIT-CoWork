@@ -81,20 +81,3 @@ class TestMasterDetailRefreshClearsRemovedSelections:
             "renderWorkspacesPanel() must clear the detail pane when the selected "
             "workspace disappears during refresh"
         )
-
-    def test_profiles_clear_empty_state_detail(self):
-        assert "if (_profileMode !== 'create') _clearProfileDetail();" in PANELS_JS, (
-            "loadProfilesPanel() must clear the detail pane when there are no profiles"
-        )
-
-    def test_profiles_clear_missing_selected_profile(self):
-        m = re.search(
-            r"if \(_currentProfileDetail && _profileMode !== 'create'\) \{.*?"
-            r"if \(refreshed\) _renderProfileDetail\(refreshed, data.active\);\s*else _clearProfileDetail\(\);",
-            PANELS_JS,
-            re.DOTALL,
-        )
-        assert m, (
-            "loadProfilesPanel() must clear the detail pane when the selected "
-            "profile disappears during refresh"
-        )

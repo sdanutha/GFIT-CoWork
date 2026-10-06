@@ -14,14 +14,13 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 

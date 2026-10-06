@@ -4,14 +4,12 @@ A row says everything the server decides about a route before its handler
 runs:
 
 - **caller**: who may call it. ``USER`` routes are open to an admitted User;
-  ``ADMIN`` routes are the Admin's only (ADR 0002). A row cannot be built
-  without one, and a path with no row is refused to a User (fail closed);
-- **session**: whether the route names a session and, if so, whether it reads
-  or writes it (``READ``/``WRITE``, by what it does, not by its method). A
-  route whose class is unclear (it reads and records something, or runs the
-  session's model) is a ``WRITE``: unknown is not allowed;
+  ``PUBLIC`` routes are served before login too (the login page and its
+  assets, health, the manifests). There is no other caller: there is no Admin
+  in the web app (ADR 0006). A row cannot be built without one, and a path
+  with no row is refused (fail closed);
 - **csrf**: whether an unsafe request to it must carry the session's CSRF
-  token. Only login (no session yet), the browser's CSP reports and the
+  token. Only login (no session yet) and the
   deprecated process-complete ack (answered 410 Gone to a stale tab that has
   no token) are exempt;
 - **handler**: the name of the route module's function that serves it. The
@@ -31,8 +29,8 @@ A pattern is an exact path, a path with ``<name>`` segments (each one matches
 exactly one non-empty segment, an id), or a prefix ending in ``*``. One matcher
 (:func:`match`) chooses the row for a request: an exact path beats a
 ``<name>`` pattern, which beats a prefix; among prefixes the longest wins. The
-Admin gate (``api.access``), session ownership's read-or-write question
-(``api.session_ownership``) and the CSRF check all read the row it chooses.
+route gate (``api.access``), the login check (``api.auth``) and the CSRF
+check all read the row it chooses.
 
 A User prefix row is allowed only where the path has a variable part that
 cannot be listed (:data:`VARIABLE_PATH_PREFIXES`, each with its reason).
@@ -42,10 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 USER = "user"
-ADMIN = "admin"
-
-READ = "read"
-WRITE = "write"
+PUBLIC = "public"
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
@@ -57,7 +52,6 @@ class Route:
     method: str
     pattern: str
     caller: str
-    session: str | None = None
     csrf: bool = True
     handler: str | None = None
     session_guard: bool = True
@@ -67,14 +61,12 @@ class Route:
     def __post_init__(self):
         if self.method not in METHODS:
             raise ValueError(f"{self.pattern}: unknown method {self.method!r}")
-        if self.caller not in (USER, ADMIN):
-            raise ValueError(f"{self.method} {self.pattern}: say who may call it (USER or ADMIN)")
+        if self.caller not in (USER, PUBLIC):
+            raise ValueError(f"{self.method} {self.pattern}: say who may call it (USER or PUBLIC)")
         if not self.handler:
             raise ValueError(f"{self.method} {self.pattern}: name the route module's function that serves it")
         if self.body not in ("json", "own"):
             raise ValueError(f"{self.method} {self.pattern}: body is 'json' or 'own'")
-        if self.session not in (None, READ, WRITE):
-            raise ValueError(f"{self.method} {self.pattern}: session is READ, WRITE or None")
         if not self.pattern.startswith("/"):
             raise ValueError(f"{self.pattern}: a pattern starts with '/'")
 
@@ -110,25 +102,25 @@ _get, _post, _put, _patch, _delete = (_route(m) for m in METHODS)
 
 ROUTES: tuple[Route, ...] = (
     # ── GET ──
-    _get("/session/static/*", USER, handler="_get_session_static", session_guard=False),
-    _get("/session/manifest.json", USER, handler="_get_session_manifest", session_guard=False),
-    _get("/session/manifest.webmanifest", USER, handler="_get_session_manifest", session_guard=False),
+    _get("/session/static/*", PUBLIC, handler="_get_session_static", session_guard=False),
+    _get("/session/manifest.json", PUBLIC, handler="_get_session_manifest", session_guard=False),
+    _get("/session/manifest.webmanifest", PUBLIC, handler="_get_session_manifest", session_guard=False),
     _get("/", USER, handler="_get_app_shell", session_guard=False),
     _get("/index.html", USER, handler="_get_app_shell", session_guard=False),
-    _get("/session/*", USER, session=READ, handler="_get_app_shell", session_guard=False),
+    _get("/session/*", USER, handler="_get_app_shell", session_guard=False),
     _get("/sessions", USER, handler="_get_app_shell", session_guard=False),
-    _get("/login", ADMIN, handler="_get_login", session_guard=False),
-    _get("/api/auth/status", USER, handler="_get_api_auth_status", session_guard=False),
-    _get("/manifest.json", USER, handler="_get_manifest", session_guard=False),
-    _get("/manifest.webmanifest", USER, handler="_get_manifest", session_guard=False),
-    _get("/sw.js", USER, handler="_get_sw_js", session_guard=False),
-    _get("/favicon.ico", USER, handler="_get_favicon_ico", session_guard=False),
+    _get("/login", PUBLIC, handler="_get_login", session_guard=False),
+    _get("/api/auth/status", PUBLIC, handler="_get_api_auth_status", session_guard=False),
+    _get("/manifest.json", PUBLIC, handler="_get_manifest", session_guard=False),
+    _get("/manifest.webmanifest", PUBLIC, handler="_get_manifest", session_guard=False),
+    _get("/sw.js", PUBLIC, handler="_get_sw_js", session_guard=False),
+    _get("/favicon.ico", PUBLIC, handler="_get_favicon_ico", session_guard=False),
     _get("/api/insights", USER, handler="_get_api_insights"),
     _get("/api/project-os/dashboard", USER, handler="_get_api_project_os_dashboard"),
     _get("/api/wiki/status", USER, handler="_get_api_wiki_status"),
     _get("/api/wiki/browse", USER, handler="_get_api_wiki_browse"),
     _get("/api/wiki/page", USER, handler="_get_api_wiki_page"),
-    _get("/health", USER, handler="_get_health", session_guard=False),
+    _get("/health", PUBLIC, handler="_get_health", session_guard=False),
     _get("/api/health/agent", USER, handler="_get_api_health_agent"),
     _get("/api/system/health", USER, handler="_get_api_system_health"),
     _get("/api/models", USER, handler="_get_api_models"),
@@ -138,44 +130,44 @@ ROUTES: tuple[Route, ...] = (
     _get("/api/settings", USER, handler="_get_api_settings"),
     _get("/api/transcribe/capability", USER, handler="_get_api_transcribe_capability"),
     _get("/api/reasoning", USER, handler="_get_api_reasoning"),
-    _get("/static/*", USER, handler="_get_static", session_guard=False),
-    _get("/api/session/worktree/status", USER, session=READ, handler="_get_api_session_worktree_status"),
-    _get("/api/session/compress/status", USER, session=READ, handler="_get_api_session_compress_status"),
-    _get("/api/session", USER, session=READ, handler="_get_api_session"),
-    _get("/api/session/lineage/report", USER, session=READ, handler="_get_api_session_lineage_report"),
-    _get("/api/session/status", USER, session=READ, handler="_get_api_session_status"),
-    _get("/api/session/usage", USER, session=READ, handler="_get_api_session_usage"),
-    _get("/api/background/status", USER, session=READ, handler="_get_api_background_status"),
+    _get("/static/*", PUBLIC, handler="_get_static", session_guard=False),
+    _get("/api/session/worktree/status", USER, handler="_get_api_session_worktree_status"),
+    _get("/api/session/compress/status", USER, handler="_get_api_session_compress_status"),
+    _get("/api/session", USER, handler="_get_api_session"),
+    _get("/api/session/lineage/report", USER, handler="_get_api_session_lineage_report"),
+    _get("/api/session/status", USER, handler="_get_api_session_status"),
+    _get("/api/session/usage", USER, handler="_get_api_session_usage"),
+    _get("/api/background/status", USER, handler="_get_api_background_status"),
     _get("/api/sessions", USER, handler="_get_api_sessions"),
     _get("/api/projects", USER, handler="_get_api_projects"),
     _get("/api/prompts", USER, handler="_get_api_prompts"),
-    _get("/api/session/export", USER, session=READ, handler="_get_api_session_export"),
+    _get("/api/session/export", USER, handler="_get_api_session_export"),
     _get("/api/workspaces", USER, handler="_get_api_workspaces"),
     _get("/api/workspaces/suggest", USER, handler="_get_api_workspaces_suggest"),
     _get("/api/sessions/search", USER, handler="_get_api_sessions_search"),
-    _get("/api/list", USER, session=READ, handler="_get_api_list"),
-    _get("/api/git/status", USER, session=READ, handler="_get_api_git_status"),
-    _get("/api/git/branches", USER, session=READ, handler="_get_api_git_branches"),
-    _get("/api/git/diff", USER, session=READ, handler="_get_api_git_diff"),
+    _get("/api/list", USER, handler="_get_api_list"),
+    _get("/api/git/status", USER, handler="_get_api_git_status"),
+    _get("/api/git/branches", USER, handler="_get_api_git_branches"),
+    _get("/api/git/diff", USER, handler="_get_api_git_diff"),
     _get("/api/personalities", USER, handler="_get_api_personalities"),
-    _get("/api/git-info", USER, session=READ, handler="_get_api_git_info"),
+    _get("/api/git-info", USER, handler="_get_api_git_info"),
     _get("/api/commands", USER, handler="_get_api_commands"),
     _get("/api/commands/bundles", USER, handler="_get_api_commands_bundles"),
     _get("/api/commands/moa/resolve", USER, handler="_get_api_commands_moa_resolve"),
-    _get("/api/chat/stream/status", USER, session=READ, handler="_get_api_chat_stream_status", names_stream=True),
-    _get("/api/chat/cancel", USER, session=WRITE, handler="_get_api_chat_cancel", names_stream=True),
-    _get("/api/chat/stream", USER, session=READ, handler="_get_api_chat_stream", names_stream=True),
+    _get("/api/chat/stream/status", USER, handler="_get_api_chat_stream_status", names_stream=True),
+    _get("/api/chat/cancel", USER, handler="_get_api_chat_cancel", names_stream=True),
+    _get("/api/chat/stream", USER, handler="_get_api_chat_stream", names_stream=True),
     _get("/api/sessions/gateway/stream", USER, handler="_get_api_sessions_gateway_stream"),
     _get("/api/sessions/events", USER, handler="_get_api_sessions_events"),
     _get("/api/media", USER, handler="_get_api_media"),
-    _get("/api/file/raw", USER, session=READ, handler="_get_api_file_raw"),
-    _get("/api/folder/download", USER, session=READ, handler="_get_api_folder_download"),
-    _get("/api/file", USER, session=READ, handler="_get_api_file"),
-    _get("/api/approval/pending", USER, session=READ, handler="_get_api_approval_pending"),
-    _get("/api/approval/stream", USER, session=READ, handler="_get_api_approval_stream"),
-    _get("/api/clarify/pending", USER, session=READ, handler="_get_api_clarify_pending"),
-    _get("/api/clarify/stream", USER, session=READ, handler="_get_api_clarify_stream"),
-    _get("/api/session/stream", USER, session=READ, handler="_get_api_session_stream"),
+    _get("/api/file/raw", USER, handler="_get_api_file_raw"),
+    _get("/api/folder/download", USER, handler="_get_api_folder_download"),
+    _get("/api/file", USER, handler="_get_api_file"),
+    _get("/api/approval/pending", USER, handler="_get_api_approval_pending"),
+    _get("/api/approval/stream", USER, handler="_get_api_approval_stream"),
+    _get("/api/clarify/pending", USER, handler="_get_api_clarify_pending"),
+    _get("/api/clarify/stream", USER, handler="_get_api_clarify_stream"),
+    _get("/api/session/stream", USER, handler="_get_api_session_stream"),
     _get("/api/crons", USER, handler="_get_api_crons"),
     _get("/api/crons/output", USER, handler="_get_api_crons_output"),
     _get("/api/crons/history", USER, handler="_get_api_crons_history"),
@@ -197,86 +189,81 @@ ROUTES: tuple[Route, ...] = (
     _get("/api/rollback/diff", USER, handler="_get_api_rollback_diff"),
     _get("/plugins/*", USER, handler="_get_plugins", session_guard=False),
     _get("/dashboard-plugins/*", USER, handler="_get_dashboard_plugins", session_guard=False),
-    _get("/api/sessions/<id>/events", USER, session=READ, handler="_get_session_events"),
+    _get("/api/sessions/<id>/events", USER, handler="_get_session_events"),
     # ── POST ──
     _post("/api/process-complete-ack", USER, handler="_post_api_process_complete_ack", body="own", csrf=False),
-    _post("/api/upload", USER, session=WRITE, handler="_post_api_upload", body="own"),
-    _post("/api/upload/extract", USER, session=WRITE, handler="_post_api_upload_extract", body="own"),
-    _post("/api/workspace/upload", USER, session=WRITE, handler="_post_api_workspace_upload", body="own"),
+    _post("/api/upload", USER, handler="_post_api_upload", body="own"),
+    _post("/api/upload/extract", USER, handler="_post_api_upload_extract", body="own"),
+    _post("/api/workspace/upload", USER, handler="_post_api_workspace_upload", body="own"),
     _post("/api/transcribe", USER, handler="_post_api_transcribe", body="own"),
     _post("/api/tts", USER, handler="_post_api_tts", body="own"),
     _post("/api/client-events/log", USER, handler="_post_api_client_events_log", body="own"),
     _post("/api/prompts", USER, handler="_post_api_prompts"),
-    _post("/api/session/new", USER, session=WRITE, handler="_post_api_session_new"),
-    _post("/api/session/compression-recovery/start", USER, session=WRITE, handler="_post_api_session_compression_recovery_start"),
-    _post("/api/session/duplicate", USER, session=WRITE, handler="_post_api_session_duplicate"),
+    _post("/api/session/new", USER, handler="_post_api_session_new"),
+    _post("/api/session/compression-recovery/start", USER, handler="_post_api_session_compression_recovery_start"),
+    _post("/api/session/duplicate", USER, handler="_post_api_session_duplicate"),
     _post("/api/default-model", USER, handler="_post_api_default_model"),
     _post("/api/model/set", USER, handler="_post_api_model_set"),
     _post("/api/reasoning", USER, handler="_post_api_reasoning"),
-    _post("/api/session/anchor-scene", USER, session=WRITE, handler="_post_api_session_anchor_scene"),
-    _post("/api/session/rename", USER, session=WRITE, handler="_post_api_session_rename"),
-    _post("/api/session/title/regenerate", USER, session=WRITE, handler="_post_api_session_title_regenerate"),
-    _post("/api/personality/set", USER, session=WRITE, handler="_post_api_personality_set"),
-    _post("/api/session/toolsets", USER, session=WRITE, handler="_post_api_session_toolsets"),
-    _post("/api/session/draft", USER, session=WRITE, handler="_post_api_session_draft"),
-    _post("/api/session/update", USER, session=WRITE, handler="_post_api_session_update"),
-    _post("/api/session/delete", USER, session=WRITE, handler="_post_api_session_delete"),
-    _post("/api/session/clear", USER, session=WRITE, handler="_post_api_session_clear"),
-    _post("/api/session/truncate", USER, session=WRITE, handler="_post_api_session_truncate"),
-    _post("/api/session/branch", USER, session=WRITE, handler="_post_api_session_branch"),
-    _post("/api/session/compress/start", USER, session=WRITE, handler="_post_api_session_compress_start"),
-    _post("/api/session/compress", USER, session=WRITE, handler="_post_api_session_compress"),
-    _post("/api/session/conversation-rounds", USER, session=READ, handler="_post_api_session_conversation_rounds"),
-    _post("/api/session/handoff-summary", USER, session=WRITE, handler="_post_api_session_handoff_summary"),
-    _post("/api/session/retry", USER, session=WRITE, handler="_post_api_session_retry"),
-    _post("/api/session/undo", USER, session=WRITE, handler="_post_api_session_undo"),
-    _post("/api/btw", USER, session=WRITE, handler="_post_api_btw"),
-    _post("/api/background", USER, session=WRITE, handler="_post_api_background"),
-    _post("/api/goal", USER, session=WRITE, handler="_post_api_goal"),
-    _post("/api/bg-task-complete-ack", USER, session=WRITE, handler="_post_api_bg_task_complete_ack"),
-    _post("/api/chat/start", USER, session=WRITE, handler="_post_api_chat_start"),
-    _post("/api/chat", USER, session=WRITE, handler="_post_api_chat"),
-    _post("/api/chat/steer", USER, session=WRITE, handler="_post_api_chat_steer"),
+    _post("/api/session/anchor-scene", USER, handler="_post_api_session_anchor_scene"),
+    _post("/api/session/rename", USER, handler="_post_api_session_rename"),
+    _post("/api/session/title/regenerate", USER, handler="_post_api_session_title_regenerate"),
+    _post("/api/personality/set", USER, handler="_post_api_personality_set"),
+    _post("/api/session/toolsets", USER, handler="_post_api_session_toolsets"),
+    _post("/api/session/draft", USER, handler="_post_api_session_draft"),
+    _post("/api/session/update", USER, handler="_post_api_session_update"),
+    _post("/api/session/delete", USER, handler="_post_api_session_delete"),
+    _post("/api/session/clear", USER, handler="_post_api_session_clear"),
+    _post("/api/session/truncate", USER, handler="_post_api_session_truncate"),
+    _post("/api/session/branch", USER, handler="_post_api_session_branch"),
+    _post("/api/session/compress/start", USER, handler="_post_api_session_compress_start"),
+    _post("/api/session/compress", USER, handler="_post_api_session_compress"),
+    _post("/api/session/conversation-rounds", USER, handler="_post_api_session_conversation_rounds"),
+    _post("/api/session/handoff-summary", USER, handler="_post_api_session_handoff_summary"),
+    _post("/api/session/retry", USER, handler="_post_api_session_retry"),
+    _post("/api/session/undo", USER, handler="_post_api_session_undo"),
+    _post("/api/btw", USER, handler="_post_api_btw"),
+    _post("/api/background", USER, handler="_post_api_background"),
+    _post("/api/goal", USER, handler="_post_api_goal"),
+    _post("/api/bg-task-complete-ack", USER, handler="_post_api_bg_task_complete_ack"),
+    _post("/api/chat/start", USER, handler="_post_api_chat_start"),
+    _post("/api/chat", USER, handler="_post_api_chat"),
+    _post("/api/chat/steer", USER, handler="_post_api_chat_steer"),
     _post("/api/crons/create", USER, handler="_post_api_crons_create"),
     _post("/api/crons/update", USER, handler="_post_api_crons_update"),
     _post("/api/crons/delete", USER, handler="_post_api_crons_delete"),
     _post("/api/crons/run", USER, handler="_post_api_crons_run"),
     _post("/api/crons/pause", USER, handler="_post_api_crons_pause"),
     _post("/api/crons/resume", USER, handler="_post_api_crons_resume"),
-    _post("/api/file/delete", USER, session=WRITE, handler="_post_api_file_delete"),
-    _post("/api/file/save", USER, session=WRITE, handler="_post_api_file_save"),
-    _post("/api/file/office-save", USER, session=WRITE, handler="_post_api_file_office_save"),
-    _post("/api/file/create", USER, session=WRITE, handler="_post_api_file_create"),
-    _post("/api/file/rename", USER, session=WRITE, handler="_post_api_file_rename"),
-    _post("/api/file/move", USER, session=WRITE, handler="_post_api_file_move"),
-    _post("/api/file/create-dir", USER, session=WRITE, handler="_post_api_file_create_dir"),
-    _post("/api/file/path", USER, session=READ, handler="_post_api_file_path"),
+    _post("/api/file/delete", USER, handler="_post_api_file_delete"),
+    _post("/api/file/save", USER, handler="_post_api_file_save"),
+    _post("/api/file/office-save", USER, handler="_post_api_file_office_save"),
+    _post("/api/file/create", USER, handler="_post_api_file_create"),
+    _post("/api/file/rename", USER, handler="_post_api_file_rename"),
+    _post("/api/file/move", USER, handler="_post_api_file_move"),
+    _post("/api/file/create-dir", USER, handler="_post_api_file_create_dir"),
+    _post("/api/file/path", USER, handler="_post_api_file_path"),
     _post("/api/workspaces/add", USER, handler="_post_api_workspaces_add"),
     _post("/api/workspaces/remove", USER, handler="_post_api_workspaces_remove"),
     _post("/api/workspaces/rename", USER, handler="_post_api_workspaces_rename"),
     _post("/api/workspaces/reorder", USER, handler="_post_api_workspaces_reorder"),
-    _post("/api/approval/respond", USER, session=WRITE, handler="_post_api_approval_respond"),
-    _post("/api/clarify/respond", USER, session=WRITE, handler="_post_api_clarify_respond"),
+    _post("/api/approval/respond", USER, handler="_post_api_approval_respond"),
+    _post("/api/clarify/respond", USER, handler="_post_api_clarify_respond"),
     _post("/api/commands/bundles/resolve", USER, handler="_post_api_commands_bundles_resolve"),
     _post("/api/skills/save", USER, handler="_post_api_skills_save"),
     _post("/api/skills/delete", USER, handler="_post_api_skills_delete"),
     _post("/api/skills/toggle", USER, handler="_post_api_skills_toggle"),
     _post("/api/memory/write", USER, handler="_post_api_memory_write"),
-    _post("/api/profile/switch", ADMIN, handler="_post_api_profile_switch"),
-    _post("/api/profile/create", ADMIN, handler="_post_api_profile_create"),
-    _post("/api/profile/disable", ADMIN, handler="_post_api_profile_enable_or_disable"),
-    _post("/api/profile/enable", ADMIN, handler="_post_api_profile_enable_or_disable"),
-    _post("/api/profile/delete", ADMIN, handler="_post_api_profile_delete"),
     _post("/api/settings", USER, handler="_post_api_settings"),
-    _post("/api/session/pin", USER, session=WRITE, handler="_post_api_session_pin"),
-    _post("/api/session/archive", USER, session=WRITE, handler="_post_api_session_archive"),
-    _post("/api/session/move", USER, session=WRITE, handler="_post_api_session_move"),
+    _post("/api/session/pin", USER, handler="_post_api_session_pin"),
+    _post("/api/session/archive", USER, handler="_post_api_session_archive"),
+    _post("/api/session/move", USER, handler="_post_api_session_move"),
     _post("/api/projects/create", USER, handler="_post_api_projects_create"),
     _post("/api/projects/rename", USER, handler="_post_api_projects_rename"),
     _post("/api/projects/delete", USER, handler="_post_api_projects_delete"),
     _post("/api/session/import", USER, handler="_post_api_session_import"),
-    _post("/api/session/import_cli", USER, session=WRITE, handler="_post_api_session_import_cli"),
-    _post("/api/auth/login", USER, csrf=False, handler="_post_api_auth_login"),
+    _post("/api/session/import_cli", USER, handler="_post_api_session_import_cli"),
+    _post("/api/auth/login", PUBLIC, csrf=False, handler="_post_api_auth_login"),
     _post("/api/auth/logout", USER, handler="_post_api_auth_logout"),
     _post("/api/rollback/restore", USER, handler="_post_api_rollback_restore"),
     # ── PUT ──
@@ -314,6 +301,11 @@ def match(method: str, path: str) -> Route | None:
         if route.method == method and route.matches(path) and (best is None or route._rank() > best._rank()):
             best = route
     return best
+
+
+def is_public(path: str) -> bool:
+    """True if *path* is served before login: its row, under any method, is ``PUBLIC``."""
+    return any(route.caller == PUBLIC for route in routes_at(path))
 
 
 def routes_at(path: str) -> tuple[Route, ...]:

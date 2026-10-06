@@ -674,7 +674,6 @@ global._showArchived = false;
 global._sessionListHasLoadedOnce = true;
 global._SESSION_LIST_BOOT_TIMEOUT_MS = 90000;
 global._renderSessionListGen = 1;
-global._profileSwitchListEmbargo = false;
 global._pendingSessionListPayload = null;
 global._allProjects = [];
 global._contentSearchResults = ['stale'];
@@ -696,7 +695,6 @@ global.renderSessionListFromCache = () => {{
     scope: global._allSessionsScope ? {{ ...global._allSessionsScope }} : null,
     webui: global._serverWebuiSessionCount,
     cli: global._serverCliSessionCount,
-    skeleton: global._sessionListSkeletonActive,
     inflightKeys: Object.keys(global.INFLIGHT || {{}}).sort(),
   }});
 }};
@@ -723,7 +721,6 @@ async function runCase(requestedSource, cachedSource) {{
   cleared.length = 0;
   global._serverWebuiSessionCount = 11;
   global._serverCliSessionCount = 5;
-  global._sessionListSkeletonActive = true;
   global._lastError = null;
   renders.length = 0;
   await _runRenderSessionListRefresh({{}}, 1);
@@ -732,7 +729,6 @@ async function runCase(requestedSource, cachedSource) {{
     scope: global._allSessionsScope ? {{ ...global._allSessionsScope }} : null,
     webui: global._serverWebuiSessionCount,
     cli: global._serverCliSessionCount,
-    skeleton: global._sessionListSkeletonActive,
     error: global._lastError,
     cleared: [...cleared],
     inflightKeys: Object.keys(global.INFLIGHT || {{}}).sort(),
@@ -759,7 +755,6 @@ async function runCase(requestedSource, cachedSource) {{
     }
     assert body["mismatch"]["webui"] is None
     assert body["mismatch"]["cli"] is None
-    assert body["mismatch"]["skeleton"] is False
     assert body["mismatch"]["render"]["sessions"] == []
     assert body["mismatch"]["inflightKeys"] == ["webui-live"]
     assert body["mismatch"]["cleared"] == []

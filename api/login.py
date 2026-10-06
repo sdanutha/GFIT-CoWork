@@ -1,13 +1,12 @@
-"""GFIT-CoWork -- the login decision for a Directory login, for the Admin and Users.
+"""GFIT-CoWork -- the login decision for a Directory login.
 
 The order matters (spec, "Login decision"):
 
 1. rate-limit check (per person: :func:`rate_limit_key`)
 2. Directory authenticate
-3. Admission (:func:`api.access.admit`): an employee ID on the Admin list logs
-   in to ``default`` as an Admin; anyone else needs a Profile named after
+3. Admission (:func:`api.access.admit`): the User needs a Profile named after
    their employee ID, and it must not be disabled in the Profile roster
-4. issue a session for that Profile, with the role
+4. issue a session for that Profile
 
 A wrong password and a missing Profile get different messages, but neither the
 password nor anything derived from it is logged or stored.
@@ -32,10 +31,10 @@ logger = logging.getLogger(__name__)
 
 INCORRECT_MESSAGE = "incorrect username or password"
 NO_PROFILE_MESSAGE = (
-    "You don't have access to this system yet — contact your team's Admin."
+    "You don't have access to this system yet — contact your team's Operator."
 )
 SUSPENDED_MESSAGE = (
-    "Your access to this system is suspended — contact your team's Admin."
+    "Your access to this system is suspended — contact your team's Operator."
 )
 RATE_LIMITED_MESSAGE = "Too many attempts. Try again in a minute."
 UNAVAILABLE_MESSAGE = (
@@ -174,7 +173,9 @@ def attempt_login(username, password, rate_key: str) -> LoginOutcome:
         _record_login_attempt(rate_key)
         return LoginOutcome(401, INCORRECT_MESSAGE)
 
-    from api.access import ROLE_ADMIN, ROLE_USER, Refused, admit
+    from api import roster
+    from api.access import Refused, admit
+    from api.workspace import ensure_user_wiki, ensure_user_workspace
 
     admission = admit(identity.employee_id)
     if isinstance(admission, Refused):
@@ -184,20 +185,14 @@ def attempt_login(username, password, rate_key: str) -> LoginOutcome:
     role, bound_profile = admission
 
     _clear_login_attempts(rate_key)
-    if role == ROLE_USER:
-        from api import roster
-        from api.workspace import ensure_user_wiki, ensure_user_workspace
-
-        ensure_user_workspace(bound_profile)
-        ensure_user_wiki(bound_profile)
-        roster.record_login(bound_profile, identity.display_name)
+    ensure_user_workspace(bound_profile)
+    ensure_user_wiki(bound_profile)
+    roster.record_login(bound_profile, identity.display_name)
     cookie = auth.create_session(
         auth_type=auth.DIRECTORY_AUTH_TYPE,
         username=identity.employee_id,
         bound_profile=bound_profile,
         role=role,
-        # An Admin has no Profile, so no roster record: the name rides on the session.
-        display_name=identity.display_name if role == ROLE_ADMIN else None,
     )
     return LoginOutcome(200, session_cookie=cookie, bound_profile=bound_profile)
 
@@ -205,18 +200,13 @@ def attempt_login(username, password, rate_key: str) -> LoginOutcome:
 def session_identity(session_info: dict) -> dict:
     """The name GFIT-CoWork shows for this request's Directory session: display name and "name (ID)" label.
 
-    A User's name comes from the Profile roster (updated from the Directory
-    on every login, else the name the Admin typed); an Admin's from the session.
-    Whether the caller is a User is the request's Admission.
+    The name comes from the Profile roster (updated from the Directory on
+    every login, else the name the Operator gave at create).
     """
     from api import roster
-    from api.access import caller_is_user
 
     employee_id = str(session_info.get("username") or "")
-    if caller_is_user():
-        display_name = roster.view(employee_id)["display_name"]
-    else:
-        display_name = roster.directory_name(session_info.get("display_name"), employee_id)
+    display_name = roster.view(employee_id)["display_name"]
     return {
         "display_name": display_name,
         "label": f"{display_name} ({employee_id})" if display_name else employee_id,
@@ -286,6 +276,18 @@ class StartupCheck(NamedTuple):
     lines: list[str]
 
 
+def _leftover_admin_users_line() -> list[str]:
+    from api.access import LEFTOVER_ADMIN_USERS_ENV
+
+    if not os.getenv(LEFTOVER_ADMIN_USERS_ENV, "").strip():
+        return []
+    return [
+        f"[!!] Ignoring {LEFTOVER_ADMIN_USERS_ENV}: there is no Admin in the web app (ADR 0006).",
+        "     The employee IDs named there log in as Users, to their own Profile, if they have one.",
+        "     Manage Profiles with: python3 -m api.operator_cli",
+    ]
+
+
 def startup_check(host: str) -> StartupCheck:
     """Decide from the bind address and the Directory whether the server may serve.
 
@@ -297,7 +299,7 @@ def startup_check(host: str) -> StartupCheck:
     lines = [
         f"[!!] Ignoring {setting}: Upstream login is gone; the Directory replaces it."
         for setting in _leftover_login_settings()
-    ]
+    ] + _leftover_admin_users_line()
     if is_directory_enabled():
         return StartupCheck(True, lines)
     if not _is_loopback_host(host):

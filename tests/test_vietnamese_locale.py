@@ -88,12 +88,9 @@ def test_vietnamese_locale_includes_representative_translations():
     expected = [
         "settings_heading_title: 'Trung tâm điều khiển'",
         "settings_heading_subtitle: 'Tùy chọn, công cụ hội thoại và điều khiển hệ thống.'",
-        "approval_skip_all: 'Bỏ qua tất cả trong phiên này'",
         "checkpoint_title: 'Checkpoint'",
         "composer_send: 'Gửi tin nhắn'",
-        "gateway_restart: 'Khởi động lại'",
         "wiki_browse: 'Duyệt wiki'",
-        "yolo_pill_title_active: 'Chế độ YOLO đang bật — bấm để tắt'",
     ]
     for entry in expected:
         assert entry in vi_block

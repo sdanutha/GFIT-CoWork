@@ -15,7 +15,6 @@ import api.auth as auth
 from tests._gfit_server import gfit_server as _gfit_server
 
 MEMBER = "521740"
-ADMIN = "100001"
 MISSING_ROUTE = "/api/auth/no-such-route"
 
 TRUSTED_HEADER_ENV = {
@@ -39,8 +38,8 @@ OIDC_ENV = {
 def server(monkeypatch, tmp_path):
     def start(*, directory="memory", legacy_env=None):
         return _gfit_server(
-            monkeypatch, tmp_path, users={MEMBER: "Member", ADMIN: "Admin"},
-            profile_names=[MEMBER], admins=ADMIN, directory=directory, legacy_env=legacy_env,
+            monkeypatch, tmp_path, users={MEMBER: "Member"},
+            profile_names=[MEMBER], directory=directory, legacy_env=legacy_env,
         )
     return start
 
@@ -50,10 +49,9 @@ def _session_cookies(set_cookies) -> list[str]:
 
 
 def _clients(srv):
-    """A signed-out client, and, with a Directory, a signed-in Admin and User."""
+    """A signed-out client, and, with a Directory, a signed-in User."""
     yield "signed-out", srv.client()
     if srv.directory:
-        yield "admin", srv.logged_in(ADMIN)
         yield "user", srv.logged_in(MEMBER)
 
 
@@ -176,14 +174,14 @@ def test_the_login_status_page_and_settings_name_no_passkey(server):
         status, html, _ = srv.client().get("/login")
         assert status == 200
         assert "passkey" not in html.lower()
-        admin = srv.logged_in(ADMIN)
-        status, body, _ = admin.get("/api/auth/status")
+        user = srv.logged_in(MEMBER)
+        status, body, _ = user.get("/api/auth/status")
         assert body["logged_in"] is True
         assert not set(PASSKEY_FIELDS) & set(body), body
-        status, settings, _ = admin.get("/api/settings")
+        status, settings, _ = user.get("/api/settings")
         assert status == 200
         assert not set(PASSKEY_FIELDS) & set(settings), settings
-        status, shell, _ = admin.get("/")
+        status, shell, _ = user.get("/")
         assert status == 200
         assert "passkey" not in shell.lower()
 
@@ -256,10 +254,10 @@ def test_setting_a_password_in_settings_does_nothing(server, stored_password):
 
 def test_clearing_the_password_in_settings_does_nothing(server, stored_password):
     with server() as srv:
-        admin = srv.logged_in(ADMIN)
-        status, saved, _ = admin.post("/api/settings", {"_clear_password": True})
+        user = srv.logged_in(MEMBER)
+        status, saved, _ = user.post("/api/settings", {"_clear_password": True})
         assert status == 200, saved
-        assert admin.get("/api/sessions")[0] == 200
+        assert user.get("/api/sessions")[0] == 200
         assert "a-stored-upstream-hash" in stored_password.read_text(encoding="utf-8")
 
 
@@ -267,14 +265,14 @@ def test_the_login_status_and_settings_name_no_password(server):
     with server(legacy_env=PASSWORD_ENV) as srv:
         status, body, _ = srv.client().get("/api/auth/status")
         assert not set(PASSWORD_FIELDS) & set(body), body
-        admin = srv.logged_in(ADMIN)
-        status, body, _ = admin.get("/api/auth/status")
+        user = srv.logged_in(MEMBER)
+        status, body, _ = user.get("/api/auth/status")
         assert not set(PASSWORD_FIELDS) & set(body), body
-        status, settings, _ = admin.get("/api/settings")
+        status, settings, _ = user.get("/api/settings")
         assert status == 200
         assert not set(PASSWORD_FIELDS) & set(settings), settings
         assert "password_hash" not in settings
-        status, shell, _ = admin.get("/")
+        status, shell, _ = user.get("/")
         assert status == 200
         for control in ("settingsPassword", "settingsCurrentPassword", "btnDisableAuth", "settingsPasswordEnvLock"):
             assert control not in shell, control

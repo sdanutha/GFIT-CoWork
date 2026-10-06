@@ -62,26 +62,6 @@ class TestComposerPlaceholderProfile:
             "boot should apply the profile-aware assistant name after active profile resolution"
         )
 
-    def test_switchToProfile_calls_applyBotName(self):
-        """switchToProfile() must call applyBotName() after switching."""
-        src = _src("panels.js")
-        assert "function switchToProfile" in src, \
-            "switchToProfile function must exist"
-        # Find the function block (starts with 'async function switchToProfile')
-        m = re.search(r'async function switchToProfile\s*\(', src)
-        assert m, "switchToProfile must be an async function"
-        # Slice the WHOLE function body — bounded by the next top-level function
-        # (openProfileCreate) — rather than a fixed char window. The profile-switch
-        # loading-skeleton + race-guard work (#4671) grew switchToProfile past every
-        # fixed window we tried (5000 -> 6500 -> still short at offset ~6609), so anchor
-        # on the next-function boundary instead so this can't drift again. The
-        # applyBotName() call still fires on every switch; this is purely about the test
-        # reading the whole body.
-        end = src.find("function openProfileCreate(", m.start())
-        after = src[m.start():end] if end != -1 else src[m.start():]
-        assert "applyBotName" in after, \
-            "switchToProfile must call applyBotName after profile switch"
-
     def test_placeholder_uses_name_variable(self):
         """The composer placeholder must use the resolved name variable."""
         src = _src("boot.js")

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
-from urllib.parse import urlparse
 
 import pytest
 
@@ -92,135 +90,6 @@ def test_gateway_watcher_pins_explicit_profile_home(tmp_path, monkeypatch):
     assert sessions[0]["session_id"] == "session-a"
 
 
-def test_restart_watcher_for_profile_replaces_singleton_with_profile_home(tmp_path, monkeypatch):
-    from api import gateway_watcher as gw
-    from api import profiles
-
-    created = []
-
-    class FakeWatcher:
-        def __init__(self, *, profile_name="", hermes_home=None, state_db_path=None):
-            self.profile_name = profile_name
-            self.hermes_home = hermes_home
-            self.state_db_path = state_db_path
-            self.started = False
-            self.stopped = False
-            created.append(self)
-
-        def start(self):
-            self.started = True
-
-        def is_alive(self):
-            return self.started
-
-        def stop(self):
-            self.stopped = True
-
-    old_home = (tmp_path / "old").resolve()
-    old = FakeWatcher(profile_name="old", hermes_home=old_home)
-    monkeypatch.setattr(gw, "_watchers", {str(old_home): old})
-    monkeypatch.setattr(gw, "GatewayWatcher", FakeWatcher)
-    monkeypatch.setattr(profiles, "get_hermes_home_for_profile", lambda name: tmp_path / name)
-    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "target")
-
-    watcher = gw.restart_watcher_for_profile("target")
-
-    assert old.stopped is True
-    assert watcher is created[-1]
-    assert watcher.profile_name == "target"
-    assert watcher.hermes_home == tmp_path / "target"
-    assert watcher.started is True
-    assert gw.get_watcher() is watcher
-
-
-def test_restart_watcher_for_profile_keeps_subscribed_other_profile(tmp_path, monkeypatch):
-    from api import gateway_watcher as gw
-    from api import profiles
-
-    default_home = (tmp_path / "default").resolve()
-    work_home = (tmp_path / "work").resolve()
-    created = []
-
-    class FakeWatcher:
-        def __init__(self, *, profile_name="", hermes_home=None, state_db_path=None):
-            self.profile_name = profile_name
-            self.hermes_home = hermes_home
-            self.state_db_path = state_db_path
-            self.started = False
-            self.stopped = False
-            self._subscribers = []
-            self._sub_lock = threading.Lock()
-            created.append(self)
-
-        def start(self):
-            self.started = True
-
-        def is_alive(self):
-            return self.started
-
-        def stop(self):
-            self.stopped = True
-            self.started = False
-
-    default_watcher = FakeWatcher(profile_name="default", hermes_home=default_home)
-    default_watcher.started = True
-    default_watcher._subscribers.append(object())
-    monkeypatch.setattr(gw, "_watchers", {str(default_home): default_watcher})
-    monkeypatch.setattr(gw, "GatewayWatcher", FakeWatcher)
-    monkeypatch.setattr(profiles, "get_hermes_home_for_profile", lambda name: work_home)
-
-    watcher = gw.restart_watcher_for_profile("work")
-
-    assert default_watcher.stopped is False
-    assert gw._watchers[str(default_home)] is default_watcher
-    assert gw._watchers[str(work_home)] is watcher
-    assert watcher.profile_name == "work"
-
-
-def test_restart_watcher_for_profile_swaps_atomically(tmp_path, monkeypatch):
-    from api import gateway_watcher as gw
-    from api import profiles
-
-    target_home = (tmp_path / "target").resolve()
-    created = []
-    seen = []
-
-    class FakeWatcher:
-        def __init__(self, *, profile_name="", hermes_home=None, state_db_path=None):
-            self.profile_name = profile_name
-            self.hermes_home = hermes_home
-            self.state_db_path = state_db_path
-            self.started = False
-            self.stopped = False
-            created.append(self)
-
-        def start(self):
-            self.started = True
-            if len(seen) == 0:
-                seen.append(gw.get_watcher(profile_name="target", hermes_home=target_home))
-
-        def is_alive(self):
-            return self.started
-
-        def stop(self):
-            self.stopped = True
-            self.started = False
-
-    existing = FakeWatcher(profile_name="target", hermes_home=target_home)
-    existing.started = True
-    monkeypatch.setattr(gw, "_watchers", {str(target_home): existing})
-    monkeypatch.setattr(gw, "GatewayWatcher", FakeWatcher)
-    monkeypatch.setattr(profiles, "get_hermes_home_for_profile", lambda name: target_home)
-
-    watcher = gw.restart_watcher_for_profile("target")
-
-    assert len(created) == 2
-    assert seen == [existing]
-    assert existing.stopped is True
-    assert watcher is created[-1]
-    assert gw.get_watcher(profile_name="target", hermes_home=target_home) is watcher
-
-
 def test_watcher_registry_key_uses_concrete_values(tmp_path, monkeypatch):
     from api import gateway_watcher as gw
 
@@ -302,47 +171,6 @@ def test_get_watcher_scopes_lookup_to_active_profile(tmp_path, monkeypatch):
     )
 
     assert gw.get_watcher() is work_watcher
-
-
-def test_profile_switch_restarts_watcher_best_effort(monkeypatch):
-    from api import config, gateway_watcher, profiles, routes
-
-    calls = []
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr(routes, "read_body", lambda handler: {"name": "demo"})
-    monkeypatch.setattr(profiles, "_validate_profile_name", lambda name: None)
-    monkeypatch.setattr(profiles, "switch_profile", lambda name, process_wide=False: {"ok": True, "name": name})
-    monkeypatch.setattr(config, "invalidate_models_cache", lambda **kw: calls.append(("cache", kw)))
-    monkeypatch.setattr(gateway_watcher, "restart_watcher_for_profile", lambda name: calls.append(("watcher", name)))
-
-    handler = _FakeHandler()
-    routes.handle_post(handler, urlparse("/api/profile/switch"))
-
-    assert handler.status == 200
-    assert handler.get_json() == {"ok": True, "name": "demo"}
-    assert calls == [("cache", {"delete_disk": False}), ("watcher", "demo")]
-    assert any(k == "Set-Cookie" for k, _v in handler.sent_headers)
-
-
-def test_profile_switch_response_survives_watcher_restart_failure(monkeypatch):
-    from api import config, gateway_watcher, profiles, routes
-
-    monkeypatch.setattr(routes, "_check_csrf", lambda handler: True)
-    monkeypatch.setattr(routes, "read_body", lambda handler: {"name": "demo"})
-    monkeypatch.setattr(profiles, "_validate_profile_name", lambda name: None)
-    monkeypatch.setattr(profiles, "switch_profile", lambda name, process_wide=False: {"ok": True, "name": name})
-    monkeypatch.setattr(config, "invalidate_models_cache", lambda *_a, **_kw: None)
-    monkeypatch.setattr(
-        gateway_watcher,
-        "restart_watcher_for_profile",
-        lambda name: (_ for _ in ()).throw(RuntimeError("restart failed")),
-    )
-
-    handler = _FakeHandler()
-    routes.handle_post(handler, urlparse("/api/profile/switch"))
-
-    assert handler.status == 200
-    assert handler.get_json() == {"ok": True, "name": "demo"}
 
 
 def test_subscribe_after_stop_gets_sentinel_immediately():

@@ -1,9 +1,10 @@
 """GFIT-CoWork: Admission, the one decision about who may use the Deployment.
 
 From an employee ID the Directory has confirmed, Admission says whether that
-person is admitted, with which role and to which Profile, or why they are
-refused (ADR 0004). Tested at its interface, with no server: a temporary
-Hermes home, a temporary Profile roster and the Admin list env var.
+person is admitted, as a User to their own Profile, or why they are refused
+(ADR 0004, ADR 0006: there is no Admin). Tested at its interface, with no
+server: a temporary Hermes home, a temporary Profile roster and the leftover
+Admin list env var, which grants nothing.
 """
 from __future__ import annotations
 
@@ -13,23 +14,22 @@ import api.auth as auth
 import api.profiles as profiles
 import api.roster as roster
 from api.access import (
-    ADMIN_USERS_ENV,
+    LEFTOVER_ADMIN_USERS_ENV,
     REFUSED_NO_PROFILE,
     REFUSED_PROFILE_NOT_ACTIVE,
-    ROLE_ADMIN,
     ROLE_USER,
     Admitted,
     Refused,
     admit,
 )
 
-ADMIN = "521740"
+FORMER_ADMIN = "521740"
 MEMBER = "600001"
 
 
 @pytest.fixture
 def deployment(monkeypatch, tmp_path):
-    """An isolated Deployment: Hermes home, Profile roster and Admin list."""
+    """An isolated Deployment: Hermes home, Profile roster and the leftover Admin list."""
     state = tmp_path / "state"
     state.mkdir()
     hermes_home = tmp_path / "hermes"
@@ -38,16 +38,13 @@ def deployment(monkeypatch, tmp_path):
     monkeypatch.setattr(auth, "_SESSIONS_FILE", state / ".sessions.json")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)
-    monkeypatch.setenv(ADMIN_USERS_ENV, "")
+    monkeypatch.delenv(LEFTOVER_ADMIN_USERS_ENV, raising=False)
 
     class Deployment:
         roster_file = state / roster.ROSTER_FILENAME
 
-        def admins(self, value):
-            if value is None:
-                monkeypatch.delenv(ADMIN_USERS_ENV)
-            else:
-                monkeypatch.setenv(ADMIN_USERS_ENV, value)
+        def leftover_admins(self, value):
+            monkeypatch.setenv(LEFTOVER_ADMIN_USERS_ENV, value)
 
         def profile(self, name, *, active=True, in_roster=True):
             (hermes_home / "profiles" / name).mkdir()
@@ -80,31 +77,33 @@ def test_a_profile_without_a_roster_record_is_admitted_as_active(deployment):
     assert admit(MEMBER) == Admitted(ROLE_USER, MEMBER)
 
 
-def test_an_unreadable_roster_refuses_everyone_but_the_admin(deployment):
-    deployment.admins(ADMIN)
+def test_an_unreadable_roster_refuses_everyone(deployment):
     deployment.profile(MEMBER)
     deployment.roster_file.write_text("{ not json", encoding="utf-8")
     assert admit(MEMBER) == Refused(REFUSED_PROFILE_NOT_ACTIVE)
-    assert admit(ADMIN) == Admitted(ROLE_ADMIN, "default")
 
 
 @pytest.mark.parametrize("profile", ["none", "active", "disabled"])
-def test_the_admin_list_always_wins_and_binds_to_default(deployment, profile):
-    deployment.admins(f"{MEMBER}, 999999")
+def test_a_leftover_admin_list_grants_nothing(deployment, profile):
+    # A former Admin is a User like anyone else: their own Profile, or nothing.
+    deployment.leftover_admins(f"{FORMER_ADMIN}, {MEMBER}")
     if profile != "none":
-        deployment.profile(MEMBER, active=profile == "active")
-    assert admit(MEMBER) == Admitted(ROLE_ADMIN, "default")
+        deployment.profile(FORMER_ADMIN, active=profile == "active")
+    expected = {
+        "none": Refused(REFUSED_NO_PROFILE),
+        "active": Admitted(ROLE_USER, FORMER_ADMIN),
+        "disabled": Refused(REFUSED_PROFILE_NOT_ACTIVE),
+    }[profile]
+    assert admit(FORMER_ADMIN) == expected
 
 
-@pytest.mark.parametrize("admins", [None, "", " , "])
-def test_with_no_admin_list_nobody_is_admin(deployment, admins):
-    deployment.admins(admins)
-    deployment.profile(MEMBER)
-    assert admit(MEMBER) == Admitted(ROLE_USER, MEMBER)
+def test_nobody_is_admitted_to_the_default_profile(deployment):
+    deployment.leftover_admins("default")
+    assert admit("default") == Refused(REFUSED_NO_PROFILE)
 
 
 def test_admission_changes_nothing_on_disk(deployment, tmp_path):
-    deployment.admins(ADMIN)
+    deployment.leftover_admins(FORMER_ADMIN)
     deployment.profile(MEMBER)
     deployment.profile("600002", active=False)
 
@@ -115,7 +114,7 @@ def test_admission_changes_nothing_on_disk(deployment, tmp_path):
         }
 
     before = snapshot()
-    for employee_id in (ADMIN, MEMBER, "600002", "700001"):
+    for employee_id in (FORMER_ADMIN, MEMBER, "600002", "700001"):
         admit(employee_id)
     assert snapshot() == before
 

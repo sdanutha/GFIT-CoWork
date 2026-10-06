@@ -20,7 +20,6 @@ PWA_STARTUP = ROOT / "static" / "pwa-startup.js"
 BOOT = ROOT / "static" / "boot.js"
 INDEX = ROOT / "static" / "index.html"
 ROUTES = ROOT / "api" / "routes.py"
-AUTH = ROOT / "api" / "auth.py"
 
 
 class TestManifest:
@@ -188,11 +187,9 @@ class TestPWARoutes:
         )
 
     def test_sw_is_public_auth_path(self):
-        src = AUTH.read_text(encoding="utf-8")
-        public_idx = src.find("PUBLIC_PATHS")
-        assert public_idx != -1, "auth.py must define PUBLIC_PATHS"
-        block = src[public_idx:public_idx + 400]
-        assert "'/sw.js'" in block, (
+        from api.route_table import is_public
+
+        assert is_public("/sw.js"), (
             "/sw.js must be public so service-worker updates never return login HTML"
         )
 

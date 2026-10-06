@@ -18,7 +18,7 @@ def test_boot_call_before_session_load():
         src = f.read()
     boot_marker = "await loadSession(saved, {preserveActiveInput:true});"
     boot_pos = src.index(boot_marker)
-    fetch_pos = src.index("fetchReasoningChip()", src.index("_profileQueryIntentFromLocation"))
+    fetch_pos = src.index("fetchReasoningChip()", src.index("await loadGfitIdentity()"))
     assert fetch_pos < boot_pos, \
         "fetchReasoningChip() should be called before saved session load in boot.js"
 

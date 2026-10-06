@@ -6,8 +6,7 @@
 - A User's cron status shows only their own running jobs (ticket 04).
 - A User's project dashboard reads only inside their Workspace (ticket 02).
 
-HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
-Admin keeps today's behaviour in each case.
+HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
 
@@ -25,14 +24,13 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 
@@ -111,15 +109,6 @@ def test_each_user_sees_only_their_own_figures(srv, usage_index):
     assert "alice-model" not in json.dumps(body)
 
 
-def test_the_admins_insights_count_every_profile(srv, usage_index):
-    body = _insights(srv.logged_in(ADMIN))
-
-    assert body["total_sessions"] == 3
-    assert body["total_messages"] == 46
-    assert sorted(m["model"] for m in body["models"]) == ["alice-model", "bob-model"]
-    assert _activity(body) == (3, 3, 3)
-
-
 # ── Step (b), ticket 06: the session list and search ask the question ────────
 
 def _session_with_a_message(client, text) -> str:
@@ -138,7 +127,7 @@ def _session_with_a_message(client, text) -> str:
 
 @pytest.fixture
 def three_sessions(srv):
-    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB, ADMIN)}
+    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB)}
     sids = {uid: _session_with_a_message(c, f"zebra-{uid}") for uid, c in clients.items()}
     return clients, sids
 
@@ -159,23 +148,9 @@ def _listed(client, path) -> tuple[set, dict]:
     return {s["session_id"] for s in body["sessions"]}, body
 
 
-def test_the_admin_counts_and_lists_other_profiles_sessions(three_sessions):
+def test_a_users_list_counts_no_other_profile_after_another_user_filled_the_cache(three_sessions):
     clients, sids = three_sessions
-
-    ids, body = _listed(clients[ADMIN], "/api/sessions")
-    assert _only_own(ids, sids, ADMIN)
-    assert body["all_profiles"] is False
-    assert body["other_profile_count"] >= 2
-
-    ids, body = _listed(clients[ADMIN], "/api/sessions?all_profiles=1")
-    assert set(sids.values()) <= ids
-    assert body["all_profiles"] is True
-    assert body["other_profile_count"] == 0
-
-
-def test_a_users_list_counts_no_other_profile_after_the_admin_filled_the_cache(three_sessions):
-    clients, sids = three_sessions
-    _listed(clients[ADMIN], "/api/sessions")
+    _listed(clients[BOB], "/api/sessions")
 
     for path in ("/api/sessions", "/api/sessions?all_profiles=1"):
         ids, body = _listed(clients[ALICE], path)
@@ -191,11 +166,6 @@ def test_session_search_reads_only_the_profiles_a_request_may_read(three_session
         ids, _ = _listed(clients[ALICE], path)
         assert _only_own(ids, sids, ALICE)
 
-    ids, _ = _listed(clients[ADMIN], "/api/sessions/search?q=zebra")
-    assert _only_own(ids, sids, ADMIN)
-    ids, _ = _listed(clients[ADMIN], "/api/sessions/search?q=zebra&all_profiles=1")
-    assert set(sids.values()) <= ids
-
 
 # ── Step (b), ticket 08: the Profile list and CLI import ask the question ────
 
@@ -204,11 +174,6 @@ def test_the_profile_list_shows_what_the_request_may_read(srv):
     assert status == 200, body
     assert [p["name"] for p in body["profiles"]] == [ALICE]
     assert body["single_profile_mode"] is True
-
-    status, body, _ = srv.logged_in(ADMIN).get("/api/profiles")
-    assert status == 200, body
-    assert {ALICE, BOB} <= {p["name"] for p in body["profiles"]}
-    assert body["single_profile_mode"] is False
 
 
 def _cli_session_in(srv, uid, sid):
@@ -251,14 +216,6 @@ def test_all_profiles_cli_import_finds_nothing_in_another_users_profile(srv):
                  {"session_id": sid, "all_profiles": True}):
         status, payload, _ = alice.post("/api/session/import_cli", body)
         assert status in (403, 404), payload
-    assert Session.load(sid) is None
-
-    # The Admin stays in default and never works in a User's Profile (ADR 0004):
-    # importing into Bob's Profile is refused too (request-profile review).
-    status, payload, _ = srv.logged_in(ADMIN).post(
-        "/api/session/import_cli", {"session_id": sid, "all_profiles": True, "profile": BOB},
-    )
-    assert status == 403, payload
     assert Session.load(sid) is None
 
 
@@ -350,20 +307,6 @@ def test_a_user_sets_and_clears_a_cron_working_folder_inside_their_workspace(srv
     assert status == 200, body
 
 
-def test_the_admin_sets_any_cron_working_folder(srv, fake_cron, workspaces):
-    admin_home = srv.hermes_home  # the Admin's request runs in the root Profile
-    (admin_home / "cron").mkdir(parents=True, exist_ok=True)
-    (admin_home / "cron" / "jobs.json").write_text(json.dumps([{"id": "admin-job", "name": "a"}]))
-
-    status, body, _ = srv.logged_in(ADMIN).post(
-        "/api/crons/update", {"job_id": "admin-job", "workdir": str(workspaces["outside"])},
-    )
-
-    assert status == 200, body
-    stored = json.loads((admin_home / "cron" / "jobs.json").read_text())[0]
-    assert stored["workdir"] == str(workspaces["outside"])
-
-
 # ── Ticket 04: cron status ───────────────────────────────────────────────────
 
 @pytest.fixture
@@ -399,14 +342,6 @@ def test_a_users_cron_status_shows_only_their_own_running_jobs(srv, running_jobs
     assert bobs["running"] is False
 
 
-def test_the_admins_cron_status_shows_every_running_job(srv, running_jobs):
-    admin = srv.logged_in(ADMIN)
-
-    running = _status(admin)["running"]
-    assert {running_jobs[ALICE], running_jobs[BOB]} <= set(running)
-    assert _status(admin, f"?job_id={running_jobs[BOB]}")["running"] is True
-
-
 # ── Step (b), ticket 07: projects and cron ask the question ──────────────────
 
 def _project(client, name) -> dict:
@@ -422,22 +357,15 @@ def _project_ids(client, path) -> tuple[set, dict]:
 
 
 def test_a_users_project_list_shows_only_their_own_projects(srv):
-    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB, ADMIN)}
+    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB)}
     projects = {uid: _project(c, f"project of {uid}")["project_id"] for uid, c in clients.items()}
-    others = {projects[BOB], projects[ADMIN]}
+    others = {projects[BOB]}
 
     for path in ("/api/projects", "/api/projects?all_profiles=1"):
         ids, body = _project_ids(clients[ALICE], path)
         assert projects[ALICE] in ids and not ids & others
         assert body["all_profiles"] is False
         assert body["other_profile_count"] == 0
-
-    ids, body = _project_ids(clients[ADMIN], "/api/projects")
-    assert projects[ADMIN] in ids and not ids & {projects[ALICE], projects[BOB]}
-    assert body["other_profile_count"] >= 2
-    ids, body = _project_ids(clients[ADMIN], "/api/projects?all_profiles=1")
-    assert set(projects.values()) <= ids
-    assert body["all_profiles"] is True
 
 
 def test_another_profiles_project_is_not_found(srv):
@@ -465,18 +393,6 @@ def test_a_user_cannot_point_a_cron_job_at_another_profile(srv, fake_cron, profi
     # runs (403); the cron Profile picker would refuse it too (400).
     assert status in (400, 403), body
     assert _stored_job(srv, ALICE, "alice-job") == before
-
-
-def test_the_admin_points_a_cron_job_only_at_default(srv, fake_cron):
-    """The Admin stays in default and never works in a User's Profile (ADR 0004)."""
-    (srv.hermes_home / "cron").mkdir(parents=True, exist_ok=True)
-    (srv.hermes_home / "cron" / "jobs.json").write_text(json.dumps([{"id": "admin-job", "name": "a"}]))
-    admin = srv.logged_in(ADMIN)
-
-    status, body, _ = admin.post("/api/crons/update", {"job_id": "admin-job", "profile": "default"})
-    assert status == 200, body
-    status, body, _ = admin.post("/api/crons/update", {"job_id": "admin-job", "profile": BOB})
-    assert status == 403, body
 
 
 @pytest.mark.parametrize("profile", ["default", BOB])

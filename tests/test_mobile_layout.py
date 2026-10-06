@@ -663,7 +663,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
         "panelMemory",
         "panelTasks",
         "panelWorkspaces",
-        "panelProfiles",
         "panelTodos",
         "panelInsights",
     ]:
@@ -708,7 +707,6 @@ def test_mobile_sidebar_detail_selections_share_close_helper():
         "openCronDetail",
         "openMemorySection",
         "openWorkspaceDetail",
-        "openProfileDetail",
     ]:
         body = _js_function_body(panels_js, name)
         assert "_closeMobileSidebarAfterPanelSelection()" in body, (
@@ -1628,14 +1626,9 @@ def test_touch_keyboard_inset_applies_to_composer_padding():
 
 # ── Sidebar tabs on mobile ───────────────────────────────────────────────────
 
-def test_profiles_sidebar_tab_present():
-    """Sidebar tab strip must include Profiles."""
-    # Tolerate additional utility classes (e.g. `has-tooltip` from #1775).
-    # We just need a nav-tab classed button targeting the profiles panel.
-    import re
-    pattern = r'class="[^"]*\bnav-tab\b[^"]*"[^>]*data-panel="profiles"'
-    assert re.search(pattern, HTML), \
-        "Sidebar nav must have a nav-tab button with data-panel=\"profiles\""
+def test_no_profiles_sidebar_tab():
+    """There is no Profile management in the web app (ADR 0006), so no Profiles tab."""
+    assert 'data-panel="profiles"' not in HTML
 
 
 def test_mobile_bottom_nav_removed():

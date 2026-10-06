@@ -110,7 +110,7 @@ def test_wrong_password_or_unknown_user_is_401_with_one_message(client, username
 def test_correct_password_but_no_profile_is_refused_with_contact_admin(client):
     status, body, _ = client.login(NO_PROFILE_USER, PASSWORD)
     assert status == 403
-    assert "contact your team's Admin" in body["error"]
+    assert "contact your team's Operator" in body["error"]
     assert body["error"] != INCORRECT
     status, _, _ = client.request("GET", "/api/sessions")
     assert status == 401

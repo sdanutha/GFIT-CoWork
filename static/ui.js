@@ -7,16 +7,6 @@
 // See api/todo_state.py for the wire contract.
 const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null,_pendingSessionToolsets:null};
 
-// GFIT-CoWork: may the caller use this feature of the web app? The server
-// stamps the features its caller may use on <html data-gfit-may="...">, from
-// the Admin gate (api/access.py SHELL_FEATURES). With no stamp (login off)
-// every feature may be used. Ask before calling a feature's route, so a User's
-// web app does not call routes the gate refuses.
-function gfitMay(feature){
-  const may=document.documentElement.dataset.gfitMay;
-  return may===undefined||may.split(' ').includes(feature);
-}
-
 // The web app's own name for page chrome (tab title). The assistant keeps its own name.
 const APP_NAME='GFIT-CoWork';
 function assistantDisplayName(){
@@ -5293,19 +5283,6 @@ function fetchReasoningChip(keyOverride){
   });
 }
 
-function refreshProfileTransitionReasoningChip(model, provider){
-  _profileTransitionReasoningContext={profile:(S&&S.activeProfile)||'default',model,provider};
-  _currentReasoningEffort=null;
-  _currentReasoningEffortsSupported=null;
-  _currentReasoningToggleSupported=undefined;
-  _lastReasoningFetchKey=null;
-  ++_reasoningFetchSeq;
-  _applyReasoningChip('', {supported_efforts:[], supports_thinking_toggle:false});
-  const params=new URLSearchParams();
-  if(model) params.set('model',model);
-  if(provider) params.set('provider',provider);
-  fetchReasoningChip(params.size?'?'+params.toString():undefined);
-}
 
 function clearProfileTransitionReasoningContext(){
   _profileTransitionReasoningContext=null;
@@ -10333,33 +10310,7 @@ function _topbarMessageMetaText(){
   // branch above surfaces the raw server total, and only as "loaded of total".
   return t('n_messages',loadedCount);
 }
-// GFIT-CoWork: the Admin reads another Profile's session in place, read-only.
-// The detail load says so (read_only_reason "other_profile"); the banner names
-// the owner and the composer is disabled until another session is opened.
-function syncReadOnlySessionView(){
-  const banner=$('sessionReadOnlyBanner');
-  const msg=$('msg');
-  const wrap=$('composerWrap');
-  const session=S.session;
-  const otherProfile=!!(session&&session.read_only_reason==='other_profile');
-  // Pending approvals and clarify questions stay visible, without their answers.
-  if(wrap) wrap.classList.toggle('other-profile-read-only',otherProfile);
-  if(banner){
-    banner.hidden=!otherProfile;
-    banner.textContent=otherProfile?t('session_other_profile_read_only',session.owner_label||session.owner_profile||''):'';
-  }
-  if(!msg) return;
-  if(otherProfile){
-    msg.disabled=true;
-    msg.dataset.otherProfileReadOnly='1';
-  }else if(msg.dataset.otherProfileReadOnly){
-    msg.disabled=false;
-    delete msg.dataset.otherProfileReadOnly;
-  }
-}
-
 function syncTopbar(){
-  if(typeof syncReadOnlySessionView==='function') syncReadOnlySessionView();
   if(!S.session){
     document.title=APP_NAME;
     if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
@@ -10403,78 +10354,67 @@ function syncTopbar(){
   }
   if(typeof syncAppTitlebar==='function') syncAppTitlebar();
   if(typeof _syncWorkspaceHeadingState==='function') _syncWorkspaceHeadingState();
-  // If a profile switch just happened, apply its model rather than the session's stale value.
-  // S._pendingProfileModel is set by switchToProfile() and cleared here after one application.
-  const modelOverride=S._pendingProfileModel;
   let currentModel=S.session.model||'';
-  if(modelOverride){
-    S._pendingProfileModel=null;
-    const providerOverride=S._pendingProfileModelProvider||null;
-    S._pendingProfileModelProvider=null;
-    _applyModelToDropdown(modelOverride,$('modelSelect'),providerOverride);
-    currentModel=modelOverride;
-  } else {
-    const modelSel=$('modelSelect');
-    const rawCurrentModel=String(currentModel||'').trim();
-    const hasSessionModel=rawCurrentModel&&rawCurrentModel.toLowerCase()!=='unknown';
-    if(!hasSessionModel){
-      // Missing/unknown session metadata must not leave the picker on the
-      // previously viewed chat's model (#1771). Apply the configured default
-      // first, then the first available option only as an HTML fallback.
-      const fallback=_applySessionModelFallback(modelSel);
-      if(fallback){
-        // Defer state mutation + network write while the live model resolution
-        // is in flight — sessions.js sets _modelResolutionDeferred=true between
-        // the fast-path session render and the resolve_model=1 round-trip.
-        // Persisting here would race that resolution and would also issue
-        // silent /api/session/update POSTs against imported/read-only CLI
-        // sessions whose model field reads "unknown" (#1779 stage-310 review).
-        // The visible sel.value change still happens above for UX; only the
-        // state mutation + persist defers.
-        const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
-        if(!deferModelCorrection){
-          S.session.model=fallback.model;
-          S.session.model_provider=fallback.model_provider||null;
-          currentModel=fallback.model;
-          _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
-        }
+  const modelSel=$('modelSelect');
+  const rawCurrentModel=String(currentModel||'').trim();
+  const hasSessionModel=rawCurrentModel&&rawCurrentModel.toLowerCase()!=='unknown';
+  if(!hasSessionModel){
+    // Missing/unknown session metadata must not leave the picker on the
+    // previously viewed chat's model (#1771). Apply the configured default
+    // first, then the first available option only as an HTML fallback.
+    const fallback=_applySessionModelFallback(modelSel);
+    if(fallback){
+      // Defer state mutation + network write while the live model resolution
+      // is in flight — sessions.js sets _modelResolutionDeferred=true between
+      // the fast-path session render and the resolve_model=1 round-trip.
+      // Persisting here would race that resolution and would also issue
+      // silent /api/session/update POSTs against imported/read-only CLI
+      // sessions whose model field reads "unknown" (#1779 stage-310 review).
+      // The visible sel.value change still happens above for UX; only the
+      // state mutation + persist defers.
+      const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
+      if(!deferModelCorrection){
+        S.session.model=fallback.model;
+        S.session.model_provider=fallback.model_provider||null;
+        currentModel=fallback.model;
+        _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
       }
-    } else {
-      const applied=_applyModelToDropdown(currentModel,modelSel,S.session.model_provider||null);
-      // If the session model is missing from the current provider list, inject
-      // a session-scoped option instead of displaying the previous/static
-      // selection. Only fall back if that repair path is unavailable.
-      if(!applied){
-        const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
-        const missingModelIsRoutable=_providerDefersMissingModelFallback(S.session.model_provider||window._activeProvider||null);
-        // Also defer if a live model fetch is still in flight — the model may be
-        // in the list once the fetch completes. Persisting now would corrupt the
-        // session with the wrong model before live models arrive (#1169).
-        const liveStillPending=window._activeProvider&&_liveModelFetchPending.has(window._activeProvider);
-        if(liveStillPending||missingModelIsRoutable){
-          // Live fetch in flight — don't touch sel.value or S.session.model yet.
-          // _addLiveModelsToSelect() will re-apply S.session.model once done (#1169).
-          // Named custom providers/OpenRouter can also route vendor-prefixed IDs
-          // outside the static catalog, so preserve the user's explicit choice.
-          if(typeof _ensureModelOptionInDropdown==='function'){
-            const sessionOption=_ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null);
-            if(sessionOption) currentModel=sessionOption;
-          }
+    }
+  } else {
+    const applied=_applyModelToDropdown(currentModel,modelSel,S.session.model_provider||null);
+    // If the session model is missing from the current provider list, inject
+    // a session-scoped option instead of displaying the previous/static
+    // selection. Only fall back if that repair path is unavailable.
+    if(!applied){
+      const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
+      const missingModelIsRoutable=_providerDefersMissingModelFallback(S.session.model_provider||window._activeProvider||null);
+      // Also defer if a live model fetch is still in flight — the model may be
+      // in the list once the fetch completes. Persisting now would corrupt the
+      // session with the wrong model before live models arrive (#1169).
+      const liveStillPending=window._activeProvider&&_liveModelFetchPending.has(window._activeProvider);
+      if(liveStillPending||missingModelIsRoutable){
+        // Live fetch in flight — don't touch sel.value or S.session.model yet.
+        // _addLiveModelsToSelect() will re-apply S.session.model once done (#1169).
+        // Named custom providers/OpenRouter can also route vendor-prefixed IDs
+        // outside the static catalog, so preserve the user's explicit choice.
+        if(typeof _ensureModelOptionInDropdown==='function'){
+          const sessionOption=_ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null);
+          if(sessionOption) currentModel=sessionOption;
+        }
+      } else {
+        const sessionOption=(typeof _ensureModelOptionInDropdown==='function')
+          ? _ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null)
+          : null;
+        if(sessionOption){
+          currentModel=sessionOption;
         } else {
-          const sessionOption=(typeof _ensureModelOptionInDropdown==='function')
-            ? _ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null)
-            : null;
-          if(sessionOption){
-            currentModel=sessionOption;
-          } else {
-            const fallback=_applySessionModelFallback(modelSel);
-            if(fallback&&!deferModelCorrection){
-              S.session.model=fallback.model;
-              S.session.model_provider=fallback.model_provider||null;
-              currentModel=fallback.model;
-              // Persist the correction so the session doesn't re-inject on next load.
-              _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
-            }
+          const fallback=_applySessionModelFallback(modelSel);
+          if(fallback&&!deferModelCorrection){
+            S.session.model=fallback.model;
+            S.session.model_provider=fallback.model_provider||null;
+            currentModel=fallback.model;
+            // Persist the correction so the session doesn't re-inject on next load.
+            _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
           }
         }
       }

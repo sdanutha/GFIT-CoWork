@@ -49,14 +49,6 @@ def _resolve_session_ttl() -> int:
     return SESSION_TTL
 
 
-# ── Public paths (no auth required) ─────────────────────────────────────────
-PUBLIC_PATHS = frozenset({
-    '/login', '/health', '/favicon.ico', '/sw.js',
-    '/api/auth/login', '/api/auth/status',
-    '/manifest.json', '/manifest.webmanifest',
-    '/session/manifest.json', '/session/manifest.webmanifest',
-})
-
 COOKIE_NAME = 'hermes_session'
 CSRF_HEADER_NAME = 'X-Hermes-CSRF-Token'
 
@@ -272,7 +264,6 @@ def create_session(
     username: str | None = None,
     bound_profile: str | None = None,
     role: str | None = None,
-    display_name: str | None = None,
 ) -> str:
     """Create a new auth session. Returns signed cookie value."""
     token = secrets.token_hex(32)
@@ -287,8 +278,6 @@ def create_session(
         }
         if role is not None:
             record['role'] = role
-        if display_name is not None:
-            record['display_name'] = display_name
     else:
         record = expiry
     with _SESSIONS_LOCK:
@@ -459,13 +448,12 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
 
     A User's request runs in, and is bound to, the Profile its Admission names
     (:func:`api.access.caller_bound_profile`), so no Profile the client names
-    (cookie, query or body) can reach another Profile's data. An Admin's request
-    runs in ``default``.
+    (cookie, query or body) can reach another Profile's data.
 
     Fails closed: the session is ended when Directory login is no longer
     configured, or when Admission (:func:`api.access.admit`) for the session's
     employee ID no longer gives the session's role and Profile -- the Profile
-    was deleted or disabled, the Admin list changed, or the role is unknown.
+    was deleted or disabled, or the role is not ``user``.
     Otherwise the confirmed Admission is recorded as the request's Admission.
     """
     from api.access import admit_request
@@ -479,22 +467,19 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
     return _remember_request_session(handler, info)
 
 
-def _refuse_admin_only_for_user(handler, parsed, session_info: dict) -> bool:
-    """The Admin-only gate: True (after sending 403) when a User calls a non-User endpoint.
+def _refuse_unlisted_route(handler, parsed, session_info: dict) -> bool:
+    """The route gate: True (after sending 403) when a User calls a route not open to Users.
 
-    The role is the request's Admission. A Directory session with none was not
-    admitted for this request, so it may call nothing.
+    The caller is the request's Admission. A Directory session with none was
+    not admitted for this request, so it may call nothing.
     """
     if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
         return False
-    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, request_admission, user_may_call
+    from api.access import NOT_AVAILABLE_MESSAGE, request_admission, user_may_call
 
-    admission = request_admission()
-    if admission is not None and admission.role == ROLE_ADMIN:
+    if request_admission() is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
         return False
-    if admission is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
-        return False
-    _send_forbidden(handler, parsed, ADMIN_ONLY_MESSAGE)
+    _send_forbidden(handler, parsed, NOT_AVAILABLE_MESSAGE)
     return True
 
 
@@ -674,12 +659,10 @@ def check_auth(handler, parsed) -> bool:
     If not authorized, sends 401 (API) or 302 redirect (page) and returns False."""
     if not directory.is_directory_enabled():
         return True
-    # Public paths don't require auth
-    if (
-        parsed.path in PUBLIC_PATHS
-        or parsed.path.startswith('/static/')
-        or parsed.path.startswith('/session/static/')
-    ):
+    # Paths served before login: the route table's PUBLIC rows.
+    from api.route_table import is_public
+
+    if is_public(parsed.path):
         return True
     cookie_val = parse_cookie(handler)
     has_session = bool(cookie_val and verify_session(cookie_val))
@@ -695,7 +678,7 @@ def check_auth(handler, parsed) -> bool:
         return False
     session_info = ensure_request_session(handler)
     if session_info:
-        if _refuse_admin_only_for_user(handler, parsed, session_info):
+        if _refuse_unlisted_route(handler, parsed, session_info):
             return False
         return True
     # Not authorized
@@ -736,7 +719,7 @@ def check_auth(handler, parsed) -> bool:
         # route handling), the actual source of the server-side loop.
         #
         # The login page is served ONLY at the public `/login` route (see
-        # PUBLIC_PATHS + the routes.py `/login` handler); the app's client route
+        # its PUBLIC route-table row + the routes.py `/login` handler); the app's client route
         # `/session/login` is NOT public, so a bare relative `login` from
         # `/session/login` resolves to `/session/login` again and re-triggers
         # check_auth() — an infinite redirect. Resolve to the real login route

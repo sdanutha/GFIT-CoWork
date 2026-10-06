@@ -25,6 +25,5 @@ def test_profiles_route_returns_active_profile(monkeypatch):
             "profiles": expected_profiles,
             "active": "default",
             "single_profile_mode": False,
-            "may_switch_profile": True,
         },
     }

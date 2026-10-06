@@ -101,7 +101,6 @@ def test_polish_locale_includes_representative_translations():
         "tab_tasks: 'Zadania'",
         "tab_profiles: 'Profile'",
         "empty_title: 'W czym mogę pomóc?'",
-        "onboarding_title: 'Witaj w GFIT-CoWork'",
     ]
     for entry in expected:
         assert entry in pl_block

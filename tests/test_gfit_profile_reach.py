@@ -1,8 +1,9 @@
 """GFIT-CoWork: the session ownership module answers "which Profiles may this request read?".
 
 A User's request reads exactly the User's own Profile, whatever it asks,
-never counts other Profiles, and is single-Profile. The unconfined adapter
-(the Admin, and requests with no Admission) keeps today's rules: the active
+never counts other Profiles, and is single-Profile. An Admin's Admission
+from an earlier version is not understood and reads no Profile (ADR 0006).
+The unconfined adapter (requests with no Admission) keeps today's rules: the active
 Profile, or every Profile when the request asks and Upstream's isolated
 profile mode is off. The refusing answer reads no Profile.
 
@@ -14,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 import api.profiles as profiles
-from api.access import ROLE_ADMIN, ROLE_USER, Admitted
+from api.access import ROLE_USER, Admitted
 from api.session_ownership import ownership_for
 
 ALICE = "521740"
@@ -45,7 +46,7 @@ def _isolated_mode(monkeypatch, hermes, profile):
 
 ADAPTERS = {
     "user": lambda: ownership_for(Admitted(ROLE_USER, ALICE), directory_session=True),
-    "admin": lambda: ownership_for(Admitted(ROLE_ADMIN, "default"), directory_session=True),
+    "former admin": lambda: ownership_for(Admitted("admin", "default"), directory_session=True),
     "login off": lambda: ownership_for(None, directory_session=False),
     "refusing": lambda: ownership_for(None, directory_session=True),
 }
@@ -59,8 +60,8 @@ def _readable(reach):
 CASES = [
     ("user", False, False, ({ALICE}, False, True)),
     ("user", True, False, ({ALICE}, False, True)),
-    ("admin", False, False, ({"default"}, True, False)),
-    ("admin", True, False, (EVERY, False, False)),
+    ("former admin", False, False, (set(), False, True)),
+    ("former admin", True, False, (set(), False, True)),
     ("login off", False, False, ({"default"}, True, False)),
     ("login off", True, False, (EVERY, False, False)),
     ("login off", False, True, ({BOB}, False, True)),
@@ -86,7 +87,7 @@ def test_which_profiles_a_request_may_read(world, monkeypatch, adapter, all_prof
 # (adapter, isolated mode) -> readable at all, whatever the view
 CALLER_CASES = [
     ("user", False, {ALICE}),
-    ("admin", False, EVERY),
+    ("former admin", False, set()),
     ("login off", False, EVERY),
     ("login off", True, EVERY),  # Upstream's posture shapes views, not what a caller may read
     ("refusing", False, set()),
@@ -107,22 +108,14 @@ def test_which_profiles_a_caller_may_read_at_all(world, monkeypatch, adapter, is
     ("user", "default", False),
     ("user", None, False),  # a row with no Profile is the root Profile's
     ("user", "", False),
-    ("admin", BOB, True),
-    ("admin", None, True),
+    ("former admin", BOB, False),
+    ("former admin", None, False),
     ("refusing", ALICE, False),
 ])
 def test_an_all_profiles_reach_includes_only_readable_rows(world, adapter, row_profile, expected):
     reach = ADAPTERS[adapter]().profile_reach("default", all_profiles=True)
 
     assert reach.includes(row_profile) is expected
-
-
-def test_the_admins_own_view_reads_only_the_active_profile(world):
-    reach = ADAPTERS["admin"]().profile_reach(BOB, all_profiles=False)
-
-    assert reach.includes(BOB)
-    assert not reach.includes(ALICE)
-    assert not reach.includes("default")
 
 
 # ── A Profile-home lookup refuses what the request may not read ─────────────
@@ -162,17 +155,11 @@ def test_a_users_profile_home_lookup_resolves_only_their_own(world, monkeypatch,
     assert _lookup(name) == homes.get(expected, expected)
 
 
-@pytest.mark.parametrize("name,expected", [
-    (ALICE, "alice"),
-    (BOB, "bob"),
-    ("default", "root"),
-    (None, "root"),
-])
-def test_the_admins_profile_home_lookup_resolves_any_profile(world, monkeypatch, name, expected):
-    _in_request(monkeypatch, Admitted(ROLE_ADMIN, "default"))
-    homes = {"alice": world / "profiles" / ALICE, "bob": world / "profiles" / BOB, "root": world}
+@pytest.mark.parametrize("name", [ALICE, BOB, "default", None])
+def test_a_former_admins_profile_home_lookup_resolves_nothing(world, monkeypatch, name):
+    _in_request(monkeypatch, Admitted("admin", "default"))
 
-    assert _lookup(name) == homes[expected]
+    assert _lookup(name) == REFUSED
 
 
 def test_upstream_isolated_mode_keeps_its_quiet_clamp(world, monkeypatch):

@@ -1,50 +1,33 @@
-"""GFIT-CoWork -- roles and the Admin-only feature gate.
+"""GFIT-CoWork -- Admission and the route gate.
 
-There are two roles. An **Admin** is an employee ID named in
-``HERMES_WEBUI_ADMIN_USERS`` (comma-separated); they log in to the ``default``
-Profile and can use everything. Everyone else who logs in is a **User**,
-bound to their own Profile.
+There is one role: the **User**, who logs in with the company AD and is bound
+to their own Profile. There is no Admin in the web app (ADR 0006); the
+Operator works on the server.
 
-This module is the one place that decides who is admitted, with which role and
-to which Profile (:func:`admit`, Admission), and what a User may call.
+This module is the one place that decides who is admitted and to which
+Profile (:func:`admit`, Admission), and what a User may call.
 Admission runs again on every request from a Directory session, and its answer
 is kept as the request's Admission (:func:`request_admission`): the one answer
 to "who is calling?" for the rest of that request.
 :func:`user_may_call` answers from the route table (``api.route_table``): a User
-may call a route whose row says ``USER``; a route whose row says ``ADMIN``, and
-any path with no row, including routes added later without one, is refused
-(fail closed).
-
-The server gate is the source of truth. The web app hides what its caller may
-not use, from :data:`SHELL_FEATURES` (each feature named by its gating route,
-answered from this gate), which is cosmetic only.
+may call a route whose row says ``USER`` or ``PUBLIC``; any path with no row,
+including routes added later without one, is refused (fail closed).
 """
 from __future__ import annotations
 
 import contextlib
-import os
 import threading
 from typing import NamedTuple
 
 from api import route_table
 
-ADMIN_USERS_ENV = "HERMES_WEBUI_ADMIN_USERS"
+# The Admin list of earlier versions. It grants nothing now; startup warns
+# when a Deployment still sets it (ADR 0006).
+LEFTOVER_ADMIN_USERS_ENV = "HERMES_WEBUI_ADMIN_USERS"
 
-ROLE_ADMIN = "admin"
 ROLE_USER = "user"
 
-ADMIN_ONLY_MESSAGE = "This feature is available to your team's Admin only."
-
-def admin_users() -> frozenset[str]:
-    """Return the normalised employee IDs named in ``HERMES_WEBUI_ADMIN_USERS``."""
-    from api.directory import normalize_username
-
-    names = (normalize_username(part) for part in os.getenv(ADMIN_USERS_ENV, "").split(","))
-    return frozenset(name for name in names if name)
-
-
-def is_admin(employee_id) -> bool:
-    return bool(employee_id) and employee_id in admin_users()
+NOT_AVAILABLE_MESSAGE = "This page or action is not available."
 
 
 # Why Admission refuses someone.
@@ -62,12 +45,13 @@ class Refused(NamedTuple):
 
 
 def admit(employee_id: str) -> Admitted | Refused:
-    """Admission: may *employee_id* use this Deployment, with which role, in which Profile?"""
+    """Admission: may *employee_id* use this Deployment, and in which Profile?
+
+    They need their own Profile, named after them, and it must be active.
+    """
     from api import roster
     from api.profiles import named_profile_exists
 
-    if is_admin(employee_id):
-        return Admitted(ROLE_ADMIN, "default")
     if not named_profile_exists(employee_id):
         return Refused(REFUSED_NO_PROFILE)
     if roster.is_disabled(employee_id):
@@ -93,9 +77,9 @@ def admit_request(session_info: dict) -> Admitted | None:
 
     Records the Admission as the request's Admission and returns it when it
     still gives the session's role and Profile, or returns None (and records
-    none) when it does not: the Profile was deleted or disabled, the Admin list
-    changed, or the role is unknown. Called only by the per-request Directory
-    session check.
+    none) when it does not: the Profile was deleted or disabled, or the role
+    is not ``user`` (an Admin session from an earlier version). Called only by
+    the per-request Directory session check.
     """
     clear_request_admission()
     _request.directory_session = True
@@ -123,21 +107,21 @@ def request_has_directory_session() -> bool:
 
 
 def caller_is_user() -> bool:
-    """True when this request comes from an admitted User (not the Admin)."""
-    admission = request_admission()
-    return admission is not None and admission.role == ROLE_USER
+    """True when this request comes from an admitted User."""
+    return request_admission() is not None
 
 
 def caller_bound_profile() -> str | None:
-    """The Profile an admitted User's request is bound to, else None (the Admin, or no caller)."""
-    return request_admission().profile if caller_is_user() else None
+    """The Profile an admitted User's request is bound to, else None (no caller)."""
+    admission = request_admission()
+    return admission.profile if admission is not None else None
 
 
 def profile_for_request(admission, *, directory_session: bool, cookie_profile) -> str | None:
     """The Profile a request runs in: the one answer, from its Admission.
 
-    A Directory session runs in its Admission's Profile (a User's own,
-    ``default`` for the Admin), whatever cookie the browser sends; one with no
+    A Directory session runs in its Admission's Profile (the User's own),
+    whatever cookie the browser sends; one with no
     Admission runs in none. With no Directory session (login turned off) the
     authenticated profile cookie picks it, as Upstream did. None means the
     process's Profile.
@@ -150,14 +134,10 @@ def profile_for_request(admission, *, directory_session: bool, cookie_profile) -
 
 
 def settle_request(handler) -> None:
-    """Once its Admission is known: set this request's Profile (the only setter)
-    and record its route, for session ownership's read-or-write question."""
-    from urllib.parse import urlparse
-
+    """Once its Admission is known: set this request's Profile (the only setter)."""
     from api.helpers import get_profile_cookie
     from api.profiles import set_request_profile
 
-    _request.route = (getattr(handler, "command", "GET"), urlparse(getattr(handler, "path", "") or "").path)
     profile = profile_for_request(
         request_admission(),
         directory_session=request_has_directory_session(),
@@ -167,16 +147,10 @@ def settle_request(handler) -> None:
         set_request_profile(profile)
 
 
-def request_route() -> tuple[str, str] | None:
-    """This request's (method, path), or None off a request thread."""
-    return getattr(_request, "route", None)
-
-
 def clear_request_admission() -> None:
-    """Forget this request's Admission, Directory session and route. Safe to call when none was recorded."""
+    """Forget this request's Admission and Directory session. Safe to call when none was recorded."""
     _request.admission = None
     _request.directory_session = False
-    _request.route = None
 
 
 @contextlib.contextmanager
@@ -198,34 +172,11 @@ def without_request_admission():
 
 def user_entry(method: str, path: str) -> str | None:
     """The route-table pattern that lets a User call *method* *path*, or None if refused."""
+    # Every row is a User's or public; a path with no row is refused.
     route = route_table.match(method, path)
-    return route.pattern if route is not None and route.caller == route_table.USER else None
+    return route.pattern if route is not None else None
 
 
 def user_may_call(method: str, path: str) -> bool:
     """True if a User may call *method* *path*. Unclassified endpoints are refused."""
     return user_entry(method, path) is not None
-
-
-# ── What the web app shows its caller ───────────────────────────────────────
-#
-# Each feature of the web app that the gate may refuse, named by the route that
-# gates it. The app shell carries the features its caller may use
-# (``data-gfit-may`` on ``<html>``); the browser hides the others and does not
-# call them. The list follows the gate, so the two cannot disagree; the gate
-# stays the authority.
-SHELL_FEATURES: dict[str, tuple[str, str]] = {
-    "profiles_admin": ("POST", "/api/profile/create"),
-    "settings": ("POST", "/api/settings"),
-}
-
-
-def shell_features(role) -> tuple[str, ...]:
-    """The features of :data:`SHELL_FEATURES` a caller with *role* may use.
-
-    A User may use those whose route the gate lets a User call; the Admin, and
-    a request with no caller (login turned off), may use every one.
-    """
-    if role != ROLE_USER:
-        return tuple(SHELL_FEATURES)
-    return tuple(name for name, (method, path) in SHELL_FEATURES.items() if user_may_call(method, path))

@@ -58,7 +58,6 @@ I18N_KEYS = [
     "composer_control_voice_mode",
     "composer_control_bg_badge",
     "composer_control_mobile_config",
-    "composer_control_quota_chip",
     "composer_control_toolsets",
     "composer_control_status",
 ]

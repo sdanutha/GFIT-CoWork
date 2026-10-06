@@ -215,8 +215,7 @@ _PROTECTED_ENV_KEYS = frozenset({
     # the operator intended. Same shape as the isolated-profile key: only
     # the operator/launcher env at startup can set it.
     'HERMES_WEBUI_MAX_SESSION_RESOLVE',
-    # GFIT-CoWork: who may log in, and who is an Admin, belong to the Deployment.
-    'HERMES_WEBUI_ADMIN_USERS',
+    # GFIT-CoWork: who may log in belongs to the Deployment.
     'HERMES_WEBUI_DIRECTORY',
     'HERMES_WEBUI_DIRECTORY_USERS',
     'HERMES_WEBUI_LDAP_URL',
@@ -2145,8 +2144,8 @@ def _build_profile_rows_fast() -> list | None:
     caller falls back to upstream's (slow but correct) ``list_profiles()``.
     When ``hermes_cli`` cannot be imported at all, the same rows are built from this
     module's own Profile paths and name rule, with the model read straight
-    from each Profile's ``config.yaml`` and no gateway probe, so the Admin still
-    sees every named Profile. Forward-compatible: if upstream fixes
+    from each Profile's ``config.yaml`` and no gateway probe, so the Operator
+    command line still sees every named Profile. Forward-compatible: if upstream fixes
     ``find_alias_for_profile`` this stays fast and correct with nothing to revert.
     """
     try:

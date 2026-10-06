@@ -2,7 +2,7 @@
 
 A Member's Workspaces live in ``<Profile>/workspace``. Registering a Workspace
 elsewhere is refused, and every file API refuses a path that resolves outside
-it, after ``..`` and symlinks are resolved. The Admin is not confined.
+it, after ``..`` and symlinks are resolved.
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
@@ -16,7 +16,6 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 REFUSED = (400, 403, 404)
 SECRET = "top secret outside the Profile"
@@ -24,9 +23,9 @@ SECRET = "top secret outside the Profile"
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 
@@ -247,15 +246,3 @@ def test_writing_inside_the_workspace_works(srv, alice, session):
     status, body, _ = alice.post("/api/file/create", {"session_id": session, "path": "sub/a.txt", "content": "hi"})
     assert status == 200, body
     assert (_workspace(srv, ALICE) / "sub" / "a.txt").read_text() == "hi"
-
-
-# ── The Admin ────────────────────────────────────────────────────────────────
-
-def test_admin_can_register_a_workspace_anywhere(srv, outside):
-    admin = srv.logged_in(ADMIN)
-    status, body, _ = admin.post("/api/workspaces/add", {"path": str(outside)})
-    assert status == 200, body
-    sid = _new_session(admin, workspace=str(outside))
-    status, body, _ = admin.get(f"/api/file?session_id={sid}&path=secret.txt")
-    assert status == 200, body
-    assert SECRET in str(body)

@@ -20,12 +20,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from api.route_table import ROUTES as _ROUTES, USER as _USER
+from api.route_table import ROUTES as _ROUTES
 from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @dataclass(frozen=True)
@@ -143,6 +142,7 @@ NAMES_NO_SESSION: dict[tuple[str, str], str] = {
         "/manifest.webmanifest", "/session/manifest.json", "/session/manifest.webmanifest",
         "/sw.js", "/favicon.ico", "/health", "/plugins/*", "/dashboard-plugins/*",
     )},
+    ("GET", "/login"): "sign in and out",
     ("GET", "/api/auth/status"): "sign in and out",
     ("POST", "/api/auth/login"): "sign in and out",
     ("POST", "/api/auth/logout"): "sign in and out",
@@ -190,7 +190,8 @@ NAMES_NO_SESSION: dict[tuple[str, str], str] = {
 
 
 def _user_entries() -> set[tuple[str, str]]:
-    return {(r.method, r.pattern) for r in _ROUTES if r.caller == _USER}
+    # Every row: a User may call each one (public rows too). There is no Admin row.
+    return {(r.method, r.pattern) for r in _ROUTES}
 
 
 def test_every_user_route_is_placed_as_naming_a_session_or_not():
@@ -209,9 +210,9 @@ def test_every_user_route_is_placed_as_naming_a_session_or_not():
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 

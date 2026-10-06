@@ -1,10 +1,11 @@
 """GFIT-CoWork: one session ownership module answers "whose session is this?" for a request.
 
 A User's adapter owns exactly the sessions of the User's Profile and refuses
-every other id, including ids it cannot place. The unconfined adapter (the
-Admin, and requests with no Admission) keeps today's rules, including the 409
-that names the owning Profile. A Directory session with no recorded Admission
-gets the refusing answer.
+every other id, including ids it cannot place. The unconfined adapter
+(requests with no Admission) keeps today's rules, including the 409 that names
+the owning Profile. A Directory session with no recorded Admission, or with an
+Admission it does not understand (an Admin's from before ADR 0006), gets the
+refusing answer.
 
 Tested from temporary Profile folders and in-memory session records alone: no
 server and no request thread. Each case is a row in a table.
@@ -21,10 +22,9 @@ import pytest
 import api.access as access
 import api.models as models
 import api.profiles as profiles
-from api.access import ROLE_ADMIN, ROLE_USER, Admitted
+from api.access import ROLE_USER, Admitted
 from api.config import ACTIVE_RUNS, ACTIVE_RUNS_LOCK
 from api.session_ownership import (
-    ADMIN,
     REFUSING,
     UNCONFINED,
     Refusal,
@@ -58,7 +58,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes)
     profiles._invalidate_root_profile_cache()
     profiles._invalidate_list_profiles_cache()
-    # The Admin's request runs in the root Profile.
+    # A request with no Admission runs in the root Profile.
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "default")
 
     sessions = collections.OrderedDict()
@@ -217,7 +217,7 @@ def test_is_this_found_session_mine(world, row, user, unconfined):
 
 
 def test_a_profile_less_row_opens_under_a_named_profile_only_from_the_listing(world, monkeypatch):
-    # The Admin in Bob's Profile: the detail load opens a Claude Code row it
+    # Login off, in Bob's Profile: the detail load opens a Claude Code row it
     # knows from the listing; any other route that found it refuses it.
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: BOB)
     row = {"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}
@@ -251,14 +251,13 @@ def test_bound_names_only_its_own_profile(world):
     user = UserSessionOwnership(ALICE)
     assert user.may_name_profile(ALICE) is True
     assert [user.may_name_profile(name) for name in (BOB, "default", "", None, 42)] == [False] * 5
-    assert user.may_switch_profile() is False
     assert user.sees_profile_less_sessions() is False
     assert user.keeps_upstream_rules() is False
     assert UNCONFINED.keeps_upstream_rules() is True
     assert REFUSING.keeps_upstream_rules() is False
-    assert UNCONFINED.may_name_profile(BOB) and UNCONFINED.may_switch_profile()
+    assert UNCONFINED.may_name_profile(BOB)
     assert UNCONFINED.sees_profile_less_sessions() is True
-    assert not REFUSING.may_name_profile(ALICE) and not REFUSING.may_switch_profile()
+    assert not REFUSING.may_name_profile(ALICE)
     assert REFUSING.sees_profile_less_sessions() is False
 
 
@@ -291,7 +290,7 @@ def test_a_refusal_writes_its_own_answer():
 CHOICE_TABLE = [
     # (admission, has a Directory session, adapter)
     (Admitted(ROLE_USER, ALICE), True, "user"),
-    (Admitted(ROLE_ADMIN, "default"), True, "admin"),
+    (Admitted("admin", "default"), True, "refusing"),  # an Admin's session from before ADR 0006
     (None, False, "unconfined"),
     (None, True, "refusing"),
     (Admitted("superuser", ALICE), True, "refusing"),
@@ -304,7 +303,7 @@ def _kind(adapter) -> str:
     if isinstance(adapter, UserSessionOwnership):
         assert adapter.profile == ALICE
         return "user"
-    return {id(UNCONFINED): "unconfined", id(ADMIN): "admin", id(REFUSING): "refusing"}[id(adapter)]
+    return {id(UNCONFINED): "unconfined", id(REFUSING): "refusing"}[id(adapter)]
 
 
 @pytest.mark.parametrize("admission,directory_session,expected", CHOICE_TABLE)
@@ -348,11 +347,10 @@ class _AnswerHandler:
         return self.status, json.loads(bytes(self.body))
 
 
-def _load_as(monkeypatch, adapter, session_id, *, reading=True, **kwargs):
+def _load_as(monkeypatch, adapter, session_id, **kwargs):
     import api.session_ownership as ownership
 
     monkeypatch.setattr(ownership, "request_session_ownership", lambda: adapter)
-    monkeypatch.setattr(ownership, "_request_is_a_read", lambda: reading)
     handler = _AnswerHandler()
     kwargs.setdefault("load", models.get_session)
     return ownership.load_owned_session(handler, session_id, **kwargs), handler
@@ -368,22 +366,6 @@ def test_another_users_session_and_a_missing_one_get_the_same_404(world, monkeyp
     session, handler = _load_as(monkeypatch, UserSessionOwnership(ALICE), session_id)
     assert session is None
     assert handler.answer() == (404, {"error": "Session not found"})
-
-
-def test_the_admin_reads_another_profiles_session_in_place(world, monkeypatch):
-    session, handler = _load_as(monkeypatch, ADMIN, "bob-webui", reading=True)
-    assert session.session_id == "bob-webui" and handler.status is None
-
-
-def test_the_admin_writing_another_profiles_session_gets_the_read_only_answer(world, monkeypatch):
-    session, handler = _load_as(monkeypatch, ADMIN, "bob-webui", reading=False)
-    status, body = handler.answer()
-    assert session is None and status == 403 and body["code"] == "session_read_only" and body["profile"] == BOB
-
-
-def test_the_admins_missing_session_is_404(world, monkeypatch):
-    session, handler = _load_as(monkeypatch, ADMIN, "no-such-session")
-    assert session is None and handler.answer() == (404, {"error": "Session not found"})
 
 
 def test_the_loader_and_its_options_are_the_callers(world, monkeypatch):

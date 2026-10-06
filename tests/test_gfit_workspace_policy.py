@@ -1,9 +1,10 @@
 """GFIT-CoWork: one Workspace policy answers every Workspace question for a request.
 
 A User's policy confines everything to that User's Workspace folder
-(``<Profile>/workspace``); the unconfined policy is today's behaviour for the
-Admin and for requests with no Admission (login turned off). A Directory
-session with no recorded Admission gets the refusing answer (unknown is not
+(``<Profile>/workspace``); the unconfined policy is today's behaviour for
+requests with no Admission (login turned off, worker threads). A Directory
+session with no recorded Admission, or one this module does not understand (an
+Admin's from before ADR 0006), gets the refusing answer (unknown is not
 allowed).
 
 The User's policy is tested from a temporary Profile folder alone: no server
@@ -18,7 +19,7 @@ import pytest
 
 import api.access as access
 import api.profiles as profiles
-from api.access import ROLE_ADMIN, ROLE_USER, Admitted
+from api.access import ROLE_USER, Admitted
 from api.workspace import OUTSIDE_WORKSPACE_MESSAGE
 from api.workspace_policy import (
     REFUSING,
@@ -271,7 +272,7 @@ def profiles_root(monkeypatch, homes):
 
 @pytest.mark.parametrize("admission,directory_session,chosen", [
     (Admitted(ROLE_USER, ALICE), True, "user"),
-    (Admitted(ROLE_ADMIN, "default"), True, "unconfined"),
+    (Admitted("admin", "default"), True, "refusing"),     # an Admin's, from before ADR 0006
     (None, False, "unconfined"),                          # login turned off
     (None, True, "refusing"),                             # unknown is not allowed
     (Admitted("owner", ALICE), True, "refusing"),         # an unknown role
@@ -296,9 +297,10 @@ def no_request_admission():
 
 @pytest.mark.parametrize("session,admission,chosen", [
     ({"username": ALICE, "role": ROLE_USER, "bound_profile": ALICE}, Admitted(ROLE_USER, ALICE), "user"),
-    ({"username": "600001", "role": ROLE_ADMIN, "bound_profile": "default"}, Admitted(ROLE_ADMIN, "default"), "unconfined"),
-    # Admission no longer gives the session's role: the Directory session has no Admission.
-    ({"username": ALICE, "role": ROLE_ADMIN, "bound_profile": "default"}, Admitted(ROLE_USER, ALICE), "refusing"),
+    # An Admin's session from before ADR 0006: Admission no longer gives its
+    # role and Profile, so the Directory session has no Admission.
+    ({"username": "600001", "role": "admin", "bound_profile": "default"}, Admitted(ROLE_USER, "600001"), "refusing"),
+    ({"username": ALICE, "role": "admin", "bound_profile": "default"}, Admitted(ROLE_USER, ALICE), "refusing"),
 ])
 def test_the_request_policy_follows_the_requests_admission(
     monkeypatch, homes, profiles_root, no_request_admission, session, admission, chosen,

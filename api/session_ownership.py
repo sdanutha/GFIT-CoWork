@@ -7,7 +7,7 @@ policy:
 - the **User's adapter** (:class:`UserSessionOwnership`): owns exactly the
   sessions of the User's Profile (ADR 0002). Every other id, and every id it
   cannot place, is refused: unknown is not allowed;
-- the **unconfined adapter** (:data:`UNCONFINED`): the Admin, and requests with
+- the **unconfined adapter** (:data:`UNCONFINED`): requests with
   no Admission (login turned off, worker threads). Today's rules: a session of
   another, known Profile is refused with that Profile named (the 409 the client
   uses to offer a switch), and an id it cannot find passes to the route;
@@ -16,8 +16,7 @@ policy:
   nothing.
 
 A User's request is **Bound** to their Profile: besides owning only that
-Profile's sessions, it may name no other Profile (:meth:`may_name_profile`)
-and may not switch Profile (:meth:`may_switch_profile`).
+Profile's sessions, it may name no other Profile (:meth:`may_name_profile`).
 
 A route loads the session its request names through :func:`load_owned_session`:
 it asks session ownership first and writes the refusal (or the 404) itself.
@@ -49,7 +48,6 @@ import logging
 from dataclasses import dataclass
 
 from api.helpers import bad, j
-from api.route_table import READ, WRITE, match, routes_at
 
 logger = logging.getLogger(__name__)
 
@@ -67,18 +65,9 @@ class Refusal:
 
     owner: str | None = None
     session_id: str | None = None
-    read_only: bool = False
 
     def answer(self, handler, session_id=None, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write this refusal's answer: 403 for a read-only session, 409 with the
-        owner, else 404 with *not_found*."""
-        if self.read_only:
-            return j(handler, {
-                "error": "This session is read-only: it belongs to another Profile",
-                "code": "session_read_only",
-                "session_id": session_id if session_id is not None else self.session_id,
-                "profile": self.owner,
-            }, status=403)
+        """Write this refusal's answer: 409 with the owner, else 404 with *not_found*."""
         if self.owner:
             return j(handler, {
                 "error": "Session belongs to a different profile",
@@ -89,10 +78,7 @@ class Refusal:
         return self.answer_not_found(handler, not_found=not_found)
 
     def answer_not_found(self, handler, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write 404, for a route whose answer never names an owner (a read-only
-        refusal still answers 403: the Admin knows the session exists)."""
-        if self.read_only:
-            return self.answer(handler)
+        """Write 404, for a route whose answer never names an owner."""
         return bad(handler, not_found, 404)
 
 
@@ -131,28 +117,6 @@ class ProfileReach:
 
 EVERY_PROFILE = ProfileReach(every_profile=True)
 NO_PROFILE = ProfileReach(every_profile=False, single_profile=True)
-
-
-def _request_is_a_read() -> bool:
-    """Is this request a read, by the read/write table? Unknown is not."""
-    from api.access import request_route
-
-    route = request_route()
-    return route is not None and session_route_kind(*route) == READ
-
-
-def session_route_kind(method: str, path: str) -> str | None:
-    """READ or WRITE for a request to a route that names a session; None for any other route.
-
-    The answer is the route table's. A session route under a method it has no
-    row for is a WRITE.
-    """
-    route = match(method, path)
-    if route is not None and route.session is not None:
-        return route.session
-    if any(other.session is not None for other in routes_at(path)):
-        return WRITE
-    return None
 
 
 def _names_nothing(session_id) -> bool:
@@ -248,17 +212,9 @@ class UserSessionOwnership:
 
         return isinstance(name, str) and _profiles_match(name, self.profile)
 
-    def may_switch_profile(self) -> bool:
-        """Bound: a User's request never switches Profile."""
-        return False
-
     def sees_profile_less_sessions(self) -> bool:
         """Never: Claude Code rows come from the server account's home."""
         return False
-
-    def read_only_reason(self, found) -> str | None:
-        """Why a session the caller may open is read-only to them: never, for a User."""
-        return None
 
     def refuse_session(self, session_id) -> Refusal | None:
         """None when *session_id* names nothing or a session of the User's Profile, else 404."""
@@ -289,7 +245,7 @@ class UserSessionOwnership:
     def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
         """A row of the User's Profile; never a Profile-less one.
 
-        *active_profile* and *all_profiles* are the Admin's view; the User's
+        *active_profile* and *all_profiles* are an unconfined view; the User's
         own Profile wins.
         """
         from api.profiles import _profiles_match
@@ -326,20 +282,14 @@ class UserSessionOwnership:
 
 
 class _UnconfinedSessionOwnership:
-    """The Admin's, and no caller's: today's rules against the request's active Profile."""
+    """No caller's: today's rules against the request's active Profile."""
 
     def may_name_profile(self, name) -> bool:
-        return True
-
-    def may_switch_profile(self) -> bool:
         return True
 
     def sees_profile_less_sessions(self) -> bool:
         """Claude Code rows, under the setting that shows them."""
         return True
-
-    def read_only_reason(self, found) -> str | None:
-        return None
 
     def keeps_upstream_rules(self) -> bool:
         """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
@@ -426,64 +376,14 @@ class _UnconfinedSessionOwnership:
         return self.refuse_found_session(session_id, row)
 
 
-class _AdminSessionOwnership(_UnconfinedSessionOwnership):
-    """The Admin's Directory session: the unconfined rules, in ``default`` for good.
-
-    The Admin stays in the ``default`` Profile and never switches (ADR 0004).
-    Another Profile's session is read-only in place: a request the read/write
-    table calls a read is answered as for the Admin's own session (no 409, no
-    switch); anything else is refused read-only (403, naming the owner).
-    """
-
-    def may_switch_profile(self) -> bool:
-        return False
-
-    def may_name_profile(self, name) -> bool:
-        """Only ``default``: a request never names a User's Profile to work in.
-
-        Managing Profiles names them under ``name``, not ``profile``.
-        """
-        from api.profiles import _profiles_match
-
-        return isinstance(name, str) and bool(name) and _profiles_match(name, "default")
-
-    def keeps_upstream_rules(self) -> bool:
-        """No: Upstream's exemptions (chat start's placeholder retag, the CLI
-        import claim) would let the Admin take over another Profile's session.
-        Every session id the Admin names goes through the generic guard."""
-        return False
-
-    def refuse_found_session(self, session_id, found) -> Refusal | None:
-        refusal = super().refuse_found_session(session_id, found)
-        if refusal is None or not refusal.owner:
-            return refusal
-        if _request_is_a_read():
-            return None
-        return Refusal(owner=refusal.owner, session_id=refusal.session_id, read_only=True)
-
-    def read_only_reason(self, found) -> str | None:
-        from api.profiles import _profiles_match, get_active_profile_name
-
-        profile = _profile_of(found)
-        if profile and not _profiles_match(profile, get_active_profile_name()):
-            return "other_profile"
-        return None
-
-
 class _RefusingSessionOwnership:
     """The refusing answer: owns nothing."""
 
     def may_name_profile(self, name) -> bool:
         return False
 
-    def may_switch_profile(self) -> bool:
-        return False
-
     def sees_profile_less_sessions(self) -> bool:
         return False
-
-    def read_only_reason(self, found) -> str | None:
-        return None
 
     def refuse_session(self, session_id) -> Refusal:
         return NOT_FOUND
@@ -514,25 +414,22 @@ class _RefusingSessionOwnership:
 
 
 UNCONFINED = _UnconfinedSessionOwnership()
-ADMIN = _AdminSessionOwnership()
 REFUSING = _RefusingSessionOwnership()
 
 
 def ownership_for(admission, *, directory_session: bool):
     """The session ownership adapter for *admission*: the one mapping from Admission to adapter.
 
-    A User's Admission gives that User's adapter, the Admin's gives the
-    Admin's (the unconfined rules, never switching Profile). No Admission is unconfined only when there is no Directory
+    A User's Admission gives that User's adapter. No Admission is
+    unconfined only when there is no Directory
     session (login turned off, a worker thread); a Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
-    from api.access import ROLE_ADMIN, ROLE_USER
+    from api.access import ROLE_USER
     from api.profiles import _resolve_named_profile_home
 
     if admission is None:
         return REFUSING if directory_session else UNCONFINED
-    if admission.role == ROLE_ADMIN:
-        return ADMIN
     if admission.role == ROLE_USER and admission.profile:
         try:
             _resolve_named_profile_home(admission.profile)
@@ -565,12 +462,12 @@ def load_owned_session(
     """The session the request names, when the request owns it; else None, its answer written.
 
     Session ownership answers first (as a read or a write, by the request's
-    route): a refusal writes 404 *not_found* (409 naming the owner, or the
-    Admin's read-only 403, for the unconfined and Admin adapters). Then *load*
+    route): a refusal writes 404 *not_found* (409 naming the owner, for the
+    unconfined adapter). Then *load*
     (the caller's session loader) loads it with *load_options*; a load
     that raises ``KeyError`` writes 404 *not_found*. Other errors pass to the
     caller. With *hide_owner* a refusal never says who owns the session (always
-    404, the Admin's read-only 403 aside), for routes that never did. For a session id the request chose,
+    404), for routes that never did. For a session id the request chose,
     never one the server chose.
     """
     refusal = request_session_ownership().refuse_session(session_id)

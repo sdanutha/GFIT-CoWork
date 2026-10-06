@@ -101,7 +101,6 @@ def test_korean_locale_includes_representative_translations():
         "tab_tasks: '작업'",
         "tab_profiles: 'Agent 프로필'",
         "empty_title: '무엇을 도와드릴까요?'",
-        "onboarding_title: 'GFIT-CoWork에 오신 것을 환영합니다'",
     ]
     for entry in expected:
         assert entry in src

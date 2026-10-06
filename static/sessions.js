@@ -361,15 +361,6 @@ const SESSION_COMPLETION_UNREAD_CLEARED_KEY = 'hermes-session-completion-unread-
 const SESSION_COMPLETION_UNREAD_CLEARED_PREFIX = `${SESSION_COMPLETION_UNREAD_CLEARED_KEY}:v1:`;
 const SESSION_COMPLETION_UNREAD_CLEARED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_OBSERVED_STREAMING_KEY = 'hermes-session-observed-streaming';
-// Per-profile session-count cache (issue #4717 / #4662 Phase 1.5). Records how
-// many sessions each profile rendered last time, keyed by profile name, so a
-// profile switch can pick an honest loading skeleton BEFORE the new /api/sessions
-// fetch resolves: a profile we last saw with zero sessions shows an empty-state
-// placeholder instead of a content skeleton that implies data which never arrives.
-// A profile we've never recorded falls back to the normal content skeleton (safe
-// default — never hide a skeleton for a profile that may well have conversations).
-const SESSION_PROFILE_COUNTS_KEY = 'hermes-session-profile-counts';
-let _sessionProfileCounts = null;
 let _sessionViewedCounts = null;
 let _sessionCompletionUnread = null;
 let _sessionCompletionUnreadClearedMemory = {};
@@ -449,45 +440,6 @@ function _getSessionViewedCounts() {
     _sessionViewedCounts = {};
   }
   return _sessionViewedCounts;
-}
-
-// ── Per-profile session-count cache (#4717) ──────────────────────────────────
-function _getSessionProfileCounts() {
-  if (_sessionProfileCounts !== null) return _sessionProfileCounts;
-  try {
-    const parsed = JSON.parse(localStorage.getItem(SESSION_PROFILE_COUNTS_KEY) || '{}');
-    _sessionProfileCounts = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch (_){
-    _sessionProfileCounts = {};
-  }
-  return _sessionProfileCounts;
-}
-
-// Record how many sessions a profile currently shows, so the NEXT switch into
-// it can pick an honest skeleton. Called after a real list render resolves.
-function _recordSessionProfileCount(profile, count) {
-  const name = (profile || '').trim();
-  if (!name) return;
-  const n = Number(count);
-  if (!Number.isFinite(n) || n < 0) return;
-  const counts = _getSessionProfileCounts();
-  if (counts[name] === n) return;  // no-op write avoidance
-  counts[name] = n;
-  try {
-    localStorage.setItem(SESSION_PROFILE_COUNTS_KEY, JSON.stringify(counts));
-  } catch (_){
-    // Ignore localStorage write failures (private mode / quota).
-  }
-}
-
-// Return the last-known session count for a profile, or null if we've never
-// recorded one (caller must treat null as "unknown" → keep the content skeleton).
-function _knownSessionProfileCount(profile) {
-  const name = (profile || '').trim();
-  if (!name) return null;
-  const counts = _getSessionProfileCounts();
-  const v = counts[name];
-  return (typeof v === 'number' && Number.isFinite(v)) ? v : null;
 }
 
 // Read a persisted sid -> value map. Missing or unreadable values read as an
@@ -1006,50 +958,12 @@ function _cronCompletionUnreadMetaForSession(session) {
   return {source: 'cron', profile: fromRow || active};
 }
 
-// Resolve whether a persisted marker is cron and which profile owns it.
-// Untagged/legacy markers are migrated from the sidebar session row when known.
-function _resolveCronCompletionMarkerOrigin(sid, marker) {
-  let isCron = !!(marker && marker.source === 'cron');
-  let profile = (marker && typeof marker.profile === 'string' && marker.profile.trim())
-    ? marker.profile.trim()
-    : '';
-  let session = null;
-  if (Array.isArray(_allSessions)) {
-    session = _allSessions.find((s) => s && s.session_id === sid) || null;
-  }
-  if (!session && typeof _sessionListSnapshotById !== 'undefined'
-    && _sessionListSnapshotById && typeof _sessionListSnapshotById.get === 'function') {
-    // Snapshot alone lacks source/profile; keep null.
-    session = null;
-  }
-  if (session) {
-    if (!isCron && _isCronSessionForUnread(session)) isCron = true;
-    if (!profile) {
-      const sp = (typeof session.profile === 'string' && session.profile.trim())
-        ? session.profile.trim()
-        : '';
-      if (sp) profile = sp;
-    }
-  }
-  // Persist migration so later switches don't re-resolve from a cleared list.
-  if (marker && isCron) {
-    if (marker.source !== 'cron') marker.source = 'cron';
-    if (profile && marker.profile !== profile) marker.profile = profile;
-  }
-  return {isCron, profile: profile || ''};
-}
 
 // A profile name provably resolving to the root profile: the literal
-// 'default' alias, or a roster entry flagged is_default (renamed root).
-// Unknown names fail closed — exact-name matching still applies to them.
+// 'default' alias. Unknown names fail closed — exact-name matching still
+// applies to them.
 function _cronProfileNameIsRootAlias(name) {
-  if (name === 'default') return true;
-  if (typeof _profilesCache !== 'undefined' && _profilesCache
-    && Array.isArray(_profilesCache.profiles)) {
-    const entry = _profilesCache.profiles.find((p) => p && p.name === name);
-    if (entry && entry.is_default) return true;
-  }
-  return false;
+  return name === 'default';
 }
 
 // default/renamed-root equivalence for cron-marker ownership (mirrors server
@@ -1077,40 +991,6 @@ function _cronMarkerProfileMatchesActive(origin, activeProfile) {
   return false;
 }
 
-// Drop persisted cron unread dots that belong to inactive profiles. Ordinary
-// (non-cron) completion markers stay put — sticky all-profile sidebars still
-// need those. Called from the shared profile-switch reset in panels.js.
-function _clearCronSessionCompletionUnreadForInactiveProfiles(activeProfile) {
-  const active = (typeof activeProfile === 'string' && activeProfile.trim())
-    ? activeProfile.trim()
-    : 'default';
-  const unread = _getSessionCompletionUnread();
-  let changed = false;
-  const clearedSids = [];
-  for (const sid of Object.keys(unread)) {
-    const marker = unread[sid];
-    if (!marker || typeof marker !== 'object' || Array.isArray(marker)) continue;
-    const resolved = _resolveCronCompletionMarkerOrigin(sid, marker);
-    if (!resolved.isCron) continue;
-    // Only clear when we know the owning profile AND it is not the active one
-    // (incl. default/renamed-root equivalence). Untagged + unresolvable stays.
-    if (!resolved.profile) continue;
-    if (_cronMarkerProfileMatchesActive(resolved.profile, active)) continue;
-    delete unread[sid];
-    clearedSids.push(sid);
-    changed = true;
-  }
-  if (!changed) return false;
-  // Each cleared marker needs its durable ordering fact, or the merge in
-  // _saveSessionCompletionUnread() (and a stale client's later save) would
-  // restore it from the store.
-  for (const sid of clearedSids) {
-    _writeSessionCompletionUnreadCleared(sid, _nextSessionCompletionUnreadOrder(sid));
-  }
-  _saveSessionCompletionUnread();
-  if (typeof renderSessionListFromCache === 'function') renderSessionListFromCache();
-  return true;
-}
 
 function _clearSessionViewedCount(sid) {
   if (!sid) return;
@@ -2195,49 +2075,6 @@ function _sessionProfileMismatchFromError(e){
   return null;
 }
 
-async function _switchProfileForSessionLoad(profile){
-  const name=String(profile||'').trim();
-  if(!name) throw new Error('missing profile');
-  if(name===S.activeProfile) return;
-  if(typeof _invalidateSessionListRenders==='function') _invalidateSessionListRenders();
-  if(typeof _setProfileSwitchListEmbargo==='function') _setProfileSwitchListEmbargo(true);
-  if(typeof showSessionListSkeleton==='function') showSessionListSkeleton(name);
-  try{
-    const data=await api('/api/profile/switch',{method:'POST',body:JSON.stringify({name}),timeoutToast:false});
-    S.activeProfile=data.active||name;
-    S.activeProfileIsDefault=!!data.is_default;
-    if(typeof _resetCronUnreadForProfileSwitch==='function'){
-      _resetCronUnreadForProfileSwitch();
-    }
-    // #7509: mirror the canonical switch in panels.js — the slash-skill caches still
-    // hold the previous profile's /api/skills payload, so drop them (and any reply
-    // still in flight) once the switch has succeeded.
-    if(typeof window!=='undefined'&&typeof window.invalidateSlashSkillCaches==='function') window.invalidateSlashSkillCaches();
-    if(typeof _clearPersistedModelState==='function') _clearPersistedModelState();
-    else localStorage.removeItem('hermes-webui-model');
-    if(data.default_model) window._defaultModel=data.default_model;
-    if(data.default_model_provider) window._activeProvider=data.default_model_provider;
-    if(typeof refreshProfileTransitionReasoningChip==='function'){
-      refreshProfileTransitionReasoningChip(data.default_model,data.default_model_provider);
-    }
-    if(typeof startGatewaySSE==='function') startGatewaySSE();
-    if(typeof syncTopbar==='function') syncTopbar();
-    if(typeof _setProfileSwitchListEmbargo==='function') _setProfileSwitchListEmbargo(false);
-    if(typeof renderSessionList==='function') await renderSessionList();
-  }catch(switchErr){
-    // The switch POST failed, so we're still on the previous profile and its
-    // caches are intact. Clear the up-front skeleton and re-render the real
-    // list so the sidebar doesn't strand on the skeleton (the #4671 strand bug
-    // — _sessionListSkeletonActive hard-gates renderSessionListFromCache + the
-    // SSE/poll repaints until an unrelated full render fires). Mirror the
-    // canonical switch's catch in panels.js, then rethrow so loadSession's
-    // catch(switchErr) still routes into the generic error handler.
-    if(typeof _setProfileSwitchListEmbargo==='function') _setProfileSwitchListEmbargo(false);
-    _sessionListSkeletonActive=false;
-    if(typeof renderSessionListFromCache==='function') renderSessionListFromCache();
-    throw switchErr;
-  }
-}
 
 async function loadSession(sid){
   const opts = arguments[1] || {};
@@ -2396,30 +2233,6 @@ async function loadSession(sid){
   try {
     data = await api(`/api/session?session_id=${encodeURIComponent(sid)}&messages=0&resolve_model=0`);
   } catch(e) {
-    const profileMismatch=_sessionProfileMismatchFromError(e);
-    if(profileMismatch && profileMismatch.profile && !opts.skipProfileResolve){
-      if (!_isCurrentLoad()) {
-        _rearmActiveSessionStream();
-        return;
-      }
-      try{
-        if(typeof showToast==='function') showToast(`Switching to ${profileMismatch.profile} profile for this session…`,2200);
-        await _switchProfileForSessionLoad(profileMismatch.profile);
-        // Post-await stale-load guard (Codex): the profile switch above does a
-        // network POST + session-list re-render, during which the user may have
-        // navigated to a different session. If we no longer own the load, bail
-        // before clearing _loadingSessionId or retrying so the stale
-        // continuation can't hijack the UI back to the old target.
-        if (!_isCurrentLoad()) {
-          _rearmActiveSessionStream();
-          return;
-        }
-        if (_isCurrentLoad()) _loadingSessionId = null;
-        return loadSession(sid,{...opts,skipProfileResolve:true,force:true});
-      }catch(switchErr){
-        e=switchErr;
-      }
-    }
     const _msgInner = $('msgInner');
     // Stale-load guard (Codex): a newer loadSession() may have started while this
     // request was awaiting (e.g. the user clicked a healthy session during a
@@ -3027,26 +2840,6 @@ function _externalImportPayload(session) {
   return payload;
 }
 
-function _sidebarSessionProfileName(session){
-  const raw=session&&typeof session.profile==='string'?session.profile.trim():'';
-  return raw||'';
-}
-
-async function _ensureSidebarSessionProfile(session){
-  const targetProfile=_sidebarSessionProfileName(session);
-  if(!_showAllProfiles||!targetProfile) return false;
-  const activeProfile=S.activeProfile||'default';
-  if(_profileMatchesActiveProfile(targetProfile,activeProfile)) return false;
-  if(typeof switchToProfile!=='function') return false;
-  _profileSwitchOpeningExistingSession=true;
-  try{
-    await switchToProfile(targetProfile);
-  }finally{
-    _profileSwitchOpeningExistingSession=false;
-  }
-  return _profileMatchesActiveProfile(targetProfile,S.activeProfile||'default');
-}
-
 async function _openSidebarSession(session, loadOpts={}){
   if(!session||!session.session_id) return;
   // #5409: close mobile sidebar AFTER veto guard passes — only close if open proceeds.
@@ -3055,7 +2848,6 @@ async function _openSidebarSession(session, loadOpts={}){
     try{await api('/api/session/import_cli',{method:'POST',body:JSON.stringify(_externalImportPayload(session))});}
     catch(_e){ /* import failed -- fall through to read-only view */ }
   }
-  await _ensureSidebarSessionProfile(session);
   await loadSession(session.session_id, Object.assign({}, loadOpts));
   renderSessionListFromCache();
 }
@@ -3066,8 +2858,6 @@ function _isReadOnlySession(session) {
 
 function _isBranchableReadOnlySession(session) {
   if (!_isReadOnlySession(session)) return false;
-  // Another Profile's session (the Admin's read-only view) is never forked.
-  if (session.read_only_reason === 'other_profile') return false;
   const sources = [
     session && session.source_tag,
     session && session.raw_source,
@@ -4507,7 +4297,7 @@ const NO_PROJECT_FILTER = '__none__';
 let _activeProject = null;  // project_id filter (null = show all, NO_PROJECT_FILTER = unassigned only)
 const SHOW_ALL_PROFILES_STORAGE_KEY = 'hermes-show-all-profiles';
 let _showAllProfiles = false;  // false = filter to active profile only
-let _profileSwitchOpeningExistingSession = false;  // true while cross-profile sidebar click switches profile before loadSession()
+  // true while cross-profile sidebar click switches profile before loadSession()
 let _otherProfileCount = 0;       // count of sessions from other profiles (server-reported)
 let _archivedWebuiCount = 0;      // archived WebUI sessions not fetched until requested
 let _archivedCliCount = 0;        // archived non-WebUI sessions not fetched until requested
@@ -4720,32 +4510,6 @@ function _composerPrefillIntentFromLocation(){
       autoSend:false
     };
   }catch(_e){return empty;}
-}
-function _profileQueryIntentFromLocation(){
-  const empty={hasParam:false,valid:false,name:''};
-  if(typeof window==='undefined'||!window.location) return empty;
-  try{
-    const qs=new URLSearchParams(window.location.search||'');
-    if(!qs.has('profile')) return empty;
-    const name=String(qs.get('profile')||'');
-    return {
-      hasParam:true,
-      valid:/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name),
-      name
-    };
-  }catch(_e){return empty;}
-}
-function _consumeProfileQueryParamFromLocation(){
-  if(typeof window==='undefined'||!window.location||!window.history||typeof window.history.replaceState!=='function') return;
-  try{
-    const current=new URL(window.location.href);
-    const before=current.searchParams.toString();
-    current.searchParams.delete('profile');
-    const after=current.searchParams.toString();
-    if(after===before) return;
-    const next=current.pathname+(after?`?${after}`:'')+(current.hash||'');
-    window.history.replaceState(window.history.state||null,'',next);
-  }catch(_e){}
 }
 function _consumeComposerPrefillParamsFromLocation(){
   if(typeof window==='undefined'||!window.location||!window.history||typeof window.history.replaceState!=='function') return;
@@ -5510,140 +5274,9 @@ let _sessionListRefreshAnimationPending = false;
 let _sessionListFirstRenderAnimated = false;
 let _sessionListEnterAllAnimationPending = false;
 
-// #4671: invalidate any session-list render that is in flight or queued. Called at
-// profile-switch start (with showSessionListSkeleton) so a pre-switch /api/sessions
-// response — which carries the OLD profile's rows but was issued before the switch
-// bumped the generation, so it would otherwise pass the _renderSessionListGen guard,
-// clear the skeleton flag, and paint stale rows over the skeleton — is discarded.
-// Bumping the generation makes every outstanding response stale; clearing the
-// pending/queued payloads drops a deferred apply that would do the same.
-function _invalidateSessionListRenders(){
-  _renderSessionListGen++;
-  _pendingSessionListPayload = null;
-  _renderSessionListQueuedRequest = null;
-  // A retry whose fetch is invalidated here (e.g. a profile switch mid-retry)
-  // would otherwise leave the error note stuck as an inert "Retrying…" button
-  // with no request in flight — the stale fetch returns before
-  // _showSessionListLoadError and the .finally() bails when the old button was
-  // removed. Clear the pending retry markers so the next repaint shows an
-  // actionable idle Retry again.
-  if(_sessionListLoadError && (_sessionListLoadError.retrying || _sessionListLoadError._retryFailedFocus)){
-    _sessionListLoadError = {..._sessionListLoadError};
-    delete _sessionListLoadError.retrying;
-    delete _sessionListLoadError._retryFailedFocus;
-  }
-}
-if(typeof window!=='undefined') window._invalidateSessionListRenders = _invalidateSessionListRenders;
-
-// #4671: profile-switch session-list EMBARGO. Point-in-time invalidation isn't enough —
-// a renderSessionList() can START after the skeleton is shown but BEFORE /api/profile/switch
-// returns (the profile cookie is only set by the switch response), so that GET fetches the
-// OLD profile's rows, passes the generation guard, and clobbers the skeleton. While the
-// embargo is on, _runRenderSessionListRefresh drops ALL payloads (none may paint), so only
-// the switch-owned render — which runs after the switch clears the embargo — replaces the
-// skeleton. The switch sets it before showSessionListSkeleton() and clears it immediately
-// before its own renderSessionList() (and in the failure-restore path).
-let _profileSwitchListEmbargo = false;
-function _setProfileSwitchListEmbargo(on){ _profileSwitchListEmbargo = !!on; }
-if(typeof window!=='undefined') window._setProfileSwitchListEmbargo = _setProfileSwitchListEmbargo;
-
 function animateNextSessionListRefresh(options={}){
   _sessionListRefreshAnimationPending = true;
   if(options&&options.enterAll) _sessionListEnterAllAnimationPending = true;
-}
-
-// ── Loading skeletons (#4662 Phase 1) ───────────────────────────────────────
-// Tracks whether the session list is currently showing a skeleton so a
-// resolving render knows to replace it (and so we don't stack skeletons).
-let _sessionListSkeletonActive = false;
-
-// Skeleton structure mirrors a real sidebar: a couple of group headers
-// (Pinned / Today / Last week) with single-line rows under each. Title widths
-// vary so it reads as real conversations. `stamp:false` omits the timestamp bar
-// on the occasional row (a real list mixes rows with/without a visible time).
-const _SESSION_SKELETON_GROUPS = [
-  {rows: [{title: 70}]},
-  {rows: [{title: 84}, {title: 58}, {title: 76}]},
-  {rows: [{title: 64}, {title: 90}, {title: 52}, {title: 72}]},
-];
-
-// Render a skeleton placeholder into #sessionList that mirrors the real row
-// anatomy (group labels + single-line title bars with a short timestamp bar).
-// Called the instant a profile switch begins so the user never sees the
-// previous profile's conversations.
-function showSessionListSkeleton(targetProfile){
-  const list = $('sessionList');
-  if(!list) return;
-  // Tear down any active virtual-scroll state up front so a pending scroll-driven
-  // render can't repaint the previous profile's cached rows over the skeleton
-  // (#4662 Codex gate). Cancel the queued RAF and drop the data-session-virtual-*
-  // window markers; the real render rebuilds them from the new payload. Done once
-  // here so it applies to BOTH the content and empty-state skeleton branches.
-  if(typeof _sessionVirtualScrollRaf!=='undefined'&&_sessionVirtualScrollRaf){
-    cancelAnimationFrame(_sessionVirtualScrollRaf);
-    _sessionVirtualScrollRaf=0;
-  }
-  delete list.dataset.sessionVirtualTotal;
-  delete list.dataset.sessionVirtualStart;
-  delete list.dataset.sessionVirtualEnd;
-  delete list.dataset.sessionVirtualFilter;
-  delete list.dataset.sessionVirtualActiveAnchor;
-  // #4717: if we already know (from a prior render) the profile we're switching
-  // INTO has zero conversations, a full content skeleton (group labels + 8 rows)
-  // is misleading — it implies data that will never arrive, then resolves to an
-  // empty list. Render a quiet empty-state placeholder instead. Only when the
-  // count is KNOWN to be 0; an unknown profile (null) keeps the content skeleton
-  // (safe default — never hide a skeleton for a profile that may have sessions).
-  // Skip the empty branch while a project/source filter is active, since the
-  // per-profile count is an unfiltered total and could be non-zero overall yet
-  // empty under the filter (or vice-versa) — the content skeleton is the safe
-  // choice there. typeof guards keep this safe if the helper isn't in scope.
-  const knownCount = (typeof targetProfile === 'string' && targetProfile
-      && typeof _knownSessionProfileCount === 'function')
-    ? _knownSessionProfileCount(targetProfile) : null;
-  const filterActive = (typeof _activeProject !== 'undefined' && _activeProject)
-    || (typeof _sessionSourceFilter !== 'undefined' && _sessionSourceFilter === 'cli');
-  const wrap = document.createElement('div');
-  wrap.setAttribute('aria-hidden', 'true');
-  if(knownCount === 0 && !filterActive){
-    // A single faint placeholder bar rather than a "no conversations" text — the
-    // real empty-state note paints the instant the (fast, empty) fetch resolves,
-    // so we just hold a calm, content-free space in the meantime (no flash of a
-    // fake list, no premature wording).
-    wrap.className = 'skeleton-list skeleton-list-empty';
-    const bar = document.createElement('div');
-    bar.className = 'skeleton-empty-hint';
-    wrap.appendChild(bar);
-  } else {
-    wrap.className = 'skeleton-list';
-    let rowIndex = 0;
-    for(const group of _SESSION_SKELETON_GROUPS){
-      const label = document.createElement('div');
-      label.className = 'skeleton-group-label';
-      wrap.appendChild(label);
-      for(const spec of group.rows){
-        const row = document.createElement('div');
-        row.className = 'skeleton-row';
-        // Stagger the fade-in per row. Set inline (not via CSS :nth-child) because
-        // group-label siblings are interleaved with rows, so a :nth-child stagger
-        // would skip most rows. Cap so the longest list doesn't feel laggy.
-        row.style.animationDelay = Math.min(rowIndex * 0.025, 0.2) + 's';
-        rowIndex++;
-        const title = document.createElement('div');
-        title.className = 'skeleton-bar skeleton-title';
-        title.style.width = spec.title + '%';
-        const stamp = document.createElement('div');
-        stamp.className = 'skeleton-bar skeleton-stamp';
-        row.appendChild(title);
-        row.appendChild(stamp);
-        wrap.appendChild(row);
-      }
-    }
-  }
-  list.innerHTML = '';
-  list.appendChild(wrap);
-  list.scrollTop = 0;
-  _sessionListSkeletonActive = true;
 }
 
 function _isOptimisticFirstTurnSessionRow(s){
@@ -5872,18 +5505,6 @@ function _applySessionListPayload(sessData, projData, opts){
     sidebarSource: _requestedSessionSidebarSource(),
     excludeHidden: _sessionListExcludeHiddenEnabled(),
   };
-  // Record this profile's session count so the NEXT switch into it can pick an
-  // honest skeleton (empty-state vs content) before its fetch resolves (#4717).
-  // Only record an UNFILTERED total: skip all-profiles (conflates profiles), and
-  // skip while a project or CLI-source filter is active (those record a filtered
-  // subset that could cache a misleading 0 for a profile that has sessions under
-  // a different filter). This mirrors the read-side `filterActive` gate in
-  // showSessionListSkeleton so the write and read agree on what the count means.
-  const _recordFilterActive = (typeof _activeProject !== 'undefined' && _activeProject)
-    || (typeof _sessionSourceFilter !== 'undefined' && _sessionSourceFilter === 'cli');
-  if (!_showAllProfiles && !_recordFilterActive) {
-    _recordSessionProfileCount(_allSessionsScope.profile, _allSessions.length);
-  }
   _syncSessionAttentionSoundState(_allSessions);
   _pruneLineageReportCacheToVisibleSessions(_allSessions);
   _allProjects = projData.projects||[];
@@ -5917,13 +5538,6 @@ function _applySessionListPayload(sessData, projData, opts){
     _sessionListFirstRenderAnimated=true;
   }
   ensureSessionEventsSSE();
-  // #4671: this payload is the freshly-resolved /api/sessions response (and a superseded
-  // response was already discarded by the generation guard upstream), so _allSessions now
-  // holds the CURRENT profile's rows. Clear the skeleton flag right before painting so this
-  // authoritative render replaces the profile-switch skeleton — while unrelated renders that
-  // fire before this point stay blocked by the guard in renderSessionListFromCache().
-  const _hadSessionListSkeleton = _sessionListSkeletonActive;
-  _sessionListSkeletonActive = false;
   // No-op fast path: if this payload renders identically to what is already on
   // screen (the common case for idle polls) and no entrance animation is
   // pending, skip the full DOM rebuild. Only applies here in the fetch/apply
@@ -5931,11 +5545,11 @@ function _applySessionListPayload(sessData, projData, opts){
   // renderSessionListFromCache directly and are unaffected. Guarded by the same
   // conditions renderSessionListFromCache bails on, so a bailed render never
   // caches a signature that would suppress the next real repaint. (#5455 WS2.4)
-  // NEVER skip when recovering from a skeleton or error-banner DOM state: those
-  // are rendered outside the signature path, so an identical-signature match
-  // would leave the skeleton/error on screen instead of the real list. (Codex #5467)
+  // NEVER skip when recovering from an error-banner DOM state: it is rendered
+  // outside the signature path, so an identical-signature match would leave
+  // the error on screen instead of the real list. (Codex #5467)
   const _canRenderNow = !_renamingSid && !_sessionActionMenu;
-  const _mustForceRender = _hadSessionListSkeleton || _hadSessionListLoadError;
+  const _mustForceRender = _hadSessionListLoadError;
   const _renderSig = _sessionListRenderSignature();
   if(_canRenderNow && !_mustForceRender && !_sessionListRefreshAnimationPending && _renderSig && _renderSig===_lastSessionListRenderSig){
     // Preserve the per-refresh INFLIGHT cleanup that renderSessionListFromCache
@@ -6067,12 +5681,6 @@ async function _runRenderSessionListRefresh(opts, _gen){
     const {sessData, projData}=await _loadSidebarSessionListPayload(sessionListQS, sessionRequestOpts);
     // Discard stale response — a newer renderSessionList() call superseded us.
     if (_gen !== _renderSessionListGen) return;
-    // #4671: while a profile switch is mid-flight, drop ANY payload — even one whose
-    // generation still matches — because a render that STARTED after the skeleton showed
-    // but before the switch response set the new-profile cookie fetched the OLD profile's
-    // rows. The switch clears the embargo immediately before its own (authoritative)
-    // renderSessionList(), so that render's payload is the first allowed to paint.
-    if (_profileSwitchListEmbargo) return;
     if(deferWhileInteracting&&_isSessionListUserInteracting()){
       _pendingSessionListPayload={gen:_gen,sessData,projData,unreadGen};
       _schedulePendingSessionListApply();
@@ -6081,11 +5689,6 @@ async function _runRenderSessionListRefresh(opts, _gen){
     _applySessionListPayload(sessData,projData,{unreadGen});
   }catch(e){
     if (_gen !== _renderSessionListGen) return;
-    // #4671: same embargo guard as the success path — a mid-switch /api/sessions that
-    // FAILS must not clear the skeleton flag or render the old-profile cache either. The
-    // switch-owned render (after the embargo lifts) is the only one allowed to resolve the
-    // skeleton; if the switch itself fails, its catch clears the skeleton + embargo.
-    if (_profileSwitchListEmbargo) return;
     _showSessionListLoadError(e);
     // Only fall back to the cached rows if they were loaded under the SAME
     // scope we're requesting now. After a profile switch the cache holds the
@@ -6103,10 +5706,6 @@ async function _runRenderSessionListRefresh(opts, _gen){
       && _allSessionsScope.allProfiles === _curScope.allProfiles
       && _allSessionsScope.sidebarSource === _curScope.sidebarSource
       && _allSessionsScope.excludeHidden === _curScope.excludeHidden;
-    // #4671: the /api/sessions fetch failed — clear the skeleton flag so this error
-    // render (matched cache, or empty rows for a mismatched scope) replaces the
-    // up-front profile-switch skeleton instead of stranding it.
-    _sessionListSkeletonActive = false;
     if (_scopeMatches) {
       renderSessionListFromCache();
     } else {
@@ -7853,11 +7452,6 @@ function _sessionVirtualSpacer(height, where){
 
 function _scheduleSessionVirtualizedRender(){
   _sessionListLastScrollAt=Date.now();
-  // While a profile-switch skeleton is up, ignore virtual-scroll events: the
-  // cached rows are the PREVIOUS profile's, and repainting them here would
-  // clobber the skeleton before the new /api/sessions response lands (#4662
-  // Codex gate). The real render clears _sessionListSkeletonActive.
-  if(_sessionListSkeletonActive) return;
   if(_renamingSid||_sessionVirtualScrollRaf) return;
   const list=_sessionVirtualScrollList;
   const total=Number(list&&list.dataset&&list.dataset.sessionVirtualTotal||0);
@@ -8158,14 +7752,6 @@ function _attachProjectQuickCreateButton(chip, project){
 
 
 function renderSessionListFromCache(){
-  // #4671: while a profile-switch skeleton is up, bail — _allSessions still holds the
-  // PREVIOUS profile's rows until /api/sessions resolves, so any unrelated caller
-  // (sidebar SSE syncs, stream/unread updates, gateway-poll timers, panel-resync
-  // repairs) hitting this mid-switch would repaint the wrong profile's rows over the
-  // skeleton. The authoritative switch render clears the flag from inside
-  // _applySessionListPayload — once _allSessions is fresh — so only a render backed by
-  // up-to-date data replaces the skeleton. The failure-restore path clears it too.
-  if(_sessionListSkeletonActive) return;
   // Don't re-render while user is actively renaming a session (would destroy the input)
   if(_renamingSid) return;
   // Keep the per-conversation actions menu stable while the user is trying to
@@ -8224,13 +7810,6 @@ function renderSessionListFromCache(){
   const committedSwipeReflowDelay=Math.max(0,committedSwipeDuration-SESSION_SWIPE_REFLOW_LEAD_MS);
   const listScrollTopBeforeRender=list.scrollTop||0;
   list.innerHTML='';
-  // #4671: belt-and-suspenders. The authoritative skeleton-clear happens in
-  // _applySessionListPayload (once fresh data is in hand) BEFORE this function is
-  // reached, and the guard at the top of renderSessionListFromCache bails while the
-  // flag is still true — so by the time we paint here the flag is already false. Keep
-  // this assignment as a defensive backstop for any future non-switch caller that
-  // reaches a real paint with the flag somehow still set.
-  _sessionListSkeletonActive=false;
   // Batch select bar (when in select mode)
   if(_sessionSelectMode){
     const selectBar=document.createElement('div');selectBar.className='session-select-bar';

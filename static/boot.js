@@ -122,9 +122,6 @@ function _prefillHasDraftText(prefillIntent){
 function _rootPrefillNeedsFreshComposer(urlSession, savedLocal, prefillIntent){
   return !urlSession&&!!savedLocal&&_prefillHasDraftText(prefillIntent);
 }
-function _profileQueryBlocksSavedLocalRestore(profileIntent, urlSession){
-  return !!(profileIntent&&profileIntent.hasParam&&profileIntent.valid&&!urlSession);
-}
 function _shouldStartFreshPwaChat(action,urlSession){
   return action==='new-chat'&&!urlSession;
 }
@@ -3254,31 +3251,7 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
   if(profileLabel) profileLabel.textContent=profileChipText();
   const titleLabel=$('titlebarProfileLabel');
   if(titleLabel) titleLabel.textContent=profileChipText();
-  const profileIntent=(typeof _profileQueryIntentFromLocation==='function')?_profileQueryIntentFromLocation():null;
-  const _savedLocalBeforeProfileSwitch=localStorage.getItem('hermes-webui-session');
-  const _profileSwitchProfileBefore=S.activeProfile||'default';
-  const _profileSwitchIsDefaultBefore=!!S.activeProfileIsDefault;
-  let _profileSwitchCompleted=false;
-  let _profileSwitchChangedProfile=false;
-  if(profileIntent&&profileIntent.hasParam){
-    try{
-      if(profileIntent.valid){
-        if(typeof switchToProfile==='function'){
-          _profileSwitchCompleted=await switchToProfile(profileIntent.name)===true;
-          if(_profileSwitchCompleted){
-            _profileSwitchChangedProfile=(S.activeProfile||'default')!==_profileSwitchProfileBefore||!!S.activeProfileIsDefault!==_profileSwitchIsDefaultBefore;
-            if(typeof _consumeProfileQueryParamFromLocation==='function') _consumeProfileQueryParamFromLocation();
-          }
-        }
-      }else{
-        console.warn('[boot] ignored invalid profile query', profileIntent.name);
-        if(typeof _consumeProfileQueryParamFromLocation==='function') _consumeProfileQueryParamFromLocation();
-      }
-    }catch(e){
-      console.warn('[boot] profile query switch failed', e);
-    }
-  }
-  if(typeof fetchReasoningChip==='function'&&(!_profileSwitchCompleted||!_profileSwitchChangedProfile)) fetchReasoningChip();
+  if(typeof fetchReasoningChip==='function') fetchReasoningChip();
   // Fetch available models without blocking session restore. The static HTML
   // options enough for first paint; the dynamic provider list can settle
   // after the saved session is visible.
@@ -3388,12 +3361,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
       S._bootReady=true;
       syncTopbar();syncWorkspacePanelState();await renderSessionList();await _finalizeComposerPrefillOnBoot(prefillIntent);if(typeof startGatewaySSE==='function')startGatewaySSE();return;
     }catch(e){console.warn('[pwa] new-chat launch action failed', e);}
-  }
-  const _profileQueryBlocksSavedLocal=_profileQueryBlocksSavedLocalRestore(profileIntent, urlSession);
-  if(_profileQueryBlocksSavedLocal&&_profileSwitchCompleted&&_profileSwitchChangedProfile){
-    try{
-      if(localStorage.getItem('hermes-webui-session')===_savedLocalBeforeProfileSwitch) localStorage.removeItem('hermes-webui-session');
-    }catch(_){}
   }
   const savedLocal=localStorage.getItem('hermes-webui-session');
   const saved=urlSession||savedLocal;

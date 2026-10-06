@@ -13,33 +13,6 @@ PANELS_JS = (REPO / "static" / "panels.js").read_text(encoding="utf-8")
 ROUTES_PY = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
 
 
-def test_profile_create_form_exposes_model_picker():
-    assert 'id="profileFormModel"' in PANELS_JS
-    assert "_populateProfileFormModelSelect" in PANELS_JS
-    assert "profile_model_label" in PANELS_JS
-    assert "profile_model_hint" in PANELS_JS
-
-
-def test_profile_create_payload_preserves_provider_context():
-    fn_start = PANELS_JS.find("async function saveProfileForm()")
-    assert fn_start != -1
-    fn_body = PANELS_JS[fn_start : PANELS_JS.find("\n}", fn_start) + 2]
-    assert "profileFormModel" in fn_body
-    assert "_modelStateForSelect(modelEl, selectedModel)" in fn_body
-    assert "payload.default_model" in fn_body
-    assert "payload.model_provider" in fn_body
-
-
-def test_profile_create_route_passes_model_fields_to_profile_api():
-    from tests._route_source import route_source
-
-    route_body = route_source("POST", "/api/profile/create")
-    assert 'default_model = body.get("default_model"' in route_body
-    assert 'model_provider = body.get("model_provider"' in route_body
-    assert "default_model=default_model" in route_body
-    assert "model_provider=model_provider" in route_body
-
-
 def test_profile_model_config_writer_persists_default_and_provider(tmp_path):
     profile_dir = tmp_path / "profiles" / "research"
     profile_dir.mkdir(parents=True)

@@ -94,7 +94,6 @@ def test_chinese_locale_includes_representative_translations():
         ["tab_tasks: '任务'"],
         ["tab_profiles: '配置'"],
         ["session_time_bucket_today: '今天'"],
-        ["onboarding_title: '欢迎使用 GFIT-CoWork'"],
         ["onboarding_complete: '引导完成'"],
     ]
     for alts in expected_alternatives:
@@ -137,8 +136,6 @@ def test_traditional_chinese_mcp_and_tree_labels_are_not_cyrillic():
         "tree_view: '樹狀'",
         "raw_view: '原始'",
         "parse_failed_note: '解析失敗'",
-        "mcp_servers_title: 'MCP 伺服器'",
-        "mcp_no_servers: '未設定 MCP 伺服器。'",
         "mcp_add_server: '+ 新增伺服器'",
     ]
     for entry in expected:

@@ -127,7 +127,6 @@ def test_workspace_and_profile_switches_clear_pending_toolsets():
     for marker in (
         "function promptWorkspacePath",
         "function switchToWorkspace",
-        "function switchToProfile",
     ):
         body = _function_body(PANELS_JS, marker)
         assert "S._pendingSessionToolsets=null" in body.replace(" ", "")

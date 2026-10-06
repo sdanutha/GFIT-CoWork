@@ -62,7 +62,7 @@ REFUSED_SERVER_FAULT = "server_fault"
 
 
 class ProfileRefused(Exception):
-    """An Admin action on a Profile was refused: ``str()`` is the message for the Admin."""
+    """An Operator action on a Profile was refused: ``str()`` is the message for the Operator."""
 
     def __init__(self, message: str, kind: str = REFUSED_BAD_REQUEST):
         super().__init__(message)
@@ -214,7 +214,7 @@ def record_login(name: str, display_name="") -> None:
     """Record a login to Profile *name*, taking the display name from the Directory.
 
     A Directory name that is empty or just the employee ID (the Directory's
-    fallback) does not replace the name the Admin typed.
+    fallback) does not replace the name the Operator gave.
     """
     fields = {"last_login": time.time()}
     display_name = directory_name(display_name, name)
@@ -224,16 +224,12 @@ def record_login(name: str, display_name="") -> None:
 
 
 def _check_existing_user_profile(name: str) -> None:
-    """Refuse unless *name* is an existing Profile that is not the built-in one or an Admin's."""
-    from api.access import is_admin
+    """Refuse unless *name* is an existing Profile that is not the built-in one."""
     from api.profiles import named_profile_exists
 
     _check_name(name)
     if not named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' does not exist.", REFUSED_NOT_FOUND)
-    if is_admin(name):
-        # An Admin logs in to `default`, so this Profile's status would not shut them out.
-        raise ProfileRefused(f"{name} is an Admin; remove them from HERMES_WEBUI_ADMIN_USERS instead.")
 
 
 def _refusal_from_hermes(exc: Exception, message: str, busy_kind: str) -> ProfileRefused:
@@ -263,7 +259,7 @@ def _refuse_isolated_mode(action: str) -> None:
 def _check_name(name: str, field: str = "profile name") -> None:
     """Refuse a name that breaks the Profile-name rule (``default`` included).
 
-    The rule is the Hermes Profile layer's; the message is in the Admin's terms.
+    The rule is the Hermes Profile layer's; the message is in the Operator's terms.
     """
     from api.profiles import _validate_profile_name
 
@@ -279,7 +275,7 @@ def _check_name(name: str, field: str = "profile name") -> None:
 
 
 def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
-    """The Admin creates Profile *name*, active, with *display_name*.
+    """The Operator creates Profile *name*, active, with *display_name*.
 
     The record is written disabled before the Hermes Profile is created and
     made active only once it exists, so a failure at any step leaves the
@@ -288,7 +284,6 @@ def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
     options). Returns the new Profile's row for the Profile list.
     """
     from api import profiles
-    from api.access import is_admin
 
     _refuse_isolated_mode("creation")
     _check_name(name)
@@ -296,10 +291,6 @@ def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
     clone_from = hermes_options.get("clone_from")
     if clone_from is not None and not profiles._is_root_profile(clone_from):
         _check_name(clone_from, "clone_from name")
-    if is_admin(name):
-        raise ProfileRefused(
-            f"{name} is an Admin: an Admin logs in to the default Profile, "
-            "so nobody could log in to this one.")
     if profiles.named_profile_exists(name):
         raise ProfileRefused(f"Profile '{name}' already exists.")
     try:
@@ -315,7 +306,7 @@ def create_profile(name: str, display_name: str = "", **hermes_options) -> dict:
         result = profiles.create_profile_api(name, **hermes_options)
     except Exception as exc:
         if profiles.named_profile_exists(name) and not isinstance(exc, FileExistsError):
-            # Made in part: its record keeps it shut until the Admin deletes it.
+            # Made in part: its record keeps it shut until the Operator deletes it.
             profiles._invalidate_list_profiles_cache()
             raise _refusal_from_hermes(
                 exc,
@@ -480,7 +471,7 @@ def disable_profile(name: str) -> dict:
 
 
 def enable_profile(name: str) -> dict:
-    """The Admin re-enables Profile *name*, so its User can log in again and the jobs
+    """The Operator re-enables Profile *name*, so its User can log in again and the jobs
     the disable paused run again."""
     _check_existing_user_profile(name)
     _set_status(name, STATUS_ACTIVE)

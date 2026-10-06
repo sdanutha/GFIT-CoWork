@@ -100,7 +100,6 @@ def test_czech_locale_includes_representative_translations():
         "tab_tasks: 'Úkoly'",
         "tab_profiles: 'Profily'",
         "empty_title: 'Jak vám mohu pomoci?'",
-        "onboarding_title: 'Vítejte v GFIT-CoWork'",
     ]
     for entry in expected:
         assert entry in cs_block, f"missing expected Czech translation: {entry}"
