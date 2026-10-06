@@ -64,8 +64,7 @@ def admit(employee_id: str) -> Admitted | Refused:
 # Admission runs again on every request from a Directory session. Its answer is
 # kept for the rest of that request, on the request thread, and is the one
 # answer to "who is calling?". Only an admitted caller has one: a request with
-# no Directory session (login turned off, or a public route before login) has
-# none. Worker threads carry none. It is cleared with the request Profile
+# no Directory session (a public route before login) has none. Worker threads carry none. It is cleared with the request Profile
 # (api.profiles.clear_request_profile) at the end of every request, before the
 # handler serves the next keep-alive request on the same thread.
 

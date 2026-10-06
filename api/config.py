@@ -11624,7 +11624,7 @@ _SETTINGS_DEFAULTS = {
     "hide_composer_attach": False,  # hide attach button in composer footer
     "hide_composer_saved_prompts": False,  # hide saved prompts button in composer footer
     "hide_composer_mic": False,  # hide dictation mic button in composer footer
-    "show_titlebar_profile": False,  # show profile switcher in app titlebar (opt-in)
+    "show_titlebar_profile": False,  # show the name button (identity menu) in the app titlebar (opt-in)
     "hide_composer_voice_mode": False,  # hide hands-free voice-mode button in composer footer
     "hide_composer_profile": False,  # hide profile chip in composer footer
     "hide_composer_workspace": False,  # hide workspace controls in composer footer/mobile config panel

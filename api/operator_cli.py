@@ -21,7 +21,8 @@ notices a disable and ends the Profile's logins and running turns itself
 
 The ``sessions-*`` actions look after the web app's session store:
 ``sessions-audit`` is read-only; ``sessions-repair`` and ``sessions-cleanup``
-change session files and the index, so stop the server first.
+change session files and the index the server also writes, so run them when
+nobody is using the Deployment and restart the server afterwards.
 It never prepares or installs the Hermes Agent runtime; start the server once
 first so the runtime is ready.
 
@@ -60,9 +61,9 @@ def _parser() -> argparse.ArgumentParser:
     delete.add_argument("name")
     delete.add_argument("--confirm", required=True, help="repeat the Profile name to confirm")
     actions.add_parser("sessions-audit", help="report session-store problems (read-only)")
-    actions.add_parser("sessions-repair", help="apply the safe session-store repairs (stop the server first)")
+    actions.add_parser("sessions-repair", help="apply the safe session-store repairs (quiet time; restart the server after)")
     cleanup = actions.add_parser(
-        "sessions-cleanup", help="delete untitled empty sessions and index ghosts (stop the server first)")
+        "sessions-cleanup", help="delete untitled empty sessions and index ghosts (quiet time; restart the server after)")
     cleanup.add_argument("--empty", action="store_true", help="delete every session with no messages")
     return parser
 

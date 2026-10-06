@@ -533,8 +533,8 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     """Return whether this request owns ``sid``, asking session ownership.
 
     When it does not, and *emit_error* is set, the refusal writes its own
-    answer: 409 ``session_profile_mismatch`` naming a known owning Profile
-    (the Admin's, #7710), else 404 "Session not found". A request that names
+    answer: 404 "Session not found" for a User (the unconfined adapter's 409
+    naming the owner, #7710, has no HTTP caller since ADR 0006). A request that names
     no session passes.
     """
     refusal = request_session_ownership().refuse_session(sid)
@@ -554,8 +554,7 @@ def _stream_id_visible_to_request_profile(
     """Return whether this request owns the session that owns *stream_id*.
 
     Session ownership answers. A User is refused a stream whose owner cannot
-    be found, with the same 404 as another Profile's stream; for the Admin a
-    known other Profile's stream is the 409 naming its owner.
+    be found, with the same 404 as another Profile's stream.
     """
     refusal = request_session_ownership().refuse_stream(stream_id)
     if refusal is None:
@@ -1363,7 +1362,7 @@ def _available_cron_profile_names() -> set[str]:
     from api import profiles as profiles_api
 
     # A job runs in its Profile: offer the Profiles this request may read and
-    # may name to work in (the Admin: only default, ADR 0004).
+    # may name to work in (a User: their own).
     reach = request_caller_reach()
     ownership = request_session_ownership()
 
@@ -5511,8 +5510,7 @@ def _onboarding_request_is_local(handler) -> bool:
       cannot promote itself to "local" by sending X-Forwarded-For: 127.0.0.1.
     * When the peer is NOT a trusted proxy, forwarded headers are ignored and the
       request is classified by the raw socket peer directly. A direct loopback or
-      private/LAN client (no proxy) is therefore still correctly local — so
-      onboarding and embedded-terminal access with login off keep working on the common direct-LAN deployment.
+      private/LAN client (no proxy) is therefore still correctly local.
     * HERMES_WEBUI_TRUST_FORWARDED_FOR=1 is the opt-in that makes us CONSULT the
       forwarded chain at all; without it the raw peer is authoritative. Either
       way the classification fails closed on malformed/empty chains.
@@ -5552,8 +5550,7 @@ def _onboarding_request_is_local(handler) -> bool:
     # (public) client we can't see. Deny in that case; require the operator to
     # opt in via HERMES_WEBUI_TRUST_FORWARDED_FOR (+ HERMES_WEBUI_TRUSTED_PROXY_CIDRS
     # for a non-loopback proxy). With NO forwarded header, a direct private/LAN
-    # client (the common direct-LAN deployment) stays local so onboarding and
-    # the terminal keep working with login off.
+    # client (the common direct-LAN deployment) stays local.
     forwarded_present = bool(
         (handler.headers.get("X-Forwarded-For", "") or "").strip()
         or (handler.headers.get("X-Real-IP", "") or "").strip()
@@ -11066,7 +11063,7 @@ def _handle_insights(handler, parsed) -> bool:
         idx = []
 
     # The index holds every Profile's sessions: a User counts only their own;
-    # the Admin, and Upstream's isolated profile mode, every one in the index.
+    # code with no caller, every one in the index.
     reach = request_caller_reach()
     for entry in idx:
         if not reach.includes(entry.get("profile")):
@@ -12229,9 +12226,9 @@ def _handle_session_get(handler, parsed) -> bool:
         if _diag: _diag.stage("t1_after_get_session_check")
         s = get_session(sid, metadata_only=(not load_messages))
         _session_profile = getattr(s, 'profile', None) or None
-        # Session ownership answers: a KNOWN other profile's session is the
-        # Admin's 409 so the client can offer to switch to it (#5419); a
-        # legacy None-profile sidecar keeps the 404 self-heal.
+        # Session ownership answers: for a User, another Profile's session is
+        # "not found", like a missing one (the unconfined 409 of #5419 has no
+        # HTTP caller since ADR 0006).
         _refusal = request_session_ownership().refuse_found_session(sid, s)
         if _refusal is not None:
             if _diag: _diag.finish()
@@ -12691,10 +12688,9 @@ def _handle_session_get(handler, parsed) -> bool:
         # gate (via _is_claimable_cli_source) so the two endpoints can't
         # drift on foreign-session semantics.
         cli_meta = _lookup_cli_session_metadata(sid)
-        # Session ownership answers from the listed row: another KNOWN
-        # profile's CLI/foreign session is the Admin's 409 (#5419); a missing
-        # session keeps the 404 self-heal; a Profile-less Claude Code row opens
-        # under any profile for the Admin, and never for a User.
+        # Session ownership answers from the listed row: for a User, another
+        # Profile's CLI/foreign session and a Profile-less Claude Code row are
+        # "not found", like a missing session (404 self-heal).
         _refusal = request_session_ownership().refuse_listed_session(sid, cli_meta or {})
         if _refusal is not None:
             return _refusal.answer(handler, sid)
@@ -13751,7 +13747,7 @@ def _get_api_profile_active(handler, parsed):
     # get_last_workspace) so a named profile without its own last_workspace.txt
     # resolves to its config.yaml workspace/terminal.cwd rather than leaking the
     # GLOBAL last-workspace file (the #5169 regression Codex flagged). It is
-    # profile-scoped via the per-request hermes_profile cookie set in server.py.
+    # profile-scoped via the request's Profile (its Admission's, settle_request).
     # Fail open: a resolution error must never 500 this boot-critical endpoint.
     try:
         try:

@@ -1,7 +1,9 @@
 # Agent-assisted onboarding checklist
 
 This checklist is for an AI assistant helping a human install, reinstall, or
-debug Hermes WebUI onboarding. It does not replace the human first-run wizard.
+debug a GFIT-CoWork first run ([`docs/onboarding.md`](onboarding.md)). There is
+no setup wizard in the web app: the Operator sets up providers and Profiles on
+the server (ADR 0006).
 Use it before running bootstrap commands, inspecting logs, or recommending a
 cleanup path.
 
@@ -66,11 +68,19 @@ Use an isolated Hermes home and WebUI state directory for a reinstall or support
 trial. This keeps the test away from the operator's real memory, sessions,
 profiles, credentials, and cron state.
 
+The server needs a Directory to start; a trial uses the in-memory Directory
+with one trial User. Let the human choose the trial password.
+
 ```bash
 mkdir -p ~/hermes-onboarding-test
-HERMES_HOME=~/hermes-onboarding-test/.hermes \
-HERMES_WEBUI_STATE_DIR=~/hermes-onboarding-test/webui \
-HERMES_WEBUI_PORT=8789 \
+export HERMES_HOME=~/hermes-onboarding-test/.hermes
+export HERMES_WEBUI_STATE_DIR=~/hermes-onboarding-test/webui
+export HERMES_WEBUI_PORT=8789
+export HERMES_WEBUI_DIRECTORY=memory
+export HERMES_WEBUI_DIRECTORY_USERS=~/hermes-onboarding-test/users.json
+# users.json: {"<employee ID>": {"password": "<chosen by the human>", "display_name": "..."}}
+hermes setup                                   # the human picks the provider and enters the key
+python3 -m api.operator_cli create <employee ID> --clone-from default
 python3 bootstrap.py
 ```
 
@@ -103,29 +113,14 @@ After the server starts, collect status without secrets:
 
 ```bash
 curl -sS http://127.0.0.1:8789/health
-curl -sS http://127.0.0.1:8789/api/onboarding/status
+python3 -m api.operator_cli list
 find ~/hermes-onboarding-test -maxdepth 3 -type f | sort
 tail -n 120 ~/hermes-onboarding-test/webui/bootstrap-8789.log
 ```
 
-When summarizing `/api/onboarding/status`, focus on:
-
-- `completed`
-- `system.hermes_found`
-- `system.imports_ok`
-- `system.config_path`
-- `system.config_exists`
-- `system.setup_state`
-- `system.provider_configured`
-- `system.provider_ready`
-- `system.chat_ready`
-- `system.current_provider`
-- `system.current_model`
-- `system.current_base_url`
-- `system.env_path`
-
-Do not paste the full payload if it contains unexpected sensitive local paths
-or values. Redact paths and provider details when the human asks for a public
+The startup banner in the log names the Directory, the agent directory and
+the config file. `operator_cli list` shows each Profile's status and last
+login. Do not paste paths or values that look sensitive. Redact paths and provider details when the human asks for a public
 GitHub or Discord support report.
 
 ## Pass criteria
@@ -133,21 +128,12 @@ GitHub or Discord support report.
 A local onboarding trial passes when:
 
 - `/health` returns successfully.
-- `/api/onboarding/status` returns JSON.
-- The wizard appears when `completed` is false.
-- The wizard stays out of the way when `completed` is true or
-  `HERMES_WEBUI_SKIP_ONBOARDING=1` is intentionally set.
-- `system.hermes_found` and `system.imports_ok` match the expected bootstrap
-  state.
-- `system.provider_ready` and `system.chat_ready` become true after the human
-  completes a provider path that should support chat.
-- `system.config_path` and `system.env_path` point inside the intended isolated
-  `HERMES_HOME` during a trial.
-- WebUI files are written under the intended `HERMES_WEBUI_STATE_DIR`.
-
-If the human chooses a provider that must be completed in the CLI, passing can
-mean the wizard correctly points them to `hermes model` or `hermes auth` rather
-than trying to collect unsupported credentials in the browser.
+- The trial User logs in and lands in their own Profile (the name in the
+  Profile chip).
+- A chat in that Profile gets an answer from the provider the human chose.
+- The Profile's `config.yaml` and `.env` are inside the intended isolated
+  `HERMES_HOME/profiles/<employee ID>` during a trial.
+- GFIT-CoWork files are written under the intended `HERMES_WEBUI_STATE_DIR`.
 
 ## Failure triage
 
@@ -158,14 +144,16 @@ If the server does not start:
 - confirm Python can run `bootstrap.py`
 - confirm `.env` is not overriding the isolated directories or port
 
-If onboarding reports `agent_unavailable`:
+If the startup banner says the agent was not found:
 
 - confirm the bootstrap found or installed Hermes Agent
 - check whether the running Python can import `run_agent.AIAgent`
 - use `docs/troubleshooting.md`, especially the `AIAgent not available` flow
 
-If onboarding reports `provider_incomplete`:
+If chat fails with a provider or credential error:
 
+- confirm the Profile has the key: it was created with `--clone-from default`
+  after `hermes setup`, or the human ran `hermes -p <employee ID> model`
 - confirm whether the provider is API-key based, OAuth based, or local
 - let the human enter credentials or run the CLI auth flow
 - do not ask the human to paste secrets into chat
@@ -178,11 +166,12 @@ If a local model server does not probe successfully:
 - from another LAN machine, use the server's LAN IP and `/v1`
 - remember that `localhost` inside a container is the container itself
 
-If password or reverse-proxy behavior is confusing:
+If login or reverse-proxy behavior is confusing:
 
 - keep the first pass on `127.0.0.1`
-- require a Directory login (`HERMES_WEBUI_DIRECTORY`) before exposing WebUI
-  beyond localhost; without one the server refuses to start there
+- a server with no Directory (`HERMES_WEBUI_DIRECTORY`) refuses to start
+- a login refused with "no access yet" means no Profile exists for that
+  employee ID; "suspended" means the Profile is disabled (`operator_cli list`)
 - include the reverse proxy shape in the support report without pasting tokens
   or cookies
 
@@ -198,7 +187,7 @@ Command used:
 WebUI URL:
 State isolation:
 Health result:
-Onboarding status summary:
+Profiles (operator_cli list):
 Files created or changed:
 Log excerpt:
 Pass/fail:

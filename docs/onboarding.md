@@ -1,120 +1,92 @@
-# First-run onboarding guide
+# First run
 
-This guide explains what happens the first time Hermes WebUI starts, which
-setup path to choose, and how to recover when the wizard cannot finish.
+This guide is for the **Operator**: the person with shell access to the
+server who sets up a GFIT-CoWork Deployment and its first Users. There is no
+setup wizard in the web app and no Admin login (ADR 0006); everything below is
+done on the server.
 
 If an AI assistant is helping with install, reinstall, bootstrap, provider
 setup, or first-run support, read
 [`docs/onboarding-agent-checklist.md`](onboarding-agent-checklist.md) before
 running commands or inspecting logs.
 
-The short version: run the bootstrap, open the WebUI, choose a provider, choose
-a workspace, then start a chat. Login is the company Directory, configured by
-the operator (see the README), not in onboarding. If you are using a
-local model server from Docker, pay special attention to the Base URL section
-below.
+The short version:
+
+1. Install Hermes Agent and give the `default` Profile a provider and model
+   (`hermes setup` or `hermes model`).
+2. Configure the Directory (`HERMES_WEBUI_DIRECTORY`): the company AD for a
+   Deployment, or the in-memory Directory for a trial. Without one the server
+   does not start.
+3. Start GFIT-CoWork.
+4. Create a Profile for each person:
+   `python3 -m api.operator_cli create <employee ID> --clone-from default`.
+5. The person logs in with their employee ID and AD password.
+
+For a Team on a server, the `deploy/` kit does steps 2–3 for you; follow
+[`deploy/README.md`](../deploy/README.md).
 
 ## Before you start
 
-Hermes WebUI is only the browser interface. The actual agent runtime, memory,
-skills, config, cron jobs, and provider credentials belong to Hermes Agent.
+GFIT-CoWork is only the browser interface. The agent runtime, memory, skills,
+config, cron jobs and provider credentials belong to Hermes Agent, one Profile
+per User.
 
-The bootstrap supports Linux, macOS, and WSL2. Native Windows is not supported
-by the bootstrap yet. A community native Windows setup is being tracked in
-[#1952](https://github.com/nesquena/hermes-webui/issues/1952), including:
-
-- [Native Windows guide](https://github.com/markwang2658/hermes-windows-native-guide)
-- [Native Windows setup scripts](https://github.com/markwang2658/hermes-windows-native)
-
-For Windows users who want the supported path today, use WSL2.
+The bootstrap supports Linux, macOS and WSL2. Native Windows runs with
+`pwsh .\start.ps1` (see the README).
 
 ## Install path choices
 
 | Path | Use it when | Notes |
 |---|---|---|
-| Local bootstrap | You run WebUI directly on Linux, macOS, or WSL2 | Best for a personal server, Mac mini, VPS, or homelab host. |
-| Docker Deployment kit (`deploy/`) | You deploy GFIT-CoWork for a Team on a server | One Deployment per Team behind the HTTPS reverse proxy; see [`deploy/README.md`](../deploy/README.md). Tools launched from GFIT-CoWork run in its container. |
-| Native Windows community path | You are intentionally testing unsupported native Windows | Community-maintained for now, not the official bootstrap path. |
+| Docker Deployment kit (`deploy/`) | You deploy GFIT-CoWork for a Team on a server | One Deployment per Team behind the HTTPS reverse proxy; see [`deploy/README.md`](../deploy/README.md). |
+| Local bootstrap | Development, or a trial on one machine | `./start.sh` or `python3 bootstrap.py`, with the in-memory Directory. |
 
-If a Docker install gets confusing, start again with the single-container setup.
-It avoids most UID/GID, source-volume, and tool-location surprises. See
-[Docker setup guide](docker.md) for the full container reference.
+## A trial on one machine
 
-## Re-running onboarding safely
-
-Do not delete `~/.hermes` just to see the wizard again. That directory can hold
-your real Hermes config, credentials, memory, skills, profiles, sessions, and
-cron state.
-
-For a clean local trial, use an isolated Hermes home and WebUI state directory:
+Do not delete `~/.hermes` to start over. It holds the real Hermes config,
+credentials, memory, skills, Profiles, sessions and cron state. Use an
+isolated Hermes home and state directory, and the in-memory Directory:
 
 ```bash
-mkdir -p ~/hermes-onboarding-test
-HERMES_HOME=~/hermes-onboarding-test/.hermes \
-HERMES_WEBUI_STATE_DIR=~/hermes-onboarding-test/webui \
-HERMES_WEBUI_PORT=8789 \
+mkdir -p ~/gfit-trial
+cat > ~/gfit-trial/users.json <<'JSON'
+{"521740": {"password": "trial-only", "display_name": "Trial User"}}
+JSON
+export HERMES_HOME=~/gfit-trial/.hermes
+export HERMES_WEBUI_STATE_DIR=~/gfit-trial/webui
+export HERMES_WEBUI_PORT=8789
+export HERMES_WEBUI_DIRECTORY=memory
+export HERMES_WEBUI_DIRECTORY_USERS=~/gfit-trial/users.json
+
+hermes setup                                   # provider and model for the default Profile
+python3 -m api.operator_cli create 521740 --clone-from default
 python3 bootstrap.py
 ```
 
-Then open `http://127.0.0.1:8789`.
+Then open `http://127.0.0.1:8789` and log in as `521740` / `trial-only`. The
+in-memory Directory is for trials and tests only; a Deployment uses the
+company AD (`HERMES_WEBUI_DIRECTORY=ldap`, see the README).
 
-For an assistant-led trial run, follow the safety rules, evidence commands, and
-pass/fail criteria in
-[`docs/onboarding-agent-checklist.md`](onboarding-agent-checklist.md).
+If your repo has a `.env` file, the bootstrap and the command line load it.
+Remove or adjust any `HERMES_HOME`, `HERMES_WEBUI_STATE_DIR` or
+`HERMES_WEBUI_PORT` entries there before an isolated trial.
 
-If your repo has a `.env` file, remember that the bootstrap loads it. Remove or
-adjust any `HERMES_HOME`, `HERMES_WEBUI_STATE_DIR`, or `HERMES_WEBUI_PORT`
-entries there before using the isolated command above.
+## Providers and models
 
-For managed hosting or fully preconfigured images, set
-`HERMES_WEBUI_SKIP_ONBOARDING=1` to bypass the wizard.
+Provider setup is the Operator's, on the server, with Hermes Agent's own
+tools: `hermes setup` for a first install, `hermes model` to change the
+provider or model. They write the provider key to the Profile's `.env` and the
+default model to its `config.yaml`.
 
-## What the wizard checks
+Set them up in the `default` Profile first. `operator_cli create … --clone-from
+default` then copies the `default` Profile's `config.yaml`, `.env` and skills
+into the new User's Profile, so it works from the first login. A Profile
+created without `--clone-from` has no provider key until the Operator gives it
+one (`hermes -p <employee ID> model`).
 
-The first screen reports the runtime state WebUI can see:
-
-- Hermes Agent importability: whether WebUI can import and run `AIAgent`.
-- Provider status: whether `config.yaml` and credential state are enough for a
-  chat request.
-- Config paths: the active `config.yaml` and `.env` locations for this profile.
-
-If the agent check fails, use [Troubleshooting](troubleshooting.md), especially
-the `AIAgent not available` section. If provider setup is incomplete, continue
-through the wizard or run `hermes model` in the same machine environment that
-will run WebUI.
-
-## Choosing a provider
-
-The setup step groups providers by how much information they usually need.
-
-| Group | Examples | What you usually enter |
-|---|---|---|
-| Easy start | OpenRouter, Anthropic, OpenAI | API key and model. |
-| Open / self-hosted | Ollama, LM Studio, custom OpenAI-compatible, AIML API | Base URL, model, optional API key. |
-| Specialized | Gemini, DeepSeek, Xiaomi MiMo, Z.AI / GLM, NVIDIA NIM, Mistral, xAI | Provider API key and default model. |
-
-For API-key providers, the wizard writes the key to the active Hermes `.env`
-file and writes the default model/provider to `config.yaml`.
-
-For local providers, the API key field can be blank when the server is keyless.
-Most LM Studio, Ollama, vLLM, llama-server, and TabbyAPI installs run this way.
-Use **Test connection** to verify the Base URL and populate the model list
-before continuing.
-
-AIML API uses the existing custom OpenAI-compatible setup path, not a
-first-class built-in Hermes provider id. Configure it under the
-custom-provider flow with Base URL `https://api.aimlapi.com/v1`, then use
-either the normal custom-provider API key field or a config entry that points
-at `AIMLAPI_API_KEY` if you want the custom provider to read its key from the
-environment. Create or manage keys at `https://aimlapi.com/app/keys`. Model
-discovery comes from the live `/v1/models` response for that endpoint, not from
-a static WebUI-maintained model list.
-
-Advanced provider flows such as Nous Portal and GitHub Copilot are still
-terminal-first. OpenAI Codex and Anthropic Claude Code OAuth can be started in
-the onboarding flow when your Hermes config selects the corresponding provider.
-If the wizard points you back to `hermes model`, use that CLI flow first, then
-refresh WebUI.
+A User can change their own Profile's default model, auxiliary models and
+reasoning settings in the web app, among the providers the Operator set up. A
+model's endpoint (`base_url`) and API key stay with the Operator.
 
 ## Base URL rules for local model servers
 
@@ -130,10 +102,10 @@ API root. Common examples:
 | Local server from Linux Docker Engine | `http://api.local:<port>/v1` with `api.local:host-gateway` in Compose `extra_hosts` |
 | Local server on another LAN machine | `http://<lan-ip>:<port>/v1` |
 
-Inside Docker, `localhost` means the WebUI container itself, not your Mac,
-Windows host, Linux host, or another machine on your LAN. If LM Studio or Ollama
-is running outside the container, use `host.docker.internal` on Docker Desktop,
-use the server's LAN IP address, or add a Linux Docker host alias:
+Inside Docker, `localhost` means the container itself, not the host or another
+machine on your LAN. If LM Studio or Ollama runs outside the container, use
+`host.docker.internal` on Docker Desktop, the server's LAN IP address, or a
+Linux Docker host alias:
 
 ```yaml
 services:
@@ -142,68 +114,36 @@ services:
       - "api.local:host-gateway"
 ```
 
-Then use `http://api.local:<port>/v1` as the Base URL. The alias avoids writing
-`localhost` in WebUI config where it would resolve to the container loopback
-instead of the host service.
-
-The wizard probes `<base-url>/models` before saving. A successful probe fills
-the model dropdown. A failed probe blocks the setup step and shows an inline
-error such as DNS failure, connection refused, timeout, HTTP error, or
-unexpected response shape.
-
-## Workspace step
-
-The workspace is the filesystem location Hermes should use for new sessions.
-It can be a source checkout, a project directory, or a general workspace folder.
-
-In Docker, the default browsable path is `/workspace`, which maps to the host
-directory mounted by the compose file. If the workspace appears empty, check the
-Docker UID/GID and mount guidance in [Docker setup guide](docker.md).
-
 ## Login
 
-The wizard has no password step. Login is the Directory alone (see the README's
-"Login with an employee ID"): on `127.0.0.1` with no Directory, login is off;
-on any other address the server refuses to start until a Directory is
-configured.
+Login is the Directory alone (see the README's "Login with an employee ID").
+A person can log in only after the Operator has created their Profile; an
+unknown employee ID is told they have no access yet, and a disabled Profile is
+told its access is suspended.
 
-For installed PWAs, prefer the Directory login over proxy basic auth. Reverse proxies are supported, but HTTP basic-auth challenges in front of the WebUI origin can interrupt the service-worker and shell-asset fetches the installed app relies on during updates. If you keep proxy auth, scope it so same-origin `sw.js`, manifest, and shell update requests can complete.
+For installed PWAs, prefer the Directory login over proxy basic auth. Reverse
+proxies are supported, but HTTP basic-auth challenges in front of the
+GFIT-CoWork origin can interrupt the service-worker and shell-asset fetches the
+installed app relies on during updates.
 
 ## What gets written
 
-The wizard uses the same files and APIs as the normal app:
+- Each Profile's `config.yaml` and `.env` (Hermes Agent): provider, default
+  model, API key.
+- The Profile roster (`gfit_roster.json` in the state directory): display
+  name, status and last login of each Profile.
+- The Deployment's `settings.json` (state directory): settings that belong to
+  the whole Deployment, edited by the Operator.
+- Each Profile's `webui_state/settings.json`: that User's own web settings.
 
-- Active Hermes `config.yaml`: provider, default model, and Base URL when
-  relevant.
-- Active Hermes `.env`: provider API keys when you entered one.
-- WebUI `settings.json`: onboarding completion, workspace, password state, and
-  other WebUI preferences.
-
-State normally lives outside the repository. By default:
-
-- Hermes Agent state: Windows `%LOCALAPPDATA%\hermes`; POSIX `~/.hermes`
-- WebUI state: `$HERMES_HOME/webui` (Windows default `%LOCALAPPDATA%\hermes\webui`, POSIX default `~/.hermes/webui`)
-
-Override these with `HERMES_HOME` and `HERMES_WEBUI_STATE_DIR` when you need an
-isolated test install.
+State normally lives outside the repository: Hermes Agent state in `~/.hermes`
+(Windows `%LOCALAPPDATA%\hermes`), web state in `$HERMES_HOME/webui`. Override
+them with `HERMES_HOME` and `HERMES_WEBUI_STATE_DIR` for an isolated install.
 
 ## When to file an issue
 
-File an issue when the diagnostics point to WebUI rather than local
-configuration. Include:
-
-1. Install path: local bootstrap, Docker single-container, Docker
-   two-container, Docker three-container, WSL2, or community native Windows.
-2. Output from `/health`, or the startup banner if the server never starts.
-3. The provider selected in onboarding and the Base URL shape, with secrets
-   redacted.
-4. For Docker provider problems, the result of probing from inside the
-   container, for example:
-
-```bash
-docker exec hermes-webui sh -c 'curl -sS -w "\nHTTP %{http_code}\n" http://host.docker.internal:1234/v1/models | head -50'
-```
-
-5. Any inline wizard error text and relevant logs.
-
-Never paste API keys, OAuth tokens, or full `.env` contents into an issue.
+File an issue when the diagnostics point to GFIT-CoWork rather than local
+configuration. Include the install path, the output of `/health` (or the
+startup banner if the server never starts), the provider and the Base URL
+shape with secrets redacted, and relevant logs. Never paste API keys, OAuth
+tokens, passwords or full `.env` contents into an issue.

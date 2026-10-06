@@ -7,10 +7,10 @@ policy:
 - the **User's adapter** (:class:`UserSessionOwnership`): owns exactly the
   sessions of the User's Profile (ADR 0002). Every other id, and every id it
   cannot place, is refused: unknown is not allowed;
-- the **unconfined adapter** (:data:`UNCONFINED`): requests with
-  no Admission (login turned off, worker threads). Today's rules: a session of
-  another, known Profile is refused with that Profile named (the 409 the client
-  uses to offer a switch), and an id it cannot find passes to the route;
+- the **unconfined adapter** (:data:`UNCONFINED`): code with no caller
+  (worker threads, public routes). Upstream's rules: a session of another,
+  known Profile is refused with that Profile named (a 409 no HTTP request can
+  get now that every one has a caller), and an id it cannot find passes;
 - the **refusing answer** (:data:`REFUSING`): a Directory session with no
   recorded Admission, or an Admission this module does not understand. It owns
   nothing.
@@ -400,8 +400,8 @@ def ownership_for(admission, *, directory_session: bool):
     """The session ownership adapter for *admission*: the one mapping from Admission to adapter.
 
     A User's Admission gives that User's adapter. No Admission is
-    unconfined only when there is no Directory
-    session (login turned off, a worker thread); a Directory session with none
+    unconfined only when there is no Directory session (a public route, a
+    worker thread); a Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
     from api.access import ROLE_USER

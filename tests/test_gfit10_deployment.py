@@ -31,7 +31,6 @@ CADDYFILE = DEPLOY / "caddy" / "Caddyfile.example"
 GUIDE = DEPLOY / "README.md"
 
 MEMBER = "600001"
-ADMIN = "521740"
 
 
 def _env_example() -> dict[str, str]:
@@ -89,9 +88,12 @@ def test_the_config_example_lists_every_value_the_compose_file_needs():
         "TEAM", "GFIT_PORT", "GFIT_HOSTNAME",
         "HERMES_WEBUI_DIRECTORY", "HERMES_WEBUI_LDAP_URL", "HERMES_WEBUI_LDAP_BIND_FORMAT",
         "HERMES_WEBUI_LDAP_DOMAIN", "HERMES_WEBUI_LDAP_BASE_DN", "HERMES_WEBUI_LDAP_CA_CERT",
-        "HERMES_WEBUI_ADMIN_USERS", "API_SERVER_KEY",
+        "API_SERVER_KEY",
     ):
         assert key in example, key
+    # There is no Admin (ADR 0006): the example does not offer the old setting.
+    assert "HERMES_WEBUI_ADMIN_USERS" not in example
+    assert "HERMES_WEBUI_ADMIN_USERS" not in ENV_EXAMPLE.read_text(encoding="utf-8")
     assert example["HERMES_WEBUI_DIRECTORY"] == "ldap"
     assert example["HERMES_WEBUI_LDAP_URL"].startswith("ldaps://")
     # Both services read the Deployment's config file.
@@ -195,7 +197,6 @@ def _start_deployment(root: Path, team: str, users_file: Path, profiles=()):
         "HERMES_WEBUI_PORT": str(port),
         "HERMES_WEBUI_DIRECTORY": "memory",
         "HERMES_WEBUI_DIRECTORY_USERS": str(users_file),
-        "HERMES_WEBUI_ADMIN_USERS": ADMIN,
         "HERMES_WEBUI_TEST_NETWORK_BLOCK": "1",
         "AWS_EC2_METADATA_DISABLED": "true",
         # Keeps the agent's import-time launch preparation from rewriting the
@@ -226,7 +227,6 @@ def two_deployments(tmp_path):
     users = tmp_path / "directory-users.json"
     users.write_text(json.dumps({
         MEMBER: {"password": PASSWORD, "display_name": "Sales Member"},
-        ADMIN: {"password": PASSWORD, "display_name": "Admin"},
     }))
     procs = []
     try:

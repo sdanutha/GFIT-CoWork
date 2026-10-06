@@ -57,7 +57,8 @@ services:
     volumes:
       - hermes-home:/home/hermeswebui/.hermes
       - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent:ro
-      # The Admin's Workspace. A User's Workspaces live in their Profile.
+      # The server's default Workspace; no User works in it. A User's
+      # Workspaces live in their Profile (hermes-home).
       - admin-workspace:/workspace
       # The AD CA certificate (HERMES_WEBUI_LDAP_CA_CERT=/certs/...).
       - ./certs:/certs:ro

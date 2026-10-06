@@ -5,8 +5,8 @@ Each request has one Workspace policy, chosen from the request's Admission
 
 - a **User's policy** (:class:`UserWorkspacePolicy`): everything is inside that
   User's Workspace folder, ``<Profile>/workspace`` (ADR 0002);
-- the **unconfined policy** (:data:`UNCONFINED`): requests with
-  no Admission (login turned off, worker threads). Today's rules, including
+- the **unconfined policy** (:data:`UNCONFINED`): code with no caller
+  (worker threads, public routes). Upstream's rules, including
   remote-terminal Workspaces and the saved-list rules;
 - the **refusing answer** (:data:`REFUSING`): a Directory session with no
   recorded Admission, or an Admission this module does not understand.
@@ -210,8 +210,9 @@ REFUSING = _RefusingWorkspacePolicy()
 def policy_for(admission, *, directory_session: bool):
     """The Workspace policy for *admission*: the one mapping from Admission to policy.
 
-    A User's Admission gives that User's policy. No Admission is unconfined only when there is no Directory
-    session (login turned off, a worker thread); a Directory session with none
+    A User's Admission gives that User's policy. No Admission is unconfined only
+    when there is no Directory session (a public route, a worker thread); a
+    Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
     from api.access import ROLE_USER

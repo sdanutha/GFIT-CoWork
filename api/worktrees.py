@@ -252,7 +252,7 @@ WORKTREE_OUTSIDE_WORKSPACE_MESSAGE = "A worktree here would be outside your Work
 def _confine_worktree(path: Path) -> None:
     """Refuse *path* when the request's Workspace policy says it may not become the session's Workspace.
 
-    A User's worktree must stay inside their Workspace; not confined for the Admin.
+    A User's worktree must stay inside their Workspace.
     """
     from api.workspace_policy import request_workspace_policy
 

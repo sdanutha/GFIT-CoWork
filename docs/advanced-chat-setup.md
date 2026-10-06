@@ -121,20 +121,8 @@ Use this when the connected gateway advertises approval support and you want too
 
 On the runs API path the turn is executed by the Gateway, so restarting WebUI does not stop it. WebUI stores the Gateway `run_id` on the pending turn (and submits it with an `Idempotency-Key` so the Gateway keeps a durable run record). On startup, WebUI reattaches to every such run by polling `GET /v1/runs/{run_id}` until it settles, then writes the real final answer into the session instead of a "Response interrupted" marker. Stop still cancels a reattached run, and a pending approval is shown again. Token-by-token output from before the restart is not replayed; the reattached turn shows only the final answer. If the Gateway no longer knows the run (for example, it restarted too and the run was interrupted), the turn ends with an error message instead. The legacy chat-completions transport cannot reattach: its turn ends when the WebUI process that holds the HTTP stream exits.
 
-When YOLO is enabled for a gateway-backed browser session, WebUI approves every
-approval already parked for that session: Runs API prompts are relayed by their
-exact `run_id` and mirror token, and local/no-run waiters are all released. It
-then automatically answers later Runs API approval requests while the WebUI
-session flag remains active. The flag is committed only after every currently
-parked remote relay succeeds; a later prompt that races that unconfirmed drain
-remains visible instead of being speculatively auto-approved. The handoff is
-also shared with local approval admission: a local waiter arriving after
-the current drain snapshot waits for the same session handoff and is released
-immediately if YOLO has committed, rather than being parked behind an enabled
-session. This is client-managed compatibility behavior: the current Runs API has
-no session-YOLO toggle, so a request briefly reaches the approval boundary before WebUI answers
-it, and Agent-owned policy such as unrestricted computer-use mode is unchanged.
-Native API session YOLO is tracked in [Hermes Agent PR #61946](https://github.com/NousResearch/hermes-agent/pull/61946).
+There is no session YOLO mode in the web app (ADR 0006): every approval the
+Gateway raises is shown as a card and waits for the User's answer.
 
 `HERMES_WEBUI_CHAT_BACKEND` is intentionally strict: only `gateway`,
 `api_server`, or `api-server` enable the bridge. Generic truthy values such as

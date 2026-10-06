@@ -3,8 +3,9 @@
 GFIT-CoWork is a multi-user web workspace for working with
 [Hermes Agent](https://hermes-agent.nousresearch.com/), run on a shared server
 for one GFIT team. Each person logs in with their company AD account and works
-in their own Hermes Agent Profile; the team's Admin runs the server, the API key
-and the list of Profiles. See [CONTEXT.md](CONTEXT.md) for the vocabulary and
+in their own Hermes Agent Profile. There is no Admin in the web app: the team's
+**Operator** runs the server, the API key and the list of Profiles from the
+server's shell ([ADR 0006](docs/adr/0006-no-admin-in-the-web-app.md)). See [CONTEXT.md](CONTEXT.md) for the vocabulary and
 [docs/adr/](docs/adr/) for the design decisions.
 
 GFIT-CoWork is a hard fork of
@@ -20,13 +21,12 @@ A User signs in with their employee ID (`521740`, `GFIT\521740` or
 `521740@gfit.co.th` all work) and password. The password is checked by the
 **Directory**; GFIT-CoWork never stores or logs it. Login succeeds only when the
 Directory accepts the password **and** a Profile named after the employee ID
-exists. The session is then bound to that Profile. An employee ID on the Admin
-list logs in to the `default` Profile as the **Admin** instead.
+exists and is active. The session is then bound to that Profile. Every person
+who logs in is a **User**; nobody logs in to the `default` Profile.
 
 | Variable | Meaning |
 | --- | --- |
-| `HERMES_WEBUI_DIRECTORY` | Which Directory to use. Unset turns Directory login off. `ldap` uses the company AD; `memory` uses the in-memory Directory. Any other value refuses every login. |
-| `HERMES_WEBUI_ADMIN_USERS` | Comma-separated employee IDs of the Deployment's Admins, e.g. `521740,671278`. |
+| `HERMES_WEBUI_DIRECTORY` | Which Directory to use: `ldap` uses the company AD; `memory` uses the in-memory Directory. Required: unset, the server does not start. Any other value refuses every login. |
 | `HERMES_WEBUI_LDAP_URL` | For `ldap`: `ldaps://ad-host` or `ldap://ad-host` with `HERMES_WEBUI_LDAP_STARTTLS=1`. Plain LDAP is refused. |
 | `HERMES_WEBUI_LDAP_BIND_FORMAT`, `HERMES_WEBUI_LDAP_DOMAIN` | For `ldap`: `upn` (`521740@domain`) or `domain` (`DOMAIN\521740`), plus the domain. |
 | `HERMES_WEBUI_LDAP_BASE_DN`, `HERMES_WEBUI_LDAP_USER_FILTER` | For `ldap`: where and how to look the user up to read `displayName` (filter default `(sAMAccountName={username})`). |
@@ -41,49 +41,63 @@ be reached, login says the directory is unavailable rather than that the
 password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
 stand-in (see its README).
 
-The Directory is the only way in, and whether login is on depends on it alone.
+The Directory is the only way in, and login is always on.
 The upstream login methods (the shared `HERMES_WEBUI_PASSWORD` or Settings
 password, passkeys, OIDC and the trusted header) are removed: a leftover
-setting of theirs neither turns login on nor lets anyone in, and startup
-reports it as ignored. A stored upstream password hash or passkey file is left
+setting of theirs lets nobody in, and startup reports it as ignored. So does a
+leftover `HERMES_WEBUI_ADMIN_USERS` from an earlier version: it grants nothing,
+and the people it names log in as Users to their own Profile, if they have one. A stored upstream password hash or passkey file is left
 on disk and ignored. The trusted proxy settings
 (`HERMES_WEBUI_TRUST_FORWARDED_FOR`, `HERMES_WEBUI_TRUSTED_PROXY_CIDRS`) stay
 for the rate limit.
 
-On a network address (anything but loopback, e.g. `0.0.0.0` in a container) the
-server does not start without a Directory: it exits and names the Directory
-settings, so a Deployment is never served with login off. On the loopback
-address with no Directory, the server starts with login off, for local
-development, and says so at startup.
+There is no mode with login turned off: with no Directory the server does not
+start, on any address, and names the Directory settings. Local development
+uses the in-memory Directory (below).
 
-### Users and the Admin
+### Users and the Operator
 
 A **User** works only in their own Profile. Every request runs in the Profile
 bound to their session, whatever Profile the client names; naming another one
-is refused, and a User cannot switch Profiles. A User's Workspaces live in
-`<Profile>/workspace`, created at first login. Registering a Workspace outside
-it, or any file operation that resolves outside it (through `..` or a symlink),
-is refused.
+is refused, and there is no Profile switching and no view of other Profiles. A
+User's Workspaces live in `<Profile>/workspace`, created at first login.
+Registering a Workspace outside it, or any file operation that resolves outside
+it (through `..` or a symlink), is refused. A User changes their own web
+settings and their own Profile's models and reasoning; settings that belong to
+the whole Deployment (the assistant's name, API redaction, ...) are the
+Operator's.
 
-The **Admin** is not confined and alone may use the server-level features:
-terminal, changing workspace git, extensions, shutdown and reload,
-server logs, YOLO mode, providers, models and MCP servers, Settings (they are
-shared by the whole Deployment), onboarding, gateway control, Profile
-management and public share links. The server refuses these to Users with
-403 (`api/access.py` lists what a User may call; anything else is refused).
-The server also tells the web app which of these features its caller may use,
-so a User's web app hides their menus and does not call them.
+The **Operator** is whoever has shell access to the Deployment's server. They
+set up providers and API keys, manage Profiles with the command line below, and
+use Hermes Agent's own tools for anything server-level (a terminal, logs,
+gateway control, restarts). The web app has none of these: the route table
+(`api/route_table.py`) lists every route a User may call, and anything else is
+refused (fail closed).
 
 ### Managing Profiles
 
-The Admin adds a colleague in the Profiles panel by creating a Profile named
-after their employee ID, with an optional display name. Each Profile is listed
-as "name (ID)" (or just the ID) with its status and last login. The Admin can
-**disable** a Profile — the person is signed out at once, later logins are
-told their access is suspended, their running turns stop and their scheduled
-jobs pause, but their data stays — **enable** it again (the jobs the disable
-paused run again), or
-**delete** it permanently (the Profile and its record) after confirming.
+The Operator manages Profiles on the server with the same Python and
+environment as the web server:
+
+```bash
+python3 -m api.operator_cli list                                   # name, status, last login, display name
+python3 -m api.operator_cli create 521740 --display-name "Somchai Jaidee" --clone-from default
+python3 -m api.operator_cli disable 521740
+python3 -m api.operator_cli enable 521740
+python3 -m api.operator_cli delete 521740 --confirm 521740        # only a disabled Profile
+python3 -m api.operator_cli sessions-audit                         # read-only
+python3 -m api.operator_cli sessions-repair                        # quiet time; restart the server after
+python3 -m api.operator_cli sessions-cleanup [--empty]             # quiet time; restart the server after
+```
+
+A Profile is named after the person's employee ID. `--clone-from default`
+copies the `default` Profile's config, `.env` (the provider key) and skills, so
+the new Profile can use the Team's model right away. **Disable** keeps the
+data: the command line pauses the Profile's scheduled jobs, and the running
+server notices within seconds, signs the person out and stops their running
+turns; later logins are told their access is suspended. **Enable** lets them
+back in and resumes the jobs the disable paused. **Delete** removes a disabled
+Profile and its record for good.
 
 Display name, status and last login live in the **Profile roster**
 (`gfit_roster.json` in the state directory), not in the Hermes Profile config.
@@ -93,7 +107,7 @@ Display name, status and last login live in the **Profile roster**
 After login the Profile chip shows who is signed in as "name (ID)", e.g.
 "สมชาย ใจดี (521740)". Every login takes the name from the Directory and saves
 it in the Profile roster. Until someone's first login, their chip shows the
-name the Admin typed, or just the ID if the Admin typed none. `/api/auth/status`
+name the Operator gave at create, or just the ID. `/api/auth/status`
 sends `user`, `display_name` and `label`. Clicking the chip opens a menu with
 the name and **Sign Out**, which ends that browser's session only.
 
@@ -135,17 +149,18 @@ the `deploy/` kit on a server (above), and two ways for development.
 **Native Windows**: `pwsh .\start.ps1` (it finds `venv\Scripts\python.exe` in the
 Hermes Agent folder).
 
-On the loopback address with no Directory, the server starts with login off.
-To try login locally, run the development Directory in
-[`dev/mock-ldap/`](dev/mock-ldap/) and point `HERMES_WEBUI_DIRECTORY=ldap` at it,
-or use `HERMES_WEBUI_DIRECTORY=memory` with a `HERMES_WEBUI_DIRECTORY_USERS`
-file. `.env` in the repo root is read at startup; see
+The server needs a Directory to start. For local development use
+`HERMES_WEBUI_DIRECTORY=memory` with a `HERMES_WEBUI_DIRECTORY_USERS` file, or
+run the development Directory in [`dev/mock-ldap/`](dev/mock-ldap/) and point
+`HERMES_WEBUI_DIRECTORY=ldap` at it. Then create a Profile for your test
+employee ID with `python3 -m api.operator_cli create <id> --clone-from default`. `.env` in the repo root is read at startup; see
 [`.env.example`](.env.example) for the variables.
 
 State lives outside the repo, in `~/.hermes/webui/` by default (sessions,
 Workspaces, settings, projects, the Profile roster). Override it with
-`HERMES_WEBUI_STATE_DIR`. For first-run onboarding and provider setup, see
-[`docs/onboarding.md`](docs/onboarding.md); if an AI assistant is helping with
+`HERMES_WEBUI_STATE_DIR`. Provider setup is done on the server with Hermes
+Agent's own tools (`hermes setup`, `hermes model`); see
+[`docs/onboarding.md`](docs/onboarding.md). If an AI assistant is helping with
 install or first-run support, have it read
 [`docs/onboarding-agent-checklist.md`](docs/onboarding-agent-checklist.md) first.
 
@@ -165,7 +180,7 @@ The launchers and `bootstrap.py` find what they need on their own:
 | Default workspace | `HERMES_WEBUI_DEFAULT_WORKSPACE` env, then `~/workspace`, then state dir |
 | Port | `HERMES_WEBUI_PORT` env or first argument, default `8787` |
 
-Environment variables beyond the Directory and Admin settings above (the
+Environment variables beyond the Directory settings above (the
 `deploy/` kit sets the ones a Deployment needs in `team.env`):
 
 | Variable | Default | Description |
@@ -178,12 +193,8 @@ Environment variables beyond the Directory and Admin settings above (the
 | `HERMES_WEBUI_SETTINGS_FILE` | `<state dir>/settings.json` | Optional path for this instance's settings file (sessions, workspaces and projects stay in the state directory). Read once at startup, so restart after changing it |
 | `HERMES_WEBUI_DEFAULT_WORKSPACE` | `~/workspace` | Default workspace |
 | `HERMES_WEBUI_DEFAULT_MODEL` | *(provider default)* | Optional model override; leave unset to use the active Hermes provider default |
-| `HERMES_WEBUI_CSP_CONNECT_EXTRA` | *(unset)* | Optional space-separated `http(s)://` or `ws(s)://` origins to append to the enforced and report-only CSP `connect-src` directives for trusted reverse-proxy, tunnel, or extension sidecar deployments |
+| `HERMES_WEBUI_CSP_CONNECT_EXTRA` | *(unset)* | Optional space-separated `http(s)://` or `ws(s)://` origins to append to the CSP `connect-src` directive for trusted reverse-proxy or tunnel deployments |
 | `HERMES_WEBUI_SSE_CHUNKED` | *(unset)* | Set truthy (`1`/`true`/`yes`/`on`) to send SSE with `Transfer-Encoding: chunked`. Needed behind buffering reverse proxies (e.g. `jupyter-server-proxy`) that otherwise buffer the whole stream; harmless but unnecessary for directly-served deployments |
-| `HERMES_WEBUI_EXTENSION_DIR` | *(unset)* | Optional local directory served at `/extensions/`; must point to an existing directory before extension injection is enabled |
-| `HERMES_WEBUI_EXTENSION_MANIFEST` | *(unset)* | Optional relative JSON manifest inside `HERMES_WEBUI_EXTENSION_DIR` listing bundled scripts/styles to inject; see [Extensions](docs/EXTENSIONS.md) |
-| `HERMES_WEBUI_EXTENSION_SCRIPT_URLS` | *(unset)* | Optional comma-separated same-origin script URLs to inject; appended after manifest scripts; see [Extensions](docs/EXTENSIONS.md) |
-| `HERMES_WEBUI_EXTENSION_STYLESHEET_URLS` | *(unset)* | Optional comma-separated same-origin stylesheet URLs to inject; appended after manifest stylesheets; see [Extensions](docs/EXTENSIONS.md) |
 | `HERMES_HOME` | Windows: `%LOCALAPPDATA%\hermes`; POSIX: `~/.hermes` | Base directory for Hermes state (affects all paths) |
 | `HERMES_CONFIG_PATH` | `$HERMES_HOME/config.yaml` | Path to Hermes config file |
 | `HERMES_WEBUI_SERVER_CWD` | *(unset)* | Working directory for the server process. Defaults to the agent dir; point it at a writable workspace when the agent dir is read-only so fallback relative writes land somewhere writable |
@@ -196,13 +207,15 @@ Environment variables beyond the Directory and Admin settings above (the
 
 ```bash
 ./scripts/test.sh                              # the whole suite
-./scripts/test.sh tests/test_gfit04_admin_gate.py -v   # one file
+./scripts/test.sh tests/test_gfit_no_admin.py -v   # one file
 ```
 
 The runner creates or reuses `.venv` with Python 3.11, 3.12 or 3.13 and installs
 `requirements-dev.txt` when something is missing. `HERMES_WEBUI_TEST_PYTHON`
 picks the base interpreter for `.venv`. Tests run against isolated servers with
 their own state directories; real sessions and cron jobs are never touched.
+Login is on in the tests too: the shared test server logs in one test User bound
+to their own Profile (see "How the automated tests log in" in TESTING.md).
 CI runs the same suite on every pull request to `main` and `dev`. See
 [`TESTING.md`](TESTING.md) for manual checks.
 
@@ -214,7 +227,8 @@ routing shell.
 | Where | What |
 | --- | --- |
 | `api/routes.py` | Every GET and POST route handler |
-| `api/access.py` | The Admin gate: what a User may call |
+| `api/access.py`, `api/route_table.py` | Admission and the route gate: every route a User may call, and who is calling |
+| `api/operator_cli.py`, `api/roster_watch.py` | The Operator's command line, and the server noticing a disabled Profile |
 | `api/login.py`, `api/directory.py`, `api/ldap_directory.py` | Directory login and Admission |
 | `api/session_ownership.py`, `api/workspace_policy.py` | Which sessions and paths a request may touch |
 | `api/roster.py`, `api/profiles.py` | The Profile roster and Profile state |
@@ -250,14 +264,13 @@ must match.
 - [`deploy/README.md`](deploy/README.md) — adding a Team, adding a User, running a pilot
 - [`docs/docker.md`](docs/docker.md) — the image: volumes, UID/GID, the gateway, upgrades, common failures
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — diagnostic flows for common failures
-- [`docs/onboarding.md`](docs/onboarding.md) — first-run wizard and provider setup
+- [`docs/onboarding.md`](docs/onboarding.md) — first run: the Directory, provider setup on the server, the first Profile
 - [`docs/onboarding-agent-checklist.md`](docs/onboarding-agent-checklist.md) — safety rules for assistant-led install support
 - [`docs/advanced-chat-setup.md`](docs/advanced-chat-setup.md) — Gateway-backed chat and recall prefill
 
 **Using and customizing**
 - [`THEMES.md`](THEMES.md) — themes and skins
-- [`docs/workspace-git.md`](docs/workspace-git.md) — the Workspace Git controls
-- [`docs/EXTENSIONS.md`](docs/EXTENSIONS.md) — extensions from the Admin's extension folder
+- [`docs/workspace-git.md`](docs/workspace-git.md) — the read-only Workspace Git view
 
 **Contributing and design**
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution style and PR expectations

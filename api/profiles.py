@@ -51,9 +51,8 @@ _profile_lock = threading.Lock()
 _loaded_profile_env_keys: set[str] = set()
 
 # Thread-local profile context: set per-request by server.py, cleared after.
-# Enables per-client profile isolation (issue #798) — each HTTP request thread
-# reads its own profile from the hermes_profile cookie instead of the
-# process-global _active_profile.
+# Each HTTP request thread runs in its Admission's Profile
+# (api.access.settle_request) instead of the process-global _active_profile.
 _tls = threading.local()
 
 # Home of the profile this process serves as its own (set by init_profile_state).
@@ -503,7 +502,7 @@ def get_active_profile_name() -> str:
 
     Priority:
       1. Isolated-profile deployment name from the configured HERMES_HOME path
-      2. Thread-local (set per-request from hermes_profile cookie) — issue #798
+      2. Thread-local (set per-request from the request's Admission)
       3. Process-level default (_active_profile)
     """
     if _is_isolated_profile_mode():

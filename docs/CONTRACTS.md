@@ -229,7 +229,7 @@ does not match the touched subsystem.
   plan.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md): API, module layout, and design
   constraints.
-- [`docs/onboarding.md`](onboarding.md): first-run wizard and provider setup.
+- [`docs/onboarding.md`](onboarding.md): first run: the Directory, provider setup on the server and the first Profile.
 - [`docs/onboarding-agent-checklist.md`](onboarding-agent-checklist.md): safety
   rules for assistant-led install, reinstall, bootstrap, provider setup, local
   model setup, Docker onboarding, and WSL onboarding.
@@ -237,8 +237,6 @@ does not match the touched subsystem.
   bind-mount migration.
 - [`docs/troubleshooting.md`](troubleshooting.md): diagnostic flows for common
   failures.
-- [`docs/EXTENSIONS.md`](EXTENSIONS.md): administrator-controlled WebUI
-  extension injection.
 
 ## Quick redline checklist
 

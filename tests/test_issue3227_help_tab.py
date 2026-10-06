@@ -25,14 +25,15 @@ def test_help_pane_present():
 
 
 def test_help_pane_sends_no_one_to_upstream():
-    """GFIT-CoWork: problems go to the Deployment's Admin, not to Upstream's GitHub or site."""
+    """GFIT-CoWork: problems go to the team's Operator, not to Upstream's GitHub or site (ADR 0006)."""
     pane = _help_pane()
     assert "<a " not in pane
     assert "get-hermes.ai" not in pane
     assert "github.com" not in pane
     assert 'data-i18n="settings_help_issue_label"' in pane
     assert 'data-i18n="settings_help_issue_desc"' in pane
-    assert "Admin" in pane
+    assert "Operator" in pane
+    assert "Admin" not in pane
 
 
 def test_panels_js_allowlist_includes_help():

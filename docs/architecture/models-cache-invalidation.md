@@ -76,12 +76,11 @@ The over-budget stale fallback (`_load_stale_models_cache_from_disk`) tolerates 
 | Path | In-memory snapshot | Disk snapshot |
 | --- | --- | --- |
 | `invalidate_models_cache()` (default `delete_disk=True`) | dropped | **deleted** |
-| `invalidate_models_cache(delete_disk=False)` (`POST /api/profile/switch`) | dropped | kept |
 | `invalidate_provider_models_cache(provider_id)` | dropped | **deleted** |
 | `_get_fresh_memory_models_cache()` on fingerprint mismatch / invalid shape | dropped | untouched |
-| config-reload branch in `get_available_models()` | dropped | deleted by `_refresh_config_cache()` only when the *same* `config.yaml` path was already loaded and changed; a first load or path change (per-client switch) keeps it |
+| config-reload branch in `get_available_models()` | dropped | deleted by `_refresh_config_cache()` only when the *same* `config.yaml` path was already loaded and changed; a first load or a path change (a request in another Profile) keeps it |
 
-The switch keeps the disk snapshot because it is keyed per profile and
+A path change keeps the disk snapshot because it is keyed per profile and
 `_is_loadable_disk_cache()` rejects it unless every axis above matches, so any
 new catalog input must become an axis first. `delete_profile_api()` and
 `create_profile_api()` unlink `models_cache.<name>.json`, so a recreated profile
@@ -111,7 +110,8 @@ timestamp-only churn keeps the fingerprint identical (and a session visit after 
 Codex refresh needs no live rebuild), while genuine changes — a new model, a
 visibility change, any catalog field, any unknown field — still invalidate.
 
-`tests/test_profile_switch_models_disk_cache.py` covers the switch: the disk
+`tests/test_profile_switch_models_disk_cache.py` covers moving between Profiles'
+configs (there is no web Profile switch any more, ADR 0006): the disk
 snapshot survives it and is served without a live rebuild, each source-axis
 change or a delete/recreate forces a fresh rebuild, and a same-path config
 edit still deletes the snapshot.

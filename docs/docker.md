@@ -63,8 +63,8 @@ several Deployments share one server without touching each other.
   start. The GFIT-CoWork image doesn't ship the agent's Python deps: at
   startup it runs `uv pip install` against this volume to install them. The
   GFIT-CoWork mount is read-only; the agent container is the only writer.
-- `admin-workspace` is the Admin's Workspace at `/workspace`. A User's
-  Workspaces live in their Profile.
+- `admin-workspace` is the server's default Workspace at `/workspace`; no User
+  works in it. A User's Workspaces live in their Profile.
 - `./certs` (read-only) holds the AD CA certificate.
 
 GFIT-CoWork publishes port 8787 on `127.0.0.1:<GFIT_PORT>` only, so people
@@ -341,7 +341,7 @@ Both are documented in `api/startup.py::fix_credential_permissions()`.
 
 **Fix**:
 - Verify: `docker compose exec gfit-cowork ls -la /home/hermeswebui/.hermes/config.yaml`
-- If it doesn't exist: the Admin has not saved a model yet — set it in Settings.
+- If it doesn't exist: no model has been set up yet — run `docker compose exec hermes-agent hermes model` (deploy/README.md).
 - If it exists but is unreadable: see #1 for the UID/GID fix.
 
 ### 6. "API base URL set to localhost fails from Docker" (#3012)

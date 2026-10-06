@@ -9,8 +9,8 @@ paths are used as fallback when no profile module is available.
 
 GFIT-CoWork: every Workspace answer (default, saved list, may use, resolve,
 file roots, confine) comes from the request's Workspace policy
-(:mod:`api.workspace_policy`). A *profile* argument is the Admin's: the
-unconfined policy uses it as it always has. For a User the policy is bound to
+(:mod:`api.workspace_policy`). A *profile* argument is for code with no
+caller: the unconfined policy uses it as it always has. For a User the policy is bound to
 the User's own Profile, and that Profile wins over any *profile* argument.
 Profile-scoped state files (the saved list, the last-used
 Workspace) are still read from *profile*, then cleaned by the policy.
@@ -425,7 +425,7 @@ def _profile_default_workspace(profile: str | Path | None = None) -> str:
 
 
 def _configured_default_workspace(profile: str | Path | None = None) -> str:
-    """The unconfined default Workspace: :func:`_profile_default_workspace` for the Admin."""
+    """The unconfined default Workspace: :func:`_profile_default_workspace`."""
     try:
         from api.config import get_config_for_profile_home
         profile_home = _resolve_profile_home_param(profile)
@@ -495,7 +495,7 @@ def _clean_workspace_list(workspaces: list, profile: str | Path | None = None) -
 
 
 def _clean_unconfined_workspace_list(workspaces: list, profile: str | Path | None = None) -> list:
-    """The unconfined saved-list clean-up: :func:`_clean_workspace_list` for the Admin."""
+    """The unconfined saved-list clean-up: :func:`_clean_workspace_list`."""
     hermes_profiles = (_home_path() / '.hermes' / 'profiles').resolve()
     result = []
     for w in workspaces:
@@ -645,7 +645,7 @@ def _remote_cwd_for(profile: str | Path | None = None) -> str | None:
 
 
 def _unconfined_may_use(raw: str, profile: str | Path | None, remote_cwd: str | None) -> bool:
-    """May *raw* be the Admin's last-used Workspace? Target-side for a remote terminal."""
+    """May *raw* be the unconfined last-used Workspace? Target-side for a remote terminal."""
     if remote_cwd:
         # For remote/SSH profiles, last_workspace is target-side state. Do
         # not accept stale server-local paths merely because they exist on
@@ -1031,7 +1031,7 @@ def _trusted_workspace_roots(profile: str | Path | None = None) -> list[Path]:
 
 
 def _unconfined_file_roots(profile: str | Path | None = None) -> list[Path]:
-    """The unconfined roots: :func:`_trusted_workspace_roots` for the Admin."""
+    """The unconfined roots: :func:`_trusted_workspace_roots`."""
     roots: list[Path] = []
 
     def add(candidate: str | Path | None) -> None:
@@ -1193,7 +1193,7 @@ def resolve_trusted_workspace(path: str | Path | None = None, profile: str | Pat
 
 
 def _resolve_unconfined_workspace(path: str | Path | None = None, profile: str | Path | None = None) -> Path:
-    """The unconfined rules of :func:`resolve_trusted_workspace`, for the Admin."""
+    """The unconfined rules of :func:`resolve_trusted_workspace`,."""
     if path in (None, ""):
         return _resolve_path(_BOOT_DEFAULT_WORKSPACE, profile) if profile is not None else _resolve_path(_BOOT_DEFAULT_WORKSPACE)
 
@@ -1378,7 +1378,7 @@ def validate_workspace_to_add(path: str, profile: str | Path | None = None) -> P
 
 
 def _unconfined_register_target(path: str, profile: str | Path | None = None) -> Path | None:
-    """The server folder the Admin may create to register *path*, checked before it is created.
+    """The server folder the unconfined policy may create to register *path*, checked before it is created.
 
     None when *path* is target-side for a remote terminal (nothing to create
     here). Refuses a blocked system folder, except at or under the home
@@ -1409,7 +1409,7 @@ def _refuse_system_folder(candidate: Path) -> None:
 
 
 def _validate_unconfined_workspace_to_add(path: str, profile: str | Path | None = None) -> Path:
-    """The unconfined rules of :func:`validate_workspace_to_add`, for the Admin."""
+    """The unconfined rules of :func:`validate_workspace_to_add`,."""
     path = _strip_surrounding_quotes(path)
     candidate = _resolve_path(path, profile) if profile is not None else _resolve_path(path)
 

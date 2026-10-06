@@ -16,10 +16,9 @@ MCP config for Hermes Agent (add to config.yaml):
         command: /path/to/venv/bin/python3
         args: [/path/to/gfit-cowork/mcp_server.py]
 
-The session tools call the GFIT-CoWork API without a login, so they work only
-while GFIT-CoWork runs on the loopback address with login turned off. When
-GFIT-CoWork has a Directory configured it requires a Directory login, which
-the MCP server cannot perform, and those tools say so.
+The session tools call the GFIT-CoWork API without a login. Login is always
+on (ADR 0006) and the MCP server cannot perform a Directory login, so those
+tools refuse and say so; only the tools that read local files work.
 
 Profile override (optional):
         args: [/path/to/gfit-cowork/mcp_server.py, --profile, myprofile]
