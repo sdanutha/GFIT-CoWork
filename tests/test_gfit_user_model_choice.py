@@ -129,3 +129,16 @@ def test_saving_a_model_in_a_users_profile_does_not_lock_up_the_server(srv, chan
 
     assert status == 200, body
     assert bob.get("/api/settings")[0] == 200
+
+
+def test_a_users_max_tokens_lands_in_their_own_profile(srv):
+    # max_tokens rides on POST /api/settings, a User route since ticket 02, and
+    # is written to config.yaml: the caller's Profile's only.
+    alice, bob = srv.logged_in(ALICE), srv.logged_in(BOB)
+
+    status, body, _ = alice.post("/api/settings", {"max_tokens": 4096})
+
+    assert status == 200, body
+    assert _profile_config(srv, ALICE)["max_tokens"] == 4096
+    _untouched(srv, BOB)
+    assert bob.get("/api/settings")[1].get("max_tokens") != 4096

@@ -98,8 +98,8 @@ def request_admission() -> Admitted | None:
 def request_has_directory_session() -> bool:
     """True when this request came with a Directory session, admitted or not.
 
-    With :func:`request_admission` it tells a request with no caller (login
-    turned off, a worker thread) from a Directory session whose Admission was
+    With :func:`request_admission` it tells a request with no caller (a public
+    route, a worker thread) from a Directory session whose Admission was
     refused, which must be refused everything (unknown is not allowed).
     """
     return getattr(_request, "directory_session", False)
