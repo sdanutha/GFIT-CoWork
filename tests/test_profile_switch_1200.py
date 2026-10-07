@@ -475,17 +475,21 @@ def test_chat_start_does_not_retag_non_empty_session(monkeypatch, tmp_path):
     monkeypatch.setattr(routes.threading, "Thread", FakeThread)
     monkeypatch.setattr(routes, "j", lambda handler, payload, status=200, **kwargs: payload)
 
-    routes._handle_chat_start(
-        object(),
-        {
-            "session_id": fake.session_id,
-            "message": "hello",
-            "workspace": str(tmp_path),
-            "model": fake.model,
-            "model_provider": fake.model_provider,
-            "profile": "work",
-        },
-    )
+    from tests._streams import closing_streams_opened
+
+    # The stubbed worker never runs: close the stream chat start opens (ticket 10).
+    with closing_streams_opened(fake.session_id):
+        routes._handle_chat_start(
+            object(),
+            {
+                "session_id": fake.session_id,
+                "message": "hello",
+                "workspace": str(tmp_path),
+                "model": fake.model,
+                "model_provider": fake.model_provider,
+                "profile": "work",
+            },
+        )
 
     assert fake.profile == "default"
     assert fake.saved is True

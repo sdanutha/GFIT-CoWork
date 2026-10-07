@@ -414,10 +414,14 @@ def test_stale_stream_cleanup_does_not_clobber_concurrent_chat_start(monkeypatch
 
     cleanup_thread = threading.Thread(target=cleanup_stale_stream)
     writer_thread = threading.Thread(target=start_new_stream)
-    cleanup_thread.start()
-    writer_thread.start()
-    cleanup_thread.join(2)
-    writer_thread.join(2)
+    try:
+        cleanup_thread.start()
+        writer_thread.start()
+        cleanup_thread.join(2)
+        writer_thread.join(2)
+    finally:
+        # The writer put this id in the stream map itself; take it out again (ticket 10).
+        config.STREAMS.pop(new_stream_id, None)
 
     assert not cleanup_thread.is_alive()
     assert not writer_thread.is_alive()
