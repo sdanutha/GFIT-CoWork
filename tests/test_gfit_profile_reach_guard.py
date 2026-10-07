@@ -20,9 +20,7 @@ The active Profile is a call to ``get_active_profile_name`` or a variable named
 
 :data:`NOT_SCOPING` names the places that match a spelling but do not scope a
 request, each with its reason. :data:`ALLOWLIST` names callers not yet moved to
-the module; it is empty. Limits: only these spellings are recognised; the MCP
-server (``mcp_server.py``) is a separate process with no request Admission and
-is not read.
+the module; it is empty. Limits: only these spellings are recognised.
 """
 from __future__ import annotations
 

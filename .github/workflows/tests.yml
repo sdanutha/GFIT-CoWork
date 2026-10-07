@@ -132,7 +132,7 @@ jobs:
       # cannot be bypassed by the diff scope. (#4641)
       - name: Python syntax gate (whole tree — fails fast on any unparseable .py)
         if: needs.changes.outputs.docs_only != 'true'
-        run: python3 -m compileall -q api server.py bootstrap.py mcp_server.py tests scripts
+        run: python3 -m compileall -q api server.py bootstrap.py tests scripts
 
       - name: Ruff forward gate (new/changed lines only)
         if: needs.changes.outputs.docs_only != 'true'
@@ -222,13 +222,6 @@ jobs:
           # tests/test_static_js_runtime_lint.py). If install fails the test
           # skips cleanly — it never blocks the matrix.
           pip install ruff || echo "ruff install failed — test_ruff_forward_lint.py will skip"
-          # Install the `mcp` package so tests/test_mcp_server.py runs in CI.
-          # The package is an optional runtime dep of mcp_server.py — users
-          # who run the MCP integration install it themselves; CI installs
-          # it so test coverage exists. If mcp install fails (Python 3.13
-          # wheel not yet available, etc.), tests/test_mcp_server.py uses
-          # importorskip and the matrix stays green.
-          pip install "mcp<2" || echo "mcp install failed — test_mcp_server.py will importorskip"
 
       - name: Get Playwright version
         if: needs.changes.outputs.docs_only != 'true'
