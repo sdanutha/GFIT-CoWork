@@ -91,9 +91,7 @@ PROJECT_ASSIGNED_CLI_SCAN_CEILING = 2000
 # conversations this projection classifies as ASSIGNED. How many is not knowable
 # before the query runs, so the refill re-classifies its own result and widens
 # again while the window is still short. These two constants are what keep that
-# loop finite. Both bound ONE profile context: get_cli_sessions(
-# all_profiles=1) runs the whole loader once per context, so an N-profile sidebar
-# pays N times the numbers below.
+# loop finite. Both bound one profile context, the one a sidebar build reads.
 #
 # At most this many unassigned queries per profile context (the first included).
 # The widening below is geometric and proportional, not one row at a time, so 4
@@ -7926,7 +7924,6 @@ def _load_and_cache_cli_sessions(
     load_sessions,
     stale_sessions,
     stale_stamp,
-    all_profiles: bool,
     db_path,
 ) -> list:
     try:
@@ -7934,7 +7931,7 @@ def _load_and_cache_cli_sessions(
     except Exception as _cli_err:
         logger.warning(
             "get_cli_sessions() failed — check state.db schema or path (%s): %s",
-            "all profiles" if all_profiles else db_path, _cli_err,
+            db_path, _cli_err,
         )
         if stale_sessions is not None and stale_stamp == _cli_sessions_cache_invalidation_stamp():
             return stale_sessions
@@ -7955,7 +7952,6 @@ def _reload_cli_sessions_after_inflight(
     stale_sessions,
     stale_stamp,
     load_sessions,
-    all_profiles: bool,
     db_path: str,
 ) -> list:
     while True:
@@ -7987,7 +7983,6 @@ def _reload_cli_sessions_after_inflight(
                 load_sessions=load_sessions,
                 stale_sessions=stale_sessions,
                 stale_stamp=stale_stamp,
-                all_profiles=all_profiles,
                 db_path=db_path,
             )
     try:
@@ -7999,7 +7994,6 @@ def _reload_cli_sessions_after_inflight(
             load_sessions=load_sessions,
             stale_sessions=stale_sessions,
             stale_stamp=stale_stamp,
-            all_profiles=all_profiles,
             db_path=db_path,
         )
     finally:
@@ -8225,58 +8219,6 @@ def _resolve_cli_sessions_context(source_filter=None, include_claude_code: bool 
         _path_stat_cache_key(_cfg.SESSION_INDEX_FILE),
     )
     return hermes_home, db_path, cli_profile, cache_key
-
-
-def _all_profiles_cli_contexts() -> tuple[list[tuple[Path, Path, str | None]], tuple]:
-    """Return per-profile CLI scan contexts plus a cache key fragment."""
-    try:
-        from api.profiles import (
-            _profiles_root,
-            get_active_profile_name,
-            get_hermes_home_for_profile,
-            list_profiles_api,
-        )
-    except Exception:
-        return [], ()
-
-    contexts: list[tuple[Path, Path, str | None]] = []
-    cache_entries: list[tuple[str, str, object]] = []
-    seen_homes: set[str] = set()
-
-    def _add_context(profile_name) -> None:
-        try:
-            hermes_home = Path(get_hermes_home_for_profile(profile_name)).expanduser().resolve()
-        except Exception:
-            return
-        home_key = _path_cache_key(hermes_home)
-        if not home_key or home_key in seen_homes:
-            return
-        seen_homes.add(home_key)
-        db_path = hermes_home / 'state.db'
-        profile_value = str(profile_name or 'default').strip() or 'default'
-        contexts.append((hermes_home, db_path, profile_value))
-        cache_entries.append((home_key, profile_value, _sqlite_file_stat_cache_key(db_path)))
-
-    try:
-        _add_context(get_active_profile_name())
-    except Exception:
-        pass
-    try:
-        for row in list_profiles_api():
-            if not isinstance(row, dict):
-                continue
-            _add_context(row.get('name'))
-    except Exception:
-        logger.debug("All-profiles CLI context enumeration failed", exc_info=True)
-    try:
-        for entry in _profiles_root().iterdir():
-            if not entry.is_dir():
-                continue
-            _add_context(entry.name)
-    except Exception:
-        logger.debug("All-profiles CLI directory enumeration failed", exc_info=True)
-
-    return contexts, tuple(cache_entries)
 
 
 def clear_sidecar_metadata_cache() -> None:
@@ -8959,9 +8901,8 @@ def _load_cli_sessions_uncached(
                 # eleven straddling the boundary delivered 15.)
                 #
                 # So the refill re-classifies ITS OWN result and widens again
-                # while the window is short. Bounds, per PROFILE CONTEXT (not per
-                # sidebar build: all_profiles=1 runs this loader once per context,
-                # so an N-profile view pays N times everything below):
+                # while the window is short. Bounds, per profile context (one per
+                # sidebar build):
                 #   * at most UNASSIGNED_CLI_REFILL_MAX_QUERIES queries;
                 #   * none of them reading deeper than the scan ceiling;
                 #   * and it stops early the moment the window is full or the
@@ -9391,7 +9332,6 @@ def _load_cli_sessions_uncached(
 def get_cli_sessions(
     source_filter=None,
     *,
-    all_profiles: bool = False,
     include_claude_code: bool = True,
 ) -> list:
     """Read CLI sessions from the agent's SQLite store and return them as
@@ -9405,37 +9345,18 @@ def get_cli_sessions(
         # Claude Code rows come from the server account's home and belong to
         # no Profile; a User's request may reach only their own Profile.
         include_claude_code = False
-    if all_profiles:
-        contexts, context_cache_key = _all_profiles_cli_contexts()
-        db_path = "all profiles"
-        # #4842: freeze the volatile per-profile state.db component while
-        # streaming so a streamed message row in one profile doesn't bust the
-        # all-profiles CLI cache and re-run every profile's heavy projection.
-        _streaming_marker = _cli_sessions_streaming_freeze_marker()
-        if _streaming_marker is not None:
-            context_cache_key = ('streaming-frozen', _streaming_marker)
-        cache_key = (
-            'all_profiles',
-            source_filter or '',
-            bool(include_claude_code),
-            context_cache_key,
-            _path_cache_key(_default_claude_code_projects_dir()),
-            _path_stat_cache_key(_default_claude_code_projects_dir()),
-            _path_stat_cache_key(_cfg.SESSION_INDEX_FILE),
-        )
-    else:
-        resolve_kwargs = {}
-        resolve_supports_include_claude_code = _callable_accepts_include_claude_code(
-            _resolve_cli_sessions_context
-        )
-        if resolve_supports_include_claude_code:
-            resolve_kwargs['include_claude_code'] = include_claude_code
-        hermes_home, db_path, cli_profile, cache_key = _resolve_cli_sessions_context(
-            source_filter,
-            **resolve_kwargs,
-        )
-        if not resolve_supports_include_claude_code:
-            cache_key = cache_key + (bool(include_claude_code),)
+    resolve_kwargs = {}
+    resolve_supports_include_claude_code = _callable_accepts_include_claude_code(
+        _resolve_cli_sessions_context
+    )
+    if resolve_supports_include_claude_code:
+        resolve_kwargs['include_claude_code'] = include_claude_code
+    hermes_home, db_path, cli_profile, cache_key = _resolve_cli_sessions_context(
+        source_filter,
+        **resolve_kwargs,
+    )
+    if not resolve_supports_include_claude_code:
+        cache_key = cache_key + (bool(include_claude_code),)
     ttl = _cli_sessions_cache_ttl_seconds()
     now = time.monotonic()
 
@@ -9443,36 +9364,6 @@ def get_cli_sessions(
         loader_supports_include_claude_code = _callable_accepts_include_claude_code(
             _load_cli_sessions_uncached
         )
-        if all_profiles:
-            merged: list[dict] = []
-            for idx, (ctx_home, ctx_db_path, ctx_profile) in enumerate(contexts):
-                load_kwargs = {
-                    # NOTE: visible_session_limit=None is NOT "unbounded" for the
-                    # interactive pass — it resolves to CLI_VISIBLE_SESSION_LIMIT
-                    # above, so this view truncates assigned conversations by
-                    # recency exactly like the single-profile one and needs the
-                    # same recovery passes. project_assigned_limit therefore keeps
-                    # its default per-project bound here. Only the three limits
-                    # below are handed straight to the reader as ``limit=``, where
-                    # None really does mean unbounded.
-                    'source_filter': source_filter,
-                    'visible_session_limit': None,
-                    'project_assigned_limit': PROJECT_ASSIGNED_CLI_LIMIT,
-                    'cron_project_limit': None,
-                    'webhook_project_limit': None,
-                    'kanban_project_limit': None,
-                }
-                if loader_supports_include_claude_code:
-                    load_kwargs['include_claude_code'] = include_claude_code and idx == 0
-                merged.extend(
-                    _load_cli_sessions_uncached(
-                        ctx_home,
-                        ctx_db_path,
-                        ctx_profile,
-                        **load_kwargs,
-                    )
-                )
-            return merged
         load_kwargs: dict = {'source_filter': source_filter}
         if loader_supports_include_claude_code:
             load_kwargs['include_claude_code'] = include_claude_code
@@ -9514,7 +9405,6 @@ def get_cli_sessions(
                     load_sessions=_load_sessions,
                     stale_sessions=stale_sessions,
                     stale_stamp=stale_stamp,
-                    all_profiles=all_profiles,
                     db_path=db_path,
                 )
             finally:
@@ -9525,7 +9415,6 @@ def get_cli_sessions(
             stale_sessions=stale_sessions,
             stale_stamp=stale_stamp,
             load_sessions=_load_sessions,
-            all_profiles=all_profiles,
             db_path=db_path,
         )
 
@@ -9534,7 +9423,7 @@ def get_cli_sessions(
     except Exception as _cli_err:
         logger.warning(
             "get_cli_sessions() failed — check state.db schema or path (%s): %s",
-            "all profiles" if all_profiles else db_path, _cli_err,
+            db_path, _cli_err,
         )
         return []
 

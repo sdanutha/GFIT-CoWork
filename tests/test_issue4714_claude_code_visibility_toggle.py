@@ -274,38 +274,6 @@ def test_sessions_route_supports_historical_get_cli_sessions_signature(monkeypat
     assert {row["session_id"] for row in body["sessions"]} == {"webui-1", "external-cli"}
 
 
-def test_all_profiles_scans_claude_code_only_once(monkeypatch):
-    """All-profiles mode should keep the old single global Claude Code scan."""
-    calls = []
-
-    def fake_contexts():
-        return [
-            (Path("D:/tmp/profile-a"), Path("D:/tmp/profile-a/state.db"), "profile-a"),
-            (Path("D:/tmp/profile-b"), Path("D:/tmp/profile-b/state.db"), "profile-b"),
-        ], ("profile-a", "profile-b")
-
-    def fake_load(_home, _db_path, profile, **kwargs):
-        include = kwargs["include_claude_code"]
-        calls.append((profile, include))
-        rows = [{"session_id": f"{profile}-cli"}]
-        if include:
-            rows.append({"session_id": "claude-global"})
-        return rows
-
-    monkeypatch.setattr(models, "_all_profiles_cli_contexts", fake_contexts)
-    monkeypatch.setattr(models, "_load_cli_sessions_uncached", fake_load)
-    monkeypatch.setattr(models, "_cli_sessions_cache_ttl_seconds", lambda: 0.0)
-
-    rows = models.get_cli_sessions(all_profiles=True, include_claude_code=True)
-
-    assert calls == [("profile-a", True), ("profile-b", False)]
-    assert [row["session_id"] for row in rows] == [
-        "profile-a-cli",
-        "claude-global",
-        "profile-b-cli",
-    ]
-
-
 def test_preferences_autosave_preserves_claude_code_opt_out_default():
     """Autosave must not stomp the opt-out child when the parent is off."""
     autosave_block = _extract_between(

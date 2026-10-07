@@ -47,7 +47,6 @@ _SESSIONS_CACHE: OrderedDict[tuple, tuple[float, tuple, dict]] = OrderedDict()
 _SESSIONS_CACHE_LOCK = threading.RLock()
 _SESSIONS_CACHE_INFLIGHT: dict[tuple, threading.Event] = {}
 _SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION = 0
-_SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION = 0
 _SESSIONS_CACHE_PROFILE_INVALIDATION_VERSION: dict[str, int] = {}
 
 
@@ -283,7 +282,6 @@ def _session_list_cache_profile_scope(profile: str | None) -> str:
 
 def _session_list_cache_key(
     active_profile: str | None,
-    all_profiles: bool,
     show_cli_sessions: bool,
     show_previous_messaging_sessions: bool,
     show_cron_sessions: bool,
@@ -309,7 +307,6 @@ def _session_list_cache_key(
         normalized_archived_offset = 0
     return (
         _session_list_cache_profile_scope(active_profile),
-        bool(all_profiles),
         bool(show_cli_sessions),
         bool(show_previous_messaging_sessions),
         bool(show_cron_sessions),
@@ -409,22 +406,16 @@ def _session_list_cache_clear(profile: str | None = None) -> None:
     normalized_profile = _session_list_cache_profile_scope(profile) if profile else None
     with _SESSIONS_CACHE_LOCK:
         global _SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION
-        global _SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION
         if not profile:
             _SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION += 1
-            _SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION += 1
             _SESSIONS_CACHE_PROFILE_INVALIDATION_VERSION.clear()
             _SESSIONS_CACHE.clear()
             return
-        _SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION += 1
         _SESSIONS_CACHE_PROFILE_INVALIDATION_VERSION[normalized_profile] = (
             _SESSIONS_CACHE_PROFILE_INVALIDATION_VERSION.get(normalized_profile, 0) + 1
         )
         for cache_key in list(_SESSIONS_CACHE.keys()):
-            cache_profile, cache_all_profiles, *_rest = cache_key
-            if cache_all_profiles:
-                _SESSIONS_CACHE.pop(cache_key, None)
-                continue
+            cache_profile, *_rest = cache_key
             if _profiles_match(cache_profile, normalized_profile):
                 _SESSIONS_CACHE.pop(cache_key, None)
 
@@ -434,14 +425,9 @@ def _clear_session_list_cache(profile: str | None = None) -> None:
 
 
 def _session_list_cache_invalidation_stamp(key: tuple) -> tuple[int, int]:
-    cache_profile, cache_all_profiles, *_rest = key
+    cache_profile, *_rest = key
     with _SESSIONS_CACHE_LOCK:
         global_version = _SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION
-        if cache_all_profiles:
-            return (
-                global_version,
-                _SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION,
-            )
         return (
             global_version,
             _SESSIONS_CACHE_PROFILE_INVALIDATION_VERSION.get(cache_profile, 0),
@@ -514,7 +500,6 @@ def _session_list_cache_state_db_fingerprint_impl(state_db_path: Path | None):
 
 
 def _session_list_cache_source_stamp(key: tuple) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int], object, int]:
-    _cache_profile, _cache_all_profiles, _cache_show_cli_sessions, *_rest = key
     try:
         swv = _session_list_cache_settings_write_version()
     except Exception:
@@ -560,21 +545,6 @@ def _session_list_cache_source_stamp(key: tuple) -> tuple[tuple[int, int], tuple
         session_index_path = _session_list_cache_session_dir() / "_index.json"
     except Exception:
         session_index_path = None
-    all_profiles_state_stamp = None
-    if _cache_all_profiles:
-        try:
-            from api.models import _all_profiles_cli_contexts
-            contexts, _ = _all_profiles_cli_contexts()
-            all_profiles_state_stamp = tuple(
-                (
-                    _session_list_cache_path_stamp(ctx_db),
-                    _session_list_cache_path_stamp(ctx_db.with_name(f"{ctx_db.name}-wal") if ctx_db else None),
-                    _session_list_cache_state_db_fingerprint(ctx_db),
-                )
-                for _home, ctx_db, _prof in contexts
-            )
-        except Exception:
-            all_profiles_state_stamp = None
 
     return (
         _session_list_cache_path_stamp(state_db_path),
@@ -587,7 +557,6 @@ def _session_list_cache_source_stamp(key: tuple) -> tuple[tuple[int, int], tuple
         # frame size), so without this a freshly-committed CLI/gateway session
         # could be served stale for the cache TTL. Mirrors the models-layer fix.
         _session_list_cache_state_db_fingerprint(state_db_path),
-        all_profiles_state_stamp,
         swv,
     )
 

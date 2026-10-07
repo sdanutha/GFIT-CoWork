@@ -39,8 +39,7 @@ The User's adapter looks in the WebUI session record, then in the Profile's own
 agent state (``state.db``: CLI, messaging, cron and gateway sessions). It never
 looks in another Profile's state or in the server account's home. Only the
 unconfined adapter lets a Profile-less row (Claude Code) through, and
-only on the detail load. Only the unconfined adapter keeps Upstream's own route
-rules on top (:meth:`keeps_upstream_rules`).
+only on the detail load.
 """
 from __future__ import annotations
 
@@ -231,10 +230,6 @@ class UserSessionOwnership:
         profile = row.get("profile")
         return isinstance(profile, str) and bool(profile) and _profiles_match(profile, self.profile)
 
-    def keeps_upstream_rules(self) -> bool:
-        """No: a User's request is answered by this adapter alone, never by a route's own rules."""
-        return False
-
     def profile_reach(self, active_profile=None) -> ProfileReach:
         """Exactly the User's own Profile, whatever was asked."""
         return self.caller_reach()
@@ -265,11 +260,6 @@ class _UnconfinedSessionOwnership:
 
     def sees_profile_less_sessions(self) -> bool:
         """Claude Code rows, under the setting that shows them."""
-        return True
-
-    def keeps_upstream_rules(self) -> bool:
-        """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
-        chat start's placeholder retag) on top of this adapter's answers."""
         return True
 
     def profile_reach(self, active_profile=None) -> ProfileReach:
@@ -355,9 +345,6 @@ class _RefusingSessionOwnership:
         return False
 
     def may_list_row(self, row, **_kwargs) -> bool:
-        return False
-
-    def keeps_upstream_rules(self) -> bool:
         return False
 
     def profile_reach(self, active_profile=None) -> ProfileReach:

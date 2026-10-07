@@ -12,7 +12,6 @@ from api.models import Session
 def _key():
     return cache._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

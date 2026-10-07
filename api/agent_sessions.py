@@ -11,8 +11,8 @@ from urllib.parse import quote, quote_from_bytes
 logger = logging.getLogger(__name__)
 
 # state.db paths that already produced the "no 'source' column" warning below.
-# ``get_cli_sessions(all_profiles=True)`` re-reads every profile DB on every
-# sidebar poll (behind a 5 s cache), so a single pre-``source`` profile DB would
+# ``get_cli_sessions()`` re-reads the profile DB on every sidebar poll (behind
+# a 5 s cache), so a single pre-``source`` profile DB would
 # otherwise re-emit the identical WARNING line every ~15 s for the life of the
 # process. The condition is a property of the DB file, not of the poll, so it
 # is reported once per path. Process-lifetime only: a restart warns again,
