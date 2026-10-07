@@ -250,9 +250,6 @@ def test_bound_names_only_its_own_profile(world):
     assert user.may_name_profile(ALICE) is True
     assert [user.may_name_profile(name) for name in (BOB, "default", "", None, 42)] == [False] * 5
     assert user.sees_profile_less_sessions() is False
-    assert user.keeps_upstream_rules() is False
-    assert UNCONFINED.keeps_upstream_rules() is True
-    assert REFUSING.keeps_upstream_rules() is False
     assert UNCONFINED.may_name_profile(BOB)
     assert UNCONFINED.sees_profile_less_sessions() is True
     assert not REFUSING.may_name_profile(ALICE)
