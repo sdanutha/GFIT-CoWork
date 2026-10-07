@@ -285,7 +285,7 @@ _MISSING = object()  # sentinel: api.profiles module not loaded pre-test
 def _restore_profile_home_globals():
     """Restore HERMES_HOME / HERMES_BASE_HOME after every test.
 
-    Several tests call ``api.profiles.switch_profile()`` (or set HERMES_HOME
+    Several tests call ``api.profiles.init_profile_state()`` (or set HERMES_HOME
     directly) which mutates ``os.environ['HERMES_HOME']`` IN PLACE — not via
     monkeypatch — so the change is not auto-reverted at test teardown. In the
     normal sequential run the next test usually re-establishes its own profile so
@@ -299,8 +299,8 @@ def _restore_profile_home_globals():
     saved_home = os.environ.get('HERMES_HOME')
     saved_base = os.environ.get('HERMES_BASE_HOME')
     # Snapshot the process-global active-profile name too. Several tests call
-    # switch_profile() (process_wide=True), which mutates api.profiles._active_profile
-    # in place and never restores it. In a sequential run the next test usually
+    # init_profile_state() or assign api.profiles._active_profile directly, in
+    # place, and never restore it. In a sequential run the next test usually
     # re-establishes its own profile so the leak is masked, but a test that only
     # patches a profile-scoped *path* (e.g. config._models_cache_path) without
     # setting an active profile then resolves the LEAKED profile — e.g.

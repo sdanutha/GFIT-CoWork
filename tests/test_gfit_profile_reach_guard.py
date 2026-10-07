@@ -49,7 +49,6 @@ NOT_SCOPING: dict[tuple[str, str, str], str] = {
     ("api/profiles.py", "install_cron_scheduler_profile_isolation", READS_POSTURE):
         POSTURE + ": a scheduled run's event names it",
     ("api/profiles.py", "init_profile_state", READS_POSTURE): POSTURE + ": startup state",
-    ("api/profiles.py", "switch_profile", READS_POSTURE): POSTURE + ": no switch away from it",
     ("api/profiles.py", "list_profiles_api", READS_POSTURE): POSTURE + ": the one Profile listed",
     ("api/profiles.py", "create_profile_api", READS_POSTURE): POSTURE + ": no Profile is created",
     ("api/profiles.py", "delete_profile_api", READS_POSTURE): POSTURE + ": no Profile is deleted",

@@ -13,7 +13,6 @@ thread-local context below is how that Profile reaches the helpers.
 Covers:
   2. set_request_profile() / get_active_profile_name() / clear_request_profile()
   3. get_active_hermes_home() routes via thread-local
-  4. switch_profile(process_wide=False) does NOT mutate process globals
   5. Concurrent requests on different threads see independent profiles
 """
 import os
@@ -72,35 +71,6 @@ def test_get_active_hermes_home_respects_tls(tmp_path, monkeypatch):
         assert p.get_active_hermes_home() == tmp_path
     finally:
         p.clear_request_profile()
-
-
-# ── 4. switch_profile(process_wide=False) does not mutate globals ─────────────
-
-def test_switch_profile_process_wide_false_does_not_mutate_global():
-    """Per-client switches from the WebUI must leave _active_profile untouched."""
-    import api.profiles as p
-
-    # Monkey in a fake profile listing so switch_profile finds 'alice'
-    original_global = p._active_profile
-    original_env_home = os.environ.get('HERMES_HOME')
-
-    # We need a profile that exists to get past the validation path.
-    # Use 'default' — switch_profile accepts it without requiring hermes_cli.
-    try:
-        result = p.switch_profile('default', process_wide=False)
-        # Global must not change
-        assert p._active_profile == original_global, (
-            f"process_wide=False must not mutate _active_profile "
-            f"(was {original_global!r}, now {p._active_profile!r})"
-        )
-        # HERMES_HOME env must not change
-        assert os.environ.get('HERMES_HOME') == original_env_home, (
-            "process_wide=False must not mutate os.environ['HERMES_HOME']"
-        )
-        # Response still shape-compatible
-        assert isinstance(result, dict)
-    finally:
-        p._active_profile = original_global
 
 
 # ── 5. Concurrent threads see independent profile context ────────────────────

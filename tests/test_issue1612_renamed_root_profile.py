@@ -140,68 +140,6 @@ def test_get_active_hermes_home_returns_named_for_real_named_profile(tmp_path, m
     assert result == profile_dir
 
 
-# ── switch_profile: accepts renamed root display name ─────────────────────
-
-
-def test_switch_profile_resolution_renamed_root_picks_default_home(tmp_path, monkeypatch):
-    """switch_profile()'s resolution branch: a renamed root must select
-    _DEFAULT_HERMES_HOME, not raise 'Profile <name> does not exist.'
-
-    We don't drive switch_profile() end-to-end (it touches reload_config,
-    workspace resolution, env mutation, etc.); instead we exercise the
-    same resolve-or-raise structure that lives at the head of switch_profile.
-    """
-    import api.profiles as p
-
-    monkeypatch.setattr(p, '_DEFAULT_HERMES_HOME', tmp_path)
-    monkeypatch.setattr(p, 'list_profiles_api', lambda: [
-        {'name': 'kinni', 'is_default': True, 'path': str(tmp_path)},
-    ])
-    p._invalidate_root_profile_cache()
-
-    # Mirror switch_profile's resolution logic
-    name = 'kinni'
-    if p._is_root_profile(name):
-        home = p._DEFAULT_HERMES_HOME
-    else:
-        home = p._resolve_named_profile_home(name)
-        if not home.is_dir():
-            raise ValueError(f"Profile '{name}' does not exist.")
-    assert home == tmp_path
-
-    # Sanity: a TRULY missing profile still raises (backward compat)
-    with pytest.raises(ValueError, match="does not exist"):
-        name = 'phantom'
-        if p._is_root_profile(name):
-            home = p._DEFAULT_HERMES_HOME
-        else:
-            home = p._resolve_named_profile_home(name)
-            if not home.is_dir():
-                raise ValueError(f"Profile '{name}' does not exist.")
-
-
-def test_switch_profile_sticky_marker_renamed_root(tmp_path, monkeypatch):
-    """switch_profile writes '' (empty marker) to active_profile file when
-    switching to the root profile, regardless of its display name. This
-    means a subsequent boot reads '' → falls through to 'default' alias →
-    _is_root_profile('default') → resolves to _DEFAULT_HERMES_HOME, which
-    is the only correct location for the renamed-root case."""
-    import api.profiles as p
-
-    monkeypatch.setattr(p, '_DEFAULT_HERMES_HOME', tmp_path)
-    monkeypatch.setattr(p, 'list_profiles_api', lambda: [
-        {'name': 'kinni', 'is_default': True, 'path': str(tmp_path)},
-    ])
-    p._invalidate_root_profile_cache()
-
-    # Mirror the sticky-write line directly — guards that the new ternary
-    # uses _is_root_profile, not the literal-'default' compare.
-    written = '' if p._is_root_profile('kinni') else 'kinni'
-    assert written == ''
-    written2 = '' if p._is_root_profile('haku') else 'haku'
-    assert written2 == 'haku' 
-
-
 def test_delete_profile_blocks_renamed_root(tmp_path, monkeypatch):
     """delete_profile_api on a renamed root must refuse, same as 'default'."""
     import api.profiles as p

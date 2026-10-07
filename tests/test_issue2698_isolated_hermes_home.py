@@ -34,7 +34,6 @@ from api.profiles import (
     get_active_profile_name,
     init_profile_state,
     set_request_profile,
-    switch_profile,
 )
 
 
@@ -414,61 +413,6 @@ class TestProfileMutationsInIsolatedMode:
                 with mock.patch("api.profiles._INITIAL_HERMES_HOME", str(temp_single_profile)):
                     with pytest.raises(PermissionError, match=".*isolated.*|.*single.*"):
                         delete_profile_api("user1")
-
-    def test_switch_to_different_profile_rejected(self, temp_single_profile):
-        """switch_profile should reject switching to another profile in isolated mode."""
-        base_home = temp_single_profile.parent.parent
-        env_dict = {
-            "HERMES_HOME": str(temp_single_profile),
-            "HERMES_BASE_HOME": "",
-        }
-        with mock.patch.dict(os.environ, env_dict, clear=False):
-            with mock.patch("api.profiles._DEFAULT_HERMES_HOME", base_home):
-                with mock.patch("api.profiles._INITIAL_HERMES_HOME", str(temp_single_profile)):
-                    with pytest.raises(PermissionError, match=".*isolated.*|.*pinned.*"):
-                        switch_profile("other_user")
-
-    def test_switch_to_same_profile_idempotent(self, temp_single_profile):
-        """switch_profile to the isolated profile itself should pass through."""
-        base_home = temp_single_profile.parent.parent
-        env_dict = {
-            "HERMES_HOME": str(temp_single_profile),
-            "HERMES_BASE_HOME": "",
-        }
-        with mock.patch.dict(os.environ, env_dict, clear=False):
-            with mock.patch("api.profiles._DEFAULT_HERMES_HOME", base_home):
-                with mock.patch("api.profiles._INITIAL_HERMES_HOME", str(temp_single_profile)):
-                    # Should not raise PermissionError; may fail downstream
-                    # for other reasons (missing hermes_cli), but the isolation
-                    # guard must pass for the same-name case.
-                    try:
-                        switch_profile("user1")
-                    except PermissionError:
-                        pytest.fail("switch_profile should allow switching to the isolated profile itself")
-                    except (ImportError, ValueError, RuntimeError):
-                        pass  # expected in test env without hermes_cli
-
-    def test_switch_to_same_default_profile_keeps_pinned_home(self, temp_hermes_home, monkeypatch, tmp_path):
-        """A same-name switch for isolated profiles/default must keep using the pinned home."""
-        isolated_default = temp_hermes_home / "profiles" / "default"
-        isolated_default.mkdir(parents=True)
-        (isolated_default / "workspace").mkdir()
-        base_workspace = tmp_path / "base-workspace"
-        isolated_workspace = tmp_path / "isolated-workspace"
-        base_workspace.mkdir()
-        isolated_workspace.mkdir()
-        (temp_hermes_home / "config.yaml").write_text(f"workspace: {base_workspace}\n", encoding="utf-8")
-        (isolated_default / "config.yaml").write_text(f"workspace: {isolated_workspace}\n", encoding="utf-8")
-
-        monkeypatch.setenv("HERMES_HOME", str(isolated_default))
-        monkeypatch.setenv("HERMES_BASE_HOME", "")
-        monkeypatch.setattr(_profiles_mod, "_DEFAULT_HERMES_HOME", temp_hermes_home)
-        monkeypatch.setattr(_profiles_mod, "_INITIAL_HERMES_HOME", str(isolated_default))
-        monkeypatch.setattr(_profiles_mod, "list_profiles_api", lambda: [])
-
-        result = switch_profile("default", process_wide=False)
-
-        assert result["default_workspace"] == str(isolated_workspace.resolve())
 
     def test_scheduled_cron_jobs_stay_pinned_to_isolated_home(self, temp_single_profile, monkeypatch):
         """Scheduler jobs must not resolve foreign profile homes in isolated mode."""

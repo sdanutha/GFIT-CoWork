@@ -512,8 +512,7 @@ name and the global registry slot, which belong to the process profile.
   ignores Hermes's sticky `~/.hermes/active_profile` when it names another Profile (a User's;
   startup prints a warning), so no User's home or `.env` becomes the server process's.
 - `api.profiles._set_hermes_home()` is the single writer of the process-profile home:
-  startup (`init_profile_state()`) and `switch_profile(process_wide=True)` both go
-  through it, so `get_process_profile_home()` and the Agent pin
+  startup (`init_profile_state()`) is its only caller (there is no Profile switch), so `get_process_profile_home()` and the Agent pin
   (`hermes_constants.pin_process_hermes_home()`, when the Agent provides it) are updated
   in the same step as `HERMES_HOME`. Streaming turns still mirror their profile into
   `os.environ['HERMES_HOME']` for legacy readers; without the pin, that mirror makes a
