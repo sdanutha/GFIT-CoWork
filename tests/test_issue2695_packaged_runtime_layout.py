@@ -73,7 +73,8 @@ def test_wheel_build_contains_runtime_tree(extracted_wheel):
         names = set(zf.namelist())
         assert "bootstrap.py" in names
         assert "server.py" in names
-        assert "mcp_server.py" in names
+        # GFIT-CoWork ships no MCP server of its own (remove-admin ticket 08).
+        assert "mcp_server.py" not in names
         assert "api/config.py" in names
         assert "api/_scm_version.py" in names
         assert "static/__init__.py" in names

@@ -144,7 +144,7 @@ def test_stream_completion_overwrites_session_usage_with_latest_turn(cleanup_tes
     # keys added during the patch that weren't in the original snapshot. That
     # silently evicts lazily-imported submodules (e.g. pydantic.root_model)
     # that other tests rely on, producing KeyError: 'pydantic.root_model' in
-    # downstream tests (notably tests/test_mcp_server.py via fastmcp imports).
+    # downstream tests.
     # Manual save/restore only touches the three keys we explicitly inject.
     _injected = {
         "hermes_cli": fake_hermes_cli,

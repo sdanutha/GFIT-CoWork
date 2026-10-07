@@ -483,9 +483,9 @@ def _profiles_match(row_profile, active_profile) -> bool:
     api/models.py::all_sessions, and matches the default seen in
     `static/sessions.js` (`S.activeProfile||'default'`).
 
-    Originally lived in api/routes.py; relocated here so both routes.py and
-    out-of-process consumers (mcp_server.py) can import the canonical helper
-    instead of duplicating the body. See #1614 for the visibility model.
+    Originally lived in api/routes.py; relocated here so every module imports
+    the canonical helper instead of duplicating the body. See #1614 for the
+    visibility model.
     """
     row = row_profile or 'default'
     active = active_profile or 'default'

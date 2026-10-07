@@ -31,7 +31,7 @@ gfit-cowork = "bootstrap:main"
 [tool.setuptools]
 include-package-data = true
 packages = ["api", "static"]
-py-modules = ["bootstrap", "server", "mcp_server"]
+py-modules = ["bootstrap", "server"]
 
 [tool.setuptools.package-data]
 static = ["**/*"]
