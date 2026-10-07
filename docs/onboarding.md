@@ -84,6 +84,12 @@ into the new User's Profile, so it works from the first login. A Profile
 created without `--clone-from` has no provider key until the Operator gives it
 one (`hermes -p <employee ID> model`).
 
+Use `-p <employee ID>` for one command rather than `hermes profile use <employee
+ID>`. The server ignores Hermes's sticky active profile and always runs as the
+Deployment's `default` Profile, so a User's `.env` never becomes the server's;
+startup prints a warning while the sticky profile names someone else, and
+`hermes profile use default` clears it.
+
 A User can change their own Profile's default model, auxiliary models and
 reasoning settings in the web app, among the providers the Operator set up. A
 model's endpoint (`base_url`) and API key stay with the Operator.
