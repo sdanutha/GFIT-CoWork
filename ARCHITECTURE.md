@@ -508,6 +508,9 @@ only when the calling task serves a *routed* profile: the context-local Hermes-h
 override differs from the process home. Otherwise the connection uses the bare server
 name and the global registry slot, which belong to the process profile.
 
+- The process profile is always the Deployment's `default` (ticket 11): `init_profile_state()`
+  ignores Hermes's sticky `~/.hermes/active_profile` when it names another Profile (a User's;
+  startup prints a warning), so no User's home or `.env` becomes the server process's.
 - `api.profiles._set_hermes_home()` is the single writer of the process-profile home:
   startup (`init_profile_state()`) and `switch_profile(process_wide=True)` both go
   through it, so `get_process_profile_home()` and the Agent pin

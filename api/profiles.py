@@ -1678,18 +1678,33 @@ def _reload_dotenv(home: Path):
         logger.debug("Failed to reload dotenv from %s", env_path)
 
 
+_ignored_sticky_profile: str | None = None
+
+
+def ignored_sticky_profile() -> str | None:
+    """The Profile Hermes's sticky ``active_profile`` named at startup, when it was ignored."""
+    return _ignored_sticky_profile
+
+
 def init_profile_state() -> None:
     """Initialize profile state at server startup.
 
-    Reads ~/.hermes/active_profile, sets HERMES_HOME env var, patches
-    module-level cached paths.  Called once from config.py after imports.
+    GFIT-CoWork runs as the Deployment's ``default`` Profile, whatever Hermes's
+    sticky ``~/.hermes/active_profile`` says (ticket 11): a named Profile is a
+    User's, and its home and ``.env`` must never become the process's. A
+    sticky name other than default is ignored and remembered for the startup
+    report (:func:`ignored_sticky_profile`). Upstream's isolated profile mode
+    keeps its explicit opt-in. Sets HERMES_HOME and patches module-level
+    cached paths. Called once from config.py after imports.
     """
-    global _active_profile
+    global _active_profile, _ignored_sticky_profile
     if _is_isolated_profile_mode():
         _active_profile = _isolated_profile_name()
         home = _isolated_profile_home()
     else:
-        _active_profile = _read_active_profile_file()
+        sticky = _read_active_profile_file()
+        _ignored_sticky_profile = None if _is_root_profile(sticky) else sticky
+        _active_profile = 'default'
         home = get_active_hermes_home()
     _set_hermes_home(home)  # also pins the process-profile home (MCP routing anchor)
     install_cron_scheduler_profile_isolation()

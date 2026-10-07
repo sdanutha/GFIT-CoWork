@@ -275,6 +275,19 @@ def _leftover_admin_users_line() -> list[str]:
     ]
 
 
+def _ignored_sticky_profile_line() -> list[str]:
+    from api.profiles import ignored_sticky_profile
+
+    name = ignored_sticky_profile()
+    if not name:
+        return []
+    return [
+        f"[!!] Ignoring Hermes's active profile '{name}' (~/.hermes/active_profile): GFIT-CoWork always",
+        "     runs as the Deployment's default Profile; a User's Profile is reached only through their login.",
+        "     The hermes command line still uses it; `hermes profile use default` clears it.",
+    ]
+
+
 def startup_check() -> StartupCheck:
     """Decide from the Directory whether the server may serve.
 
@@ -286,7 +299,7 @@ def startup_check() -> StartupCheck:
     lines = [
         f"[!!] Ignoring {setting}: Upstream login is gone; the Directory replaces it."
         for setting in _leftover_login_settings()
-    ] + _leftover_admin_users_line()
+    ] + _leftover_admin_users_line() + _ignored_sticky_profile_line()
     if is_directory_enabled():
         return StartupCheck(True, lines)
     lines += [

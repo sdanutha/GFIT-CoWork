@@ -5,6 +5,10 @@ through ``profiles._resolve_base_hermes_home() -> api.config``. ``api.config``
 then caught the partial-module ``ImportError`` from its startup
 ``init_profile_state`` import, so the later config import never initialized the
 sticky active profile.
+
+GFIT-CoWork (ticket 11) ignores a sticky Profile other than default: the server
+runs as the Deployment. Startup still has to run, which this test proves through
+what it records (the ignored name) and the home it pins (the Deployment's).
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ import os
 import api.profiles
 import api.config
 print(os.environ.get('HERMES_HOME', ''))
+print(api.profiles.ignored_sticky_profile())
 """
     proc = subprocess.run(
         [sys.executable, "-c", code],
@@ -47,4 +52,6 @@ print(os.environ.get('HERMES_HOME', ''))
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == str(profile_home)
+    hermes_home, ignored = proc.stdout.strip().splitlines()[-2:]
+    assert ignored == "webui"  # startup ran and saw the sticky Profile
+    assert hermes_home == str(base)  # and runs as the Deployment, not as "webui"
