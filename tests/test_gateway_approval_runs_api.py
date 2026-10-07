@@ -1941,7 +1941,10 @@ def test_start_chat_stream_marks_gateway_run_pending_before_thread_start(monkeyp
     monkeypatch.setattr(routes, "set_last_workspace", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(routes, "threading", SimpleNamespace(Thread=_FakeThread))
 
-    with patch("api.turn_journal.append_turn_journal_event", return_value={}):
+    from tests._streams import closing_streams_opened
+
+    # The stubbed worker never runs: close the stream chat start opens (ticket 10).
+    with closing_streams_opened(session.session_id), patch("api.turn_journal.append_turn_journal_event", return_value={}):
         response = routes._start_chat_stream_for_session(
             session,
             msg="hi",

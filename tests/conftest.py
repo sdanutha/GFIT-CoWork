@@ -282,6 +282,32 @@ _MISSING = object()  # sentinel: api.profiles module not loaded pre-test
 
 
 @pytest.fixture(autouse=True)
+def _no_stream_left_open(request):
+    """Fail a test that leaves a stream open in ``api.config.STREAMS``.
+
+    A live stream is process-wide state: while any stream id is in the map the
+    session-list cache freezes its state.db stamps (the streaming hold-down),
+    so a later test misses new rows (ticket 10: a chat-start test with a stub
+    worker left one behind). The guard only detects: it names the test and the
+    ids and fails it; it never clears the map. A test that opens a stream
+    closes it before it ends (``api.run_registry.close_stream``).
+    """
+    config_mod = sys.modules.get("api.config")
+    before = set(getattr(config_mod, "STREAMS", {}) or {}) if config_mod is not None else set()
+    yield
+    config_mod = sys.modules.get("api.config")
+    if config_mod is None:
+        return
+    left = sorted(set(getattr(config_mod, "STREAMS", {}) or {}) - before)
+    if left:
+        pytest.fail(
+            f"{request.node.nodeid} left {len(left)} stream(s) open in api.config.STREAMS: {left}. "
+            "Close the streams a test opens (api.run_registry.close_stream) before it ends.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(autouse=True)
 def _restore_profile_home_globals():
     """Restore HERMES_HOME / HERMES_BASE_HOME after every test.
 

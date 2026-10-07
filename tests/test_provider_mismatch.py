@@ -1065,11 +1065,15 @@ def test_issue1734_chat_start_persists_repaired_codex_provider(monkeypatch):
     monkeypatch.setattr("api.config.create_stream_channel", lambda: object())
     monkeypatch.setattr(routes.threading, "Thread", FakeThread)
 
+    from tests._streams import closing_streams_opened
+
     handler = FakeHandler()
-    routes._handle_chat_start(
-        handler,
-        {"session_id": session.session_id, "message": "new turn"},
-    )
+    # The stubbed worker never runs: close the stream chat start opens (ticket 10).
+    with closing_streams_opened(session.session_id):
+        routes._handle_chat_start(
+            handler,
+            {"session_id": session.session_id, "message": "new turn"},
+        )
     payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
 
     assert handler.status == 200

@@ -623,15 +623,20 @@ def test_chat_start_forwards_goal_related_to_gateway_worker(monkeypatch, tmp_pat
     monkeypatch.setattr(routes.threading, "Thread", FakeThread)
     monkeypatch.setattr(routes.uuid, "uuid4", lambda: SimpleNamespace(hex="goal-stream-id"))
 
-    response = routes._start_chat_stream_for_session(
-        FakeSession(),
-        msg="continue the goal",
-        attachments=[],
-        workspace=str(tmp_path),
-        model="gpt-5.5",
-        model_provider="openai-codex",
-        goal_related=True,
-    )
+    from tests._streams import closing_streams_opened
+
+    session = FakeSession()
+    # The stubbed worker never runs: close the stream chat start opens (ticket 10).
+    with closing_streams_opened(session.session_id):
+        response = routes._start_chat_stream_for_session(
+            session,
+            msg="continue the goal",
+            attachments=[],
+            workspace=str(tmp_path),
+            model="gpt-5.5",
+            model_provider="openai-codex",
+            goal_related=True,
+        )
 
     assert response["stream_id"] == "goal-stream-id"
     assert captured["target"] is routes._run_gateway_chat_streaming
