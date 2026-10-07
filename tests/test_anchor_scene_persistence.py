@@ -219,7 +219,7 @@ def test_anchor_scene_persistence_rejects_cross_profile_write(tmp_path, monkeypa
 
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "profile-a")
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "profile-a")
-    # Session ownership writes its own refusals.
+    # Session ownership writes its own refusals (404 through bad()).
     for module in (routes, session_ownership):
         monkeypatch.setattr(
             module,
@@ -228,30 +228,22 @@ def test_anchor_scene_persistence_rejects_cross_profile_write(tmp_path, monkeypa
                 error=msg, status=status
             ) or True,
         )
-        monkeypatch.setattr(
-            module,
-            "j",
-            lambda handler, payload, status=200, extra_headers=None: captured.update(
-                payload=payload, status=status
-            ) or True,
-        )
+    monkeypatch.setattr(
+        routes,
+        "j",
+        lambda handler, payload, status=200, extra_headers=None: captured.update(
+            payload=payload, status=status
+        ) or True,
+    )
 
     assert routes.handle_post(
         SimpleNamespace(command="POST"),
         SimpleNamespace(path="/api/session/anchor-scene"),
     ) is True
-    # #7710: the generic request-guard now mirrors the detail-load
-    # endpoint's contract — a session owned by a KNOWN other profile
-    # yields 409 ``session_profile_mismatch`` so the client can offer
-    # to switch to it (#5419). The 404 self-heal path is preserved for
-    # the None-profile (unknown/legacy) case.
-    assert captured.get("status") == 409, captured
-    assert captured.get("payload") == {
-        "error": "Session belongs to a different profile",
-        "code": "session_profile_mismatch",
-        "session_id": "foreignprofile1",
-        "profile": "profile-b",
-    }
+    # Another Profile's session: 404, never naming its owner (ticket 07).
+    assert captured.get("status") == 404, captured
+    assert captured.get("error") == "Session not found"
+    assert "payload" not in captured
     raw = json.loads((session_dir / "foreignprofile1.json").read_text(encoding="utf-8"))
     assert not raw.get("anchor_activity_scenes"), (
         "cross-profile request must NOT persist anchor_activity_scenes"

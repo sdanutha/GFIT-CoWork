@@ -41,8 +41,7 @@ def _capture(monkeypatch):
 
     monkeypatch.setattr("api.routes.j", _j)
     monkeypatch.setattr("api.routes.bad", _bad)
-    # Session ownership writes its own refusals.
-    monkeypatch.setattr("api.session_ownership.j", _j)
+    # Session ownership writes its own refusals (404 through bad()).
     monkeypatch.setattr("api.session_ownership.bad", _bad)
     return cap
 
@@ -509,18 +508,9 @@ def test_session_route_blocks_hidden_sessions_before_replay_or_live_attach(monke
     handler = _FakeHandler()
     routes.handle_get(handler, urlparse("/api/sessions/hidden_session/events"))
 
-    # #7710: the generic request-guard now mirrors the detail-load
-    # endpoint's contract — a session owned by a KNOWN other profile
-    # yields 409 ``session_profile_mismatch`` so the client can offer
-    # to switch to it (#5419). The 404 self-heal path is preserved for
-    # the None-profile (unknown/legacy) case.
-    assert cap.get("status") == 409, cap
-    assert cap.get("ok") == {
-        "error": "Session belongs to a different profile",
-        "code": "session_profile_mismatch",
-        "session_id": "hidden_session",
-        "profile": "other",
-    }
+    # Another Profile's session: 404, never naming its owner (ticket 07).
+    assert cap.get("bad") == ("Session not found", 404), cap
+    assert "ok" not in cap
 
 
 def test_session_route_live_delivery_skips_replayed_active_run_items(monkeypatch):

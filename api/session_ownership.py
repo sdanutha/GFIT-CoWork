@@ -7,13 +7,13 @@ policy:
 - the **User's adapter** (:class:`UserSessionOwnership`): owns exactly the
   sessions of the User's Profile (ADR 0002). Every other id, and every id it
   cannot place, is refused: unknown is not allowed;
-- the **unconfined adapter** (:data:`UNCONFINED`): code with no caller
-  (worker threads, public routes). Upstream's rules: a session of another,
-  known Profile is refused with that Profile named (a 409 no HTTP request can
-  get now that every one has a caller), and an id it cannot find passes;
-- the **refusing answer** (:data:`REFUSING`): a Directory session with no
-  recorded Admission, or an Admission this module does not understand. It owns
-  nothing.
+- the **unconfined adapter** (:data:`UNCONFINED`): code with no caller, which
+  never answers HTTP (worker threads, startup, the session-list cache
+  builder). Upstream's rules: a session of another, known Profile is refused,
+  and an id it cannot find passes;
+- the **refusing answer** (:data:`REFUSING`): an HTTP request with no
+  Admission (a public route, a session not admitted), or an Admission this
+  module does not understand. It owns nothing.
 
 A User's request is **Bound** to their Profile: besides owning only that
 Profile's sessions, it may name no other Profile (:meth:`may_name_profile`).
@@ -31,9 +31,9 @@ id mine (:meth:`refuse_stream`), may this session-list event go to me
 which follows Upstream's isolated profile mode (:meth:`profile_reach`), and
 at all, which a caller alone confines (:meth:`caller_reach`). Both answer a
 :class:`ProfileReach`. A refusal (:class:`Refusal`) writes its own answer:
-404 "Session not found", or 409 naming the owning Profile, which only the
-unconfined adapter gives. For a User, another Profile's session and a session
-that does not exist get exactly the same answer.
+404 "Session not found". It never names the owning Profile (ticket 07):
+another Profile's session and a session that does not exist get exactly the
+same answer.
 
 The User's adapter looks in the WebUI session record, then in the Profile's own
 agent state (``state.db``: CLI, messaging, cron and gateway sessions). It never
@@ -47,7 +47,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from api.helpers import bad, j
+from api.helpers import bad
 
 logger = logging.getLogger(__name__)
 
@@ -56,29 +56,10 @@ NOT_FOUND_MESSAGE = "Session not found"
 
 @dataclass(frozen=True)
 class Refusal:
-    """A session the caller does not own.
-
-    *owner* names the owning Profile; only the unconfined adapter sets it, and
-    then the answer is the 409 the client uses to offer a switch.
-    *session_id* is the session refused (for a stream, the stream's owner).
-    """
-
-    owner: str | None = None
-    session_id: str | None = None
+    """A session the caller does not own. It carries nothing: its answer never says whose it is."""
 
     def answer(self, handler, session_id=None, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write this refusal's answer: 409 with the owner, else 404 with *not_found*."""
-        if self.owner:
-            return j(handler, {
-                "error": "Session belongs to a different profile",
-                "code": "session_profile_mismatch",
-                "session_id": session_id if session_id is not None else self.session_id,
-                "profile": self.owner,
-            }, status=409)
-        return self.answer_not_found(handler, not_found=not_found)
-
-    def answer_not_found(self, handler, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write 404, for a route whose answer never names an owner."""
+        """Write this refusal's answer: 404 with *not_found*, whoever owns the session."""
         return bad(handler, not_found, 404)
 
 
@@ -306,7 +287,7 @@ class _UnconfinedSessionOwnership:
         return EVERY_PROFILE
 
     def refuse_session(self, session_id) -> Refusal | None:
-        """Another known Profile's session names its owner; an id it cannot find passes."""
+        """Another known Profile's session is refused; an id it cannot find passes."""
         from api.models import get_session, is_safe_session_id
 
         if not isinstance(session_id, str) or not session_id or not is_safe_session_id(session_id):
@@ -334,15 +315,15 @@ class _UnconfinedSessionOwnership:
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found: a session record, or a listed row.
 
-        Another known Profile's session names its owner; a missing or legacy
-        one with no Profile is 404, so the client's self-heal fires.
+        The active Profile's session passes; any other is refused, without
+        saying whose it is.
         """
         from api.profiles import _profiles_match, get_active_profile_name
 
         profile = _profile_of(found)
         if _profiles_match(profile, get_active_profile_name()):
             return None
-        return Refusal(owner=profile, session_id=session_id)
+        return NOT_FOUND
 
     def refuse_listed_session(self, session_id, row) -> Refusal | None:
         """A session known only from its listed row, opened by the detail load.
@@ -396,19 +377,21 @@ UNCONFINED = _UnconfinedSessionOwnership()
 REFUSING = _RefusingSessionOwnership()
 
 
-def ownership_for(admission, *, directory_session: bool):
+def ownership_for(admission, *, directory_session: bool, serving: bool = False):
     """The session ownership adapter for *admission*: the one mapping from Admission to adapter.
 
-    A User's Admission gives that User's adapter. No Admission is
-    unconfined only when there is no Directory session (a public route, a
-    worker thread); a Directory session with none
-    is refused, as is a role or Profile this module does not understand.
+    A User's Admission gives that User's adapter. No Admission is unconfined
+    only for code with no caller (a worker thread, startup): an HTTP request
+    being *served* or a Directory session with none is refused, as is a role
+    or Profile this module does not understand.
     """
     from api.access import ROLE_USER
     from api.profiles import _resolve_named_profile_home
 
     if admission is None:
-        return REFUSING if directory_session else UNCONFINED
+        # Unknown is not allowed: a request (served, or a Directory session)
+        # with no Admission is refused; only code with no caller is unconfined.
+        return REFUSING if directory_session or serving else UNCONFINED
     if admission.role == ROLE_USER and admission.profile:
         try:
             _resolve_named_profile_home(admission.profile)
@@ -420,9 +403,11 @@ def ownership_for(admission, *, directory_session: bool):
 
 def request_session_ownership():
     """This request's session ownership adapter, from the request's Admission."""
-    from api.access import request_admission, request_has_directory_session
+    from api.access import request_admission, request_has_directory_session, request_is_served
 
-    return ownership_for(request_admission(), directory_session=request_has_directory_session())
+    return ownership_for(
+        request_admission(), directory_session=request_has_directory_session(), serving=request_is_served(),
+    )
 
 
 def request_profile_reach(active_profile=None) -> ProfileReach:
@@ -436,25 +421,19 @@ def request_caller_reach() -> ProfileReach:
 
 
 def load_owned_session(
-    handler, session_id, *, load, not_found: str = NOT_FOUND_MESSAGE, hide_owner: bool = False, **load_options
+    handler, session_id, *, load, not_found: str = NOT_FOUND_MESSAGE, **load_options
 ):
     """The session the request names, when the request owns it; else None, its answer written.
 
     Session ownership answers first (as a read or a write, by the request's
-    route): a refusal writes 404 *not_found* (409 naming the owner, for the
-    unconfined adapter). Then *load*
-    (the caller's session loader) loads it with *load_options*; a load
+    route): a refusal writes 404 *not_found*, never naming the owner. Then
+    *load* (the caller's session loader) loads it with *load_options*; a load
     that raises ``KeyError`` writes 404 *not_found*. Other errors pass to the
-    caller. With *hide_owner* a refusal never says who owns the session (always
-    404), for routes that never did. For a session id the request chose,
-    never one the server chose.
+    caller. For a session id the request chose, never one the server chose.
     """
     refusal = request_session_ownership().refuse_session(session_id)
     if refusal is not None:
-        if hide_owner:
-            refusal.answer_not_found(handler, not_found=not_found)
-        else:
-            refusal.answer(handler, session_id, not_found=not_found)
+        refusal.answer(handler, session_id, not_found=not_found)
         return None
     try:
         return load(session_id, **load_options)

@@ -64,9 +64,11 @@ def admit(employee_id: str) -> Admitted | Refused:
 # Admission runs again on every request from a Directory session. Its answer is
 # kept for the rest of that request, on the request thread, and is the one
 # answer to "who is calling?". Only an admitted caller has one: a request with
-# no Directory session (a public route before login) has none. Worker threads carry none. It is cleared with the request Profile
-# (api.profiles.clear_request_profile) at the end of every request, before the
-# handler serves the next keep-alive request on the same thread.
+# no Directory session (a public route before login) has none, and is refused
+# (begin_request marks the thread as serving one). Worker threads carry none
+# and are not marked: they have no caller. Both are cleared with the request
+# Profile (api.profiles.clear_request_profile) at the end of every request,
+# before the handler serves the next keep-alive request on the same thread.
 
 _request = threading.local()
 
@@ -98,8 +100,8 @@ def request_admission() -> Admitted | None:
 def request_has_directory_session() -> bool:
     """True when this request came with a Directory session, admitted or not.
 
-    With :func:`request_admission` it tells a request with no caller (a public
-    route, a worker thread) from a Directory session whose Admission was
+    With :func:`request_admission` it tells code with no caller (a worker
+    thread) from a Directory session whose Admission was
     refused, which must be refused everything (unknown is not allowed).
     """
     return getattr(_request, "directory_session", False)
@@ -136,21 +138,56 @@ def clear_request_admission() -> None:
     _request.directory_session = False
 
 
+def begin_request() -> None:
+    """Mark this thread as serving an HTTP request, with no Admission yet (ticket 07).
+
+    Called by the server before the login check. Until :func:`end_request`, a
+    request with no Admission is refused every session and Workspace, never
+    given the unconfined rules: those are for code with no caller (a worker
+    thread, startup), which never answers HTTP. Thread-locals are not
+    inherited, so a thread the request starts has no caller.
+    """
+    clear_request_admission()
+    _request.serving = True
+
+
+def end_request() -> None:
+    """The request this thread served is over (the server's ``finally``)."""
+    clear_request_admission()
+    _request.serving = False
+
+
+def request_is_served() -> bool:
+    """True while this thread serves an HTTP request (outside :func:`without_request_admission`)."""
+    return getattr(_request, "serving", False)
+
+
+def serving_without_caller() -> bool:
+    """True for an HTTP request with no Admission (a public route): it may read no Profile."""
+    return request_is_served() and request_admission() is None
+
+
 @contextlib.contextmanager
 def without_request_admission():
     """Set the request's Admission aside while the block runs, then restore it.
 
     Inside, the request has no caller, as on a worker thread (the unconfined
-    rule). Only for building a cache keyed by the view, not the caller (the
-    session list), so what is built never depends on who built it; the
-    caller's own answer is applied after the cache.
+    rule): the one no-caller block a request may enter. Only for building a
+    cache keyed by the view, not the caller (the session list), so what is
+    built never depends on who built it; the caller's own answer is applied
+    after the cache.
     """
-    saved = (getattr(_request, "admission", None), getattr(_request, "directory_session", False))
+    saved = (
+        getattr(_request, "admission", None),
+        getattr(_request, "directory_session", False),
+        getattr(_request, "serving", False),
+    )
     clear_request_admission()
+    _request.serving = False
     try:
         yield
     finally:
-        _request.admission, _request.directory_session = saved
+        _request.admission, _request.directory_session, _request.serving = saved
 
 
 def user_entry(method: str, path: str) -> str | None:

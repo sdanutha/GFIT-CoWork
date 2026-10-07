@@ -1,22 +1,14 @@
-"""Regression tests for issue #7710 — cross-profile session guards return 409 + ``session_profile_mismatch`` instead of masking a known-other-profile session as 404.
+"""Issue #7710, reversed by GFIT-CoWork ticket 07: a session guard never names another Profile.
 
-The detail-load endpoint (and the foreign-session synthesizer) already
-distinguish "session owned by a KNOWN other profile" (return ``409
-session_profile_mismatch``) from "session missing/legacy with no
-profile stamped" (return ``404 Session not found`` so the frontend
-self-heal clears the stale URL).
+Upstream answered a session owned by a known other profile with 409
+``session_profile_mismatch`` naming that profile, so the client could offer to
+switch to it. GFIT-CoWork has no Profile switch (ADR 0006), and naming the
+owner tells a caller whose session an id is. The guard
+``_session_id_visible_to_request_profile`` answers 404 "Session not found"
+for another Profile's session exactly as for a legacy one.
 
-The generic request-guard
-``_session_id_visible_to_request_profile`` (used by
-``_guard_request_session_visibility``) flattened both cases to a
-``404 Session not found``, so any cross-profile POST/PATCH/DELETE
-(archive, rename, pin, delete, …) failed with a misleading "Session
-not found" instead of the actionable 409 the detail endpoint emits.
-The fix mirrors the detail endpoint's contract in the generic guard.
-
-The guard now asks session ownership (``api.session_ownership``); these tests
-drive the real helper through the unconfined adapter (no request's
-Admission), with the session lookup and the active Profile stubbed.
+These tests drive the real helper through the unconfined adapter (code with
+no caller), with the session lookup and the active Profile stubbed.
 """
 from __future__ import annotations
 
@@ -77,17 +69,13 @@ def guard(monkeypatch):
     return drive
 
 
-def test_profile_mismatch_returns_409_with_code_and_profile(guard) -> None:
-    """A session owned by a known other profile MUST yield 409 ``session_profile_mismatch``."""
+def test_another_profiles_session_is_404_and_names_no_owner(guard) -> None:
+    """A session owned by a known other profile is refused with 404, never naming the owner."""
     handler = _FakeHandler()
     fn = guard(lambda sid: _FakeSession(profile="alpha"))
     assert fn(handler, "sess-1") is False
-    assert handler.status == 409
-    body = handler.body()
-    assert body["code"] == "session_profile_mismatch"
-    assert body["session_id"] == "sess-1"
-    assert body["profile"] == "alpha"
-    assert "different profile" in body["error"].lower()
+    assert handler.status == 404
+    assert handler.body() == {"error": "Session not found"}
 
 
 def test_unknown_profile_returns_404_for_frontend_self_heal(guard, monkeypatch) -> None:
@@ -128,24 +116,14 @@ def test_emit_error_false_suppresses_response(guard) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Source-shape: the 409 payload MUST keep the four contract fields and the
-# status code, in the session ownership refusal. A silent reversion to a
-# single 404 fails the suite.
+# Source-shape: the refusal has one answer, 404, and no 409 naming an owner.
 # ---------------------------------------------------------------------------
 
 
-def test_source_emits_409_not_404_in_helper() -> None:
-    """The refusal MUST contain a 409 ``session_profile_mismatch`` branch and keep the 404."""
+def test_the_refusal_has_one_answer_and_no_409() -> None:
     src = (REPO_ROOT / "api" / "session_ownership.py").read_text(encoding="utf-8")
     body = src[src.index("class Refusal"):src.index("NOT_FOUND = Refusal()")]
-    assert "status=409" in body, (
-        "the refusal no longer emits 409 for a known-other-profile session"
-    )
-    assert "session_profile_mismatch" in body, (
-        "the refusal no longer carries the ``session_profile_mismatch`` code"
-    )
-    assert "NOT_FOUND_MESSAGE" in body and 'NOT_FOUND_MESSAGE = "Session not found"' in src, (
-        "the None-profile 404 self-heal path was dropped — "
-        "keep the 404 for the None-profile branch so the frontend "
-        "self-heal still fires for actually-missing sids"
-    )
+    assert "status=409" not in body
+    assert "session_profile_mismatch" not in body
+    assert "self.owner" not in body and "owner:" not in body
+    assert 'NOT_FOUND_MESSAGE = "Session not found"' in src

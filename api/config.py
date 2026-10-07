@@ -11961,13 +11961,19 @@ def load_settings() -> dict:
         stored.get("theme") if _has_stored_appearance else settings.get("theme"),
         stored.get("skin") if _has_stored_appearance else settings.get("skin"),
     )
-    settings["default_model"] = get_effective_default_model()
-    try:
-        model_cfg = get_config().get("model", {})
-        if isinstance(model_cfg, dict) and model_cfg.get("provider"):
-            settings["default_model_provider"] = str(model_cfg.get("provider"))
-    except Exception:
-        logger.debug("Failed to resolve default model provider for settings")
+    # The default model is the request Profile's (its config.yaml). A request
+    # with no caller (the login page, login itself) has no Profile to read and
+    # needs none: it gets the Deployment's settings only (ticket 07).
+    from api.access import serving_without_caller
+
+    if not serving_without_caller():
+        settings["default_model"] = get_effective_default_model()
+        try:
+            model_cfg = get_config().get("model", {})
+            if isinstance(model_cfg, dict) and model_cfg.get("provider"):
+                settings["default_model_provider"] = str(model_cfg.get("provider"))
+        except Exception:
+            logger.debug("Failed to resolve default model provider for settings")
     # #7622/#7730 (round 4): keep the tri-state signal explicit.  `language`
     # is intentionally absent from `_SETTINGS_DEFAULTS` (see above), so
     # without this line a fresh install's returned dict would OMIT the key

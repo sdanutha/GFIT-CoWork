@@ -5,12 +5,12 @@ Each request has one Workspace policy, chosen from the request's Admission
 
 - a **User's policy** (:class:`UserWorkspacePolicy`): everything is inside that
   User's Workspace folder, ``<Profile>/workspace`` (ADR 0002);
-- the **unconfined policy** (:data:`UNCONFINED`): code with no caller
-  (worker threads, public routes). Upstream's rules, including
+- the **unconfined policy** (:data:`UNCONFINED`): code with no caller, which
+  never answers HTTP (worker threads, startup). Upstream's rules, including
   remote-terminal Workspaces and the saved-list rules;
-- the **refusing answer** (:data:`REFUSING`): a Directory session with no
-  recorded Admission, or an Admission this module does not understand.
-  Unknown is not allowed.
+- the **refusing answer** (:data:`REFUSING`): an HTTP request with no
+  Admission (a public route, a session not admitted), or an Admission this
+  module does not understand. Unknown is not allowed.
 
 The policy answers: the default Workspace for a new session, the saved
 Workspace list cleaned for this caller, whether a path may be used as a
@@ -207,18 +207,20 @@ UNCONFINED = _UnconfinedWorkspacePolicy()
 REFUSING = _RefusingWorkspacePolicy()
 
 
-def policy_for(admission, *, directory_session: bool):
+def policy_for(admission, *, directory_session: bool, serving: bool = False):
     """The Workspace policy for *admission*: the one mapping from Admission to policy.
 
     A User's Admission gives that User's policy. No Admission is unconfined only
-    when there is no Directory session (a public route, a worker thread); a
-    Directory session with none
-    is refused, as is a role or Profile this module does not understand.
+    for code with no caller (a worker thread, startup): an HTTP request being
+    *served* or a Directory session with none is refused, as is a role or
+    Profile this module does not understand.
     """
     from api.access import ROLE_USER
 
     if admission is None:
-        return REFUSING if directory_session else UNCONFINED
+        # Unknown is not allowed: a request (served, or a Directory session)
+        # with no Admission is refused; only code with no caller is unconfined.
+        return REFUSING if directory_session or serving else UNCONFINED
     if admission.role == ROLE_USER and admission.profile:
         try:
             return UserWorkspacePolicy.for_profile(admission.profile)
@@ -229,6 +231,8 @@ def policy_for(admission, *, directory_session: bool):
 
 def request_workspace_policy():
     """This request's Workspace policy, from the request's Admission."""
-    from api.access import request_admission, request_has_directory_session
+    from api.access import request_admission, request_has_directory_session, request_is_served
 
-    return policy_for(request_admission(), directory_session=request_has_directory_session())
+    return policy_for(
+        request_admission(), directory_session=request_has_directory_session(), serving=request_is_served(),
+    )

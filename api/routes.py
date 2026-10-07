@@ -509,14 +509,13 @@ def _request_session_visibility_exempt(method: str, path: str | None, ownership)
         # Creates a new session with a new id; an id in the body names nothing.
         return True
     if not ownership.keeps_upstream_rules():
-        # A User names only their own Profile's sessions, so the detail-load
-        # 409, and the import and placeholder-retag rules below, never apply
-        # to them: the generic guard answers first.
+        # Only the unconfined adapter (code with no caller, never an HTTP
+        # request since ticket 07) keeps Upstream's route rules below; a User
+        # and a request with no caller get the generic guard first.
         return False
     if method == "GET" and path == "/api/session":
-        # Detail-load owns profile mismatch handling so the frontend can switch
-        # to the session's profile instead of treating a valid cross-profile
-        # deep link as a deleted/stale session.
+        # Upstream: the detail load answers profile mismatch itself (404, never
+        # naming the owner, like every refusal).
         return True
     if method != "POST":
         return False
@@ -533,9 +532,8 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     """Return whether this request owns ``sid``, asking session ownership.
 
     When it does not, and *emit_error* is set, the refusal writes its own
-    answer: 404 "Session not found" for a User (the unconfined adapter's 409
-    naming the owner, #7710, has no HTTP caller since ADR 0006). A request that names
-    no session passes.
+    answer: 404 "Session not found", never naming the owner. A request that
+    names no session passes.
     """
     refusal = request_session_ownership().refuse_session(sid)
     if refusal is None:
@@ -14024,8 +14022,9 @@ def handle_delete(handler, parsed) -> bool:
 def _dispatch_write(handler, parsed, method: str) -> bool:
     """One preamble for every unsafe method, driven by the request's route-table row:
     CSRF (unless the row is exempt), then the handler at
-    once when it reads its own body, else the JSON body, the session guard and
-    the handler. A path with no row has its body read and guarded before the 404."""
+    once when it reads its own body, else the JSON body, the session guard
+    (unless the row has none: login and logout) and the handler. A path with
+    no row has its body read and guarded before the 404."""
     diag = None
     if method == "POST":
         diag = RequestDiagnostics.maybe_start(method, parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
@@ -14058,7 +14057,10 @@ def _dispatch_write(handler, parsed, method: str) -> bool:
         if diag:
             diag.finish()
         raise
-    if not _guard_request_session_visibility(handler, parsed, body=body, method=method):
+    # The row's session_guard is honoured as on GET; a path with no row is guarded.
+    if (route is None or route.session_guard) and not _guard_request_session_visibility(
+        handler, parsed, body=body, method=method
+    ):
         if diag:
             diag.finish()
         return True
@@ -16004,7 +16006,7 @@ def _handle_session_export(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session, hide_owner=True)
+    s = load_owned_session(handler, sid, load=get_session)
     if s is None:
         return True
     # ``public_session_projection`` supersedes the narrower
@@ -18750,7 +18752,7 @@ def _handle_folder_download(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
     if s is None:
         return True
 
@@ -18835,7 +18837,7 @@ def _handle_file_raw(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -18874,7 +18876,7 @@ def _handle_file_read(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops)
     if s is None:
         return True
     rel = qs.get("path", [""])[0]
@@ -21802,9 +21804,9 @@ def _handle_session_compression_recovery_start(handler, body):
         return bad(handler, "session_id is required")
     if _session_is_subagent_view_only(sid):
         return bad(handler, "Subagent sessions are view-only and cannot start compression recovery from WebUI", 400)
-    # The accessor answers as the detail load does (#7710): 409
-    # ``session_profile_mismatch`` for a known other Profile, 404 otherwise.
-    # Recovery continues only into this request's own sessions.
+    # The accessor answers as the detail load does: 404 for a session this
+    # request does not own, never naming its owner (ticket 07). Recovery
+    # continues only into this request's own sessions.
     source = load_owned_session(handler, sid, load=get_session)
     if source is None:
         return True
@@ -22211,10 +22213,8 @@ def _handle_chat_start(handler, body, diag=None):
                 # Profile's sessions.
                 s.profile = requested_profile
             else:
-                # #7710: known other profile → 409 ``session_profile_mismatch``
-                # so the client can offer to switch to it (#5419).
-                # 404 is preserved only for the None-profile
-                # (unknown/legacy) self-heal case.
+                # Another Profile's session: 404, never naming its owner
+                # (ticket 07; there is no Profile switch to offer).
                 return _refusal.answer(handler, body.get("session_id", ""))
         # Resolve durable rotations before any workspace/model/pending mutation.
         # GET navigation adopts the tip; POST never silently replays a user turn.
@@ -23134,7 +23134,7 @@ def _handle_file_delete(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23165,7 +23165,7 @@ def _handle_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23195,7 +23195,7 @@ def _handle_office_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23229,7 +23229,7 @@ def _handle_file_create(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23255,7 +23255,7 @@ def _handle_file_rename(handler, body):
         require(body, "session_id", "path", "new_name")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23289,7 +23289,7 @@ def _handle_file_move(handler, body):
         require(body, "session_id", "path", "dest_dir")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23386,7 +23386,7 @@ def _handle_create_dir(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:
@@ -23420,7 +23420,7 @@ def _handle_file_path(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops)
     if s is None:
         return True
     try:

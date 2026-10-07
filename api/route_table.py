@@ -17,7 +17,10 @@ runs:
 - **session_guard**: whether session ownership checks the session ids the
   request names (``session_id`` in the query or body, the id in the session
   events path) before the handler runs. Pages, static assets and the routes
-  served before login do not run it;
+  served before login do not run it: a ``PUBLIC`` row cannot have it, since a
+  request with no caller is refused every session (ticket 07). Logout does
+  not run it either: it names no session, and a session that is no longer
+  admitted may still end itself;
 - **names_stream**: whether the request names a stream by its ``stream_id``;
   the session guard then asks session ownership about the session that owns
   the stream;
@@ -69,6 +72,8 @@ class Route:
             raise ValueError(f"{self.method} {self.pattern}: body is 'json' or 'own'")
         if not self.pattern.startswith("/"):
             raise ValueError(f"{self.pattern}: a pattern starts with '/'")
+        if self.caller == PUBLIC and self.session_guard:
+            raise ValueError(f"{self.method} {self.pattern}: a PUBLIC route has no caller to own sessions; session_guard=False")
 
     @property
     def is_prefix(self) -> bool:
@@ -263,8 +268,8 @@ ROUTES: tuple[Route, ...] = (
     _post("/api/projects/delete", USER, handler="_post_api_projects_delete"),
     _post("/api/session/import", USER, handler="_post_api_session_import"),
     _post("/api/session/import_cli", USER, handler="_post_api_session_import_cli"),
-    _post("/api/auth/login", PUBLIC, csrf=False, handler="_post_api_auth_login"),
-    _post("/api/auth/logout", USER, handler="_post_api_auth_logout"),
+    _post("/api/auth/login", PUBLIC, csrf=False, handler="_post_api_auth_login", session_guard=False),
+    _post("/api/auth/logout", USER, handler="_post_api_auth_logout", session_guard=False),
     _post("/api/rollback/restore", USER, handler="_post_api_rollback_restore"),
     # ── PUT ──
     # ── PATCH ──

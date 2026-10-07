@@ -53,9 +53,9 @@ def _capture(monkeypatch):
         cap["ok_status"] = status
         return True
 
-    # Session ownership writes its own refusals.
+    # Session ownership writes its own refusals (404 through bad()).
+    monkeypatch.setattr(routes, "j", _fake_j)
     for module in (routes, session_ownership):
-        monkeypatch.setattr(module, "j", _fake_j)
         monkeypatch.setattr(
             module,
             "bad",
@@ -86,10 +86,8 @@ class _FakeSession:
 
 def test_import_cli_existing_foreign_profile_unqualified_request_404(monkeypatch):
     """Unqualified request (active profile=default) for a session stored under a
-    foreign profile must yield 409 ``session_profile_mismatch`` (so the client
-    can offer to switch to it per #5419) — not 404, which would mask a
-    legitimate owned-by-other-profile session as missing and trigger a
-    destructive self-heal in the frontend (#7710)."""
+    foreign profile is refused with 404 and never names the owner (ticket 07;
+    Upstream's #7710 answered 409 naming it)."""
     foreign = _FakeSession("foreign_existing_001", "other")
     monkeypatch.setattr(routes.Session, "load", staticmethod(lambda sid: foreign))
     monkeypatch.setattr(routes, "_get_active_profile_name", lambda: "default")
@@ -106,14 +104,9 @@ def test_import_cli_existing_foreign_profile_unqualified_request_404(monkeypatch
         {"session_id": "foreign_existing_001"},
     )
 
-    assert "ok" in cap, f"expected 409 session_profile_mismatch, got {cap}"
-    assert cap["ok_status"] == 409, f"expected status 409, got {cap.get('ok_status')}"
-    assert cap["ok"] == {
-        "error": "Session belongs to a different profile",
-        "code": "session_profile_mismatch",
-        "session_id": "foreign_existing_001",
-        "profile": "other",
-    }
+    assert "ok" not in cap, cap
+    assert cap["bad"][1] == 404, cap
+    assert "other" not in str(cap["bad"][0])
 
 
 def test_import_cli_existing_same_profile_still_refreshes(monkeypatch):

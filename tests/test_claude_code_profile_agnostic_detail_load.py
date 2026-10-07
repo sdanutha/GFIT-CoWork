@@ -86,9 +86,9 @@ def _capture(monkeypatch):
         cap["status"] = status
         return True
 
-    # Session ownership writes its own refusals.
+    # Session ownership writes its own refusals (404 through bad()).
+    monkeypatch.setattr(routes, "j", fake_j)
     for module in (routes, session_ownership):
-        monkeypatch.setattr(module, "j", fake_j)
         monkeypatch.setattr(module, "bad", fake_bad)
     return cap
 
@@ -125,7 +125,7 @@ def test_claude_code_detail_load_survives_named_active_profile(monkeypatch):
 
 
 def test_profile_tagged_foreign_session_still_scoped(monkeypatch):
-    """Negative control: a row that DOES carry a profile keeps the #5419 409."""
+    """Negative control: a row that DOES carry another profile is refused (404, owner not named)."""
     row = dict(_claude_code_row())
     row.update(
         session_id="20260101_000000_abc123",
@@ -146,8 +146,8 @@ def test_profile_tagged_foreign_session_still_scoped(monkeypatch):
          patch("api.routes._lookup_cli_session_metadata", return_value=row):
         assert routes.handle_get(handler, parsed) is True
 
-    assert cap["status"] == 409
-    assert cap["data"]["code"] == "session_profile_mismatch"
+    assert cap["status"] == 404
+    assert "other-profile" not in str(cap)
 
 
 def test_profile_agnostic_predicate_is_narrow():

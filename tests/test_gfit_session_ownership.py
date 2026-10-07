@@ -1,11 +1,11 @@
 """GFIT-CoWork: one session ownership module answers "whose session is this?" for a request.
 
 A User's adapter owns exactly the sessions of the User's Profile and refuses
-every other id, including ids it cannot place. The unconfined adapter
-(requests with no Admission) keeps today's rules, including the 409 that names
-the owning Profile. A Directory session with no recorded Admission, or with an
-Admission it does not understand (an Admin's from before ADR 0006), gets the
-refusing answer.
+every other id, including ids it cannot place. The unconfined adapter (code
+with no caller, never an HTTP request) keeps Upstream's rules, but its refusal
+never names the owning Profile: every refusal is 404 (ticket 07). An HTTP
+request with no Admission, or with an Admission it does not understand (an
+Admin's from before ADR 0006), gets the refusing answer.
 
 Tested from temporary Profile folders and in-memory session records alone: no
 server and no request thread. Each case is a row in a table.
@@ -38,7 +38,6 @@ BOB = "671278"
 
 OWNED = "owned"
 NOT_FOUND = "404"
-OWNER_BOB = "409 bob"
 PASSES = "passes"  # an id the unconfined adapter cannot find is left to the route
 
 
@@ -82,7 +81,7 @@ def _outcome(refusal) -> str:
     if refusal is None:
         return OWNED
     assert isinstance(refusal, Refusal)
-    return f"409 {'bob' if refusal.owner == BOB else refusal.owner}" if refusal.owner else NOT_FOUND
+    return NOT_FOUND
 
 
 SESSION_IDS = {
@@ -99,9 +98,9 @@ SESSION_IDS = {
 
 # case -> (User Alice, unconfined in the root Profile, refusing)
 SESSION_TABLE = {
-    "own WebUI session": (OWNED, "409 521740", NOT_FOUND),
+    "own WebUI session": (OWNED, NOT_FOUND, NOT_FOUND),
     "own gateway session": (OWNED, OWNED, NOT_FOUND),
-    "another Profile's WebUI session": (NOT_FOUND, OWNER_BOB, NOT_FOUND),
+    "another Profile's WebUI session": (NOT_FOUND, NOT_FOUND, NOT_FOUND),
     "another Profile's gateway session": (NOT_FOUND, OWNED, NOT_FOUND),
     "the root Profile's session": (NOT_FOUND, OWNED, NOT_FOUND),
     "Profile-less row": (NOT_FOUND, OWNED, NOT_FOUND),
@@ -133,9 +132,9 @@ def test_naming_no_session_is_not_a_refusal(world, adapter, session_id):
 
 
 STREAM_TABLE = {
-    "own run": ("alice-run", OWNED, "409 521740"),
+    "own run": ("alice-run", OWNED, NOT_FOUND),
     "own gateway session's run": ("alice-gateway-run", OWNED, OWNED),
-    "another Profile's run": ("bob-run", NOT_FOUND, OWNER_BOB),
+    "another Profile's run": ("bob-run", NOT_FOUND, NOT_FOUND),
     "unknown stream": ("no-such-run", NOT_FOUND, OWNED),
     "no stream": ("", NOT_FOUND, OWNED),
 }
@@ -196,13 +195,13 @@ def test_may_this_row_go_to_me(world, row, user, root, bobs, every):
 
 LISTED_TABLE = [
     # (a session the route has already found, User Alice, unconfined in the root Profile)
-    ({"session_id": f"{ALICE}-gateway", "profile": ALICE}, OWNED, "409 521740"),
-    ({"session_id": f"{BOB}-gateway", "profile": BOB}, NOT_FOUND, OWNER_BOB),
+    ({"session_id": f"{ALICE}-gateway", "profile": ALICE}, OWNED, NOT_FOUND),
+    ({"session_id": f"{BOB}-gateway", "profile": BOB}, NOT_FOUND, NOT_FOUND),
     ({"session_id": "cli-root", "profile": "default"}, NOT_FOUND, OWNED),
     ({"session_id": "claude_code_x", "profile": None, "source_tag": "claude_code"}, NOT_FOUND, OWNED),
     ({}, NOT_FOUND, OWNED),
-    (models.Session(session_id="rec-alice", profile=ALICE), OWNED, "409 521740"),
-    (models.Session(session_id="rec-bob", profile=BOB), NOT_FOUND, OWNER_BOB),
+    (models.Session(session_id="rec-alice", profile=ALICE), OWNED, NOT_FOUND),
+    (models.Session(session_id="rec-bob", profile=BOB), NOT_FOUND, NOT_FOUND),
     (None, NOT_FOUND, OWNED),
 ]
 
@@ -266,22 +265,13 @@ def test_a_refusal_writes_its_own_answer():
     assert (handler.status, handler.body()) == (404, {"error": "Session not found"})
 
     handler = _Handler()
-    Refusal(owner=BOB).answer(handler, "sid")
-    assert handler.status == 409
-    assert handler.body() == {"error": "Session belongs to a different profile",
-                              "code": "session_profile_mismatch", "session_id": "sid", "profile": BOB}
-
-    handler = _Handler()
-    Refusal(owner=BOB).answer_not_found(handler)
-    assert (handler.status, handler.body()) == (404, {"error": "Session not found"})
-
-    handler = _Handler()
-    Refusal(owner=BOB, session_id="owner-sid").answer(handler)
-    assert handler.body()["session_id"] == "owner-sid"
-
-    handler = _Handler()
     Refusal().answer(handler, "sid", not_found="Session not found in CLI store")
     assert (handler.status, handler.body()) == (404, {"error": "Session not found in CLI store"})
+
+
+def test_a_refusal_cannot_carry_an_owner():
+    with pytest.raises(TypeError):
+        Refusal(owner=BOB)
 
 
 # ── The choice of adapter ────────────────────────────────────────────────────

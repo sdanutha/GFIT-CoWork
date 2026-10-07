@@ -211,35 +211,14 @@ class _ProfileScopedSession:
         }
 
 
-# Keys the profile-mismatch 409 envelope is ALLOWED to contain. Any key beyond
-# these would mean session content is leaking across the profile boundary.
-_ALLOWED_MISMATCH_KEYS = {"error", "code", "session_id", "profile"}
-
-
 def _assert_profile_mismatch_envelope(captured, session_id, profile, *, leak_msg):
-    """#5419: a valid-but-wrong-profile /api/session load now returns a
-    structured 409 ``session_profile_mismatch`` envelope (so the frontend can
-    switch to the owning profile) instead of a misleading 404. This asserts the
-    new contract WHILE preserving the isolation guarantee this suite exists to
-    protect: the response body must carry ONLY the error envelope — never any
-    transcript/messages/title/content from the foreign-profile session.
+    """A valid session of another Profile is refused exactly like a missing one:
+    404 "Session not found" (ticket 07; Upstream's #5419 409 named the owner).
+    Nothing of the foreign session rides along, not even whose it is.
     """
-    assert "bad" not in captured, (
-        "wrong-profile session should no longer 404 via bad(); expected the 409 envelope"
-    )
-    entry = captured.get("json")
-    assert entry is not None, "expected a structured 409 profile-mismatch response"
-    assert entry.get("status") == 409, f"expected status 409, got {entry.get('status')}"
-    data = entry.get("data") or {}
-    assert data.get("code") == "session_profile_mismatch"
-    assert data.get("profile") == profile
-    assert data.get("session_id") == session_id
-    assert "error" in data
-    # Boundary guard: no foreign-profile content may ride along in the envelope.
-    extra = set(data.keys()) - _ALLOWED_MISMATCH_KEYS
-    assert not extra, f"{leak_msg} (unexpected keys leaked: {sorted(extra)})"
-    for forbidden in ("messages", "content", "title", "workspace", "model", "tool_calls"):
-        assert forbidden not in data, f"{leak_msg} ('{forbidden}' present in envelope)"
+    assert "json" not in captured, f"{leak_msg} (a JSON body was written)"
+    assert captured.get("bad") == {"message": "Session not found", "status": 404}, captured
+    assert profile not in str(captured), f"{leak_msg} (the owning Profile was named)"
 
 
 def test_get_session_rejects_session_from_inactive_profile():
@@ -271,14 +250,10 @@ def test_get_session_rejects_session_from_inactive_profile():
          patch("api.routes.get_state_db_session_messages", return_value=[]), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=default"}), parsed)
 
-    # #5419: a valid-but-wrong-profile session now returns a structured 409
-    # (session_profile_mismatch) so the frontend can switch profiles, instead
-    # of a misleading 404. The isolation boundary this suite protects still
-    # holds: the response carries ONLY the error envelope, never any transcript.
+    # Another Profile's session: 404, never naming its owner or any transcript.
     _assert_profile_mismatch_envelope(captured, "foreign_001", "other",
                                       leak_msg="foreign-profile transcript must not be returned")
 
@@ -304,8 +279,7 @@ def test_get_session_rejects_metadata_only_session_from_inactive_profile():
          patch("api.models.get_session", return_value=_ProfileScopedSession()), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=default"}), parsed)
 
     _assert_profile_mismatch_envelope(captured, "foreign_001", "other",
@@ -333,8 +307,7 @@ def test_get_session_rejects_cookieless_session_from_inactive_profile():
          patch("api.models.get_session", return_value=_ProfileScopedSession()), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={}), parsed)
 
     _assert_profile_mismatch_envelope(captured, "foreign_001", "other",
@@ -365,8 +338,7 @@ def test_get_session_rejects_cli_session_from_inactive_profile():
          patch("api.routes.get_cli_session_messages", return_value=[{"role": "user", "content": "foreign profile secret"}]), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=default"}), parsed)
 
     _assert_profile_mismatch_envelope(captured, "cli_foreign", "other",
@@ -404,8 +376,7 @@ def test_missing_session_under_nondefault_profile_still_404_primary_branch():
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=research"}), parsed)
 
     assert captured.get("bad", {}).get("status") == 404, (
@@ -439,8 +410,7 @@ def test_missing_session_under_nondefault_profile_still_404_cli_branch():
          patch("api.routes._lookup_cli_session_metadata", return_value={}), \
          patch("api.routes.bad", side_effect=fake_bad), \
          patch("api.session_ownership.bad", side_effect=fake_bad), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes.handle_get(SimpleNamespace(headers={"Cookie": "hermes_profile=research"}), parsed)
 
     assert captured.get("bad", {}).get("status") == 404, (
@@ -584,8 +554,7 @@ def test_session_import_stamps_active_profile():
          patch("api.routes.Session", side_effect=lambda **kwargs: _ImportedSessionStub(**kwargs)), \
          patch.object(routes, "SESSIONS", sessions), \
          patch("api.routes.publish_session_list_changed"), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes._handle_session_import(SimpleNamespace(headers={}), body)
 
     session = captured["json"]["data"]["session"]
@@ -613,8 +582,7 @@ def test_session_import_default_profile_remains_default_owned():
          patch("api.routes.Session", side_effect=lambda **kwargs: _ImportedSessionStub(**kwargs)), \
          patch.object(routes, "SESSIONS", sessions), \
          patch("api.routes.publish_session_list_changed"), \
-         patch("api.routes.j", side_effect=fake_j), \
-         patch("api.session_ownership.j", side_effect=fake_j):
+         patch("api.routes.j", side_effect=fake_j):
         routes._handle_session_import(SimpleNamespace(headers={}), body)
 
     session = captured["json"]["data"]["session"]
