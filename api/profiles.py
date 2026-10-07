@@ -2599,16 +2599,33 @@ def create_profile_api(name: str, clone_from: str = None,
     default_model, model_provider = _split_webui_provider_model_value(default_model, model_provider)
     _validate_profile_model_selection(default_model, model_provider)
 
+    # The fallback is for a missing capability only (ticket 14, as ticket 13 for
+    # delete): the try covers the import alone. Once Hermes's create runs, any
+    # error from it, an ImportError raised inside it included, fails the create;
+    # the fallback never builds the Profile instead. Hermes builds in a staging
+    # directory and publishes with one rename, so an error before that leaves
+    # nothing; after it (gateway service, multiplexer) the Profile is in place
+    # and roster.create_profile keeps it disabled.
     try:
         from hermes_cli.profiles import create_profile
-        create_profile(
-            name,
-            clone_from=clone_from,
-            clone_config=clone_config,
-            clone_all=False,
-            no_alias=True,
-        )
     except ImportError:
+        create_profile = None
+    if create_profile is not None:
+        try:
+            create_profile(
+                name,
+                clone_from=clone_from,
+                clone_config=clone_config,
+                clone_all=False,
+                no_alias=True,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                f"Hermes Agent could not create Profile '{name}': {exc}. Fix the Hermes Agent "
+                "installation and run the create again."
+            ) from exc
+    else:
+        # Hermes Agent's create is not installed: the WebUI builds the Profile itself.
         _create_profile_fallback(name, clone_from, clone_config)
 
     # Resolve the profile directory from the profile list when possible.
