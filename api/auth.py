@@ -383,6 +383,10 @@ def _remember_request_session(handler, info: dict | None) -> dict | None:
 
 
 def reset_request_auth_state(handler) -> None:
+    """Start a request: nothing about its session is known yet, and it has no caller until admitted."""
+    from api.access import begin_request
+
+    begin_request()
     for name in (
         '_request_session',
         '_request_session_rejected',
@@ -434,16 +438,19 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
 
 
 def _refuse_unlisted_route(handler, parsed, session_info: dict) -> bool:
-    """The route gate: True (after sending 403) when a User calls a route not open to Users.
+    """The route gate: True (after sending 403) unless an admitted User calls a route open to Users.
 
     The caller is the request's Admission. A Directory session with none was
-    not admitted for this request, so it may call nothing.
+    not admitted for this request, so it may call nothing; nor may any other
+    kind of session (fail closed, ticket 07).
     """
-    if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
-        return False
     from api.access import NOT_AVAILABLE_MESSAGE, request_admission, user_may_call
 
-    if request_admission() is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
+    if (
+        session_info.get('auth_type') == DIRECTORY_AUTH_TYPE
+        and request_admission() is not None
+        and user_may_call(getattr(handler, 'command', 'GET'), parsed.path)
+    ):
         return False
     _send_forbidden(handler, parsed, NOT_AVAILABLE_MESSAGE)
     return True

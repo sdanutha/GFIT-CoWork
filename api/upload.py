@@ -296,7 +296,7 @@ def handle_upload(handler):
         filename, file_bytes = files['file']
         if not filename:
             return j(handler, {'error': 'No filename in upload'}, status=400)
-        s = load_owned_session(handler, session_id, load=get_session, hide_owner=True)
+        s = load_owned_session(handler, session_id, load=get_session)
         if s is None:
             return True
         safe_name = _sanitize_upload_name(filename)
@@ -487,7 +487,7 @@ def handle_upload_extract(handler):
         filename, file_bytes = files['file']
         if not filename:
             return j(handler, {'error': 'No filename in upload'}, status=400)
-        s = load_owned_session(handler, session_id, load=get_session, hide_owner=True)
+        s = load_owned_session(handler, session_id, load=get_session)
         if s is None:
             return True
         session_dir = _session_attachment_dir(session_id)
@@ -702,7 +702,7 @@ def handle_workspace_upload(handler):
             return j(handler, {'error': 'No file field in request'}, status=400)
 
         # Validate session
-        session = load_owned_session(handler, session_id, load=get_session, hide_owner=True)
+        session = load_owned_session(handler, session_id, load=get_session)
         if session is None:
             return True
 

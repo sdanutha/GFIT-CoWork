@@ -536,10 +536,10 @@ def clear_request_profile() -> None:
     Also clears the request's Admission (GFIT-CoWork), which ends with the
     request Profile, before the next keep-alive request on this thread.
     """
-    from api.access import clear_request_admission
+    from api.access import end_request
 
     _tls.profile = None
-    clear_request_admission()
+    end_request()
 
 
 class ProfileNotReadable(LookupError):

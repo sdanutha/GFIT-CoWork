@@ -1233,9 +1233,12 @@ confined (ADR 0006).
 - `api/workspace_policy.py` — the Workspace policy: the one answer to "what may this request
   touch?", as the request's Admission is the one answer to "who is calling?". It is chosen once
   per request from the request's Admission (`request_workspace_policy`, the only mapping): a
-  User's policy (everything inside `<Profile>/workspace`), the unconfined policy (no caller:
-  worker threads and public routes), or the refusing answer (a Directory session with no
-  Admission: `access.request_has_directory_session`). Choosing and listing Workspaces, file
+  User's policy (everything inside `<Profile>/workspace`), the unconfined policy (code with no
+  caller that never answers HTTP: worker threads, startup), or the refusing answer (an HTTP
+  request with no Admission: a public route, or a Directory session not admitted). The server
+  marks every request it serves (`access.begin_request`, from `auth.reset_request_auth_state`)
+  until its `finally` (`access.end_request`), so "no Admission" on a request thread is never
+  taken for "no caller" (ticket 07). Choosing and listing Workspaces, file
   roots and confinement, and the git, media, rollback (through the saved list) and worktree
   checks all ask it; no other code asks "is the caller a User?" to decide confinement, and
   `tests/test_gfit_workspace_policy_guard.py` fails when it does (its allowlist is empty).
@@ -1251,11 +1254,12 @@ confined (ADR 0006).
   writes where the WebUI reads.
 - `api/session_ownership.py` — session ownership: the one answer to "whose session is
   this?". Like the Workspace policy, one adapter is chosen per request from the request's
-  Admission (`request_session_ownership`): a User's adapter, the unconfined adapter (no
-  caller: worker threads and public routes; Upstream's rules) or the refusing answer (a
-  Directory session with no Admission, or an Admission it does not understand, such as an
-  Admin session from before ADR 0006). It answers whether
-  a session id or stream id is the caller's (a `Refusal` writes its own 404 or 409); whether a
+  Admission (`request_session_ownership`): a User's adapter, the unconfined adapter (code with
+  no caller that never answers HTTP; Upstream's rules) or the refusing answer (an HTTP request
+  with no Admission, or an Admission it does not understand, such as an Admin session from
+  before ADR 0006). It answers whether
+  a session id or stream id is the caller's (a `Refusal` writes its own 404 and never names
+  the owning Profile); whether a
   session the route has already found (a record or a listed CLI row) is; whether a
   session-list event or a listed row may go to the caller; and whether the request may see
   Profile-less sessions. The dispatch guard (top-level and `/api/sessions/<id>/events` ids),
@@ -1281,8 +1285,11 @@ confined (ADR 0006).
     Profile-home lookup outside the reach raises `profiles.ProfileNotReadable`, which
     `server.py` answers with 404 (no quiet retarget to the User's own home).
   - The session list cache is keyed by the view, not the caller: it is built inside
-    `access.without_request_admission()` (the unconfined rule, wherever it is built) and each
-    caller's rows are applied after the cache.
+    `access.without_request_admission()` (the unconfined rule, wherever it is built: the one
+    no-caller block a request may enter) and each caller's rows are applied after the cache.
+  - Public routes (`PUBLIC` rows) have no session guard (the route table refuses one), and a
+    request with no caller reads only the Deployment's settings, never a Profile's config
+    (`config.load_settings` skips the default model; `access.serving_without_caller`).
   - `tests/test_gfit_profile_reach_guard.py` fails when code outside the policy modules asks
     whether the caller is a User, reads isolated profile mode, or filters rows by comparing a
     row's Profile with the active Profile (each remaining match is listed with its reason;
