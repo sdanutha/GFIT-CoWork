@@ -1,4 +1,4 @@
-"""/api/profile/switch keeps the target profile's models disk snapshot only while its sources are unchanged."""
+"""A Profile's models disk snapshot is served (cold memory: a restart) only while its sources are unchanged."""
 
 from __future__ import annotations
 
@@ -69,8 +69,10 @@ def _fetch_as_demo() -> dict:
 
 
 def _switch_to_demo_and_fetch() -> str:
-    profiles.switch_profile("demo", process_wide=False)
-    cfg.invalidate_models_cache(delete_disk=False)  # as /api/profile/switch does
+    # A cold in-memory catalog with the disk snapshot kept, as after a restart.
+    # (Upstream reached this state through /api/profile/switch; GFIT-CoWork has
+    # no Profile switch, but a restart and a first request for the Profile still do.)
+    cfg.invalidate_models_cache(delete_disk=False)
     return _fetch_as_demo()["default_model"]
 
 

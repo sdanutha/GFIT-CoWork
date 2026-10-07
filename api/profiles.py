@@ -353,7 +353,7 @@ def _resolve_base_hermes_home() -> Path:
     The bug this prevents: if HERMES_HOME has already been mutated to
     /home/user/.hermes/profiles/webui (by init_profile_state at startup),
     reading it here would make _DEFAULT_HERMES_HOME point to that subdir,
-    causing switch_profile('webui') to look for
+    causing a lookup of 'webui' to look for
     /home/user/.hermes/profiles/webui/profiles/webui — which doesn't exist.
 
     HERMES_BASE_HOME normally points at the base home already, but isolated
@@ -410,7 +410,7 @@ def _read_active_profile_file() -> str:
 #
 # `_is_root_profile(name)` answers "does this name resolve to ~/.hermes?" and
 # is the canonical replacement for scattered `if name == 'default':` checks
-# in switch_profile, get_active_hermes_home, _validate_profile_name, etc.
+# in get_active_hermes_home, _validate_profile_name, etc.
 #
 # Cost note: list_profiles_api() shells out via hermes_cli (non-trivial), so
 # we memoize the lookup. The cache is invalidated whenever profiles are
@@ -944,9 +944,8 @@ def _stringify_env_value(value) -> str:
 def get_profile_runtime_env(home: Path) -> dict[str, str]:
     """Return env vars needed to run an agent turn for a profile home.
 
-    WebUI profile switching is per-client/cookie scoped, so it intentionally
-    does not call ``switch_profile(..., process_wide=True)`` for every browser.
-    Agent/tool code still consumes terminal backend settings through
+    A request's Profile is its Admission's and never changes the process's
+    (ticket 11). Agent/tool code still consumes terminal backend settings through
     environment variables (matching ``hermes -p <profile>``), so streaming must
     apply the selected profile's terminal config and ``.env`` for the duration
     of that run.
@@ -1606,7 +1605,7 @@ def profile_scope_for_detached_worker(
 def _set_hermes_home(home: Path):
     """Set HERMES_HOME env var and monkey-patch cached module-level paths.
 
-    Every process-wide home change (startup, ``switch_profile(process_wide=True)``)
+    Startup (``init_profile_state``) is the only process-wide home change and
     goes through here, so the process-profile pin used for MCP routing decisions
     is updated in the same step and cannot drift from ``HERMES_HOME``.
     """
@@ -1743,166 +1742,6 @@ def get_process_profile_home() -> Path:
     if _INITIAL_HERMES_HOME:
         return Path(_INITIAL_HERMES_HOME).expanduser()
     return _DEFAULT_HERMES_HOME
-
-
-def switch_profile(name: str, *, process_wide: bool = True) -> dict:
-    """Switch the active profile.
-
-    Validates the profile exists, updates process state, patches module caches,
-    reloads .env, and reloads config.yaml.
-
-    In isolated profile mode, switching to a different profile is rejected (403).
-    Switching to the isolated profile itself is allowed (idempotent).
-
-    Args:
-        name: Profile name to switch to.
-        process_wide: If True (default), updates the process-global
-            _active_profile.  Set to False for per-client switches from the
-            WebUI where the profile is managed via cookie + thread-local (#798).
-
-    Returns: {'profiles': [...], 'active': name}
-    Raises ValueError when profile doesn't exist, RuntimeError when agent is running,
-    PermissionError in isolated mode for cross-profile switches.
-    """
-    global _active_profile
-
-    # In isolated profile mode, reject switching to other profiles
-    if _is_isolated_profile_mode():
-        active = _isolated_profile_name()
-        if name != active:
-            raise PermissionError(
-                f"Profile switching is not allowed in isolated profile mode. "
-                f"Currently pinned to profile '{active}'."
-            )
-
-    # Import here to avoid circular import at module load
-    from api import run_registry
-    from api.config import reload_config
-
-    # Process-wide profile switches mutate HERMES_HOME, module-level path caches,
-    # os.environ-backed .env keys, and the global config cache. Keep those blocked
-    # while any agent stream is active. Per-client WebUI switches are cookie/TLS
-    # scoped (process_wide=False) and do not mutate those globals, so users can
-    # leave a running session in one profile and start work in another (#1700).
-    if process_wide and run_registry.live_stream_ids():
-        raise RuntimeError(
-            'Cannot switch profiles while an agent is running. '
-            'Cancel or wait for it to finish.'
-        )
-
-    # Resolve profile directory
-    if _is_isolated_profile_mode():
-        home = _isolated_profile_home()
-    elif _is_root_profile(name):
-        home = _DEFAULT_HERMES_HOME
-    else:
-        home = _resolve_named_profile_home(name)
-        if not home.is_dir():
-            raise ValueError(f"Profile '{name}' does not exist.")
-
-    with _profile_lock:
-        _SKILLS_STATS_CACHE.clear()
-        if process_wide:
-            global _active_profile
-            _active_profile = name
-            _set_hermes_home(home)
-            _reload_dotenv(home)
-
-    if process_wide:
-        # Write sticky default for CLI consistency
-        try:
-            ap_file = _DEFAULT_HERMES_HOME / 'active_profile'
-            ap_file.write_text('' if _is_root_profile(name) else name, encoding='utf-8')
-        except Exception:
-            logger.debug("Failed to write active profile file")
-
-        # Reload config.yaml from the new profile
-        reload_config()
-
-    # Return profile-specific defaults so frontend can apply them.
-    # For process_wide=False (per-client switch), read the target profile's
-    # config.yaml directly from disk rather than from _cfg_cache (process-global),
-    # since reload_config() was intentionally skipped.
-    if process_wide:
-        from api.config import get_config
-        cfg = get_config()
-    else:
-        # Direct disk read — does not touch _cfg_cache
-        try:
-            import yaml as _yaml
-            cfg_path = home / 'config.yaml'
-            cfg = _yaml.safe_load(cfg_path.read_text(encoding='utf-8')) if cfg_path.exists() else {}
-            if not isinstance(cfg, dict):
-                cfg = {}
-        except Exception:
-            cfg = {}
-    model_cfg = cfg.get('model', {})
-    default_model = None
-    default_model_provider = None
-    if isinstance(model_cfg, str):
-        default_model = model_cfg
-    elif isinstance(model_cfg, dict):
-        default_model = model_cfg.get('default')
-        default_model_provider = model_cfg.get('provider')
-
-    # Read the target profile's workspace directly from *home* rather than via
-    # get_last_workspace() which routes through the thread-local/process-global active
-    # profile — both of which still point to the OLD profile during process_wide=False
-    # switches (the Set-Cookie has been sent but hasn't been processed by a new request
-    # yet).  We derive workspace in priority order:
-    #   1. {home}/webui_state/last_workspace.txt  (previously chosen workspace for this profile)
-    #   2. cfg terminal.cwd / workspace / default_workspace keys
-    #   3. Boot-time DEFAULT_WORKSPACE constant
-    # Use the module-level ``Path`` (imported at line 17) rather than re-importing
-    # it locally — keeps the exception fallback simple and avoids a latent NameError
-    # if a future refactor moves the inner imports.
-    default_workspace = None
-    try:
-        from api.config import DEFAULT_WORKSPACE as _DW
-        from api.workspace import _resolve_path, _remote_terminal_workspace_candidate
-        lw_file = home / 'webui_state' / 'last_workspace.txt'
-        if lw_file.exists():
-            _p = lw_file.read_text(encoding='utf-8').strip()
-            if _p:
-                _pp = _resolve_path(_p, profile=name)
-                remote_cand = _remote_terminal_workspace_candidate(_p, profile=name)
-                if remote_cand is not None or _pp.is_dir():
-                    default_workspace = str(_pp)
-        if default_workspace is None:
-            for _key in ('workspace', 'default_workspace'):
-                _v = cfg.get(_key)
-                if _v:
-                    _pp = _resolve_path(str(_v), profile=name)
-                    remote_cand = _remote_terminal_workspace_candidate(str(_v), profile=name)
-                    if remote_cand is not None or _pp.is_dir():
-                        default_workspace = str(_pp)
-                        break
-        if default_workspace is None:
-            _tc = cfg.get('terminal', {})
-            if isinstance(_tc, dict):
-                _cwd = _tc.get('cwd', '')
-                if _cwd and str(_cwd) not in ('.', ''):
-                    _pp = _resolve_path(str(_cwd), profile=name)
-                    remote_cand = _remote_terminal_workspace_candidate(str(_cwd), profile=name)
-                    if remote_cand is not None or _pp.is_dir():
-                        default_workspace = str(_pp)
-        if default_workspace is None:
-            default_workspace = str(_DW)
-    except Exception:
-        try:
-            from api.config import DEFAULT_WORKSPACE as _DW2
-            default_workspace = str(_DW2)
-        except Exception:
-            default_workspace = str(Path.home())
-
-    return {
-        'profiles': list_profiles_api(),
-        'active': name,
-        'is_default': _is_root_profile(name),
-        'default_model': default_model,
-        'default_model_provider': default_model_provider,
-        'default_workspace': default_workspace,
-    }
 
 
 _SKILLS_STATS_CACHE: dict[Path, tuple[int, int, int, float]] = {}
@@ -2860,26 +2699,33 @@ def _drop_profile_models_cache(name: str) -> None:
         logger.debug("Failed to drop models cache for profile %s", name, exc_info=True)
 
 
-def delete_profile_api(name: str) -> dict:
-    """Delete a profile. Switches to default first if it's the active one.
+def _clear_sticky_profile(name: str) -> None:
+    """Point Hermes's sticky ``active_profile`` back at default when it names *name*.
 
-    In isolated profile mode, profile deletion is rejected (403).
+    Hermes Agent's own ``delete_profile`` does this itself; the manual fallback
+    below must too, or the Operator's ``hermes`` command line is left on a
+    deleted Profile. Default is no file, as Hermes writes it.
+    """
+    path = _DEFAULT_HERMES_HOME / 'active_profile'
+    try:
+        if path.read_text(encoding='utf-8-sig').strip() == name:
+            path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def delete_profile_api(name: str) -> dict:
+    """Delete a profile (the Operator's, through ``api.operator_cli delete``).
+
+    The process always runs as the Deployment's default Profile (ticket 11), so
+    the Profile being deleted is never the process's own: there is nothing to
+    switch away from. In isolated profile mode, profile deletion is rejected.
     """
     if _is_isolated_profile_mode():
         raise PermissionError("Profile deletion is not allowed in isolated profile mode.")
     if _is_root_profile(name):
         raise ValueError("Cannot delete the default profile.")
     _validate_profile_name(name)
-
-    # If deleting the active profile, switch to default first
-    if _active_profile == name:
-        try:
-            switch_profile('default')
-        except RuntimeError:
-            raise RuntimeError(
-                f"Cannot delete active profile '{name}' while an agent is running. "
-                "Cancel or wait for it to finish."
-            )
 
     try:
         from hermes_cli.profiles import delete_profile
@@ -2892,6 +2738,7 @@ def delete_profile_api(name: str) -> dict:
             shutil.rmtree(str(profile_dir))
         else:
             raise ValueError(f"Profile '{name}' does not exist.")
+        _clear_sticky_profile(name)
 
     _drop_profile_models_cache(name)
     # Drop cached root-profile-name lookup — list_profiles_api() shape changed.

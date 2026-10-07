@@ -32,7 +32,6 @@ import api.profiles as _profiles_mod
 from api.profiles import (
     _is_isolated_profile_mode,
     _isolated_profile_opt_in,
-    switch_profile,
 )
 
 
@@ -126,25 +125,6 @@ class TestIssue4586NamedProfileIsNotIsolated:
             if "HERMES_WEBUI_ISOLATED_PROFILE was not enabled at startup" in record.getMessage()
         ]
         assert len(warnings) == 1
-
-    def test_switching_to_another_profile_is_allowed(self, named_profile_home):
-        """Regressed symptom #2: switching was blocked with PermissionError."""
-        base = named_profile_home["base"]
-        active = named_profile_home["active"]
-        with mock.patch.dict(os.environ, {"HERMES_HOME": str(active)}, clear=False):
-            with mock.patch("api.profiles._INITIAL_HERMES_HOME", str(active)):
-                with mock.patch("api.profiles._DEFAULT_HERMES_HOME", base):
-                    with mock.patch("api.profiles._resolve_base_hermes_home", return_value=base):
-                        # Must NOT raise PermissionError (the regression). process_wide=False
-                        # keeps this from mutating global interpreter state during the test.
-                        try:
-                            switch_profile("alpha", process_wide=False)
-                        except PermissionError as e:
-                            pytest.fail(
-                                f"profile switching must work for a normal named profile; "
-                                f"got PermissionError: {e} (#4586)"
-                            )
-
 
 class TestIssue4586ExplicitOptInStillWorks:
     """The explicit opt-in still engages isolated mode (multi-user deployments unaffected)."""
