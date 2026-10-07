@@ -10,7 +10,7 @@ session leaked across the load and surfaced as a phantom "Compressing context"
 barrier on a fresh session that never triggered compression.
 
 The fix clears the state near the top of ``loadSession`` — alongside the other
-per-session resets (``_yoloEnabled=false``, ``stopClarifyPolling``,
+per-session resets (``stopClarifyPolling``,
 ``hideClarifyCard``) and before transcript loading — by calling the canonical
 ``clearCompressionUi()`` teardown (defined in ``static/ui.js``), with a
 fail-soft ``window._compressionUi=null`` fallback if the function is not yet

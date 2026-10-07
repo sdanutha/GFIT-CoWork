@@ -44,16 +44,16 @@ def make_session(created_list):
 
 def _make_session_visible(sid):
     from api.models import Session
-    from tests.conftest import TEST_WORKSPACE
+    from tests._pytest_port import TEST_USER, TEST_USER_WORKSPACE
 
     session = Session(
         session_id=sid,
         title="regression-test-delete-R8",
-        workspace=str(TEST_WORKSPACE),
+        workspace=str(TEST_USER_WORKSPACE),
         model="test",
         created_at=time.time(),
         updated_at=time.time(),
-        profile="default",
+        profile=TEST_USER,
         messages=[{"role": "user", "content": "visible row", "timestamp": time.time()}],
         tool_calls=[],
     )
@@ -178,11 +178,12 @@ def test_aiagent_imported_in_streaming(cleanup_test_sessions):
 # ── R5: SSE loop did not break on cancel event (Sprint 10 bug) ───────────────
 
 def test_cancel_nonexistent_stream_returns_not_cancelled(cleanup_test_sessions):
-    """R5a: Cancel endpoint works and returns cancelled:false for unknown stream."""
-    data, status = get("/api/chat/cancel?stream_id=nonexistent_test_xyz")
-    assert status == 200
-    assert data["ok"] is True
-    assert data["cancelled"] is False
+    """R5a: a stream the User cannot place is "not found" (ADR 0002), never cancelled."""
+    try:
+        get("/api/chat/cancel?stream_id=nonexistent_test_xyz")
+        raise AssertionError("an unknown stream was answered")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 
 def test_server_py_sse_loop_breaks_on_cancel(cleanup_test_sessions):
@@ -237,7 +238,7 @@ def test_all_api_modules_importable(cleanup_test_sessions):
     """All api/ modules must be importable without NameError or ImportError.
     Catches missing imports introduced during future module splits.
     """
-    import ast, pathlib
+    import ast
     api_dir = REPO_ROOT / "api"
     for module_file in api_dir.glob("*.py"):
         src = module_file.read_text()
@@ -249,7 +250,7 @@ def test_all_api_modules_importable(cleanup_test_sessions):
 
 def test_server_py_importable(cleanup_test_sessions):
     """server.py must parse without syntax errors after any split."""
-    import ast, pathlib
+    import ast
     src = (REPO_ROOT / "server.py").read_text()
     try:
         ast.parse(src)
@@ -347,29 +348,19 @@ def test_server_delete_prunes_session_index(cleanup_test_sessions):
     src = (REPO_ROOT / "server.py").read_text()
     routes_src = (REPO_ROOT / "api" / "routes.py").read_text() if (REPO_ROOT / "api" / "routes.py").exists() else ""
     # Find the delete handler in either file
-    for label, text in [("server.py", src), ("api/routes.py", routes_src)]:
-        # Accept both single-quote and double-quote style (formatting varies by contributor)
-        delete_idx = max(
-            text.find("if parsed.path == '/api/session/delete':"),
-            text.find('if parsed.path == "/api/session/delete":'),
-        )
-        if delete_idx >= 0:
-            delete_block = text[delete_idx:delete_idx+2400]
-            assert "prune_session_from_index(sid)" in delete_block, \
-                f"{label} session/delete must prune SESSION_INDEX_FILE"
-            return
-    assert False, "session/delete handler not found in server.py or api/routes.py"
+    from tests._route_source import route_source
+
+    assert src and routes_src
+    delete_block = route_source("POST", "/api/session/delete")
+    assert "prune_session_from_index(sid)" in delete_block, \
+        "api/routes.py session/delete must prune SESSION_INDEX_FILE"
 
 
 def test_server_delete_removes_session_bak_snapshot(cleanup_test_sessions):
     """session/delete must remove sidecar backups so deleted sessions stay deleted."""
-    routes_src = (REPO_ROOT / "api" / "routes.py").read_text()
-    delete_idx = max(
-        routes_src.find("if parsed.path == '/api/session/delete':"),
-        routes_src.find('if parsed.path == "/api/session/delete":'),
-    )
-    assert delete_idx >= 0, "session/delete handler not found in api/routes.py"
-    delete_block = routes_src[delete_idx:delete_idx+2400]
+    from tests._route_source import route_source
+
+    delete_block = route_source("POST", "/api/session/delete")
     assert "with_suffix('.json.bak').unlink" in delete_block or 'with_suffix(".json.bak").unlink' in delete_block, \
         "session/delete must unlink <sid>.json.bak to avoid later orphan-backup recovery"
 
@@ -1212,97 +1203,3 @@ def test_reload_recovery_persists_durable_inflight_state(cleanup_test_sessions):
 
 
 # ── R18: OAuth onboarding must recognize credential_pool-only auth ───────────
-
-def test_provider_oauth_authenticated_accepts_credential_pool_entries(
-    cleanup_test_sessions, tmp_path
-):
-    """R18a: pool-only OAuth auth.json should count as authenticated.
-
-    Hermes runtime resolves Codex credentials from credential_pool; onboarding
-    must not insist on stale or duplicated providers[provider_id] entries.
-    """
-    _make_auth_json_with_credential_pool(
-        "openai-codex",
-        [
-            {
-                "id": "pool1",
-                "label": "device_code",
-                "source": "device_code",
-                "auth_type": "oauth",
-                "access_token": "***",
-                "refresh_token": "***",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-            }
-        ],
-        tmp_path,
-    )
-
-    from api.onboarding import _provider_oauth_authenticated
-
-    assert _provider_oauth_authenticated("openai-codex", tmp_path) is True
-
-
-def test_provider_oauth_authenticated_rejects_flag_only_credential_pool_entries(
-    cleanup_test_sessions, tmp_path
-):
-    """R18a2: metadata flags alone must not count as usable OAuth auth."""
-    _make_auth_json_with_credential_pool(
-        "openai-codex",
-        [
-            {
-                "id": "pool1",
-                "label": "device_code",
-                "source": "device_code",
-                "auth_type": "oauth",
-                "has_access_token": True,
-                "has_refresh_token": True,
-                "base_url": "https://chatgpt.com/backend-api/codex",
-            }
-        ],
-        tmp_path,
-    )
-
-    from api.onboarding import _provider_oauth_authenticated
-
-    assert _provider_oauth_authenticated("openai-codex", tmp_path) is False
-
-
-def test_status_from_runtime_marks_openai_codex_ready_from_credential_pool(
-    cleanup_test_sessions, tmp_path
-):
-    """R18b: provider_ready should be true when auth lives only in credential_pool."""
-    _make_auth_json_with_credential_pool(
-        "openai-codex",
-        [
-            {
-                "id": "pool1",
-                "label": "device_code",
-                "source": "device_code",
-                "auth_type": "oauth",
-                "access_token": "***",
-                "refresh_token": "***",
-                "base_url": "https://chatgpt.com/backend-api/codex",
-            }
-        ],
-        tmp_path,
-    )
-
-    from api.onboarding import _status_from_runtime
-    import api.onboarding as _ob
-
-    orig_home = _ob._get_active_hermes_home
-    orig_found = _ob._HERMES_FOUND
-    _ob._get_active_hermes_home = lambda: tmp_path
-    _ob._HERMES_FOUND = True
-    try:
-        result = _status_from_runtime(
-            {"model": {"provider": "openai-codex", "default": "codex-mini-latest"}},
-            True,
-        )
-    finally:
-        _ob._get_active_hermes_home = orig_home
-        _ob._HERMES_FOUND = orig_found
-
-    assert result["provider_configured"] is True
-    assert result["provider_ready"] is True
-    assert result["setup_state"] == "ready"

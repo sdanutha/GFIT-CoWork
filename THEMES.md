@@ -91,22 +91,10 @@ light and dark variants:
 }
 ```
 
-Two ways to ship it:
-
-1. **In the repo (built-in):** add the block to `static/style.css`, register it
-   in the Settings skin picker (`static/index.html`) and in the `/theme` command
-   list (`static/commands.js`), then open a PR.
-
-2. **Self-hosted (no fork):** use the WebUI extensions surface — see
-   `docs/EXTENSIONS.md`. Drop your CSS in `HERMES_WEBUI_EXTENSION_DIR` and
-   declare it in `HERMES_WEBUI_EXTENSION_STYLESHEET_URLS`. No code changes
-   needed; the skin attribute can be set from your own JS.
-
-   Extensions that register a skin through `window.registerHermesSkin()` may
-   also set `scheme: "light"` or `scheme: "dark"` for light-only or dark-only
-   skins. The saved Theme preference stays unchanged, but WebUI applies the
-   matching effective base class while that skin is selected so System/Light or
-   System/Dark does not mix incompatible base tokens into the skin.
+To ship it, add the block to `static/style.css`, register it in the Settings
+skin picker (`static/index.html`) and in the `/theme` command list
+(`static/commands.js`), then open a PR. (The extensions surface that let a
+Deployment inject its own CSS went with the Admin, ADR 0006.)
 
 ### Tips
 
@@ -160,12 +148,9 @@ By default:
 --font-mono: ui-monospace,"SFMono-Regular","SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
 ```
 
-For CSS-based custom skins and extension stylesheets/scripts, override the three
-font tokens directly (`--font-ui`, `--font-conversation`, `--font-mono`) on the
-skin root (`:root[data-skin="..."]`), including any mode-specific variant.
-`window.registerHermesSkin()` currently accepts only the documented design-token
-allowlist (no `--font-*` tokens), so custom font families should be supplied via
-CSS rather than skin registration.
+For a custom skin, override the three font tokens directly (`--font-ui`,
+`--font-conversation`, `--font-mono`) on the skin root (`:root[data-skin="..."]`),
+including any mode-specific variant.
 
 Leaving `--font-conversation` untouched keeps prose coupled to `--font-ui`;
 override it only when a different reading face is explicitly required. Avoid
@@ -178,9 +163,7 @@ expresses the intent.
 
 1. **Theme:** `document.documentElement.classList.toggle('dark', isDark)` —
    light mode removes the class. System mode tracks
-   `matchMedia('(prefers-color-scheme: dark)')`. Extension-registered skins
-   may declare a light/dark `scheme`; when selected, that scheme controls the
-   effective `.dark` class without rewriting the saved Theme preference.
+   `matchMedia('(prefers-color-scheme: dark)')`.
 2. **Skin:** `document.documentElement.dataset.skin = name` (or remove the
    attribute for `default`).
 3. **Font size:** `document.documentElement.dataset.fontSize = size` (or

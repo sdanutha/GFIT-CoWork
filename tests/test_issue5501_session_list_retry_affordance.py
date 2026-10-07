@@ -39,7 +39,6 @@ def _build_node_script(extra_js):
     src = SESSIONS_JS.read_text(encoding="utf-8")
     show_error_fn = _extract_function(src, "_showSessionListLoadError")
     retry_note_fn = _extract_function(src, "_renderSessionListLoadErrorNote")
-    invalidate_fn = _extract_function(src, "_invalidateSessionListRenders")
     return f"""
 class FakeClassList {{
   constructor(node) {{
@@ -188,7 +187,6 @@ global.renderSessionList = (opts) => {{
 }};
 {show_error_fn}
 {retry_note_fn}
-{invalidate_fn}
 {extra_js}
 """
 
@@ -584,38 +582,3 @@ def test_session_list_error_note_has_live_region_and_pending_uses_aria_disabled(
     assert "Retrying..." not in note_fn
     # keyboard focus restored on a failed retry
     assert "_retryFailedFocus" in note_fn
-
-
-def test_retry_pending_state_cleared_on_render_invalidation():
-    """#5505 gate (Codex SILENT): a retry whose fetch is invalidated mid-flight
-    (e.g. a profile switch) must not leave the button stuck as an inert
-    'Retrying…' with no request in flight. _invalidateSessionListRenders() clears
-    the pending retry markers so the next repaint shows an actionable idle Retry."""
-    if NODE is None:
-        pytest.skip("node not on PATH")
-
-    script = _render_script(
-        """
-_showSessionListLoadError(new Error('backend busy'));
-global._sessionListLoadError = {...global._sessionListLoadError, retrying: true, _retryFailedFocus: true};
-_invalidateSessionListRenders();
-global.renderSessionListFromCache();
-const note = list.children[0];
-const retry = findButton(note);
-console.log(JSON.stringify({
-  retryingCleared: !global._sessionListLoadError.retrying,
-  focusFlagCleared: !global._sessionListLoadError._retryFailedFocus,
-  text: retry.textContent,
-  ariaDisabled: retry.getAttribute('aria-disabled'),
-  clickable: typeof retry.onclick === 'function',
-}));
-"""
-    )
-    body = _run_node(script)
-    assert body == {
-        "retryingCleared": True,
-        "focusFlagCleared": True,
-        "text": "Retry",
-        "ariaDisabled": None,
-        "clickable": True,
-    }

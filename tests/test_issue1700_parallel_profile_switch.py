@@ -4,7 +4,6 @@ A WebUI profile switch uses cookie/thread-local profile state, so it should be
 allowed while another session is streaming. Only process-wide profile switches
 must remain blocked because they mutate global Hermes runtime state.
 """
-import re
 from pathlib import Path
 
 import pytest
@@ -77,24 +76,3 @@ def test_per_client_switch_allowed_when_stream_is_active(tmp_path, monkeypatch):
 
     assert result["active"] == "writer"
     assert result["default_model"] == "gpt-5.5"
-
-
-def test_frontend_profile_switch_no_longer_blocks_on_busy_state():
-    fn = _extract_switch_to_profile()
-
-    assert "profiles_busy_switch" not in fn
-    assert "if (S.busy)" not in fn
-    assert "Profile switches are per-client cookie/TLS scoped" in fn
-
-
-def test_frontend_treats_active_or_pending_session_as_in_progress():
-    fn = _extract_switch_to_profile()
-    session_decl = re.search(r"\b(?:let|const)\s+sessionInProgress\b", fn)
-    assert session_decl, "sessionInProgress declaration not found"
-    try_idx = fn.find("try {", session_decl.start())
-    assert try_idx != -1, "switchToProfile() try block not found after sessionInProgress declaration"
-    session_block = fn[session_decl.start() : try_idx]
-
-    assert "S.session.active_stream_id" in session_block
-    assert "S.session.pending_user_message" in session_block
-    assert "S.messages.length > 0" in session_block

@@ -1,5 +1,4 @@
 const _WEBUI_DISPATCHABLE_AGENT_COMMANDS = new Set([
-  'reload-mcp','reload-skills','codex-runtime','credits',
   'moa','sessions','resume'
 ]);
 // ── Slash commands ──────────────────────────────────────────────────────────
@@ -15,7 +14,6 @@ const COMMANDS=[
   {name:'compact',   desc:t('cmd_compact_alias'),       fn:cmdCompact, noEcho:true},
   {name:'model',     desc:t('cmd_model'),  fn:cmdModel,     arg:'model_name', subArgs:'models', noEcho:true},
   {name:'workspace', desc:t('cmd_workspace'),            fn:cmdWorkspace, arg:'name',           noEcho:true},
-  {name:'terminal',  desc:t('cmd_terminal'),             fn:cmdTerminal,                        noEcho:true},
   {name:'new',       desc:t('cmd_new'),            fn:cmdNew,       noEcho:true},
   {name:'usage',     desc:t('cmd_usage'),   fn:cmdUsage,     noEcho:true},
   {name:'theme',     desc:t('cmd_theme'), fn:cmdTheme, arg:'name',  noEcho:true},
@@ -35,7 +33,6 @@ const COMMANDS=[
   {name:'status',    desc:t('cmd_status'),   fn:cmdStatus},
   {name:'voice',     desc:t('cmd_voice'),    fn:cmdVoice,     noEcho:true},
   {name:'reasoning', desc:t('cmd_reasoning'), fn:cmdReasoning, arg:'show|hide|none|minimal|low|medium|high|xhigh|max', subArgs:['show','hide','none','minimal','low','medium','high','xhigh','max'], noEcho:true},
-  {name:'yolo', desc:t('cmd_yolo'), fn:cmdYolo, noEcho:true},
   {name:'branch', desc:t('cmd_branch'), fn:cmdBranch, arg:'[name]', noEcho:true},
 ];
 
@@ -77,17 +74,12 @@ function executeCommand(text){
 // getAgentCommandMetadata() at dispatch time and the canonical name is what
 // gets tested against the dispatcher allowlist (#6951).
 //
-// Keep this in sync with _AGENT_COMMANDS_RUN_ON_WEBUI in messages.js and
-// _ALLOWED_AGENT_COMMANDS in api/commands.py -- the announced list is a
-// subset of the dispatched list (fail-closed), never a superset.
-// Plugin-category commands are always dispatchable via the plugin exec
-// transport. #6951.
+// Only commands send() dispatches in the browser are announced (#6951); the
+// server-side command transport went with the Admin (ADR 0006).
 
 function _isWebuiDispatchableAgentCommand(cmd){
   const name=String(cmd&&cmd.name||'').trim().toLowerCase();
-  if(_WEBUI_DISPATCHABLE_AGENT_COMMANDS.has(name))return true;
-  // Plugin-registered commands execute via the /api/commands/exec plugin transport.
-  return String(cmd&&cmd.category||'').trim()==='Plugin';
+  return _WEBUI_DISPATCHABLE_AGENT_COMMANDS.has(name);
 }
 
 function getMatchingCommands(prefix){
@@ -356,23 +348,8 @@ function cliOnlyCommandResponse(cmdName, meta){
   return `\`/${name}\` is a Hermes CLI-only command and cannot run inside the WebUI.${detail}${extra}`;
 }
 
-async function executeAgentCommand(text,_meta){
-  return _runAgentCommandTransport(text,_meta);
-}
 
-async function executeAgentPluginCommand(text,_meta){
-  return _runAgentCommandTransport(text,_meta);
-}
 
-async function _runAgentCommandTransport(text,_meta){
-  const command=String(text||'').trim();
-  if(!command) throw new Error('command is required');
-  const data=await api('/api/commands/exec',{
-    method:'POST',
-    body:JSON.stringify({command})
-  });
-  return String(data&&data.output||'(no output)');
-}
 
 async function resolveBundleCommand(text,_meta){
   const command=String(text||'').trim();
@@ -714,37 +691,6 @@ async function cmdWorkspace(args){
   }catch(e){showToast(t('workspace_switch_failed')+e.message);}
 }
 
-async function cmdTerminal(){
-  let data=null;
-  try{
-    data=await api('/api/workspaces');
-    if(typeof syncTerminalBackendState==='function') syncTerminalBackendState(data);
-    if(data&&data.terminal_remote_backend){
-      const msg=typeof _terminalRemoteBackendUnsupportedMessage==='function'
-        ? _terminalRemoteBackendUnsupportedMessage()
-        : 'Embedded terminal is only supported for local terminal backends.';
-      showToast(msg,3200,'warning');
-      if(typeof syncTerminalButton==='function') syncTerminalButton();
-      return;
-    }
-  }catch(_){}
-  if(!S.session&&typeof newSession==='function'){
-    if(!S._profileSwitchWorkspace&&!S._profileDefaultWorkspace){
-      const first=(data&&data.workspaces||[])[0];
-      S._profileSwitchWorkspace=(data&&data.last)||(first&&first.path)||null;
-    }
-    // System-minted session (#6022): opening the terminal auto-creates a
-    // session — explicit worktree:false so the config default can't leak.
-    await newSession(false, {worktree: false});
-    if(typeof renderSessionList==='function') await renderSessionList();
-  }
-  if(!S.session||!S.session.workspace){
-    showToast(t('terminal_no_workspace_title'),2600,'warning');
-    if(typeof syncTerminalButton==='function') syncTerminalButton();
-    return;
-  }
-  if(typeof toggleComposerTerminal==='function') await toggleComposerTerminal(true);
-}
 
 async function cmdNew(){
   if(typeof clearCompressionUi==='function') clearCompressionUi();
@@ -865,12 +811,6 @@ async function resumeManualCompressionForSession(sid){
     // No active compression job or transient server error — not a real failure.
     // 404: route missed or session gone; 5xx: backend exception during status check.
     if(e&&(!e.status||e.status===404||e.status>=500)) return;
-    // #7710: a cross-profile refusal now arrives as 409
-    // (``session_profile_mismatch``) where it used to be a 404 that hit the
-    // benign early-return above. It is not a compression failure, so do not
-    // render the error state or locally settle the compression UI.
-    if(e&&e.status===409&&typeof _sessionProfileMismatchFromError==='function'
-       &&_sessionProfileMismatchFromError(e)) return;
     if(S.session&&S.session.session_id===sid&&typeof setCompressionUi==='function'){
       const visibleMessages=_manualCompressionVisibleMessages();
       setCompressionUi({
@@ -1266,7 +1206,6 @@ async function cmdGoal(args){
     if(typeof saveInflightState==='function')saveInflightState(activeSid,{streamId:r.stream_id,messages:INFLIGHT[activeSid].messages,uploaded:[],toolCalls:[]});
     startApprovalPolling(activeSid);
     startClarifyPolling(activeSid);
-    if(typeof _fetchYoloState==='function')_fetchYoloState(activeSid);
     attachLiveStream(activeSid,r.stream_id,[]);
     if(typeof renderSessionList==='function')void renderSessionList();
   }catch(e){
@@ -1892,57 +1831,6 @@ function cmdVoice(){
   showToast(t('cmd_voice_use_mic'));
 }
 
-// ── YOLO mode toggle ──
-// Session-scoped: skips all approval prompts for the current session.
-// Toggles on/off; state is not persisted across page reloads.
-async function cmdYolo(){
-  const sid=S.session&&S.session.session_id;
-  if(!sid){showToast(t('yolo_no_session'));return;}
-  const generation=_loadSessionGeneration;
-  const viewIsCurrent=()=>!!(
-    S.session&&S.session.session_id===sid&&_loadSessionGeneration===generation
-  );
-  let approvalOwner=null;
-  try{
-    // Check current state first to toggle.
-    const status=await api('/api/session/yolo?session_id='+encodeURIComponent(sid));
-    if(!viewIsCurrent())return;
-    const enable=!status.yolo_enabled;
-    // A visible approval must belong to this exact session load before any
-    // command handler may POST through it. Otherwise fail closed.
-    const card=$('approvalCard');
-    if(card&&card.classList.contains('visible')){
-      approvalOwner=typeof _captureApprovalResponseOwner==='function'
-        ?_captureApprovalResponseOwner()
-        :null;
-      if(!approvalOwner)return;
-      if(enable&&typeof toggleYoloFromApproval==='function'){
-        await toggleYoloFromApproval();
-        return;
-      }
-    }
-    const result=await api('/api/session/yolo',{
-      method:'POST',
-      body:JSON.stringify({session_id:sid,enabled:enable}),
-    });
-    if(!viewIsCurrent()||(approvalOwner&&!_approvalResponseOwnerIsCurrent(approvalOwner)))return;
-    const settled=(result&&typeof result.yolo_enabled==='boolean')?result.yolo_enabled:enable;
-    _yoloEnabled=settled;
-    _updateYoloPill();
-    showToast(settled?t('yolo_enabled'):t('yolo_disabled'));
-  }catch(e){
-    if(!viewIsCurrent()||(approvalOwner&&!_approvalResponseOwnerIsCurrent(approvalOwner)))return;
-    let errorPayload=null;
-    if(e&&typeof e.body==='string'){
-      try{errorPayload=JSON.parse(e.body);}catch(_){}
-    }
-    if(errorPayload&&typeof errorPayload.yolo_enabled==='boolean'){
-      _yoloEnabled=errorPayload.yolo_enabled;
-      _updateYoloPill();
-    }
-    showToast('YOLO: '+((errorPayload&&(errorPayload.error||errorPayload.message))||e.message));
-  }
-}
 
 // ── Branch / fork command ──
 // Forks the current conversation into a new session (#465).

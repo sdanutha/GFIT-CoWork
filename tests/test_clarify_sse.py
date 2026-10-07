@@ -56,8 +56,9 @@ class TestClarifySSEBackendCode:
 
 class TestClarifySSERoutesCode:
     def test_route_registered(self):
-        src = _read(_ROUTES)
-        assert '"/api/clarify/stream"' in src, "Missing /api/clarify/stream route"
+        from tests._route_source import route_handler
+
+        assert route_handler("GET", "/api/clarify/stream"), "Missing /api/clarify/stream route"
 
     def test_handler_function_exists(self):
         src = _read(_ROUTES)

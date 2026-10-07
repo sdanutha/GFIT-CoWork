@@ -31,10 +31,6 @@ ROUTES_PY = ROOT / "api" / "routes.py"
 
 
 FILE_HANDLERS = [
-    "_handle_escape_authorize",
-    "_handle_escape_list_dir",
-    "_handle_escape_file_read",
-    "_handle_escape_file_raw",
     "_handle_folder_download",
     "_handle_file_raw",
     "_handle_file_read",
@@ -43,9 +39,7 @@ FILE_HANDLERS = [
     "_handle_file_create",
     "_handle_file_rename",
     "_handle_create_dir",
-    "_handle_file_reveal",
     "_handle_file_path",
-    "_handle_file_open_vscode",
     "_handle_office_file_save",
     "_handle_file_move",
 ]
@@ -183,7 +177,7 @@ def test_get_session_for_file_ops_recovers_missing_implicit_workspace(
         return metadata_session
 
     monkeypatch.setattr(models_module, "get_session", get_session)
-    monkeypatch.setattr(models_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models_module, "_write_session_index", lambda **_kwargs: None)
     monkeypatch.setattr(models_module, "get_last_workspace", lambda: str(fallback))
     monkeypatch.setattr(profiles_module, "_profiles_match", lambda *_args: True)
@@ -235,7 +229,7 @@ def test_get_session_for_file_ops_recovery_save_failure_fails_closed(
         "get_session",
         lambda _sid, metadata_only=False: metadata_session,
     )
-    monkeypatch.setattr(models_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(
         models_module,
         "_safe_replace",
@@ -282,7 +276,7 @@ def test_recovered_workspace_compare_rejects_a_stale_concurrent_binding(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(models_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
 
     with pytest.raises(
         models_module.WorkspaceBindingPersistenceError,
@@ -324,7 +318,7 @@ def test_recovery_cas_uses_the_workspace_seen_when_recovery_was_decided(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(models_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
 
     with pytest.raises(
         models_module.WorkspaceBindingPersistenceError,
@@ -357,7 +351,7 @@ def test_recovery_never_recreates_a_missing_session_sidecar(
         _loaded_metadata_only=False,
         save=lambda **_kwargs: saves.__setitem__("count", saves["count"] + 1),
     )
-    monkeypatch.setattr(models_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
 
     with pytest.raises(
         models_module.WorkspaceBindingPersistenceError,
@@ -437,8 +431,7 @@ def test_delete_serializes_with_workspace_recovery_and_sidecar_stays_deleted(
         assert allow_replace.wait(timeout=5)
         original_replace(source, target)
 
-    monkeypatch.setattr(models_module, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(routes_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models_module, "_safe_replace", paused_replace)
     monkeypatch.setattr(models_module, "_write_session_index", lambda **_kwargs: None)
     monkeypatch.setattr(routes_module, "_check_csrf", lambda _handler: True)
@@ -538,7 +531,7 @@ def test_delete_returns_503_without_mutation_when_session_lock_is_busy(
         def __exit__(self, *_args):
             self.release()
 
-    monkeypatch.setattr(routes_module, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(routes_module, "SESSIONS", {sid: cached_session})
     monkeypatch.setattr(routes_module, "_check_csrf", lambda _handler: True)
     monkeypatch.setattr(

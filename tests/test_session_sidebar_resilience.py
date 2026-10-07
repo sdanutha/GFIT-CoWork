@@ -50,7 +50,7 @@ def test_sessions_and_projects_load_independently_so_projects_failure_cannot_bla
     assert "Promise.all" not in block
     assert "_loadSidebarSessionListPayload(sessionListQS, sessionRequestOpts)" in block
     assert "const projectPromise = (async() => {" in helper
-    assert "return await api('/api/projects' + projectQS,{timeoutToast:false});" in helper
+    assert "return await api('/api/projects',{timeoutToast:false});" in helper
     assert "console.warn('renderProjectsList',projectError);" in helper
     assert "const projData = await projectPromise;" in helper
     assert "_applySessionListPayload(sessData,projData,{unreadGen})" in block

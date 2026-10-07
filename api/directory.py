@@ -8,7 +8,7 @@ Directory (company AD, ticket 08) are interchangeable.
 
 The implementation is chosen with ``HERMES_WEBUI_DIRECTORY``:
 
-* unset -- Directory login is off.
+* unset -- no Directory: the server refuses to start (ADR 0006).
 * ``ldap`` -- :class:`api.ldap_directory.LdapDirectory`, the company AD over
   LDAPS or StartTLS (configured with ``HERMES_WEBUI_LDAP_*``).
 * ``memory`` -- :class:`InMemoryDirectory`, loaded from the JSON file named by
@@ -139,7 +139,7 @@ def is_directory_enabled() -> bool:
 
 
 def get_directory() -> Directory | None:
-    """Return the configured Directory, or None when Directory login is off."""
+    """Return the configured Directory, or None when none is configured (the server then refuses to start)."""
     kind = os.getenv(DIRECTORY_ENV, "").strip().lower()
     if not kind:
         return None

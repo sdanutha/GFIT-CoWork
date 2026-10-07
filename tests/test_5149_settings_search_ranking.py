@@ -601,19 +601,10 @@ def test_results_cap_still_applies_to_ranked_matches(driver_file):
     assert not payload["noResults"]
 
 
-def test_provider_and_plugin_cards_remain_searchable(driver_file):
-    provider_payload = _run_driver(
-        driver_file,
-        {"command": "provider-plugin", "query": "alpha"},
-    )
-    field_payload = _run_driver(
-        driver_file,
-        {"command": "provider-plugin", "query": "key"},
-    )
+def test_plugin_cards_remain_searchable(driver_file):
+    # The Providers pane went with the Admin (ADR 0006); plugin cards stay searchable.
     plugin_payload = _run_driver(
         driver_file,
         {"command": "provider-plugin", "query": "plugin"},
     )
-    assert "Provider Alpha" in provider_payload["labels"]
-    assert "Provider Alpha API Key" in field_payload["labels"]
     assert "Plugin Sample" in plugin_payload["labels"]

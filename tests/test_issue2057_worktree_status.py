@@ -4,7 +4,6 @@ from urllib.parse import urlparse
 
 import pytest
 
-import api.models as models
 from api.models import SESSIONS, Session
 
 
@@ -22,8 +21,8 @@ def _git(cwd, *args):
 def _isolate_sessions(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     SESSIONS.clear()
     yield session_dir
     SESSIONS.clear()
@@ -77,7 +76,6 @@ def test_worktree_status_reports_clean_existing_worktree(git_worktree):
     assert status["ahead_behind"]["ahead"] == 0
     assert status["ahead_behind"]["behind"] == 0
     assert status["locked_by_stream"] is False
-    assert status["locked_by_terminal"] is False
 
 
 def test_worktree_status_reports_dirty_untracked_and_ahead(git_worktree):
@@ -144,25 +142,6 @@ def test_worktree_status_uses_live_stream_registry(git_worktree):
             STREAMS.pop("live-stream", None)
 
     assert worktree_status_for_session(session)["locked_by_stream"] is False
-
-
-def test_worktree_status_reports_live_terminal_lock(git_worktree, monkeypatch):
-    import api.terminal as terminal
-    from api.worktrees import worktree_status_for_session
-
-    repo, worktree = git_worktree
-
-    class FakeTerminal:
-        workspace = str(worktree.resolve())
-
-        def is_alive(self):
-            return True
-
-    monkeypatch.setattr(terminal, "get_terminal", lambda session_id: FakeTerminal())
-
-    status = worktree_status_for_session(_session_for_worktree(repo, worktree))
-
-    assert status["locked_by_terminal"] is True
 
 
 def test_worktree_status_endpoint_returns_session_owned_status(git_worktree, monkeypatch):

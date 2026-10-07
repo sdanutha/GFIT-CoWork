@@ -1,12 +1,10 @@
 from collections import Counter
 from pathlib import Path
 import re
-from tests.test_issue2147_profile_concept_help import PROFILE_CONCEPT_KEYS
 
 
 REPO = Path(__file__).resolve().parent.parent
 PROFILE_CONCEPT_FALLBACK_KEYS = {
-    *PROFILE_CONCEPT_KEYS,
     "workspace_artifact_source_session",
 }
 
@@ -101,7 +99,6 @@ def test_turkish_locale_includes_representative_translations():
         "tab_tasks: 'Görevler'",
         "tab_profiles: 'Agent profilleri'",
         "empty_title: 'Hangi konuda yardımcı olabilirim?'",
-        "onboarding_title: 'Hermes Web Kullanıcı Arayüzüne Hoş Geldiniz'",
     ]
     for entry in expected:
         assert entry in tr_block
@@ -115,10 +112,7 @@ def test_turkish_settings_detail_descriptions_are_translated():
         "settings_desc_notifications: 'Uygulama arka plandayken bir yanıt tamamlandığında bir sistem bildirimi gösterin.'",
         "settings_desc_token_usage: 'Her Asistan yanıtının altında giriş/çıkış jeton sayılarını gösterir. /usage ile de değiştirilebilir.'",
         "settings_desc_sidebar_density: 'Oturum listesinin sol kenar çubuğunda ne kadar meta veri göstereceğini kontrol eder.'",
-        "settings_desc_auto_title_refresh: 'Oturum başlıklarını en son konuşmaya göre otomatik olarak yeniden oluşturarak konuşma ilerledikçe başlıkların alakalı kalmasını sağlar. LLM başlık oluşturma modeli yapılandırması gerektirir.'",
         "settings_desc_external_sessions: 'Oturum listesinde CLI, Telegram, Discord, Slack ve diğer kanallardan gelen konuşmaları gösterin. İçe aktarmak ve devam etmek için tıklayın.'",
-        "settings_desc_sync_insights: 'GFIT-CoWork belirteci kullanımını state.db\\'ye yansıtır, böylece hermes /insights tarayıcı oturum verilerini içerir. Varsayılan olarak kapalıdır.'",
-        "settings_desc_bot_name: 'Yalnızca varsayılan profil için kullanılır. Diğer profiller kendi profil adlarını kullanır.'",
     ]
     for entry in expected:
         assert entry in tr_block

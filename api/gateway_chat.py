@@ -12,12 +12,12 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from api import run_registry
 from api.config import (
     AGENT_INSTANCES,
     CANCEL_FLAGS,
     PENDING_GOAL_CONTINUATION,
     STREAM_GOAL_RELATED,
-    STREAMS,
     STREAMS_LOCK,
     STREAM_LAST_EVENT_ID,
     STREAM_LIVE_TOOL_CALLS,
@@ -32,7 +32,6 @@ from api.config import (
     peek_stream,
     register_active_run,
     unregister_active_run,
-    unregister_stream_owner,
     update_active_run,
 )
 from api.helpers import _redact_text, redact_session_data
@@ -347,71 +346,17 @@ def _gateway_reasoning_effort_for_request(cfg, *, model=None, model_provider=Non
         return None
 
 
-def _gateway_session_yolo_enabled(session_id: str) -> bool:
-    """Return the WebUI-owned, in-memory YOLO state for a browser session."""
-    try:
-        from tools.approval import is_session_yolo_enabled
-
-        return bool(is_session_yolo_enabled(str(session_id or "")))
-    except Exception:
-        return False
-
-
 def _settle_gateway_run_approval(
     session_id: str,
     approval_data: dict,
     base_url: str,
     api_key: str,
 ) -> tuple[bool, dict | None, int]:
-    """Auto-approve or mirror one run approval at a session-linearized point."""
-    from api.route_approvals import gateway_yolo_handoff, submit_gateway_pending_mirror
+    """Mirror one run approval as a card (nothing is auto-approved: ADR 0006)."""
+    from api.route_approvals import submit_gateway_pending_mirror
 
-    run_id = str(approval_data.get("run_id") or "").strip()
-    identity_v1 = bool(approval_data.get("_gateway_agent_identity_v1"))
-    with gateway_yolo_handoff(session_id):
-        if _gateway_session_yolo_enabled(session_id):
-            try:
-                _auto_approve_gateway_run(
-                    base_url,
-                    api_key,
-                    run_id,
-                    approval_data["approval_id"] if identity_v1 else "",
-                )
-                return True, None, 0
-            except Exception:
-                # Fail closed: if remote approval fails, surface the real card
-                # before allowing a same-session toggle to pass the handoff.
-                logger.warning(
-                    "WebUI YOLO could not auto-approve run %s; showing approval card",
-                    run_id,
-                    exc_info=True,
-                )
-        head, total = submit_gateway_pending_mirror(session_id, approval_data)
-        return False, head, total
-
-
-def _auto_approve_gateway_run(
-    base_url: str,
-    api_key: str,
-    run_id: str,
-    approval_id: str,
-) -> None:
-    """Resolve one Runs API prompt using only the shipped approval contract.
-
-    This is a WebUI-owned compatibility path: the Runs API does not yet expose
-    session YOLO, so WebUI answers each approval request while its own session
-    flag is enabled. Native Agent-side YOLO would be preferable because it can
-    bypass gates before they pause and also covers Agent-owned computer-use
-    policy; https://github.com/NousResearch/hermes-agent/pull/61946 tracks that
-    API capability. Until then, do not send speculative fields to the Agent.
-    """
-    from api.runner_client import HttpRunnerClient
-
-    HttpRunnerClient(base_url=base_url, api_key=api_key).respond_approval(
-        run_id,
-        approval_id,
-        "once",
-    )
+    head, total = submit_gateway_pending_mirror(session_id, approval_data)
+    return False, head, total
 
 
 def gateway_chat_config_status(config_data=None, environ: dict[str, str] | None = None) -> dict:
@@ -955,10 +900,11 @@ def resume_gateway_runs_after_restart() -> list[str]:
 
     Call before serving so stale-pending repair does not mark these turns interrupted.
     """
+    from api import config as _config
     from api import models as _models
 
     try:
-        candidates = _sidecars_with_active_stream(_models.SESSION_DIR)
+        candidates = _sidecars_with_active_stream(_config.SESSION_DIR)
     except Exception:
         logger.warning("gateway reattach: could not scan session sidecars", exc_info=True)
         return []
@@ -1002,7 +948,7 @@ def _gateway_endpoint_for_profile(profile_name) -> tuple[str, str]:
 
 
 def _resume_gateway_run_for_session(session) -> bool:
-    from api.config import create_stream_channel, register_session_writeback_owner, register_stream_owner
+    from api.config import register_session_writeback_owner
 
     run = (session.gateway_run if session is not None else None) or {}
     stream_id = str(run.get("stream_id") or "")
@@ -1011,11 +957,8 @@ def _resume_gateway_run_for_session(session) -> bool:
         return False
     sid = session.session_id
     endpoint = _gateway_endpoint_for_profile(session.profile)
-    with STREAMS_LOCK:
-        if stream_id in STREAMS:
-            return False
-        STREAMS[stream_id] = create_stream_channel()
-    register_stream_owner(stream_id, sid)
+    if run_registry.open_stream(sid, stream_id, only_if_absent=True) is None:
+        return False
     register_session_writeback_owner(sid, stream_id)
     _mark_gateway_run_starting(stream_id)
     threading.Thread(
@@ -1173,7 +1116,7 @@ def _run_gateway_chat_streaming(
         _clear_gateway_run_starting(stream_id)
         # Cancelled before the worker started; release the owner entry the route
         # layer registered so STREAM_SESSION_OWNERS does not leak (no teardown finally runs).
-        unregister_stream_owner(stream_id)
+        run_registry.forget_owner(stream_id)
         # Also release the writeback-owner entry the route layer registered, so
         # SESSION_WRITEBACK_OWNERS does not leak on this pre-start cancellation
         # path (the teardown finally below never runs when we early-return here).
@@ -1267,8 +1210,8 @@ def _run_gateway_chat_streaming(
                 _prefill_messages_with_webui_context,
                 _normalize_prefill_messages_before_user_turn,
                 _public_prefill_context_status,
-                _webui_ephemeral_system_prompt,
             )
+            from api.turn_builder import ephemeral_system_prompt
 
             prefill_context = _load_webui_prefill_context(cfg)
             # #3324: the WebUI session/delivery context (connected platforms,
@@ -1276,7 +1219,7 @@ def _run_gateway_chat_streaming(
             # the ephemeral system prompt rather than a prefill `user` message.
             # The gateway-backed path must build the SAME system prompt so that
             # context is not silently dropped on Gateway-routed WebUI chats.
-            _gateway_system_prompt = _webui_ephemeral_system_prompt(
+            _gateway_system_prompt = ephemeral_system_prompt(
                 None,
                 surface_context={
                     "source": "webui",
@@ -1787,13 +1730,13 @@ def _run_gateway_chat_streaming(
             STREAM_REASONING_TEXT.pop(stream_id, None)
             STREAM_LIVE_TOOL_CALLS.pop(stream_id, None)
             STREAM_LAST_EVENT_ID.pop(stream_id, None)
-            STREAMS.pop(stream_id, None)
+            run_registry.detach_stream_locked(stream_id)
         if runs_api_pending_marked and gateway_run_id_pending(stream_id):
             _finish_gateway_run_starting(stream_id)
         _clear_gateway_run_starting(stream_id)
         with _STREAM_RUN_STARTING_CONDITION:
             _STREAM_ENDPOINTS.pop(stream_id, None)
-        unregister_stream_owner(stream_id)
+        # Unregistering the active run also forgets the stream owner.
         unregister_active_run(stream_id)
         # Release the writeback-owner entry the route layer registered for this
         # Gateway run so SESSION_WRITEBACK_OWNERS does not grow unbounded across

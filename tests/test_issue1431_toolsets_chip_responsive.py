@@ -159,7 +159,9 @@ class TestToolsetsAPIStillWorks:
                     break
             assert found, "api/session/toolsets endpoint must exist somewhere in api/"
             return
-        assert "session/toolsets" in src, (
+        from api import route_table
+
+        assert src and route_table.match("POST", "/api/session/toolsets"), (
             "/api/session/toolsets endpoint must still be registered "
             "(only the visual chip is hidden, not the underlying state)"
         )

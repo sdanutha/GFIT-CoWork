@@ -33,7 +33,7 @@ def test_ensure_cron_project_creates_per_profile(tmp_path, monkeypatch):
 
     projects_file = tmp_path / 'projects.json'
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
     profiles._invalidate_root_profile_cache()
@@ -61,7 +61,7 @@ def test_ensure_cron_project_idempotent_per_profile(tmp_path, monkeypatch):
 
     projects_file = tmp_path / 'projects.json'
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
     profiles._invalidate_root_profile_cache()
@@ -86,7 +86,7 @@ def test_ensure_cron_project_back_tags_legacy_untagged(tmp_path, monkeypatch):
         {'project_id': legacy_pid, 'name': 'Cron Jobs', 'color': '#6366f1', 'created_at': 1.0}
     ]))
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)  # skip the load_projects auto-migration
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
     profiles._invalidate_root_profile_cache()
@@ -115,7 +115,7 @@ def test_ensure_cron_project_renamed_root_matches_default(tmp_path, monkeypatch)
          'profile': 'default', 'created_at': 1.0}
     ]))
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', True)
     monkeypatch.setattr(models, '_CRON_PROJECT_LOCK', threading.Lock())
 
@@ -154,8 +154,8 @@ def test_load_projects_backfills_from_session_index(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
     monkeypatch.setattr(cfg, 'SESSION_INDEX_FILE', index_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'SESSION_INDEX_FILE', index_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, '_projects_migrated', False)
     monkeypatch.setattr(models, '_PROJECTS_MIGRATION_LOCK', threading.Lock())
 
@@ -185,8 +185,8 @@ def test_load_projects_backfills_to_default_when_no_sessions(tmp_path, monkeypat
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
     # Index doesn't exist
     monkeypatch.setattr(cfg, 'SESSION_INDEX_FILE', tmp_path / 'no-index.json')
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'SESSION_INDEX_FILE', tmp_path / 'no-index.json')
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / 'no-index.json')
     monkeypatch.setattr(models, '_projects_migrated', False)
     monkeypatch.setattr(models, '_PROJECTS_MIGRATION_LOCK', threading.Lock())
 
@@ -205,7 +205,7 @@ def test_load_projects_idempotent_after_first_migrate(tmp_path, monkeypatch):
          'profile': 'haku', 'created_at': 1.0},
     ]))
     monkeypatch.setattr(cfg, 'PROJECTS_FILE', projects_file)
-    monkeypatch.setattr(models, 'PROJECTS_FILE', projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, '_projects_migrated', False)
     monkeypatch.setattr(models, '_PROJECTS_MIGRATION_LOCK', threading.Lock())
 
@@ -230,10 +230,10 @@ def test_profile_field_on_project_dict_default_create(monkeypatch):
     src = (Path(__file__).parent.parent / 'api' / 'routes.py').read_text(encoding='utf-8')
 
     # The create handler must now include get_active_profile_name() for the new dict
-    create_idx = src.find('"/api/projects/create"')
-    assert create_idx > 0
-    next_handler_idx = src.find('"/api/projects/rename"', create_idx)
-    create_block = src[create_idx:next_handler_idx]
+    from tests._route_source import route_source
+
+    assert src
+    create_block = route_source("POST", "/api/projects/create")
     # The create handler must stamp the profile from a (validated) body value or
     # the active profile. #3331 follow-up: the raw body value is now validated
     # via _PROFILE_ID_RE before stamping, so the expression reads `_requested_profile`.
@@ -251,10 +251,10 @@ def test_project_rename_rejects_cross_profile():
     from pathlib import Path
     src = (Path(__file__).parent.parent / 'api' / 'routes.py').read_text(encoding='utf-8')
 
-    rename_idx = src.find('"/api/projects/rename"')
-    assert rename_idx > 0
-    next_idx = src.find('"/api/projects/delete"', rename_idx)
-    rename_block = src[rename_idx:next_idx]
+    from tests._route_source import route_source
+
+    assert src
+    rename_block = route_source("POST", "/api/projects/rename")
     assert '.includes(proj.get("profile"))' in rename_block, (
         "Rename must check active-profile ownership"
     )
@@ -264,9 +264,10 @@ def test_project_delete_rejects_cross_profile():
     from pathlib import Path
     src = (Path(__file__).parent.parent / 'api' / 'routes.py').read_text(encoding='utf-8')
 
-    delete_idx = src.find('"/api/projects/delete"')
-    assert delete_idx > 0
-    delete_block = src[delete_idx:delete_idx + 1500]
+    from tests._route_source import route_source
+
+    assert src
+    delete_block = route_source("POST", "/api/projects/delete")
     assert '.includes(proj.get("profile"))' in delete_block, (
         "Delete must check active-profile ownership"
     )
@@ -277,9 +278,10 @@ def test_session_move_uses_session_profile():
     from pathlib import Path
     src = (Path(__file__).parent.parent / 'api' / 'routes.py').read_text(encoding='utf-8')
 
-    move_idx = src.find('"/api/session/move"')
-    assert move_idx > 0
-    move_block = src[move_idx:move_idx + 2000]
+    from tests._route_source import route_source
+
+    assert src
+    move_block = route_source("POST", "/api/session/move")
     assert '_profiles_match(target.get("profile"), _session_profile)' in move_block, (
         "session/move must use session-scoped profile (not active_profile) for authorization"
     )

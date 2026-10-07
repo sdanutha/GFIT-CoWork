@@ -6447,6 +6447,12 @@ def set_hermes_default_model(model_id: str, provider: str | None = None, advance
         raise ValueError("model is required")
 
     config_path = _get_config_path()
+    # Resolve before taking _cfg_lock: resolving reads config, and for a
+    # request in a Profile other than the shared cache's that read takes the
+    # non-reentrant _cfg_lock (its config view), which would self-deadlock.
+    resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(
+        selected_model
+    )
     # Hold _cfg_lock only around the read-modify-write of the YAML file.
     # reload_config() acquires _cfg_lock internally (it's not reentrant) so
     # it must be called AFTER releasing the lock to avoid deadlock.
@@ -6458,9 +6464,6 @@ def set_hermes_default_model(model_id: str, provider: str | None = None, advance
 
         previous_provider = str(model_cfg.get("provider") or "").strip()
         requested_provider = str(provider or "").strip()
-        resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(
-            selected_model
-        )
         # Persist the resolved bare/slash form, NOT the `@provider:` prefix. The
         # prefix is a WebUI-internal routing hint that the hermes-agent CLI does
         # not understand — if we wrote `@nous:anthropic/claude-opus-4.6` to
@@ -6664,6 +6667,19 @@ def set_auxiliary_model(task: str, provider: str, model: str, advanced: dict | N
     provider = str(provider or "").strip() or "auto"
     model = str(model or "").strip()
     config_path = _get_config_path()
+    # The unnamed-custom fallback below resolves the model against config.
+    # Do it before taking _cfg_lock: for a request in a Profile other than the
+    # shared cache's, that read takes the non-reentrant _cfg_lock itself. A
+    # genuine ambiguity is kept and raised only where the fallback is used.
+    fallback_base_url = None
+    fallback_ambiguity = None
+    if task != "__reset__" and (provider == "custom" or provider.startswith("custom:")):
+        try:
+            _, _, fallback_base_url = resolve_model_provider(_provider_native_auxiliary_model(provider, model))
+        except AmbiguousCustomProviderError as exc:
+            fallback_ambiguity = exc
+        except Exception:
+            fallback_base_url = None
     with _cfg_lock:
         config_data = _load_yaml_config_file(config_path)
         if task != "__reset__" and task not in AUX_TASK_SLOTS:
@@ -6737,14 +6753,12 @@ def set_auxiliary_model(task: str, provider: str, model: str, advanced: dict | N
                         resolved_base_url = str(_cp_match.get("base_url") or "").strip() or None
                 if not resolved_base_url:
                     # Best-effort fallback for the unnamed `custom` case (no own
-                    # entry). Keep it non-fatal for unexpected errors, but let a
-                    # genuine ambiguity propagate so the save fails closed.
-                    try:
-                        _, _, resolved_base_url = resolve_model_provider(model)
-                    except AmbiguousCustomProviderError:
-                        raise
-                    except Exception:
-                        resolved_base_url = None
+                    # entry), resolved before the lock. Keep it non-fatal for
+                    # unexpected errors, but let a genuine ambiguity propagate
+                    # so the save fails closed.
+                    if fallback_ambiguity is not None:
+                        raise fallback_ambiguity
+                    resolved_base_url = fallback_base_url
                 if resolved_base_url:
                     slot_cfg["base_url"] = str(resolved_base_url).strip().rstrip("/")
             if advanced is not None:
@@ -7625,8 +7639,6 @@ def _has_explicit_pool_credentials(provider_id: str) -> bool:
     cost more than once per TTL window.
     """
     return bool(_pool_entry_payloads(provider_id))
-_provider_models_invalidated_ts: dict[str, float] = {}  # provider_id -> timestamp of last invalidation
-
 # Disk-backed in-memory cache for get_available_models().
 # Written to disk on every cache population so the cache survives server restarts.
 # Invalidated (file deleted) whenever a provider is added/changed/removed or
@@ -8427,37 +8439,6 @@ def invalidate_credential_pool_cache(provider_id: str):
         invalidate_account_usage_status_cache(_resolve_provider_alias(provider_id))
     except Exception:
         logger.debug("Failed to invalidate account usage status cache", exc_info=True)
-
-
-def invalidate_provider_models_cache(provider_id: str):
-    """Invalidate cached models for a single provider.
-
-    Also invalidates the full cache so that the next get_available_models()
-    call rebuilds all groups cleanly (the rebuilt provider is merged with any
-    other cached groups from the 24h TTL window).  After the next
-    get_available_models() call, _provider_models_invalidated_ts[provider_id]
-    is cleared so the provider's fresh models are used.
-
-    Args:
-        provider_id: canonical provider id (e.g. 'openai', 'anthropic', 'custom:my-key')
-    """
-    global _available_models_cache, _available_models_cache_ts
-    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _CREDENTIAL_POOL_CACHE
-    with _available_models_cache_lock:
-        _available_models_cache = None
-        _available_models_cache_ts = 0.0
-        _available_models_live_rebuild_ts = 0.0
-        _available_models_cache_source_fingerprint = None
-        _sync_models_cache_provenance()
-        _provider_models_invalidated_ts[provider_id] = time.time()
-        # Also evict the credential pool so the next cold path re-loads it.
-        # Must evict both the original key and its canonical form (load_pool
-        # may be called with either, and both paths cache under their own key),
-        # scoped to the active profile's cache key.
-        _cp_tag = _credential_pool_profile_tag()
-        _CREDENTIAL_POOL_CACHE.pop((_cp_tag, provider_id), None)
-        _CREDENTIAL_POOL_CACHE.pop((_cp_tag, _resolve_provider_alias(provider_id)), None)
-    _delete_models_cache_on_disk()
 
 
 def _get_label_for_model(model_id: str, existing_groups: list) -> str:
@@ -11600,7 +11581,6 @@ _SETTINGS_DEFAULTS = {
     "onboarding_completed": False,
     "send_key": "enter",  # 'enter', 'ctrl+enter', or 'shift+enter'
     "show_token_usage": False,  # show input/output token badge below assistant messages
-    "show_quota_chip": False,  # show ambient provider quota chip in composer footer (default off; wide desktop only when enabled, see style.css @media)
     "show_conversation_outline": False,  # show opt-in desktop jump-to-question outline panel
     "show_busy_placeholder_hint": False,  # opt-in busy composer placeholder hint
     "hide_empty_state_suggestions": False,  # hide the default new-chat suggestion buttons
@@ -11644,14 +11624,12 @@ _SETTINGS_DEFAULTS = {
     "hide_composer_attach": False,  # hide attach button in composer footer
     "hide_composer_saved_prompts": False,  # hide saved prompts button in composer footer
     "hide_composer_mic": False,  # hide dictation mic button in composer footer
-    "show_titlebar_profile": False,  # show profile switcher in app titlebar (opt-in)
+    "show_titlebar_profile": False,  # show the name button (identity menu) in the app titlebar (opt-in)
     "hide_composer_voice_mode": False,  # hide hands-free voice-mode button in composer footer
-    "hide_composer_yolo": False,  # hide YOLO chip in composer footer
     "hide_composer_profile": False,  # hide profile chip in composer footer
     "hide_composer_workspace": False,  # hide workspace controls in composer footer/mobile config panel
     "hide_composer_mobile_config": False,  # hide mobile composer config button
     "hide_composer_model": False,  # hide model chip in composer footer/mobile config panel
-    "hide_composer_quota_chip": False,  # hide provider quota chip in composer footer
     "hide_composer_reasoning": False,  # hide reasoning chip in composer footer/mobile config panel
     "hide_composer_toolsets": False,  # hide toolsets chip in composer footer
     "hide_composer_status": False,  # hide status text in composer footer
@@ -11681,15 +11659,12 @@ _SETTINGS_DEFAULTS = {
     "notifications_enabled": False,  # browser notification when tab is in background
     "show_thinking": True,  # show/hide thinking/reasoning blocks in chat view
     "simplified_tool_calling": True,  # legacy compatibility; Worklog renderer remains enabled
-    "terminal_auto_expand_on_output": False,  # auto-expand terminal panel when output arrives while collapsed
     "workspace_todos_tab": False,  # show a Todos tab in the workspace panel (right side)
     "api_redact_enabled": True,  # redact sensitive data (API keys, secrets) from API responses
     "dashboard_plugins": {},  # plugin_name -> bool, opt-in per plugin (default off per PF-10b)
     "sidebar_density": "compact",  # compact | detailed
     "auto_title_refresh_every": "0",  # adaptive title refresh: 0=off, 5/10/20=every N exchanges
     "default_message_mode": "steer",  # behavior when sending while agent is running: queue | interrupt | steer
-    "auth_disabled_acknowledged": False,  # user acknowledged unauthenticated risk
-    "provider_cost_budget": None,
 }
 _SETTINGS_SPEECH_KEYS = {
     "tts_enabled",
@@ -11715,6 +11690,15 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     "update_channel",
     "ignore_agent_updates",
     "whats_new_summary_enabled",
+    # The embedded terminal and session YOLO went with the Admin (ADR 0006).
+    "terminal_auto_expand_on_output",
+    "hide_composer_yolo",
+    # Provider quota went with the Admin (ADR 0006).
+    "show_quota_chip",
+    "hide_composer_quota_chip",
+    "provider_cost_budget",
+    # There is no mode with login turned off (ADR 0006).
+    "auth_disabled_acknowledged",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -11805,6 +11789,70 @@ def _read_raw_settings_file() -> dict:
     return loaded if isinstance(loaded, dict) else {}
 
 
+# ── Settings: the Deployment's file and each Profile's own (ADR 0006) ──────
+#
+# settings.json in the state directory holds the Deployment's settings, which
+# the Operator edits on the server. A User's own choices (theme, voice,
+# composer buttons, ...) live in their Profile, in
+# ``{profile_home}/webui_state/settings.json``, hold only personal keys, and
+# are laid over the Deployment's settings for that User's requests. A request
+# with no User (the login page, a worker thread) sees the Deployment's
+# settings alone. A Profile with no file of its own starts from the
+# Deployment's settings, so values saved before settings were per Profile
+# carry over.
+
+_PERSONAL_SETTINGS_FILENAME = "settings.json"
+
+
+class SettingsRefused(PermissionError):
+    """A User tried to change settings that belong to the Deployment."""
+
+    def __init__(self, keys):
+        self.keys = sorted(keys)
+        super().__init__(
+            "These settings are set for the whole Deployment by its Operator: " + ", ".join(self.keys))
+
+
+def _settings_profile() -> str | None:
+    """The Profile whose own settings apply to this request, or None."""
+    try:
+        from api.profiles import request_profile_name
+    except ImportError:
+        return None
+    name = request_profile_name()
+    return name if name and name != "default" else None
+
+
+def _personal_settings_file(profile: str) -> Path:
+    from api.profiles import get_hermes_home_for_profile
+
+    return get_hermes_home_for_profile(profile) / "webui_state" / _PERSONAL_SETTINGS_FILENAME
+
+
+def _read_personal_settings(profile: str) -> dict:
+    """Profile *profile*'s own settings: personal keys only, {} when there are none."""
+    path = _personal_settings_file(profile)
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        logger.debug("Failed to load the settings of Profile %s from %s", profile, path)
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {k: v for k, v in loaded.items() if k in PERSONAL_SETTINGS_KEYS}
+
+
+def _read_stored_settings() -> dict:
+    """The stored settings for this request: the Deployment's, then the User's own over them."""
+    stored = _read_raw_settings_file()
+    profile = _settings_profile()
+    if profile:
+        stored = {**stored, **_read_personal_settings(profile)}
+    return stored
+
+
 def _extract_persisted_speech_keys(stored: dict) -> set[str]:
     if not isinstance(stored, dict):
         return set()
@@ -11812,7 +11860,7 @@ def _extract_persisted_speech_keys(stored: dict) -> set[str]:
 
 
 def persisted_speech_settings_keys() -> list[str]:
-    return sorted(_extract_persisted_speech_keys(_read_raw_settings_file()))
+    return sorted(_extract_persisted_speech_keys(_read_stored_settings()))
 
 
 def _settings_payload_for_write(settings: dict, persisted_speech_keys: set[str]) -> dict:
@@ -11828,9 +11876,13 @@ def _settings_payload_for_write(settings: dict, persisted_speech_keys: set[str])
 
 
 def load_settings() -> dict:
-    """Load settings from disk, merging with defaults for any missing keys."""
+    """Load settings from disk, merging with defaults for any missing keys.
+
+    For a User's request the User's own settings are laid over the
+    Deployment's (see ``_read_stored_settings``).
+    """
     settings = dict(_SETTINGS_DEFAULTS)
-    stored = _read_raw_settings_file()
+    stored = _read_stored_settings()
     if isinstance(stored, dict):
         if (
             "worklog_details_expanded_default" not in stored
@@ -11942,6 +11994,26 @@ _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
     # existing BCP-47 validation at save-time still applies.
     "language",
 }
+# Settings that belong to the whole Deployment: the Operator sets them in
+# settings.json on the server and a User cannot change them. They either act
+# outside any one User's request (worker threads, the shared API key, the
+# state database) or weaken a safeguard. Every other allowed key is personal.
+_SETTINGS_DEPLOYMENT_KEYS = frozenset({
+    "default_workspace",
+    "onboarding_completed",
+    "sync_to_insights",
+    "api_redact_enabled",
+    "dashboard_plugins",
+    "bot_name",
+    "auto_title_refresh_every",
+    "inflight_state_max_sessions",
+    "inflight_state_max_messages",
+    "inflight_state_max_tool_calls",
+    "inflight_state_max_string_chars",
+    "inflight_state_max_json_chars",
+})
+PERSONAL_SETTINGS_KEYS = frozenset(_SETTINGS_ALLOWED_KEYS - _SETTINGS_DEPLOYMENT_KEYS)
+
 _SETTINGS_ENUM_VALUES = {
     "send_key": {"enter", "ctrl+enter", "shift+enter"},
     "sidebar_density": {"compact", "detailed"},
@@ -11968,7 +12040,6 @@ _SETTINGS_FLOAT_RANGES = {
 _SETTINGS_BOOL_KEYS = {
     "onboarding_completed",
     "show_token_usage",
-    "show_quota_chip",
     "show_conversation_outline",
     "show_busy_placeholder_hint",
     "hide_empty_state_suggestions",
@@ -11994,7 +12065,6 @@ _SETTINGS_BOOL_KEYS = {
     "rtl",
     "notifications_enabled",
     "show_thinking",
-    "terminal_auto_expand_on_output",
     "workspace_todos_tab",
     "api_redact_enabled",
     "session_jump_buttons",
@@ -12005,18 +12075,15 @@ _SETTINGS_BOOL_KEYS = {
     "transparent_stream_event_timestamps",
     "auto_scroll_follow",
     "worklog_details_expanded_default",
-    "auth_disabled_acknowledged",
     "hide_composer_attach",
     "hide_composer_saved_prompts",
     "hide_composer_mic",
     "show_titlebar_profile",
     "hide_composer_voice_mode",
-    "hide_composer_yolo",
     "hide_composer_profile",
     "hide_composer_workspace",
     "hide_composer_mobile_config",
     "hide_composer_model",
-    "hide_composer_quota_chip",
     "hide_composer_reasoning",
     "hide_composer_toolsets",
     "hide_composer_status",
@@ -12087,23 +12154,19 @@ def _current_umask() -> int:
     return umask
 
 
-def _coerce_provider_cost_budget(value: Any) -> float | None:
-    """Normalize a monthly budget to the persisted two-decimal representation."""
-    try:
-        rounded = round(float(value), 2)
-    except (TypeError, ValueError):
-        return None
-    if not (0 < rounded < 1e9) or not math.isfinite(rounded):
-        return None
-    return rounded
-
-
 def save_settings(settings: dict) -> dict:
-    """Save settings to disk. Returns the merged settings. Ignores unknown keys."""
-    raw_settings = _read_raw_settings_file()
+    """Save settings to disk. Returns the merged settings. Ignores unknown keys.
+
+    For a User's request only personal keys may be given (SettingsRefused
+    otherwise), and they are written to the User's Profile, not to the
+    Deployment's file.
+    """
+    profile = _settings_profile()
+    raw_settings = _read_stored_settings()
     persisted_speech_keys = _extract_persisted_speech_keys(raw_settings)
     current = load_settings()
     applied_speech_keys: set[str] = set()
+    applied_keys: set[str] = set()
     if (
         "worklog_details_expanded_default" not in settings
         and "activity_feed_expanded_default" in settings
@@ -12119,6 +12182,10 @@ def save_settings(settings: dict) -> dict:
         settings["default_message_mode"] = settings.get("busy_input_mode")
     settings.pop("busy_input_mode", None)
     settings.pop("simplified_tool_calling", None)
+    if profile:
+        refused = {k for k in settings if k in _SETTINGS_ALLOWED_KEYS and k not in PERSONAL_SETTINGS_KEYS}
+        if refused:
+            raise SettingsRefused(refused)
     pending_theme = current.get("theme")
     pending_skin = current.get("skin")
     theme_was_explicit = False
@@ -12203,19 +12270,11 @@ def save_settings(settings: dict) -> dict:
                     seen.add(s)
                     cleaned.append(s)
                 v = cleaned
-            if k == "provider_cost_budget":
-                if v is None or v == "":
-                    current[k] = None
-                    continue
-                budget = _coerce_provider_cost_budget(v)
-                if budget is None:
-                    continue
-                current[k] = budget
-                continue
             # Coerce bool keys
             if k in _SETTINGS_BOOL_KEYS:
                 v = bool(v)
             current[k] = v
+            applied_keys.add(k)
             if key_is_speech:
                 applied_speech_keys.add(k)
     theme_value = pending_theme
@@ -12225,6 +12284,11 @@ def save_settings(settings: dict) -> dict:
         if raw_theme not in _SETTINGS_THEME_VALUES:
             skin_value = None
     current["theme"], current["skin"] = _normalize_appearance(theme_value, skin_value)
+    if theme_was_explicit or skin_was_explicit:
+        applied_keys.update(("theme", "skin"))
+
+    if profile:
+        return _save_personal_settings(profile, current, applied_keys)
 
     current["default_workspace"] = str(
         resolve_default_workspace(current.get("default_workspace"))
@@ -12244,6 +12308,20 @@ def save_settings(settings: dict) -> dict:
     global DEFAULT_WORKSPACE
     if "default_workspace" in current:
         DEFAULT_WORKSPACE = resolve_default_workspace(current["default_workspace"])
+    current["default_model"] = get_effective_default_model()
+    return current
+
+
+def _save_personal_settings(profile: str, current: dict, applied_keys: set[str]) -> dict:
+    """Write the personal keys a User just changed into their Profile; return the settings."""
+    personal = _read_personal_settings(profile)
+    personal.update({k: current[k] for k in applied_keys if k in PERSONAL_SETTINGS_KEYS})
+    path = _personal_settings_file(profile)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_settings_text(path, json.dumps(personal, ensure_ascii=False, indent=2))
+    global _SETTINGS_WRITE_VERSION
+    with _SETTINGS_WRITE_LOCK:
+        _SETTINGS_WRITE_VERSION += 1
     current["default_model"] = get_effective_default_model()
     return current
 

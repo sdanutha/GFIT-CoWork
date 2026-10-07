@@ -120,6 +120,7 @@ def test_play_edge_tts_chunked_sends_explicit_engine_when_server_still_elevenlab
             extract_function(UI_JS, "_playEdgeTtsChunked"),
             extract_function(UI_JS, "stopTTS"),
             extract_function(UI_JS, "speakMessage"),
+            extract_function(UI_JS, "requestSpeech"),
         ]
     )
     requests = _run_node(_UI_HARNESS.replace("__UI_FNS__", fns))
@@ -133,7 +134,7 @@ def test_play_edge_tts_chunked_sends_explicit_engine_when_server_still_elevenlab
 
 def test_voice_mode_edge_branch_sends_explicit_engine_when_server_still_openai():
     """Local Edge selection (voice-mode auto-read) must override persisted OpenAI."""
-    fns = extract_function(BOOT_JS, "_speakResponse")
+    fns = extract_function(BOOT_JS, "_speakResponse") + "\n" + extract_function(UI_JS, "requestSpeech")
     requests = _run_node(_BOOT_HARNESS.replace("__BOOT_FNS__", fns))
 
     assert len(requests) == 1

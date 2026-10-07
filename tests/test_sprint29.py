@@ -63,35 +63,35 @@ def get_raw_with_headers(path):
 
 class TestCSRF:
     @pytest.fixture(autouse=True)
-    def _disable_auth_for_origin_unit_checks(self, monkeypatch):
-        """Keep origin/port CSRF checks isolated from auth stateful tests.
+    def _logged_in_request(self, request_has_user_session):
+        """Keep these origin/port checks about the origin alone.
 
         These Sprint 29 cases predate session-bound CSRF tokens and exercise
-        only Origin/Referer/Host allow/deny behavior. If an earlier test leaves
-        password auth enabled in the shared pytest process, _check_csrf also
-        requires a valid session CSRF token and these origin-only assertions
-        become order-dependent. Auth-enabled token coverage lives in
+        only Origin/Referer/Host allow/deny behavior. Login is always on
+        (ADR 0006), so every stand-in request carries a real session and its
+        CSRF token; only the origin can then decide. Token coverage lives in
         test_issue1909_csrf_token.py.
         """
-        monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
+        from api.auth import csrf_token_for_session
 
-    @staticmethod
-    def _csrf_allowed(headers):
+        self._csrf_token = csrf_token_for_session(request_has_user_session)
+
+    def _csrf_allowed(self, headers):
         from types import SimpleNamespace
         from api.routes import _check_csrf
 
-        return _check_csrf(SimpleNamespace(headers=headers))
+        return _check_csrf(SimpleNamespace(headers={**headers, "X-Hermes-CSRF-Token": self._csrf_token}))
 
     def test_no_origin_no_referer_allowed(self):
         """Curl-style request with no Origin/Referer must pass CSRF check."""
-        body, status = post("/api/sessions/new", {})
+        body, status = post("/api/session/new", {})
         # Should succeed (200 or 404) but NOT 403
         assert status != 403, f"Expected non-403 for no-origin request, got {status}"
 
     def test_cross_origin_post_rejected(self):
         """Cross-origin POST (Origin != Host) must be rejected with 403."""
         body, status = post(
-            "/api/sessions/new",
+            "/api/session/new",
             {},
             headers={"Origin": "http://evil.com", "Host": "127.0.0.1:8788"},
         )
@@ -101,7 +101,7 @@ class TestCSRF:
     def test_same_origin_post_allowed(self):
         """Same-origin POST (Origin matches Host) must be allowed."""
         body, status = post(
-            "/api/sessions/new",
+            "/api/session/new",
             {},
             headers={"Origin": "http://127.0.0.1:8788", "Host": "127.0.0.1:8788"},
         )
@@ -110,7 +110,7 @@ class TestCSRF:
     def test_same_origin_referer_allowed(self):
         """Same-origin Referer (matching Host) must be allowed."""
         body, status = post(
-            "/api/sessions/new",
+            "/api/session/new",
             {},
             headers={"Referer": "http://127.0.0.1:8788/", "Host": "127.0.0.1:8788"},
         )
@@ -383,7 +383,7 @@ class TestSessionIDValidation:
         """A valid hex session ID gets past the validation check."""
         import sys
         sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-        from api.models import Session, SESSION_DIR
+        from api.models import Session
         valid_hex = "deadbeef" * 8  # 64 hex chars
         # Should not raise — returns None only if file doesn't exist (it won't)
         result = Session.load(valid_hex)
@@ -556,7 +556,7 @@ class TestContentDisposition:
         import urllib.error
 
         # Use a session to create an HTML file in the workspace
-        sessions_body, _ = post("/api/sessions/new", {})
+        sessions_body, _ = post("/api/session/new", {})
         sid = sessions_body.get("session_id") or sessions_body.get("id")
         if not sid:
             return  # Skip if sessions API shape is unexpected

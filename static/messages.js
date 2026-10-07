@@ -1,10 +1,4 @@
-const _AGENT_COMMAND_ALIASES = {
-  'reload_mcp': 'reload-mcp',
-  'reload_skills': 'reload-skills',
-  'codex_runtime': 'codex-runtime',
-  'credits': 'credits'
-};
-const _AGENT_COMMANDS_RUN_ON_WEBUI = new Set([
+const _AGENT_COMMANDS_CLI_ONLY_IN_WEBUI = new Set([
   'reload-mcp','reload-skills','codex-runtime','credits',
   'reload_mcp','reload_skills','codex_runtime','credits'
 ]);
@@ -1190,10 +1184,6 @@ if(typeof document!=='undefined'){
 let _sendInProgress = false;
 let _sendInProgressSid = null;  // session_id of the in-flight send
 const _sessionTitleProvisionalBySid = new Map();
-// Agent commands that are safe to execute directly in the WebUI even though
-// their canonical command is registered on the backend (for example
-// /reload-mcp). Keep this intentionally narrow and include underscore variants
-// observed by users so typing either form still routes through executeAgentCommand.
 
 function _clearStaleBusyStateBeforeSend({compressionRunning=false}={}){
   if(!S||!S.busy||compressionRunning) return false;
@@ -1443,7 +1433,7 @@ async function send(){
       if(!S.session){await newSession();await renderSessionList();}
       // Busy-control slash commands must be intercepted HERE, before the
       // defaultMessageMode routing block, so the user can always type /steer, /interrupt,
-      // /queue, /terminal, /goal, /yolo, or /stop while the agent is running and have
+      // /queue, /goal, or /stop while the agent is running and have
       // them execute immediately.
       // Without this intercept they fall through to the queue and execute after
       // the current turn ends — by which point there is no active stream and
@@ -1452,7 +1442,7 @@ async function send(){
       // or queued as the literal text "/stop" (#6951).
       if(text.startsWith('/')&&!literalSlash){
         const _pc=typeof parseCommand==='function'&&parseCommand(text);
-        if(_pc&&['steer','interrupt','queue','terminal','goal','yolo','stop'].includes(_pc.name)){
+        if(_pc&&['steer','interrupt','queue','goal','stop'].includes(_pc.name)){
           const _bc=COMMANDS.find(c=>c.name===_pc.name);
           if(_bc){
             $('msg').value='';autoResize();
@@ -1547,41 +1537,13 @@ async function send(){
       const _agentCmd=typeof getAgentCommandMetadata==='function'
         ? await getAgentCommandMetadata(_parsedCmd.name)
         : null;
-      if(_agentCmd&&_agentCmd.cli_only){
+      const _agentCmdName=String(_agentCmd&&_agentCmd.name||_parsedCmd&&_parsedCmd.name||'').trim().toLowerCase();
+      // Commands that ran on the server (agent reloads, plugin commands) went
+      // with the Admin (ADR 0006): answer them like CLI-only commands.
+      if(_agentCmd&&(_agentCmd.cli_only||_agentCmd.category==='Plugin'||_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI.has(_agentCmdName))){
         if(!S.session){await newSession();await renderSessionList();}
         S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
         S.messages.push({role:'assistant',content:cliOnlyCommandResponse(_parsedCmd.name,_agentCmd),_ts:Date.now()/1000});
-        renderMessages();
-        $('msg').value='';autoResize();hideCmdDropdown();return;
-      }
-      const _agentCmdName=String(_agentCmd&&_agentCmd.name||_parsedCmd&&_parsedCmd.name||'').trim().toLowerCase();
-      if(_AGENT_COMMANDS_RUN_ON_WEBUI.has(_agentCmdName)){
-        if(!S.session){await newSession();await renderSessionList();}
-        S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
-        let _agentOutput='(no output)';
-        try{
-          _agentOutput=typeof executeAgentCommand==='function'
-            ? await executeAgentCommand(text,_agentCmd||{name:_agentCmdName})
-            : 'Agent command runtime unavailable in WebUI.';
-        }catch(e){
-          _agentOutput=`Agent command error: ${e&&e.message||e}`;
-        }
-        S.messages.push({role:'assistant',content:String(_agentOutput||'(no output)'),_ts:Date.now()/1000});
-        renderMessages();
-        $('msg').value='';autoResize();hideCmdDropdown();return;
-      }
-      if(_agentCmd&&_agentCmd.category==='Plugin'){
-        if(!S.session){await newSession();await renderSessionList();}
-        S.messages.push({role:'user',content:text,_ts:Date.now()/1000});
-        let _pluginOutput='(no output)';
-        try{
-          _pluginOutput=typeof executeAgentPluginCommand==='function'
-            ? await executeAgentPluginCommand(text,_agentCmd)
-            : 'Plugin command runtime unavailable in WebUI.';
-        }catch(e){
-          _pluginOutput=`Plugin command error: ${e&&e.message||e}`;
-        }
-        S.messages.push({role:'assistant',content:String(_pluginOutput||'(no output)'),_ts:Date.now()/1000});
         renderMessages();
         $('msg').value='';autoResize();hideCmdDropdown();return;
       }
@@ -1734,7 +1696,6 @@ async function send(){
     });
     _runOptionalPreStartUiStep('startApprovalPolling.prestart', ()=>startApprovalPolling(activeSid));
     _runOptionalPreStartUiStep('startClarifyPolling.prestart', ()=>startClarifyPolling(activeSid));
-    _runOptionalPreStartUiStep('fetchYoloState.prestart', ()=>_fetchYoloState(activeSid));  // sync YOLO pill with backend state
     S.activeStreamId = null;  // will be set after stream starts
     _runOptionalPreStartUiStep('updateSendBtn.prestart', ()=>{
       if(typeof updateSendBtn==='function') updateSendBtn();
@@ -2133,26 +2094,9 @@ function closeOtherLiveStreams(activeSid){
   }
 }
 
-function _dispatchExtensionTurnLifecycle(type,sessionId,streamId,details={}){
-  const runtime=typeof window!=='undefined'&&window.HermesExtensionSettings;
-  const dispatch=runtime&&runtime._dispatchTurnLifecycle;
-  if(typeof dispatch!=='function') return false;
-  try{
-    return dispatch(type,{sessionId,streamId,...details});
-  }catch(error){
-    if(typeof console!=='undefined'&&typeof console.error==='function'){
-      try{console.error('[Hermes extensions] lifecycle dispatch failed:',error);}catch(_loggingError){ }
-    }
-    return false;
-  }
-}
-
 function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   if(!activeSid||!streamId) return;
   const reconnecting=!!options.reconnecting;
-  const _extensionTurnStartedAt=(S.session&&S.session.session_id===activeSid&&Number.isFinite(S.session.pending_started_at))
-    ?S.session.pending_started_at
-    :Date.now()/1000;
   // #4416: start (or, on reconnect for the SAME stream, keep) tracking whether
   // the tab was hidden during this stream so the done-notification fires for a
   // backgrounded tab. A reconnect with a different streamId re-seeds (the old
@@ -6514,10 +6458,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         if(isActiveSession) _queueDrainSid=activeSid;
         renderSessionList();
         _setActivePaneIdleIfOwner();
-        _dispatchExtensionTurnLifecycle('turn:complete',activeSid,streamId,{
-          status:d.status||'completed',
-          endedAt:Date.now()/1000,
-        });
         playNotificationSound();
         // #4416: notify if the tab was hidden at ANY point during this stream
         // (not just at done-receive time, which a throttled background-tab SSE
@@ -6702,7 +6642,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       _clearClarifyForOwner('terminal');
       let d={};
       try{ d=JSON.parse(e.data||'{}')||{}; }catch(_){ d={}; }
-      const _extensionErrorType=(d.type==='cancelled'||d.type==='interrupted')?'turn:cancel':'turn:error';
       const currentSid=S.session&&S.session.session_id;
       const eventSid=d.old_session_id||d.session_id||'';
       const continuationSid=(d.session&&d.session.session_id)||d.new_session_id||d.continuation_session_id||'';
@@ -6805,10 +6744,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       }
       _setActivePaneIdleIfOwner();
       renderSessionList(); // clear streaming indicator immediately on apperror
-      _dispatchExtensionTurnLifecycle(_extensionErrorType,activeSid,streamId,{
-        status:d.status||d.type||(_extensionErrorType==='turn:cancel'?'cancelled':'error'),
-        endedAt:Date.now()/1000,
-      });
     });
 
     source.addEventListener('warning',e=>{
@@ -7044,11 +6979,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
             if(_wasFollowingAtCancelFb && typeof scrollToBottom==='function') scrollToBottom();
             _markSessionViewed(activeSid, S.messages.length);
           }
-        }finally{
-          _dispatchExtensionTurnLifecycle('turn:cancel',activeSid,streamId,{
-            status:_cancelData.status||_cancelData.type||'cancelled',
-            endedAt:Date.now()/1000,
-          });
         }
       })();
     });
@@ -7319,10 +7249,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       }
     }
     _setActivePaneIdleIfOwner();
-    _dispatchExtensionTurnLifecycle('turn:error',activeSid,streamId,{
-      status:'connection_lost',
-      endedAt:Date.now()/1000,
-    });
   }
 
   (async()=>{
@@ -7364,9 +7290,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       }catch(_){}
     }
     const replayParams=(reconnecting||replayOnly)?_runJournalReplayParams():'';
-    _dispatchExtensionTurnLifecycle('turn:start',activeSid,streamId,{
-      startedAt:_extensionTurnStartedAt,
-    });
     _wireSSE(new EventSource(new URL(`api/chat/stream?stream_id=${encodeURIComponent(streamId)}${replayParams}`,document.baseURI||location.href).href,{withCredentials:true}));
   })();
 
@@ -7495,43 +7418,6 @@ function scheduleComposerAutoResize(){
     _composerAutoResizeRaf=0;
     autoResize();
   });
-}
-
-
-// ── YOLO mode state ──
-// Session-scoped; stored server-side in memory (tools/approval.py).
-// Lifecycle:
-//   • Page reload: state PERSISTS — _fetchYoloState() re-syncs from backend.
-//   • Cross-tab: state is SHARED — enabling YOLO in Tab A affects Tab B for
-//     the same session (both poll the same server-side flag).
-//   • Server restart: state is LOST — in-memory only, not persisted to disk.
-//   • Session switch: state resets — loadSession() clears _yoloEnabled and
-//     fetches the new session's state.
-let _yoloEnabled = false;
-
-async function _fetchYoloState(sid) {
-  try {
-    const data = await api('/api/session/yolo?session_id=' + encodeURIComponent(sid));
-    _yoloEnabled = !!data.yolo_enabled;
-    _updateYoloPill();
-  } catch (_) { /* ignore */ }
-}
-
-function _updateYoloPill() {
-  const pill = $('yoloPill');
-  if (!pill) return;
-  pill.style.display = _yoloEnabled ? '' : 'none';
-  if (_yoloEnabled) {
-    pill.title = t('yolo_pill_title_active');
-    pill.setAttribute('data-i18n-title', 'yolo_pill_title_active');
-  }
-  if (typeof applyLocaleToDOM === 'function') applyLocaleToDOM();
-}
-
-async function toggleYoloFromApproval() {
-  const owner = _captureApprovalResponseOwner();
-  if (!owner) return false;
-  return !!(await respondApproval('once', {yolo: true, owner}));
 }
 
 // ── Approval polling ──
@@ -7851,10 +7737,8 @@ function _approvalClearedOwnerMayRefresh(owner) {
 }
 
 function _setApprovalControlsDisabled(choice, disabled) {
-  const loadingId = choice === "skipAll"
-    ? "approvalSkipAll"
-    : (choice ? "approvalBtn" + choice.charAt(0).toUpperCase() + choice.slice(1) : null);
-  ["approvalBtnOnce","approvalBtnSession","approvalBtnAlways","approvalBtnDeny","approvalSkipAll"].forEach(id => {
+  const loadingId = choice ? "approvalBtn" + choice.charAt(0).toUpperCase() + choice.slice(1) : null;
+  ["approvalBtnOnce","approvalBtnSession","approvalBtnAlways","approvalBtnDeny"].forEach(id => {
     const b = $(id);
     if (!b) return;
     b.disabled = !!disabled;
@@ -8003,11 +7887,6 @@ function _restoreFailedApprovalResponse(owner, errMsg) {
   if (typeof setStatus === "function") setStatus(errMsg);
 }
 
-function _applyApprovalYoloProjection(result) {
-  if (!result || typeof result.yolo_enabled !== "boolean") return;
-  _yoloEnabled = result.yolo_enabled;
-  _updateYoloPill();
-}
 
 function toggleApprovalCardCollapsed(forceCollapsed) {
   const card = $("approvalCard");
@@ -8025,10 +7904,9 @@ async function respondApproval(choice, options = {}) {
   if (_approvalResponseMatches(sid, approvalId, owner.generation, owner)) return false;
   _approvalClearedOwner = null;
   _unmarkApprovalDismissed(sid, approvalId);
-  const controlChoice = options.yolo ? "skipAll" : choice;
   _approvalResponding = {...owner, choice};
-  _approvalResponding.controlChoice = controlChoice;
-  _setApprovalControlsDisabled(controlChoice, true);
+  _approvalResponding.controlChoice = choice;
+  _setApprovalControlsDisabled(choice, true);
   try {
     const result = await api("/api/approval/respond", {
       method: "POST",
@@ -8038,7 +7916,6 @@ async function respondApproval(choice, options = {}) {
         approval_id: approvalId,
         ...(owner.runId ? {run_id: owner.runId} : {}),
         ...(owner.mirrorToken ? {mirror_token: owner.mirrorToken} : {}),
-        ...(options.yolo ? {yolo: true} : {}),
       })
     });
     if (!_approvalResponseOwnerIsCurrent(owner)) {
@@ -8047,7 +7924,6 @@ async function respondApproval(choice, options = {}) {
     }
     if (result && result.ok) {
       _releaseApprovalResponseOwner(owner);
-      if (options.yolo) _applyApprovalYoloProjection(result);
       const pendingEntry = _approvalPendingBySession.get(sid);
       const pendingOwner = _approvalMirrorOwnerFor(sid, approvalId);
       const samePending = !!(
@@ -8075,8 +7951,7 @@ async function respondApproval(choice, options = {}) {
           }
         })();
       }
-      if (options.yolo) showToast(t(_yoloEnabled ? 'yolo_enabled' : 'yolo_disabled'));
-      return options.yolo ? result : true;
+      return true;
     }
     const errMsg = (result && result.error) || "Approval response not accepted.";
     _restoreFailedApprovalResponse(owner, errMsg);
@@ -8093,7 +7968,6 @@ async function respondApproval(choice, options = {}) {
       _releaseApprovalResponseOwner(owner);
       return false;
     }
-    if (options.yolo) _applyApprovalYoloProjection(errorPayload);
     _restoreFailedApprovalResponse(owner, errMsg);
     return false;
   }
@@ -8120,14 +7994,8 @@ function startApprovalPolling(sid) {
 let _approvalEventSource = null;
 let _approvalSSEHealthTimer = null;
 let _approvalPollingSessionId = null;
-// Session whose poller stopped on a profile-mismatch 409; re-armed on focus/visibility.
-let _approvalProfilePausedSessionId = null;
-// Bumped on every focus/visibility return. A mismatch 409 for a request that began before
-// the latest return may predate a cookie switch-back, so it earns one retry before pausing.
-let _promptPollerFocusEpoch = 0;
 
 function _startApprovalFallbackPoll(sid) {
-  _approvalProfilePausedSessionId = null;
   // Run one tick immediately so a session already blocked on a pending approval
   // shows its card instantly (the removed SSE 'initial' event used to do this);
   // then poll on the 1500ms cadence. (#3913 SHOULD-FIX)
@@ -8137,7 +8005,6 @@ function _startApprovalFallbackPoll(sid) {
     }
     if (_approvalFallbackPollInFlight) return;
     _approvalFallbackPollInFlight = true;
-    const focusEpoch = _promptPollerFocusEpoch;
     try {
       const generation = _approvalPromptGeneration(sid);
       const data = await api("/api/approval/pending?session_id=" + encodeURIComponent(sid),{timeoutToast:false});
@@ -8154,15 +8021,7 @@ function _startApprovalFallbackPoll(sid) {
         }
       }
     } catch(e) {
-      // Another profile owns this session now (e.g. a different tab switched the shared
-      // profile cookie): every further poll would 409, so stop and leave the card as-is.
-      // Only this poller may stop itself: a late 409 from a replaced poller must not kill its successor.
-      if (typeof _sessionProfileMismatchFromError === 'function' && _sessionProfileMismatchFromError(e)
-          && _approvalPollTimer === pollTimer) {
-        // Focus returned mid-request: the cookie may be back, so retry once (after finally).
-        if (focusEpoch !== _promptPollerFocusEpoch) queueMicrotask(_tick);
-        else { stopApprovalPolling(); _approvalProfilePausedSessionId = sid; }
-      }
+      // A failed poll is retried on the next tick.
     }
     finally { if (_approvalPollTimer === pollTimer) _approvalFallbackPollInFlight = false; }
   };
@@ -9233,19 +9092,6 @@ async function respondClarify(response) {
     // not tear B down on A's late 409. The SSE/poll path will re-render the
     // next prompt's card from scratch via ``showClarifyCard`` either way.
     if (e && e.status === 409) {
-      // #7710: a cross-profile refusal now also arrives as 409
-      // (``session_profile_mismatch``). The prompt is NOT expired — the write
-      // was refused because the session belongs to another profile. Treating
-      // it as expired would hide a live clarification card and mislabel the
-      // cause, so leave the card standing and report the real reason.
-      if (typeof _sessionProfileMismatchFromError === 'function'
-          && _sessionProfileMismatchFromError(e)) {
-        _clarifySetControlsDisabled(false, false);
-        if (typeof setStatus === "function") {
-          setStatus("Clarify: session belongs to a different profile");
-        }
-        return;
-      }
       if (_clarifyId === clarifyId) {
         // Same card still showing — dismiss it and rescue the typed draft.
         // Order matters: ``_stashClarifyDraft`` (called from
@@ -9292,7 +9138,6 @@ var _clarifyFallbackTimer = null;
 var _clarifyHealthTimer = null;
 let _clarifyFallbackPollInFlight = false;
 let _clarifyPollingSessionId = null;
-let _clarifyProfilePausedSessionId = null;
 
 function startClarifyPolling(sid) {
   stopClarifyPolling();
@@ -9315,7 +9160,6 @@ function startClarifyPolling(sid) {
 
 function _startClarifyFallbackPoll(sid) {
   _clarifyPollingSessionId = sid || null;
-  _clarifyProfilePausedSessionId = null;
   // Run one tick immediately so a session already blocked on a pending clarify
   // shows its card instantly (the removed SSE 'initial' event used to do this);
   // then poll on the 3000ms cadence. (#3913 SHOULD-FIX)
@@ -9325,7 +9169,6 @@ function _startClarifyFallbackPoll(sid) {
     }
     if (_clarifyFallbackPollInFlight) return;
     _clarifyFallbackPollInFlight = true;
-    const focusEpoch = _promptPollerFocusEpoch;
     try {
       const generation = _clarifyPromptGeneration(sid);
       const data = await api("/api/clarify/pending?session_id=" + encodeURIComponent(sid),{timeoutToast:false});
@@ -9347,16 +9190,6 @@ function _startClarifyFallbackPoll(sid) {
         currentSessionId: currentSid,
         message: msg,
       };
-      // Profile-mismatch 409: the session is owned by another profile under the current
-      // cookie, so polling can never succeed. Stop quietly; the live card stays standing.
-      // Only this poller may stop itself: a late 409 from a replaced poller must not kill its successor.
-      if (typeof _sessionProfileMismatchFromError === "function" && _sessionProfileMismatchFromError(e)) {
-        if (_clarifyFallbackTimer === pollTimer) {
-          if (focusEpoch !== _promptPollerFocusEpoch) queueMicrotask(_tick);
-          else { stopClarifyPolling(); _clarifyProfilePausedSessionId = sid; }
-        }
-        return;
-      }
       // A 404 from the active session domain is a STALE-SESSION signal — e.g.
       // the old profile's session still polling briefly after a profile switch,
       // or a session deleted server-side — NOT a missing clarify endpoint. Stop
@@ -9425,20 +9258,6 @@ function stopClarifyPolling() {
   _clarifyPollingSessionId = null;
 }
 
-// Another tab may have switched the shared profile cookie back: re-arm pollers that a
-// profile-mismatch 409 paused while their session is still open. A still-mismatched
-// profile just 409s once and pauses them again.
-function _resumeProfilePausedPromptPollers() {
-  if (typeof document !== 'undefined' && document.hidden) return;
-  _promptPollerFocusEpoch++;
-  const current = (S.session && S.session.session_id) || null;
-  const approvalSid = _approvalProfilePausedSessionId;
-  const clarifySid = _clarifyProfilePausedSessionId;
-  if (approvalSid && approvalSid === current && !_approvalPollTimer) startApprovalPolling(approvalSid);
-  if (clarifySid && clarifySid === current && !_clarifyFallbackTimer) startClarifyPolling(clarifySid);
-}
-document.addEventListener('visibilitychange', _resumeProfilePausedPromptPollers);
-window.addEventListener('focus', _resumeProfilePausedPromptPollers);
 
 // ── Notifications and Sound ──────────────────────────────────────────────────
 

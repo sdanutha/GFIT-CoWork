@@ -1,11 +1,13 @@
 """GFIT-CoWork: disabling a Profile stops its work, not only its logins.
 
-Architecture review round 5, candidate 13. When the Admin disables (or
-deletes) a Profile, its running turns stop through the Stop path and its
-scheduled jobs pause; re-enabling resumes exactly the jobs the disable paused.
-Another Profile's work is untouched.
+Architecture review round 5, candidate 13. When the Operator disables a
+Profile (``python3 -m api.operator_cli disable``), its scheduled jobs pause and
+the running server stops its turns through the Stop path
+(``api.roster_watch``); re-enabling resumes exactly the jobs the disable
+paused. Another Profile's work is untouched.
 
-HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
+The command line runs in-process next to an in-process server (see
+``tests/_gfit_server.py``). The
 Agent's ``cron.jobs`` is stood in for by a module that keeps jobs in
 ``$HERMES_HOME/cron/jobs.json``, as the Agent does.
 """
@@ -22,6 +24,7 @@ from pathlib import Path
 import pytest
 
 import api.routes as routes
+from api import operator_cli, roster_watch
 from api.config import (
     ACTIVE_RUNS,
     ACTIVE_RUNS_LOCK,
@@ -35,21 +38,17 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
-    with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
-    ) as s:
+    users = {ALICE: "Alice", BOB: "Bob"}
+    with _gfit_server(monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB]) as s:
         yield s
 
 
-@pytest.fixture
-def admin(srv):
-    return srv.logged_in(ADMIN)
+def cli(*argv) -> int:
+    return operator_cli.run(list(argv))
 
 
 # ── Scheduled jobs ───────────────────────────────────────────────────────────
@@ -117,61 +116,54 @@ def _enabled(srv, uid) -> dict:
     return {job_id: job["enabled"] for job_id, job in _jobs(srv, uid).items()}
 
 
-def test_disabling_a_profile_pauses_its_scheduled_jobs(srv, admin, fake_cron):
+def test_disabling_a_profile_pauses_its_scheduled_jobs(srv, fake_cron):
     _store_jobs(srv, ALICE, {"id": "daily"}, {"id": "hourly"},
                 {"id": "own-pause", "enabled": False, "state": "paused", "paused_reason": "on leave"})
     _store_jobs(srv, BOB, {"id": "bob-daily"})
 
-    status, body, _ = admin.post("/api/profile/disable", {"name": ALICE})
-
-    assert status == 200, body
+    assert cli("disable", ALICE) == 0
     assert _enabled(srv, ALICE) == {"daily": False, "hourly": False, "own-pause": False}
     assert _jobs(srv, ALICE)["own-pause"]["paused_reason"] == "on leave"
     assert _enabled(srv, BOB) == {"bob-daily": True}
 
 
-def test_re_enabling_resumes_only_the_jobs_the_disable_paused(srv, admin, fake_cron):
+def test_re_enabling_resumes_only_the_jobs_the_disable_paused(srv, fake_cron):
     _store_jobs(srv, ALICE, {"id": "daily"}, {"id": "hourly"},
                 {"id": "own-pause", "enabled": False, "state": "paused", "paused_reason": "on leave"})
-    admin.post("/api/profile/disable", {"name": ALICE})
+    cli("disable", ALICE)
 
-    status, body, _ = admin.post("/api/profile/enable", {"name": ALICE})
-
-    assert status == 200, body
+    assert cli("enable", ALICE) == 0
     assert _enabled(srv, ALICE) == {"daily": True, "hourly": True, "own-pause": False}
     # A second disable and enable pauses and resumes them again.
-    admin.post("/api/profile/disable", {"name": ALICE})
-    admin.post("/api/profile/enable", {"name": ALICE})
+    cli("disable", ALICE)
+    cli("enable", ALICE)
     assert _enabled(srv, ALICE) == {"daily": True, "hourly": True, "own-pause": False}
 
 
-def test_a_job_paused_by_hand_while_disabled_stays_paused(srv, admin, fake_cron):
+def test_a_job_paused_by_hand_while_disabled_stays_paused(srv, fake_cron):
     # A job someone paused for their own reason after the disable is not the disable's to resume.
     _store_jobs(srv, ALICE, {"id": "daily"})
-    admin.post("/api/profile/disable", {"name": ALICE})
+    cli("disable", ALICE)
     jobs = list(_jobs(srv, ALICE).values())
     jobs[0]["paused_reason"] = "paused by hand"
     (srv.profile_home(ALICE) / "cron" / "jobs.json").write_text(json.dumps(jobs))
 
-    admin.post("/api/profile/enable", {"name": ALICE})
+    cli("enable", ALICE)
 
     assert _enabled(srv, ALICE) == {"daily": False}
 
 
-def test_a_cron_store_that_cannot_be_read_does_not_stop_the_disable(srv, admin, fake_cron):
+def test_a_cron_store_that_cannot_be_read_does_not_stop_the_disable(srv, fake_cron):
     _store_jobs(srv, ALICE, {"id": "daily"})
     fake_cron["fail"] = True
 
-    status, body, _ = admin.post("/api/profile/disable", {"name": ALICE})
-
-    assert status == 200, body
-    assert body["profile"]["status"] == "disabled"
+    assert cli("disable", ALICE) == 0
     status, _, _ = srv.client().login(ALICE)
     assert status == 403
 
 
-def test_deleting_a_profile_pauses_its_jobs_first(srv, admin, fake_cron, monkeypatch):
-    # A deletion that cannot finish leaves the Profile shut, and its jobs paused.
+def test_a_deletion_that_cannot_finish_leaves_the_jobs_paused(srv, fake_cron, monkeypatch):
+    # Delete needs the Profile disabled first; one that cannot finish leaves it shut, its jobs paused.
     from api import profiles
 
     _store_jobs(srv, ALICE, {"id": "daily"})
@@ -179,10 +171,9 @@ def test_deleting_a_profile_pauses_its_jobs_first(srv, admin, fake_cron, monkeyp
     def busy(*_args, **_kwargs):
         raise RuntimeError("Profile is busy")
 
+    assert cli("disable", ALICE) == 0
     monkeypatch.setattr(profiles, "delete_profile_api", busy)
-    status, body, _ = admin.post("/api/profile/delete", {"name": ALICE, "confirm": ALICE})
-
-    assert status != 200, body
+    assert cli("delete", ALICE, "--confirm", ALICE) == 1
     assert _enabled(srv, ALICE) == {"daily": False}
 
 
@@ -220,14 +211,13 @@ def running():
         unregister_stream_owner(stream_id)
 
 
-def test_disabling_a_profile_stops_its_running_turn_and_no_other(srv, admin, running):
+def test_disabling_a_profile_stops_its_running_turn_and_no_other(srv, running):
     alice_stream = running(_new_session(srv.logged_in(ALICE)))
     bob_stream = running(_new_session(srv.logged_in(BOB)))
     alice_flag = CANCEL_FLAGS[alice_stream]
 
-    status, body, _ = admin.post("/api/profile/disable", {"name": ALICE})
-
-    assert status == 200, body
+    assert cli("disable", ALICE) == 0
+    assert roster_watch.check() == [ALICE]
     assert alice_flag.is_set()
     with STREAMS_LOCK:
         assert alice_stream not in STREAMS

@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, new_session_id
 
 
 def get(path):
@@ -281,7 +281,7 @@ class TestApprovalMessagesJS:
         src = read(REPO / "static/messages.js")
         assert "_approvalResponding = {...owner, choice};" in src, \
             "respondApproval should record the immutable owner before the API call"
-        assert "_setApprovalControlsDisabled(controlChoice, true);" in src, \
+        assert "_setApprovalControlsDisabled(choice, true);" in src, \
             "respondApproval should disable buttons immediately using the clicked control target"
 
     def test_respond_uses_i18n_for_error(self):
@@ -393,8 +393,7 @@ class TestApprovalRespondHTTP:
 
     def test_respond_ok_with_all_choices(self):
         for choice in ("once", "session", "always", "deny"):
-            import uuid
-            sid = f"sprint30-{uuid.uuid4().hex[:8]}"
+            sid = new_session_id()
             result, status = post("/api/approval/respond",
                                   {"session_id": sid, "choice": choice})
             assert status == 200, f"choice={choice} should return 200"
@@ -403,7 +402,7 @@ class TestApprovalRespondHTTP:
 
     def test_respond_rejects_bad_choice(self):
         result, status = post("/api/approval/respond",
-                              {"session_id": "x", "choice": "HACKED"})
+                              {"session_id": new_session_id(), "choice": "HACKED"})
         assert status == 400
 
     def test_respond_requires_session_id(self):
@@ -411,8 +410,7 @@ class TestApprovalRespondHTTP:
         assert status == 400
 
     def test_respond_returns_choice_field(self):
-        import uuid
-        sid = f"sprint30-choice-{uuid.uuid4().hex[:8]}"
+        sid = new_session_id()
         result, status = post("/api/approval/respond",
                               {"session_id": sid, "choice": "always"})
         assert status == 200

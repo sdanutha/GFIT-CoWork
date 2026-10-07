@@ -316,7 +316,6 @@ console.log(JSON.stringify({{
 def test_cache_key_varies_for_exclude_hidden_and_visible_only():
     key_without_filters = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -325,7 +324,6 @@ def test_cache_key_varies_for_exclude_hidden_and_visible_only():
     )
     key_exclude_hidden = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -335,7 +333,6 @@ def test_cache_key_varies_for_exclude_hidden_and_visible_only():
     )
     key_visible_only = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

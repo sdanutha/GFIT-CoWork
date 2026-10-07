@@ -97,17 +97,19 @@ def test_static_files_still_served(cleanup_test_sessions):
 # ── Cancel endpoint ────────────────────────────────────────────────────────
 
 def test_cancel_requires_stream_id(cleanup_test_sessions):
+    # No stream named is a stream the User cannot place: "not found" (ADR 0002).
     try:
         data, status = get("/api/chat/cancel")
-        assert status == 400
+        assert status == 404
     except urllib.error.HTTPError as e:
-        assert e.code == 400
+        assert e.code == 404
 
 def test_cancel_nonexistent_stream(cleanup_test_sessions):
-    data, status = get("/api/chat/cancel?stream_id=nonexistent_xyz")
-    assert status == 200
-    assert data["ok"] is True
-    assert data["cancelled"] is False
+    try:
+        get("/api/chat/cancel?stream_id=nonexistent_xyz")
+        raise AssertionError("an unknown stream was answered")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 def test_send_button_in_html(cleanup_test_sessions):
     src, _ = get_text("/")

@@ -8,13 +8,15 @@ touches `frame-ancestors` (who may embed the WebUI), which stays 'none'.
 
 from __future__ import annotations
 
+from api.helpers import _build_csp_enforced_policy
+
 
 def test_csp_frame_src_default_is_self_only(monkeypatch):
     from server import Handler
 
     monkeypatch.delenv("HERMES_WEBUI_CSP_FRAME_EXTRA", raising=False)
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     assert "frame-src 'self'; " in policy
     # frame-ancestors must remain locked down regardless.
     assert "frame-ancestors 'none'" in policy
@@ -28,7 +30,7 @@ def test_csp_frame_src_includes_valid_extra_origins(monkeypatch):
         "https://grafana.example.com https://*.dash.example.com:8443",
     )
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     assert (
         "frame-src 'self' "
         "https://grafana.example.com https://*.dash.example.com:8443; "
@@ -51,7 +53,7 @@ def test_csp_frame_src_rejects_directive_injection(monkeypatch, caplog):
         "https://ok.example.com; script-src *",
     )
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     assert "https://ok.example.com" not in policy
     assert "script-src *" not in policy
     assert "frame-src 'self'; " in policy  # falls back to safe default
@@ -62,7 +64,7 @@ def test_csp_frame_src_rejects_paths(monkeypatch):
     from server import Handler
 
     monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_EXTRA", "https://app.example.com/embed")
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     assert "https://app.example.com/embed" not in policy
 
 
@@ -71,7 +73,7 @@ def test_csp_frame_src_rejects_ws_scheme(monkeypatch):
     from server import Handler
 
     monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_EXTRA", "wss://socket.example.com")
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     assert "wss://socket.example.com" not in policy
     assert "frame-src 'self'; " in policy
 
@@ -80,7 +82,7 @@ def test_csp_frame_src_rejects_invalid_ports(monkeypatch):
     from server import Handler
 
     monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_EXTRA", "https://app.example.com:99999")
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     assert "https://app.example.com:99999" not in policy
 
 
@@ -90,7 +92,7 @@ def test_csp_frame_src_does_not_affect_connect_src(monkeypatch):
 
     monkeypatch.setenv("HERMES_WEBUI_CSP_FRAME_EXTRA", "https://dash.example.com")
     monkeypatch.delenv("HERMES_WEBUI_CSP_CONNECT_EXTRA", raising=False)
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     # frame-extra present in frame-src ...
     assert "frame-src 'self' https://dash.example.com;" in policy
     # ... and NOT leaked into connect-src (which ends at cdn.jsdelivr.net).

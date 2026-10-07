@@ -689,64 +689,6 @@ def test_custom_provider_explicit_credential_detected_by_provider_has_key(monkey
     )
 
 
-def test_custom_provider_detected_by_get_providers(monkeypatch, tmp_path):
-    """Positive: custom:bothub must appear in get_providers() with has_key=True."""
-    config._CREDENTIAL_POOL_CACHE.clear()
-
-    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data={
-        "custom:bothub": [
-            {
-                "id": "bothub-prov-1",
-                "label": "bothub-key",
-                "source": "manual",
-                "auth_type": "api_key",
-                "runtime_api_key": "sk-bh...test",
-                "base_url": "https://bothub.chat/v1",
-            },
-        ],
-    })
-    monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
-
-    # Custom providers need to be in config.yaml for get_providers() to list them
-    old_cfg = dict(config.cfg)
-    old_mtime = config._cfg_mtime
-    config.cfg.clear()
-    config.cfg["model"] = {"provider": "custom:bothub"}
-    config.cfg["custom_providers"] = [
-        {
-            "name": "bothub",
-            "api_key": "sk-bh...test",
-            "base_url": "https://bothub.chat/v1",
-            "display_name": "Bothub",
-        },
-    ]
-    try:
-        config._cfg_mtime = config.Path(config._get_config_path()).stat().st_mtime
-    except Exception:
-        config._cfg_mtime = 0.0
-    config.invalidate_models_cache()
-
-    try:
-        from api.providers import get_providers
-
-        providers = get_providers()
-        bothub = None
-        for p in providers["providers"]:
-            if p["id"] == "custom:bothub":
-                bothub = p
-                break
-        assert bothub is not None, (
-            f"custom:bothub must appear in get_providers(); "
-            f"got {[p['id'] for p in providers['providers']]}"
-        )
-        assert bothub["has_key"] is True, "custom:bothub must show has_key=True"
-    finally:
-        config.invalidate_models_cache()
-        config.cfg.clear()
-        config.cfg.update(old_cfg)
-        config._cfg_mtime = old_mtime
-
-
 def test_custom_provider_detected_by_get_available_models(monkeypatch, tmp_path):
     """Positive: custom provider with explicit pool credentials must appear as a group."""
     config._CREDENTIAL_POOL_CACHE.clear()

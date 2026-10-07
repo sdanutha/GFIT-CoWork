@@ -22,6 +22,9 @@ from types import SimpleNamespace
 
 import pytest
 
+# The dispatcher reaches these handlers only for a logged-in request (ADR 0006).
+pytestmark = pytest.mark.usefixtures("request_has_user_session")
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

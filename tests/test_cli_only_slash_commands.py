@@ -8,7 +8,7 @@ import tempfile
 import textwrap
 from types import SimpleNamespace
 
-from api.commands import list_commands, _ALLOWED_AGENT_COMMANDS, _AGENT_COMMAND_ALIASES
+from api.commands import list_commands
 
 import pytest
 
@@ -23,11 +23,6 @@ def _extract_js_set_members(source: str, varname: str) -> set[str]:
     m = re.search(rf"const\s+{re.escape(varname)}\s*=\s*new Set\(\[(.*?)\]\)", source, re.S)
     assert m, f"could not find const {varname}=new Set([...]) in source"
     return set(re.findall(r"'([^']*)'", m.group(1)))
-
-
-def _canonical_agent_names(names: set[str]) -> set[str]:
-    """Map underscore alias forms to canonical names via api/commands.py's map."""
-    return {_AGENT_COMMAND_ALIASES.get(n, n) for n in names}
 
 
 def _extract_busy_intercept_block() -> str:
@@ -98,14 +93,6 @@ def test_frontend_matches_agent_command_aliases():
     helper = COMMANDS_JS[helper_idx : helper_idx + 700]
     assert "cmd.aliases" in helper
     assert "some(a=>String(a||'').toLowerCase()===needle)" in helper
-
-
-def test_frontend_can_execute_agent_commands_via_api_endpoint():
-    assert "async function executeAgentCommand" in COMMANDS_JS
-    assert "async function executeAgentPluginCommand" in COMMANDS_JS
-    assert "async function _runAgentCommandTransport" in COMMANDS_JS
-    assert "api('/api/commands/exec'" in COMMANDS_JS
-    assert COMMANDS_JS.count("api('/api/commands/exec'") == 1
 
 
 def test_cli_only_response_mentions_webui_and_cli_scope():
@@ -412,8 +399,10 @@ def test_cli_only_slugs_reserve_skill_autocomplete_namespace():
     assert result["incident_sources"] == ["bundle"]
     assert result["triage_names"] == []
     assert result["triage_sources"] == []
-    assert result["plugin_names"] == ["plugin-review"]
-    assert result["plugin_sources"] == ["plugin"]
+    # Plugin commands ran through the server's command transport, which went
+    # with the Admin (ADR 0006): they are no longer announced.
+    assert result["plugin_names"] == []
+    assert result["plugin_sources"] == []
     assert "skills" in result["skills_names"]
     assert "use" in result["use_names"]
 
@@ -582,8 +571,10 @@ def test_bundle_collisions_stay_hidden_until_agent_metadata_is_ready():
     result = json.loads(proc.stdout)
     assert result["before_names"] == []
     assert result["before_sources"] == []
-    assert result["after_names"] == ["plugin-review"]
-    assert result["after_sources"] == ["plugin"]
+    # The colliding bundle stays hidden; the plugin command itself is not
+    # announced since the command transport went with the Admin (ADR 0006).
+    assert result["after_names"] == []
+    assert result["after_sources"] == []
 
 
 def test_send_intercepts_cli_only_commands_before_agent_round_trip():
@@ -594,7 +585,7 @@ def test_send_intercepts_cli_only_commands_before_agent_round_trip():
     intercept = MESSAGES_JS[intercept_idx:normal_send_idx]
 
     assert "await getAgentCommandMetadata(_parsedCmd.name)" in intercept
-    assert "if(_agentCmd&&_agentCmd.cli_only)" in intercept
+    assert "if(_agentCmd&&(_agentCmd.cli_only||_agentCmd.category==='Plugin'||_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI.has(_agentCmdName)))" in intercept
     assert "cliOnlyCommandResponse(_parsedCmd.name,_agentCmd)" in intercept
     assert "return;" in intercept
 
@@ -622,28 +613,6 @@ def test_send_consults_agent_metadata_before_bundle_resolution():
     assert agent_idx != -1
     assert bundle_idx != -1
     assert agent_idx < bundle_idx
-
-
-def test_send_intercepts_reload_mcp_agent_command_before_agent_round_trip():
-    intercept_idx = MESSAGES_JS.find("Slash command intercept")
-    normal_send_idx = MESSAGES_JS.find("const activeSid=S.session.session_id", intercept_idx)
-    assert normal_send_idx != -1
-    intercept = MESSAGES_JS[intercept_idx:normal_send_idx]
-
-    assert "const _agentCmdName=String(_agentCmd&&_agentCmd.name||_parsedCmd&&_parsedCmd.name||'')" in intercept
-    assert "if(_AGENT_COMMANDS_RUN_ON_WEBUI.has(_agentCmdName))" in intercept
-    assert "executeAgentCommand(text,_agentCmd||{name:_agentCmdName})" in intercept
-
-
-def test_reload_mcp_reload_skills_and_codex_runtime_webui_intercept_aliases_are_defined_in_js_whitelist():
-    assert "'reload-mcp'" in MESSAGES_JS
-    assert "'reload_mcp'" in MESSAGES_JS
-    assert "'reload-skills'" in MESSAGES_JS
-    assert "'reload_skills'" in MESSAGES_JS
-    assert "'codex-runtime'" in MESSAGES_JS
-    assert "'codex_runtime'" in MESSAGES_JS
-    assert "'credits'" in MESSAGES_JS
-    assert "if(_agentCmd&&_AGENT_COMMANDS_RUN_ON_WEBUI.has(_agentCmdName))" not in MESSAGES_JS
 
 
 def test_reload_skills_agent_command_metadata_resolves_alias():
@@ -692,14 +661,13 @@ def test_unknown_slash_commands_still_fall_through_to_agent():
     normal_send_idx = MESSAGES_JS.find("const activeSid=S.session.session_id", intercept_idx)
     intercept = MESSAGES_JS[intercept_idx:normal_send_idx]
 
+    cli_only = "if(_agentCmd&&(_agentCmd.cli_only||_agentCmd.category==='Plugin'||_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI.has(_agentCmdName)))"
     assert "if(_bundleCmd){" in intercept
-    assert "if(_agentCmd&&_agentCmd.cli_only)" in intercept
-    assert "if(_AGENT_COMMANDS_RUN_ON_WEBUI.has(_agentCmdName))" in intercept
-    assert "if(_agentCmd&&_agentCmd.category==='Plugin')" in intercept
+    assert cli_only in intercept
     assert "if(_parsedCmd&&!_cmd)" in intercept
     assert "if(!_agentCmd" not in intercept
     assert "if(_agentCmd){" not in intercept
-    assert "else" not in intercept[intercept.find("if(_agentCmd&&_agentCmd.cli_only)") :]
+    assert "else" not in intercept[intercept.find(cli_only) :]
 
 
 def test_builtin_command_opt_outs_do_not_hit_agent_metadata_lookup():
@@ -737,8 +705,9 @@ def test_non_dispatchable_agent_command_hidden_from_autocomplete():
 
 
 def test_dispatchable_agent_commands_stay_in_autocomplete():
-    """#6951: commands the WebUI does dispatch -- backend exec allowlist and
-    native WebUI behaviors -- must keep appearing in autocomplete."""
+    """#6951: commands the WebUI dispatches in the browser (native behaviors)
+    keep appearing in autocomplete; the server-transport commands (reloads,
+    plugins) went with the Admin (ADR 0006) and are not announced."""
     result = _run_commands_js(
         """
         await loadAgentCommandMetadata(true);
@@ -755,44 +724,26 @@ def test_dispatchable_agent_commands_stay_in_autocomplete():
         };
         """
     )
-    assert result["reload_names"] == ["reload-skills"]
-    assert result["reload_sources"] == ["agent"]
+    assert result["reload_names"] == []
+    assert result["reload_sources"] == []
     assert result["sessions_names"] == ["sessions"]
     assert result["resume_names"] == ["resume"]
-    assert result["plugin_names"] == ["plugin-review"]
+    assert result["plugin_names"] == []
 
 
 def test_autocomplete_allowlist_is_exact_parity_with_dispatchers():
-    """#6951 (re-gate): the announced allowlist must be in exact agreement with
-    BOTH real dispatch authorities -- api/commands.py's _ALLOWED_AGENT_COMMANDS
-    (the /api/commands/exec allowlist) and messages.js's
-    _AGENT_COMMANDS_RUN_ON_WEBUI (the send() dispatch set). This compares the
-    actual parsed sets, so drift in ANY authority fails the test: a command
-    added to one allowlist but not the others, a renamed alias, or a removed
-    entry all break parity here."""
+    """#6951: the announced allowlist is exactly the commands send() handles in
+    the browser without an agent round-trip. The server-side command transport
+    went with the Admin (ADR 0006), so nothing announced may need it, and the
+    commands that used it answer like CLI-only commands."""
     announced = _extract_js_set_members(COMMANDS_JS, "_WEBUI_DISPATCHABLE_AGENT_COMMANDS")
-    dispatched = _extract_js_set_members(MESSAGES_JS, "_AGENT_COMMANDS_RUN_ON_WEBUI")
-
-    # The backend-exec family must agree exactly across all three authorities
-    # (canonical names after alias normalization).
-    backend_allowed = set(_ALLOWED_AGENT_COMMANDS)
-    assert _canonical_agent_names(dispatched) == backend_allowed
-    assert _canonical_agent_names(announced) & backend_allowed == backend_allowed
-
-    # Announced backend-exec commands are exactly the backend-exec allowlist
-    # (no announced exec command outside /api/commands/exec, none missing).
-    announced_backend = _canonical_agent_names(announced) & backend_allowed
-    assert announced_backend == backend_allowed
-
-    # Every remaining announced command must be a native WebUI behavior that
-    # send() handles without an agent round-trip (moa/sessions/resume).
-    native = announced - announced_backend
-    assert native == {"moa", "sessions", "resume"}
-
-    # The plugin transport is parity by rule, not by list: the filter accepts
-    # category==='Plugin' and the dispatcher routes the exact same value.
-    assert "category==='Plugin'" in COMMANDS_JS
-    assert "_agentCmd.category==='Plugin'" in MESSAGES_JS
+    assert announced == {"moa", "sessions", "resume"}
+    assert "_parsedCmd.name==='sessions' || _parsedCmd.name==='resume'" in MESSAGES_JS
+    assert "_agentCmdName==='moa'" in MESSAGES_JS
+    cli_only_in_webui = _extract_js_set_members(MESSAGES_JS, "_AGENT_COMMANDS_CLI_ONLY_IN_WEBUI")
+    assert {"reload-mcp", "reload-skills", "codex-runtime", "credits"} <= cli_only_in_webui
+    assert not cli_only_in_webui & announced
+    assert "/api/commands/exec" not in COMMANDS_JS + MESSAGES_JS
 
 
 def _run_shared_classic_realm_js() -> dict:
@@ -836,7 +787,7 @@ def _run_shared_classic_realm_js() -> dict:
           secondError = String(e && e.message || e);
         }}
         const bound = vm.runInContext(`({{
-          runOnWebui: typeof _AGENT_COMMANDS_RUN_ON_WEBUI,
+          cliOnlyInWebui: typeof _AGENT_COMMANDS_CLI_ONLY_IN_WEBUI,
           dispatchable: typeof _WEBUI_DISPATCHABLE_AGENT_COMMANDS,
           backendConst: typeof _BACKEND_EXECUTED_AGENT_COMMANDS
         }})`, ctx);
@@ -867,8 +818,8 @@ def test_commands_and_messages_evaluate_in_one_shared_classic_script_realm():
         f"messages.js failed to evaluate after commands.js in the shared realm: "
         f"{out['secondError']}"
     )
-    assert out["runOnWebui"] == "object", (
-        "messages.js dispatch const _AGENT_COMMANDS_RUN_ON_WEBUI not bound in "
+    assert out["cliOnlyInWebui"] == "object", (
+        "messages.js const _AGENT_COMMANDS_CLI_ONLY_IN_WEBUI not bound in "
         "the shared realm -- declaration instantiation was aborted"
     )
     assert out["dispatchable"] == "object", (
@@ -890,7 +841,7 @@ def test_busy_path_intercepts_stop_before_mode_routing():
     mode_idx = MESSAGES_JS.find("const defaultMessageMode=", busy_idx)
     assert mode_idx != -1
     busy_block = MESSAGES_JS[busy_idx:mode_idx]
-    assert "['steer','interrupt','queue','terminal','goal','yolo','stop']" in busy_block
+    assert "['steer','interrupt','queue','goal','stop']" in busy_block
     assert "cmdStop" in busy_block or "COMMANDS.find(c=>c.name===_pc.name)" in busy_block
 
 
@@ -969,12 +920,11 @@ def test_real_registry_announced_commands_are_all_dispatchable():
         )
         announced_by_prefix[name] = result
 
-    backend_allowed = set(_ALLOWED_AGENT_COMMANDS)
     for name, rows in announced_by_prefix.items():
         for row in rows:
             if row["source"] not in ("agent", "plugin"):
                 continue  # builtin/subarg/skill rows are out of scope
-            assert row["name"] in backend_allowed or row["name"] in (
+            assert row["name"] in (
                 "moa",
                 "sessions",
                 "resume",

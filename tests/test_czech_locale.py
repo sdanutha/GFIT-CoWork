@@ -1,12 +1,10 @@
 from collections import Counter
 from pathlib import Path
 import re
-from tests.test_issue2147_profile_concept_help import PROFILE_CONCEPT_KEYS
 
 
 REPO = Path(__file__).resolve().parent.parent
 PROFILE_CONCEPT_FALLBACK_KEYS = {
-    *PROFILE_CONCEPT_KEYS,
     "workspace_artifact_source_session",
 }
 
@@ -100,7 +98,6 @@ def test_czech_locale_includes_representative_translations():
         "tab_tasks: 'Úkoly'",
         "tab_profiles: 'Profily'",
         "empty_title: 'Jak vám mohu pomoci?'",
-        "onboarding_title: 'Vítejte v GFIT-CoWork'",
     ]
     for entry in expected:
         assert entry in cs_block, f"missing expected Czech translation: {entry}"

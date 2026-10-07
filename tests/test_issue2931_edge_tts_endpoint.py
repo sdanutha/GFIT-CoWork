@@ -14,6 +14,9 @@ import pytest
 
 import api.routes as routes
 
+# The dispatcher reaches these handlers only for a logged-in request (ADR 0006).
+pytestmark = pytest.mark.usefixtures("request_has_user_session")
+
 
 class _FakeHandler:
     def __init__(self, body: bytes, command: str = "POST", headers=None, client="1.2.3.4"):
@@ -59,12 +62,6 @@ def _fresh_tts_limiter(monkeypatch):
     # The limiter is a function-attribute singleton that persists across the
     # whole test session; reset it before AND after every test in this module so
     # neither prior suite state nor these tests leak rate-limit state.
-    # Also force auth OFF: these tests exercise the method/length/voice/rate-limit
-    # guards, which sit before the auth check. Another test in the full suite can
-    # leave is_directory_enabled() True globally, which would 401 these requests before
-    # they reach the path under test. Pin it False so the assertions are
-    # deterministic regardless of suite order.
-    monkeypatch.setattr("api.directory.is_directory_enabled", lambda: False)
     monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
     _reset_limiter()
     yield
@@ -176,21 +173,25 @@ def test_tts_rate_limit_ignores_spoofed_forwarded_for_by_default():
     assert h2.status == 429
 
 
-def test_tts_rate_limit_can_trust_forwarded_for_when_opted_in(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", "1")
+def test_tts_rate_limit_is_per_session():
+    # Every request carries a session (ADR 0006), so the limit is per session,
+    # not per address: another User's request from the same address is served.
+    import api.auth as auth
 
-    h1 = _post(
-        {"text": "hello", "voice": "not-a-real-voice"},
-        headers={"X-Forwarded-For": "203.0.113.12"},
-        client="10.0.0.5",
-    )
+    h1 = _post({"text": "hello", "voice": "not-a-real-voice"}, client="10.0.0.5")
     routes._handle_tts(h1, None)
     assert h1.status == 400
 
-    h2 = _post(
-        {"text": "hello", "voice": "not-a-real-voice"},
-        headers={"X-Forwarded-For": "203.0.113.13"},
-        client="10.0.0.5",
+    other = auth.create_session(
+        auth_type=auth.DIRECTORY_AUTH_TYPE, username="200002", bound_profile="200002", role="user",
     )
-    routes._handle_tts(h2, None)
-    assert h2.status == 400
+    try:
+        h2 = _post(
+            {"text": "hello", "voice": "not-a-real-voice"},
+            headers={"Cookie": f"{auth._resolve_cookie_name()}={other}"},
+            client="10.0.0.5",
+        )
+        routes._handle_tts(h2, None)
+        assert h2.status == 400
+    finally:
+        auth.invalidate_session(other)

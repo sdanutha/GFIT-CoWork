@@ -74,26 +74,6 @@ class TestProfileSwitchWorkspaceSetter:
             "so newSession() can apply it to the first new session"
         )
 
-    def test_panels_still_sets_profile_default_workspace(self):
-        src = read('static/panels.js')
-        assert 'S._profileDefaultWorkspace = data.default_workspace' in src, (
-            "panels.js must still set S._profileDefaultWorkspace (persistent default) "
-            "alongside S._profileSwitchWorkspace"
-        )
-
-    def test_both_set_together_in_same_block(self):
-        src = read('static/panels.js')
-        default_pos = src.find('S._profileDefaultWorkspace = data.default_workspace')
-        switch_pos = src.find('S._profileSwitchWorkspace = data.default_workspace')
-        assert default_pos != -1, "S._profileDefaultWorkspace setter not found"
-        assert switch_pos != -1, "S._profileSwitchWorkspace setter not found"
-        # Both must be set within 200 chars of each other (same block)
-        assert abs(default_pos - switch_pos) < 300, (
-            "_profileDefaultWorkspace and _profileSwitchWorkspace must be set "
-            "together in the same profile-switch workspace block"
-        )
-
-
     def test_switch_to_workspace_clears_profile_switch_workspace(self):
         """Opus Q4: when the user manually changes workspace, the pending one-shot
         switch flag should be cleared so a subsequent newSession() inherits the

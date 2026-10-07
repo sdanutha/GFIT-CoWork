@@ -36,7 +36,7 @@ def _default_max_turns() -> int:
     try:
         from api import config as _config
 
-        cfg = getattr(_config, "cfg", {}) or {}
+        cfg = _config.get_config() or {}
         goals_cfg = cfg.get("goals", {}) if isinstance(cfg, dict) else {}
         if not isinstance(goals_cfg, dict):
             return int(DEFAULT_MAX_TURNS or 20)

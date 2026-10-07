@@ -7,17 +7,19 @@ policy:
 - the **User's adapter** (:class:`UserSessionOwnership`): owns exactly the
   sessions of the User's Profile (ADR 0002). Every other id, and every id it
   cannot place, is refused: unknown is not allowed;
-- the **unconfined adapter** (:data:`UNCONFINED`): the Admin, and requests with
-  no Admission (login turned off, worker threads). Today's rules: a session of
-  another, known Profile is refused with that Profile named (the 409 the client
-  uses to offer a switch), and an id it cannot find passes to the route;
+- the **unconfined adapter** (:data:`UNCONFINED`): code with no caller
+  (worker threads, public routes). Upstream's rules: a session of another,
+  known Profile is refused with that Profile named (a 409 no HTTP request can
+  get now that every one has a caller), and an id it cannot find passes;
 - the **refusing answer** (:data:`REFUSING`): a Directory session with no
   recorded Admission, or an Admission this module does not understand. It owns
   nothing.
 
 A User's request is **Bound** to their Profile: besides owning only that
-Profile's sessions, it may name no other Profile (:meth:`may_name_profile`)
-and may not switch Profile (:meth:`may_switch_profile`).
+Profile's sessions, it may name no other Profile (:meth:`may_name_profile`).
+
+A route loads the session its request names through :func:`load_owned_session`:
+it asks session ownership first and writes the refusal (or the 404) itself.
 
 Callers ask: is this session id mine (:meth:`refuse_session`; for a session
 the route has already found, a record or a listed row,
@@ -63,18 +65,9 @@ class Refusal:
 
     owner: str | None = None
     session_id: str | None = None
-    read_only: bool = False
 
     def answer(self, handler, session_id=None, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write this refusal's answer: 403 for a read-only session, 409 with the
-        owner, else 404 with *not_found*."""
-        if self.read_only:
-            return j(handler, {
-                "error": "This session is read-only: it belongs to another Profile",
-                "code": "session_read_only",
-                "session_id": session_id if session_id is not None else self.session_id,
-                "profile": self.owner,
-            }, status=403)
+        """Write this refusal's answer: 409 with the owner, else 404 with *not_found*."""
         if self.owner:
             return j(handler, {
                 "error": "Session belongs to a different profile",
@@ -85,10 +78,7 @@ class Refusal:
         return self.answer_not_found(handler, not_found=not_found)
 
     def answer_not_found(self, handler, *, not_found: str = NOT_FOUND_MESSAGE) -> bool:
-        """Write 404, for a route whose answer never names an owner (a read-only
-        refusal still answers 403: the Admin knows the session exists)."""
-        if self.read_only:
-            return self.answer(handler)
+        """Write 404, for a route whose answer never names an owner."""
         return bad(handler, not_found, 404)
 
 
@@ -101,16 +91,12 @@ class ProfileReach:
 
     The answer to :meth:`profile_reach` (a view) and :meth:`caller_reach` (the
     caller). *every_profile* is true when every Profile may be read; otherwise
-    *profiles* names the ones that may. *counts_other_profiles* says whether an
-    "N from other Profiles" count may be shown. *single_profile* says whether
-    the web app should treat the caller as single-Profile (no Profile picker,
-    no all-Profiles view).
+    *profiles* names the ones that may. There is no all-Profiles view (ADR
+    0006): a view is always one Profile's.
     """
 
     every_profile: bool
     profiles: frozenset = frozenset()
-    counts_other_profiles: bool = False
-    single_profile: bool = False
 
     def __post_init__(self):
         if self.every_profile and self.profiles:
@@ -126,147 +112,7 @@ class ProfileReach:
 
 
 EVERY_PROFILE = ProfileReach(every_profile=True)
-NO_PROFILE = ProfileReach(every_profile=False, single_profile=True)
-
-
-READ = "read"
-WRITE = "write"
-
-# Every (method, route) that names a session, by what it does (not its method).
-# A route whose class is unclear (it reads and records something, or runs the
-# session's model) is a WRITE: unknown is not allowed.
-SESSION_ROUTE_KINDS: dict[tuple[str, str], str] = {
-    ("GET", "/api/approval/pending"): READ,
-    ("GET", "/api/approval/stream"): READ,
-    ("GET", "/api/background/status"): READ,
-    ("GET", "/api/chat/stream"): READ,
-    ("GET", "/api/chat/stream/status"): READ,
-    ("GET", "/api/clarify/pending"): READ,
-    ("GET", "/api/clarify/stream"): READ,
-    ("GET", "/api/file"): READ,
-    ("GET", "/api/file/raw"): READ,
-    ("GET", "/api/folder/download"): READ,
-    ("GET", "/api/git-info"): READ,
-    ("GET", "/api/git/branches"): READ,
-    ("GET", "/api/git/diff"): READ,
-    ("GET", "/api/git/status"): READ,
-    ("GET", "/api/list"): READ,
-    ("GET", "/api/session"): READ,
-    ("GET", "/api/session/compress/status"): READ,
-    ("GET", "/api/session/export"): READ,
-    ("GET", "/api/session/lineage/report"): READ,
-    ("GET", "/api/session/status"): READ,
-    ("GET", "/api/session/stream"): READ,
-    ("GET", "/api/session/usage"): READ,
-    ("GET", "/api/session/worktree/status"): READ,
-    ("GET", "/api/session/yolo"): READ,
-    ("GET", "/api/sessions/<id>/events"): READ,
-    ("GET", "/session/*"): READ,
-    ("POST", "/api/file/path"): READ,  # resolves a Workspace path
-    ("POST", "/api/session/conversation-rounds"): READ,  # counts rounds
-    ("GET", "/api/chat/cancel"): WRITE,  # stops a run
-    ("POST", "/api/approval/respond"): WRITE,
-    ("POST", "/api/background"): WRITE,
-    ("POST", "/api/bg-task-complete-ack"): WRITE,
-    ("POST", "/api/btw"): WRITE,
-    ("POST", "/api/chat"): WRITE,
-    ("POST", "/api/chat/start"): WRITE,
-    ("POST", "/api/chat/steer"): WRITE,
-    ("POST", "/api/clarify/respond"): WRITE,
-    ("POST", "/api/file/create"): WRITE,
-    ("POST", "/api/file/create-dir"): WRITE,
-    ("POST", "/api/file/delete"): WRITE,
-    ("POST", "/api/file/move"): WRITE,
-    ("POST", "/api/file/office-save"): WRITE,
-    ("POST", "/api/file/rename"): WRITE,
-    ("POST", "/api/file/save"): WRITE,
-    ("POST", "/api/goal"): WRITE,
-    ("POST", "/api/personality/set"): WRITE,
-    ("POST", "/api/session/anchor-scene"): WRITE,  # persists onto the session
-    ("POST", "/api/session/archive"): WRITE,
-    ("POST", "/api/session/branch"): WRITE,
-    ("POST", "/api/session/clear"): WRITE,
-    ("POST", "/api/session/compress"): WRITE,
-    ("POST", "/api/session/compress/start"): WRITE,
-    ("POST", "/api/session/compression-recovery/start"): WRITE,
-    ("POST", "/api/session/delete"): WRITE,
-    ("POST", "/api/session/draft"): WRITE,
-    ("POST", "/api/session/duplicate"): WRITE,
-    ("POST", "/api/session/handoff-summary"): WRITE,  # runs the session's model
-    ("POST", "/api/session/import_cli"): WRITE,
-    ("POST", "/api/session/move"): WRITE,
-    ("POST", "/api/session/new"): WRITE,
-    ("POST", "/api/session/pin"): WRITE,
-    ("POST", "/api/session/rename"): WRITE,
-    ("POST", "/api/session/retry"): WRITE,
-    ("POST", "/api/session/title/regenerate"): WRITE,
-    ("POST", "/api/session/toolsets"): WRITE,
-    ("POST", "/api/session/truncate"): WRITE,
-    ("POST", "/api/session/undo"): WRITE,
-    ("POST", "/api/session/update"): WRITE,
-    ("POST", "/api/upload"): WRITE,
-    ("POST", "/api/upload/extract"): WRITE,
-    ("POST", "/api/workspace/upload"): WRITE,
-    # Admin-only routes that name a session (the Admin's view of another
-    # Profile's session must not reach a write through them either).
-    ("GET", "/api/escape/file/raw"): READ,
-    ("GET", "/api/escape/file/read"): READ,
-    ("GET", "/api/escape/list"): READ,
-    ("GET", "/api/terminal/output"): READ,
-    ("GET", "/api/approval/inject_test"): WRITE,
-    ("GET", "/api/clarify/inject_test"): WRITE,
-    ("POST", "/api/escape/authorize"): WRITE,
-    ("POST", "/api/file/open-vscode"): WRITE,
-    ("POST", "/api/file/reveal"): WRITE,
-    ("POST", "/api/git/checkout"): WRITE,
-    ("POST", "/api/git/commit"): WRITE,
-    ("POST", "/api/git/commit-message"): WRITE,  # runs the model
-    ("POST", "/api/git/commit-message-selected"): WRITE,  # runs the model
-    ("POST", "/api/git/commit-selected"): WRITE,
-    ("POST", "/api/git/discard"): WRITE,
-    ("POST", "/api/git/fetch"): WRITE,
-    ("POST", "/api/git/pull"): WRITE,
-    ("POST", "/api/git/push"): WRITE,
-    ("POST", "/api/git/stage"): WRITE,
-    ("POST", "/api/git/stash-checkout"): WRITE,
-    ("POST", "/api/git/unstage"): WRITE,
-    ("POST", "/api/session/worktree/remove"): WRITE,
-    ("POST", "/api/session/yolo"): WRITE,
-    ("POST", "/api/share/create"): WRITE,  # a public link to the session
-    ("POST", "/api/share/revoke"): WRITE,
-    ("POST", "/api/terminal/close"): WRITE,
-    ("POST", "/api/terminal/input"): WRITE,
-    ("POST", "/api/terminal/resize"): WRITE,
-    ("POST", "/api/terminal/start"): WRITE,
-}
-
-
-def _request_is_a_read() -> bool:
-    """Is this request a read, by the read/write table? Unknown is not."""
-    from api.access import request_route
-
-    route = request_route()
-    return route is not None and session_route_kind(*route) == READ
-
-
-def _route_matches(pattern: str, path: str) -> bool:
-    from api.access import _segments_match
-
-    return path.startswith(pattern[:-1]) if pattern.endswith("*") else _segments_match(pattern, path)
-
-
-def session_route_kind(method: str, path: str) -> str | None:
-    """READ or WRITE for a request to a route that names a session; None for any other route.
-
-    A session route under a method the table does not name is a WRITE.
-    """
-    named = False
-    for (route_method, pattern), kind in SESSION_ROUTE_KINDS.items():
-        if _route_matches(pattern, path):
-            if route_method == method:
-                return kind
-            named = True
-    return WRITE if named else None
+NO_PROFILE = ProfileReach(every_profile=False)
 
 
 def _names_nothing(session_id) -> bool:
@@ -362,17 +208,9 @@ class UserSessionOwnership:
 
         return isinstance(name, str) and _profiles_match(name, self.profile)
 
-    def may_switch_profile(self) -> bool:
-        """Bound: a User's request never switches Profile."""
-        return False
-
     def sees_profile_less_sessions(self) -> bool:
         """Never: Claude Code rows come from the server account's home."""
         return False
-
-    def read_only_reason(self, found) -> str | None:
-        """Why a session the caller may open is read-only to them: never, for a User."""
-        return None
 
     def refuse_session(self, session_id) -> Refusal | None:
         """None when *session_id* names nothing or a session of the User's Profile, else 404."""
@@ -400,11 +238,10 @@ class UserSessionOwnership:
             return False
         return not session_id or self._owns(session_id)
 
-    def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
+    def may_list_row(self, row, *, active_profile=None) -> bool:
         """A row of the User's Profile; never a Profile-less one.
 
-        *active_profile* and *all_profiles* are the Admin's view; the User's
-        own Profile wins.
+        *active_profile* is an unconfined view's; the User's own Profile wins.
         """
         from api.profiles import _profiles_match
 
@@ -417,13 +254,13 @@ class UserSessionOwnership:
         """No: a User's request is answered by this adapter alone, never by a route's own rules."""
         return False
 
-    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
-        """Exactly the User's own Profile, whatever was asked; other Profiles are never counted."""
+    def profile_reach(self, active_profile=None) -> ProfileReach:
+        """Exactly the User's own Profile, whatever was asked."""
         return self.caller_reach()
 
     def caller_reach(self) -> ProfileReach:
         """The User's own Profile."""
-        return ProfileReach(every_profile=False, profiles=frozenset({self.profile}), single_profile=True)
+        return ProfileReach(every_profile=False, profiles=frozenset({self.profile}))
 
     def refuse_found_session(self, session_id, found) -> Refusal | None:
         """A session the route has already found (a record, or a listed row): the User's own, else 404."""
@@ -440,42 +277,25 @@ class UserSessionOwnership:
 
 
 class _UnconfinedSessionOwnership:
-    """The Admin's, and no caller's: today's rules against the request's active Profile."""
+    """No caller's: today's rules against the request's active Profile."""
 
     def may_name_profile(self, name) -> bool:
-        return True
-
-    def may_switch_profile(self) -> bool:
         return True
 
     def sees_profile_less_sessions(self) -> bool:
         """Claude Code rows, under the setting that shows them."""
         return True
 
-    def read_only_reason(self, found) -> str | None:
-        return None
-
     def keeps_upstream_rules(self) -> bool:
         """Yes: routes keep Upstream's own rules (the detail-load and import exemptions,
         chat start's placeholder retag) on top of this adapter's answers."""
         return True
 
-    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
-        """Today's rules: the active Profile, or every Profile when asked for.
+    def profile_reach(self, active_profile=None) -> ProfileReach:
+        """The active Profile (a view is always one Profile's)."""
+        from api.profiles import get_active_profile_name
 
-        Upstream's isolated profile mode (a process serving one Profile) keeps
-        the request on the active Profile and counts no other.
-        """
-        from api.profiles import _is_isolated_profile_mode, get_active_profile_name
-
-        single = _is_isolated_profile_mode()
-        if all_profiles and not single:
-            return EVERY_PROFILE
-        active = active_profile or get_active_profile_name()
-        return ProfileReach(
-            every_profile=False, profiles=frozenset({active}),
-            counts_other_profiles=not single, single_profile=single,
-        )
+        return ProfileReach(every_profile=False, profiles=frozenset({active_profile or get_active_profile_name()}))
 
     def caller_reach(self) -> ProfileReach:
         """Every Profile: no caller confines this request, whatever Upstream's posture.
@@ -504,15 +324,10 @@ class _UnconfinedSessionOwnership:
     def may_receive_event(self, event) -> bool:
         return True
 
-    def may_list_row(self, row, *, active_profile=None, all_profiles: bool = False) -> bool:
-        """Every Profile's rows in the all-Profiles view, else the active Profile's.
-
-        A row with no Profile counts as the root Profile's.
-        """
+    def may_list_row(self, row, *, active_profile=None) -> bool:
+        """The active Profile's rows. A row with no Profile counts as the root Profile's."""
         from api.profiles import _profiles_match, get_active_profile_name
 
-        if all_profiles:
-            return True
         profile = row.get("profile") if isinstance(row, dict) else None
         return _profiles_match(profile, active_profile or get_active_profile_name())
 
@@ -540,64 +355,14 @@ class _UnconfinedSessionOwnership:
         return self.refuse_found_session(session_id, row)
 
 
-class _AdminSessionOwnership(_UnconfinedSessionOwnership):
-    """The Admin's Directory session: the unconfined rules, in ``default`` for good.
-
-    The Admin stays in the ``default`` Profile and never switches (ADR 0004).
-    Another Profile's session is read-only in place: a request the read/write
-    table calls a read is answered as for the Admin's own session (no 409, no
-    switch); anything else is refused read-only (403, naming the owner).
-    """
-
-    def may_switch_profile(self) -> bool:
-        return False
-
-    def may_name_profile(self, name) -> bool:
-        """Only ``default``: a request never names a User's Profile to work in.
-
-        Managing Profiles names them under ``name``, not ``profile``.
-        """
-        from api.profiles import _profiles_match
-
-        return isinstance(name, str) and bool(name) and _profiles_match(name, "default")
-
-    def keeps_upstream_rules(self) -> bool:
-        """No: Upstream's exemptions (chat start's placeholder retag, the CLI
-        import claim) would let the Admin take over another Profile's session.
-        Every session id the Admin names goes through the generic guard."""
-        return False
-
-    def refuse_found_session(self, session_id, found) -> Refusal | None:
-        refusal = super().refuse_found_session(session_id, found)
-        if refusal is None or not refusal.owner:
-            return refusal
-        if _request_is_a_read():
-            return None
-        return Refusal(owner=refusal.owner, session_id=refusal.session_id, read_only=True)
-
-    def read_only_reason(self, found) -> str | None:
-        from api.profiles import _profiles_match, get_active_profile_name
-
-        profile = _profile_of(found)
-        if profile and not _profiles_match(profile, get_active_profile_name()):
-            return "other_profile"
-        return None
-
-
 class _RefusingSessionOwnership:
     """The refusing answer: owns nothing."""
 
     def may_name_profile(self, name) -> bool:
         return False
 
-    def may_switch_profile(self) -> bool:
-        return False
-
     def sees_profile_less_sessions(self) -> bool:
         return False
-
-    def read_only_reason(self, found) -> str | None:
-        return None
 
     def refuse_session(self, session_id) -> Refusal:
         return NOT_FOUND
@@ -614,7 +379,7 @@ class _RefusingSessionOwnership:
     def keeps_upstream_rules(self) -> bool:
         return False
 
-    def profile_reach(self, active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
+    def profile_reach(self, active_profile=None) -> ProfileReach:
         return NO_PROFILE
 
     def caller_reach(self) -> ProfileReach:
@@ -628,25 +393,22 @@ class _RefusingSessionOwnership:
 
 
 UNCONFINED = _UnconfinedSessionOwnership()
-ADMIN = _AdminSessionOwnership()
 REFUSING = _RefusingSessionOwnership()
 
 
 def ownership_for(admission, *, directory_session: bool):
     """The session ownership adapter for *admission*: the one mapping from Admission to adapter.
 
-    A User's Admission gives that User's adapter, the Admin's gives the
-    Admin's (the unconfined rules, never switching Profile). No Admission is unconfined only when there is no Directory
-    session (login turned off, a worker thread); a Directory session with none
+    A User's Admission gives that User's adapter. No Admission is
+    unconfined only when there is no Directory session (a public route, a
+    worker thread); a Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
-    from api.access import ROLE_ADMIN, ROLE_USER
+    from api.access import ROLE_USER
     from api.profiles import _resolve_named_profile_home
 
     if admission is None:
         return REFUSING if directory_session else UNCONFINED
-    if admission.role == ROLE_ADMIN:
-        return ADMIN
     if admission.role == ROLE_USER and admission.profile:
         try:
             _resolve_named_profile_home(admission.profile)
@@ -663,11 +425,39 @@ def request_session_ownership():
     return ownership_for(request_admission(), directory_session=request_has_directory_session())
 
 
-def request_profile_reach(active_profile=None, *, all_profiles: bool = False) -> ProfileReach:
-    """This request's Profile reach in a view: its active Profile, or all Profiles when asked."""
-    return request_session_ownership().profile_reach(active_profile, all_profiles=all_profiles)
+def request_profile_reach(active_profile=None) -> ProfileReach:
+    """This request's Profile reach in a view: one Profile, the caller's."""
+    return request_session_ownership().profile_reach(active_profile)
 
 
 def request_caller_reach() -> ProfileReach:
     """The Profiles this request's caller may read at all, whatever the view."""
     return request_session_ownership().caller_reach()
+
+
+def load_owned_session(
+    handler, session_id, *, load, not_found: str = NOT_FOUND_MESSAGE, hide_owner: bool = False, **load_options
+):
+    """The session the request names, when the request owns it; else None, its answer written.
+
+    Session ownership answers first (as a read or a write, by the request's
+    route): a refusal writes 404 *not_found* (409 naming the owner, for the
+    unconfined adapter). Then *load*
+    (the caller's session loader) loads it with *load_options*; a load
+    that raises ``KeyError`` writes 404 *not_found*. Other errors pass to the
+    caller. With *hide_owner* a refusal never says who owns the session (always
+    404), for routes that never did. For a session id the request chose,
+    never one the server chose.
+    """
+    refusal = request_session_ownership().refuse_session(session_id)
+    if refusal is not None:
+        if hide_owner:
+            refusal.answer_not_found(handler, not_found=not_found)
+        else:
+            refusal.answer(handler, session_id, not_found=not_found)
+        return None
+    try:
+        return load(session_id, **load_options)
+    except KeyError:
+        bad(handler, not_found, 404)
+        return None

@@ -453,8 +453,8 @@ class RailTooltipCascadeTests(unittest.TestCase):
                 missing.append(('missing or empty data-tooltip', attrs[:120]))
 
         self.assertGreaterEqual(
-            rail_btn_count, 10,
-            f"Expected ≥10 rail buttons (found {rail_btn_count}). Test selector wrong?",
+            rail_btn_count, 5,
+            f"Expected ≥5 rail buttons (found {rail_btn_count}). Test selector wrong?",
         )
         self.assertEqual(
             missing, [],

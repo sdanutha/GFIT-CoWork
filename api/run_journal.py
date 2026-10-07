@@ -68,9 +68,9 @@ _SNAPSHOT_ARGS_TRUNCATED_SUFFIX = "...[truncated]"
 
 
 def _default_session_dir() -> Path:
-    from api.models import SESSION_DIR
+    from api import config as _config
 
-    return Path(SESSION_DIR)
+    return Path(_config.SESSION_DIR)
 
 
 def _validate_id(value: str, field: str) -> str:

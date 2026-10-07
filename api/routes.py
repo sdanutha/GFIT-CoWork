@@ -17,12 +17,10 @@ import mimetypes
 import os
 import queue
 import re
-import platform
 import shlex
 import shutil
 import sqlite3
 import stat as _stat
-import subprocess
 import sys
 import threading
 import time
@@ -32,8 +30,7 @@ import socket as _socket
 from collections import defaultdict, deque, OrderedDict
 from pathlib import Path
 from contextlib import closing
-from urllib.parse import parse_qs, quote, urljoin, urlsplit
-from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 from api.agent_runtime import (
     AgentRuntimeChangedError,
@@ -62,14 +59,13 @@ from api.session_events import (
     subscribe_session_events,
     unsubscribe_session_events,
 )
-from api.gateway_restart import restart_active_profile_gateway
 from api.session_ownership import (
     UNCONFINED as _UNCONFINED_OWNERSHIP,
+    load_owned_session,
     request_caller_reach,
     request_profile_reach,
     request_session_ownership,
 )
-from api.shares import create_or_refresh_share, load_share, revoke_share
 from api.trusted_proxy import forwarded_client_address, peer_address, peer_is_trusted_proxy
 
 logger = logging.getLogger(__name__)
@@ -264,6 +260,14 @@ except Exception:
 # Track job IDs currently being executed so the frontend can poll status.
 _RUNNING_CRON_JOBS: dict[str, float] = {}  # job_id → start_timestamp
 _RUNNING_CRON_LOCK = threading.Lock()
+
+
+def _running_cron_jobs_snapshot() -> dict[str, float]:
+    """{job_id: start_epoch} of the cron jobs running now (for the session-list cache)."""
+    with _RUNNING_CRON_LOCK:
+        return dict(_RUNNING_CRON_JOBS)
+
+
 _CRON_CREATE_SNAPSHOT_LOCK = threading.Lock()
 _MANUAL_COMPRESSION_JOBS: dict[str, dict] = {}
 _MANUAL_COMPRESSION_JOBS_LOCK = threading.Lock()
@@ -278,19 +282,12 @@ _MESSAGING_SESSION_METADATA_CACHE: dict[str, object] = {
 }
 _MESSAGING_SESSION_METADATA_LOCK = threading.Lock()
 _STALE_MESSAGING_END_REASONS = {"session_reset", "session_switch"}
-_CSP_REPORT_LOGGER = logging.getLogger("csp_report")
-_CSP_REPORT_RATE_LIMIT: dict[str, list[float]] = {}
-_CSP_REPORT_RATE_LIMIT_LOCK = threading.Lock()
-_CSP_REPORT_RATE_LIMIT_WINDOW_SECONDS = 60
-_CSP_REPORT_RATE_LIMIT_MAX = 100
-_CSP_REPORT_MAX_BODY_BYTES = 64 * 1024
 _CLIENT_EVENT_LOGGER = logging.getLogger("client_event")
 _CLIENT_EVENT_RATE_LIMIT: dict[str, list[float]] = {}
 _CLIENT_EVENT_RATE_LIMIT_LOCK = threading.Lock()
 _CLIENT_EVENT_RATE_LIMIT_WINDOW_SECONDS = 60
 _CLIENT_EVENT_RATE_LIMIT_MAX = 30
 _CLIENT_EVENT_MAX_BODY_BYTES = 4 * 1024
-_EXTENSION_SIDECAR_PROXY_MAX_RESPONSE_BYTES = 512 * 1024
 _CLIENT_EVENT_ALLOWED_FIELDS = {
     "event": 64,
     "source": 80,
@@ -465,7 +462,7 @@ def _visible_pinned_lineage_ids(session_rows) -> set[str]:
 # Sessions and projects are stored in the WebUI sidecar without per-row
 # isolation by default — they're tagged with a `profile` field but every
 # query saw all rows. The fix scopes both endpoints to the active profile
-# by default, with `?all_profiles=1` opting into aggregate mode.
+# (a User's own; there is no all-Profiles view, ADR 0006).
 #
 # Renamed-root profile handling (#1612): a row tagged `profile='default'`
 # matches the active root regardless of the root's display name, and a row
@@ -473,31 +470,14 @@ def _visible_pinned_lineage_ids(session_rows) -> set[str]:
 # when the active profile is `'default'`. _is_root_profile() is the
 # canonical check.
 
-# Canonical helper now lives in api.profiles so out-of-process consumers
-# (mcp_server.py) can import it without duplicating the visibility model.
-# Re-exported here so existing `_profiles_match(...)` call sites in this
-# module keep resolving without per-call-site refactors.
-from api.profiles import (  # noqa: F401, E402  (re-export)
+from api.profiles import (  # noqa: E402
     _profiles_match,
     _is_root_profile,
     _SKILLS_STATS_CACHE,
     get_active_profile_name,
     get_active_profile_name as _get_active_profile_name,
-    get_active_hermes_home,
-    list_profiles_api,
     profile_scope_for_detached_worker,
 )
-
-
-def _all_profiles_query_flag(parsed_url) -> bool:
-    """Return True if the request URL has `?all_profiles=1` (or true/yes).
-
-    Centralizes the opt-in parsing so /api/sessions and /api/projects use
-    the same shape. Accepts 1/true/yes (case-insensitive) for ergonomics.
-    """
-    qs = parse_qs(parsed_url.query)
-    raw = qs.get('all_profiles', [''])[0].strip().lower()
-    return raw in ('1', 'true', 'yes', 'on')
 
 
 def _query_flag(parsed_url, name: str) -> bool:
@@ -553,8 +533,8 @@ def _session_id_visible_to_request_profile(handler, sid, *, emit_error: bool = T
     """Return whether this request owns ``sid``, asking session ownership.
 
     When it does not, and *emit_error* is set, the refusal writes its own
-    answer: 409 ``session_profile_mismatch`` naming a known owning Profile
-    (the Admin's, #7710), else 404 "Session not found". A request that names
+    answer: 404 "Session not found" for a User (the unconfined adapter's 409
+    naming the owner, #7710, has no HTTP caller since ADR 0006). A request that names
     no session passes.
     """
     refusal = request_session_ownership().refuse_session(sid)
@@ -574,8 +554,7 @@ def _stream_id_visible_to_request_profile(
     """Return whether this request owns the session that owns *stream_id*.
 
     Session ownership answers. A User is refused a stream whose owner cannot
-    be found, with the same 404 as another Profile's stream; for the Admin a
-    known other Profile's stream is the 409 naming its owner.
+    be found, with the same 404 as another Profile's stream.
     """
     refusal = request_session_ownership().refuse_stream(stream_id)
     if refusal is None:
@@ -588,9 +567,8 @@ def _stream_id_visible_to_request_profile(
 def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
     """A Bound request (a GFIT-CoWork User's) may name only its own Profile.
 
-    Session ownership answers (``may_switch_profile``, ``may_name_profile``).
-    Refuses with 403 a profile switch, and a ``profile`` in the query string or
-    body that names another Profile. The request itself already runs in the
+    Session ownership answers (``may_name_profile``). Refuses with 403 a
+    ``profile`` in the query string or body that names another Profile. The request itself already runs in the
     bound Profile; refusing makes a forged request fail loudly instead of
     being quietly retargeted.
     """
@@ -598,10 +576,7 @@ def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
     named = list(parse_qs(getattr(parsed, "query", "") or "").get("profile", []))
     if isinstance(body, dict) and body.get("profile") not in (None, ""):
         named.append(body.get("profile"))
-    switching = getattr(parsed, "path", "") == "/api/profile/switch"
-    if (switching and not ownership.may_switch_profile()) or any(
-        not ownership.may_name_profile(value) for value in named
-    ):
+    if any(not ownership.may_name_profile(value) for value in named):
         bad(handler, "Profile access forbidden", 403)
         return False
     return True
@@ -610,9 +585,9 @@ def _guard_bound_profile_request(handler, parsed, body=None) -> bool:
 def _guard_request_session_visibility(handler, parsed, body=None, method="GET") -> bool:
     """Ask session ownership about the session ids a request names.
 
-    Covers the top-level `session_id` in the query and body, and the id in a
-    `/api/sessions/<id>/events` path. Routes that accept session ids under
-    other keys ask session ownership themselves.
+    Covers the top-level `session_id` in the query and body, the id in a
+    `/api/sessions/<id>/events` path, and, on a route whose row names a
+    stream, the session that owns the `stream_id` in the query.
     """
     if not _guard_bound_profile_request(handler, parsed, body):
         return False
@@ -623,11 +598,16 @@ def _guard_request_session_visibility(handler, parsed, body=None, method="GET") 
     path_sid = _session_events_path_session_id(path)
     if path_sid is not None and not _session_id_visible_to_request_profile(handler, path_sid):
         return False
-    sid = parse_qs(getattr(parsed, "query", "") or "").get("session_id", [None])[0]
+    query = parse_qs(getattr(parsed, "query", "") or "")
+    sid = query.get("session_id", [None])[0]
     if not _session_id_visible_to_request_profile(handler, sid):
         return False
     if isinstance(body, dict) and not _session_id_visible_to_request_profile(handler, body.get("session_id")):
         return False
+    route = route_table.match(method, path)
+    if route is not None and route.names_stream:
+        if not _stream_id_visible_to_request_profile(handler, query.get("stream_id", [""])[0]):
+            return False
     return True
 
 
@@ -1122,17 +1102,8 @@ def _safe_first(*values):
     return ""
 
 
-def _gateway_session_metadata_path():
-    try:
-        from api.profiles import get_active_hermes_home
-        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
-    except Exception:
-        hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser().resolve()
-    return hermes_home / "sessions" / "sessions.json"
-
-
 def _load_gateway_session_identity_map() -> dict[str, dict]:
-    path = _gateway_session_metadata_path()
+    path = api_profiles.gateway_session_metadata_path()
     if not path.exists():
         return {}
 
@@ -1182,7 +1153,7 @@ def _gateway_status_payload() -> dict:
     import datetime
 
     identity_map = _load_gateway_session_identity_map()
-    sessions_path = _gateway_session_metadata_path()
+    sessions_path = api_profiles.gateway_session_metadata_path()
 
     # Detect whether the gateway process is alive, independent of connected
     # messaging platforms. An empty identity_map means zero connected
@@ -1244,138 +1215,6 @@ def _gateway_status_payload() -> dict:
             "gateway_state": health_gateway_state,
         },
     }
-
-
-_GATEWAY_LIFECYCLE_TIMEOUT_SECONDS = 60
-
-# Server-side single-flight guard for gateway lifecycle actions. The client
-# disables its button while a request is in flight, but a scripted authed
-# client could still fire overlapping start/stop/restart calls, spawning
-# concurrent `hermes gateway` subprocesses. Serialize them here (mirrors the
-# self-update _apply_lock pattern): a non-blocking acquire returns 409 on
-# contention rather than launching a second overlapping subprocess.
-_GATEWAY_ACTION_LOCK = threading.Lock()
-
-
-def _run_gateway_lifecycle_command(action: str) -> subprocess.CompletedProcess:
-    if action not in {"start", "stop", "restart"}:
-        raise ValueError("unsupported gateway action")
-
-    from api import config as api_config
-    from api.profiles import get_active_profile_name
-
-    agent_dir = getattr(api_config, "_AGENT_DIR", None)
-    if not agent_dir:
-        raise FileNotFoundError("Hermes agent checkout not found")
-    agent_dir = Path(agent_dir).expanduser().resolve()
-    main_py = agent_dir / "hermes_cli" / "main.py"
-    if not main_py.exists():
-        raise FileNotFoundError("Hermes agent CLI entrypoint not found")
-
-    cmd = [str(getattr(api_config, "PYTHON_EXE", sys.executable)), str(main_py)]
-    profile_name = ""
-    try:
-        profile_name = str(get_active_profile_name() or "").strip()
-    except Exception as exc:
-        logger.debug("Could not resolve active profile for gateway lifecycle: %s", exc)
-    if profile_name and profile_name != "default":
-        cmd.extend(["--profile", profile_name])
-    cmd.extend(["gateway", action])
-
-    env = os.environ.copy()
-    env.setdefault("PYTHONUTF8", "1")
-    env.setdefault("BROWSER", "echo")
-    return subprocess.run(
-        cmd,
-        cwd=str(agent_dir),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=_GATEWAY_LIFECYCLE_TIMEOUT_SECONDS,
-    )
-
-
-def _handle_gateway_lifecycle(handler, action: str, body: dict):
-    del body  # Reserved for future per-gateway naming without changing the route contract.
-    # Reject overlapping lifecycle actions instead of spawning concurrent
-    # `hermes gateway` subprocesses (a non-blocking acquire — the action holds
-    # the lock for at most _GATEWAY_LIFECYCLE_TIMEOUT_SECONDS).
-    if action not in {"start", "stop", "restart"}:
-        return bad(handler, "unsupported gateway action", 400)
-    if not _GATEWAY_ACTION_LOCK.acquire(blocking=False):
-        return j(
-            handler,
-            {
-                "ok": False,
-                "error": "Another gateway action is already in progress; try again shortly.",
-                "action": action,
-            },
-            status=409,
-        )
-    try:
-        result = _run_gateway_lifecycle_command(action)
-    except ValueError as exc:
-        return bad(handler, str(exc), 400)
-    except FileNotFoundError as exc:
-        return j(handler, {"ok": False, "error": _sanitize_error(exc), "action": action}, status=500)
-    except subprocess.TimeoutExpired as exc:
-        logger.warning(
-            "Gateway %s command timed out after %ss; stdout=%r stderr=%r",
-            action,
-            _GATEWAY_LIFECYCLE_TIMEOUT_SECONDS,
-            exc.stdout,
-            exc.stderr,
-        )
-        return j(
-            handler,
-            {
-                "ok": False,
-                "error": f"Gateway {action} timed out after {_GATEWAY_LIFECYCLE_TIMEOUT_SECONDS} seconds",
-                "action": action,
-            },
-            status=504,
-        )
-    except Exception as exc:
-        logger.exception("Gateway %s command failed before completion", action)
-        return j(handler, {"ok": False, "error": _sanitize_error(exc), "action": action}, status=500)
-    finally:
-        _GATEWAY_ACTION_LOCK.release()
-
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    if result.returncode != 0:
-        logger.warning(
-            "Gateway %s command failed with exit code %s; stdout=%r stderr=%r",
-            action,
-            result.returncode,
-            stdout,
-            stderr,
-        )
-        return j(
-            handler,
-            {
-                "ok": False,
-                "error": f"Gateway {action} failed with exit code {result.returncode}",
-                "action": action,
-                "returncode": result.returncode,
-            },
-            status=500,
-        )
-
-    return j(
-        handler,
-        {
-            "ok": True,
-            "action": action,
-            # Do NOT return captured stdout/stderr — the `hermes gateway` CLI
-            # prints service/PID/status details the browser shouldn't receive
-            # (mirrors the failure path, which already suppresses them). The
-            # frontend localizes its own success copy; the refreshed status
-            # payload carries the user-facing state.
-            "message": f"Gateway {action} completed.",
-            "status": _gateway_status_payload(),
-        },
-    )
 
 
 def _mark_cron_running(job_id: str):
@@ -1502,78 +1341,20 @@ def _ensure_agent_cron_import_path() -> None:
                     sys.modules.pop(name, None)
 
 
-def _cron_jobs_cross_profile(active_profile: str) -> tuple[list[dict], list[dict]]:
-    """Return active-profile rows plus foreign rows for the Tasks panel.
+def _cron_jobs_for_profile(active_profile: str) -> list[dict]:
+    """The Tasks panel's rows: the active Profile's cron jobs (one Profile's view, ADR 0006).
 
-    Row ownership is intentionally distinct from a cron job's persisted
-    ``profile`` field. The persisted field controls where the job executes;
-    ``owner_profile`` tells the UI which profile home the row came from.
+    ``owner_profile`` tells the UI which Profile home the row came from; it is
+    distinct from a job's persisted ``profile`` field, which controls where the
+    job executes.
     """
     from cron.jobs import list_jobs
-    from api.profiles import (
-        cron_profile_context_for_home,
-        get_hermes_home_for_profile,
-        list_profiles_api,
-    )
+    from api.profiles import cron_profile_context_for_home, get_hermes_home_for_profile
 
-    def _home_key(path: Path) -> str:
-        try:
-            return str(Path(path).expanduser().resolve(strict=False))
-        except Exception:
-            return str(Path(path).expanduser())
-
-    names: list[str] = []
-    seen_names: set[str] = set()
-
-    def _add_name(raw_name) -> None:
-        name = str(raw_name or "").strip()
-        if not name:
-            return
-        folded = name.casefold()
-        if folded in seen_names:
-            return
-        seen_names.add(folded)
-        names.append(name)
-
-    # Only the Profiles this request may read are scanned at all.
-    readable = request_caller_reach()
-    _add_name(active_profile)
-    for row in list_profiles_api():
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or "").strip()
-        if not name or not readable.includes(name):
-            continue
-        if row.get("visible") is False and not _profiles_match(name, active_profile):
-            continue
-        _add_name(name)
-
-    active_jobs: list[dict] = []
-    other_jobs: list[dict] = []
-    seen_homes: set[str] = set()
-    for owner_profile in names:
-        home = Path(get_hermes_home_for_profile(owner_profile))
-        home_key = _home_key(home)
-        if home_key in seen_homes:
-            continue
-        seen_homes.add(home_key)
-        is_active = _profiles_match(owner_profile, active_profile)
-        try:
-            with cron_profile_context_for_home(home):
-                jobs = _cron_jobs_for_api(list_jobs(include_disabled=True))
-        except Exception:
-            if not is_active:
-                continue
-            raise
-        for job in jobs:
-            row = dict(job)
-            row["owner_profile"] = owner_profile
-            row["read_only"] = not is_active
-            if is_active:
-                active_jobs.append(row)
-            else:
-                other_jobs.append(row)
-    return active_jobs, other_jobs
+    home = Path(get_hermes_home_for_profile(active_profile))
+    with cron_profile_context_for_home(home):
+        jobs = _cron_jobs_for_api(list_jobs(include_disabled=True))
+    return [{**dict(job), "owner_profile": active_profile, "read_only": False} for job in jobs]
 
 
 def _available_cron_profile_names() -> set[str]:
@@ -1581,7 +1362,7 @@ def _available_cron_profile_names() -> set[str]:
     from api import profiles as profiles_api
 
     # A job runs in its Profile: offer the Profiles this request may read and
-    # may name to work in (the Admin: only default, ADR 0004).
+    # may name to work in (a User: their own).
     reach = request_caller_reach()
     ownership = request_session_ownership()
 
@@ -1913,6 +1694,9 @@ def _clear_live_models_cache() -> None:
 
 from api import route_session_list_cache as _route_session_list_cache
 
+# The session-list cache marks running cron jobs' rows; only this module knows them.
+_route_session_list_cache.set_running_cron_jobs(_running_cron_jobs_snapshot)
+
 _SESSIONS_CACHE = _route_session_list_cache._SESSIONS_CACHE
 _SESSIONS_CACHE_INFLIGHT = _route_session_list_cache._SESSIONS_CACHE_INFLIGHT
 _SESSIONS_CACHE_LOCK = _route_session_list_cache._SESSIONS_CACHE_LOCK
@@ -1962,7 +1746,6 @@ def _callable_accepts_kwarg(callable_obj, kwarg_name: str) -> bool:
 
 def _session_list_cache_key(
     active_profile: str | None,
-    all_profiles: bool,
     show_cli_sessions: bool,
     show_previous_messaging_sessions: bool,
     show_cron_sessions: bool,
@@ -1979,7 +1762,7 @@ def _session_list_cache_key(
 ) -> tuple:
     return _route_session_list_cache_key(
         active_profile=active_profile,
-        all_profiles=all_profiles,
+        all_profiles=False,  # there is no all-Profiles view (ADR 0006)
         show_cli_sessions=show_cli_sessions,
         show_previous_messaging_sessions=show_previous_messaging_sessions,
         show_cron_sessions=show_cron_sessions,
@@ -1993,19 +1776,6 @@ def _session_list_cache_key(
         archived_limit=archived_limit,
         archived_offset=archived_offset,
     ) + (bool(show_claude_code_sessions),)
-
-_ROUTE_SESSION_LIST_CACHE_DYNAMIC_EXPORTS = {
-    "_SESSIONS_CACHE_ALL_PROFILES_INVALIDATION_VERSION",
-    "_SESSIONS_CACHE_GLOBAL_INVALIDATION_VERSION",
-    "_session_list_cache_settings_write_version",
-}
-
-
-def __getattr__(name):
-    if name in _ROUTE_SESSION_LIST_CACHE_DYNAMIC_EXPORTS:
-        return getattr(_route_session_list_cache, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 def _prune_orphaned_webui_zero_message_sessions(rows, *, diag_stage=None):
     """#4985 second-pass orphan prune for native-WebUI rows whose ``state.db.messages`` is empty.
@@ -2224,7 +1994,6 @@ def _prune_orphaned_webui_zero_message_sessions(rows, *, diag_stage=None):
 
 def _build_session_list_cache_payload(
     active_profile: str | None,
-    all_profiles: bool,
     show_cli_sessions: bool,
     show_previous_messaging_sessions: bool,
     show_cron_sessions: bool,
@@ -2295,16 +2064,12 @@ def _build_session_list_cache_payload(
         if _callable_accepts_kwarg(get_cli_sessions, "include_claude_code"):
             cli = get_cli_sessions(
                 source_filter=source_filter,
-                all_profiles=all_profiles,
                 include_claude_code=show_claude_code_sessions,
             )
         else:
             # Focused tests sometimes monkeypatch routes.get_cli_sessions with
             # the historical two-keyword signature.
-            cli = get_cli_sessions(
-                source_filter=source_filter,
-                all_profiles=all_profiles,
-            )
+            cli = get_cli_sessions(source_filter=source_filter)
         diag_stage("merge_cli_sessions")
         cli_by_id = {s["session_id"]: s for s in cli}
         # #3238/#4591: reconcile orphaned imported sidecars. When a CLI or
@@ -2461,11 +2226,7 @@ def _build_session_list_cache_payload(
         reverse=True,
     )
     # ── Profile scoping (#1611) ────────────────────────────────────────
-    # Default: filter to the active profile. ?all_profiles=1 opts into
-    # the aggregate view used by the "All profiles" sidebar toggle.
-    # The other_profile_count is always returned so the UI can render
-    # the "Show N from other profiles" affordance without sending the
-    # cross-profile rows by default.
+    # The list is one Profile's: there is no all-Profiles view (ADR 0006).
     #
     # IMPORTANT: scope BEFORE _keep_latest_messaging_session_per_source.
     # _messaging_source_key is profile-blind (#1614 follow-up): if the
@@ -2475,16 +2236,14 @@ def _build_session_list_cache_payload(
     # source. Filter first so the dedupe operates only within the active
     # profile's rows.
     diag_stage("profile_scope")
-    # The cached payload is keyed by the view (active Profile, all_profiles),
+    # The cached payload is keyed by the view (the active Profile),
     # not by the caller, and may be rebuilt on a thread with no Admission, so
     # the view is scoped with the unconfined rule here. The caller's own
     # adapter filters the rows after the cache (_rows_for_caller).
     scoped = [
         s for s in merged
-        if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+        if _UNCONFINED_OWNERSHIP.may_list_row(s, active_profile=active_profile)
     ]
-    # Whether this count may be shown is the caller's answer, after the cache.
-    other_profile_count = 0 if all_profiles else len(merged) - len(scoped)
     diag_stage("messaging_dedupe")
     archived_scoped = _keep_latest_messaging_session_per_source(
         list(scoped),
@@ -2595,9 +2354,7 @@ def _build_session_list_cache_payload(
         "include_archived": include_archived,
         "archived_limit": archived_limit,
         "archived_offset": archived_offset,
-        "all_profiles": all_profiles,
         "active_profile": active_profile,
-        "other_profile_count": other_profile_count,
         "settings": {
             "show_cli_sessions": show_cli_sessions,
             "show_previous_messaging_sessions": show_previous_messaging_sessions,
@@ -2626,31 +2383,20 @@ def _session_list_rows_for_caller(payload: dict, active_profile, reach) -> dict:
     """The cached session list with only the rows session ownership lets this caller see.
 
     The cache is keyed by the view, not the caller; this is the caller's own
-    answer, including whether the other Profiles' count may be shown (*reach*).
-    The cached payload is never changed.
+    answer. The cached payload is never changed.
     """
     ownership = request_session_ownership()
-    all_profiles = reach.every_profile
-
-    def for_caller(row):
-        # A row this caller may only read (the Admin's view of another
-        # Profile's session) is marked, on a copy: cached rows never change.
-        reason = ownership.read_only_reason(row)
-        if not reason:
-            return row
-        return {**row, "read_only": True, "read_only_reason": reason, "owner_profile": row.get("profile")}
 
     def keep(rows):
         return [
-            for_caller(row) for row in rows or []
-            if ownership.may_list_row(row, active_profile=active_profile, all_profiles=all_profiles)
+            row for row in rows or []
+            if ownership.may_list_row(row, active_profile=active_profile)
         ]
 
     return {
         **payload,
         "sessions": keep(payload.get("sessions")),
         "sidebar_reference_sessions": keep(payload.get("sidebar_reference_sessions")),
-        "other_profile_count": payload.get("other_profile_count", 0) if reach.counts_other_profiles else 0,
     }
 
 
@@ -2686,9 +2432,7 @@ def _session_list_payload_to_response(payload: dict) -> dict:
         "archived_webui_count": int(payload.get("archived_webui_count", 0)),
         "archived_cli_count": int(payload.get("archived_cli_count", 0)),
         "include_archived": bool(payload.get("include_archived", False)),
-        "all_profiles": bool(payload.get("all_profiles", False)),
         "active_profile": payload.get("active_profile"),
-        "other_profile_count": int(payload.get("other_profile_count", 0)),
         "server_time": time.time(),
         "server_tz": time.strftime("%z"),
     }
@@ -2911,9 +2655,6 @@ def _get_cached_session_list_payload(
 
 from api.config import (
     APP_NAME,
-    STATE_DIR,
-    SESSION_DIR,
-    DEFAULT_WORKSPACE,
     DEFAULT_MODEL,
     SESSIONS,
     SESSIONS_MAX,
@@ -2934,30 +2675,25 @@ from api.config import (
     MAX_UPLOAD_BYTES,
     ACTIVE_RUNS,
     ACTIVE_RUNS_LOCK,
-    register_stream_owner,
     register_session_writeback_owner,
     clear_session_writeback_owner_if_owned,
     stream_owner_session_id,
     peek_stream,
-    unregister_stream_owner,
     CHAT_LOCK,
     _get_session_agent_lock,
     CUSTOM_MODELS_ENDPOINT_TIMEOUT_SECONDS,
     load_settings,
     persisted_speech_settings_keys,
     save_settings,
-    SETTINGS_FILE,
     set_hermes_default_model,
     canonical_model_provider_lane,
     model_with_provider_context,
     get_reasoning_status,
     set_reasoning_display,
     set_reasoning_effort,
-    create_stream_channel,
     get_config,
     get_webui_session_save_mode,
     get_config_snapshot,
-    STREAM_GOAL_RELATED,
     PENDING_GOAL_CONTINUATION,
     _get_config_path,
     _load_yaml_config_file,
@@ -2969,6 +2705,10 @@ from api.config import (
     _parse_provider_qualified_model_id,
 )
 from api import config as api_config
+from api import profiles as api_profiles
+from api import route_table
+from api import run_registry
+from api.turn_builder import webui_agent
 from api.helpers import (
     require,
     bad,
@@ -2977,7 +2717,6 @@ from api.helpers import (
     j,
     t,
     read_body,
-    MAX_BODY_BYTES,
     _security_headers,
     _sanitize_error,
     redact_session_data,
@@ -3010,12 +2749,6 @@ from api.system_health import build_system_health_payload
 # the constructor at all. These helpers carry the WHOLE bundle instead, exactly
 # as ``api/streaming.py`` does for the streaming path.
 
-# The constructor-routing fields that travel with provider/base_url/api_key as
-# one authority. Mirrors ``api.streaming._RUNTIME_BUNDLE_FIELDS`` and
-# ``api.config.CUSTOM_CONNECTION_SIDE_FIELDS``.
-_AGENT_BUNDLE_SIDE_FIELDS = ("api_mode", "acp_command", "acp_args", "credential_pool")
-
-
 def _resolve_agent_connection_bundle(
     resolved_provider,
     resolved_api_key,
@@ -3027,8 +2760,8 @@ def _resolve_agent_connection_bundle(
     """Return the COMPLETE constructor-routing bundle for a non-streaming send.
 
     Keys: ``provider``, ``base_url``, ``api_key`` plus every field in
-    :data:`_AGENT_BUNDLE_SIDE_FIELDS`. Pass the whole dict to the constructor
-    via :func:`_agent_bundle_kwargs` — the endpoint/credential and the
+    :data:`AGENT_BUNDLE_SIDE_FIELDS`. Pass the whole dict to the constructor
+    via :func:`api.turn_builder.agent_bundle_kwargs` — the endpoint/credential and the
     transport/protocol/pool fields are ONE authority.
 
     ``runtime_provider`` is the dict ``resolve_runtime_provider`` returned. It
@@ -3066,65 +2799,6 @@ def _resolve_agent_connection_bundle(
             lookup_provider=lookup_provider or resolved_provider,
         )
     )
-
-
-def _agent_bundle_kwargs(agent_cls, bundle):
-    """Return the bundle's side-field kwargs supported by ``agent_cls``.
-
-    ``api_mode``/``acp_command``/``acp_args``/``credential_pool`` were added to
-    AIAgent over several releases, so gate each on the constructor signature the
-    way the streaming path does rather than raising TypeError against an older
-    hermes-agent build. Values come from the BUNDLE, never from the runtime
-    provider dict: a custom-provider override clears these, and reading them off
-    the runtime would re-introduce the authority the merge just replaced.
-    """
-    import inspect as _inspect
-
-    try:
-        params = set(_inspect.signature(agent_cls.__init__).parameters)
-    except (TypeError, ValueError):
-        return {}
-    return {
-        field: bundle[field]
-        for field in _AGENT_BUNDLE_SIDE_FIELDS
-        if field in params
-    }
-
-
-def _auxiliary_main_runtime(bundle, model):
-    """Return the ``main_runtime`` an auxiliary client must receive for a bundle.
-
-    When the auxiliary client answers, AIAgent is never built, so this dict is
-    the ONLY place the resolved authority reaches the wire. It therefore carries
-    the same whole bundle :func:`_agent_bundle_kwargs` hands the constructor —
-    endpoint and credential plus every field in
-    :data:`_AGENT_BUNDLE_SIDE_FIELDS`. Sending only provider/model/base_url/
-    api_key silently downgraded an exact row's ``api_mode``
-    (``anthropic_messages`` fell back to chat completions) and dropped the
-    credential pool/ACP transport that belong to the same record.
-    """
-    runtime = {
-        "provider": bundle["provider"],
-        "model": model,
-        "base_url": bundle["base_url"],
-        "api_key": bundle["api_key"],
-    }
-    for field in _AGENT_BUNDLE_SIDE_FIELDS:
-        runtime[field] = bundle[field]
-    return runtime
-
-
-def _kanban_unknown_endpoint(handler, parsed, method: str) -> bool:
-    """Return a Kanban-specific 404 for stale clients/obsolete endpoint shapes."""
-    return bad(
-        handler,
-        (
-            f"unknown Kanban endpoint: {method} {parsed.path}. "
-            "If this appeared after a WebUI update, your browser may be running "
-            "a stale cached bundle; use Hard refresh now, then reopen Kanban."
-        ),
-        status=404,
-    ) or True
 
 
 # A cancelled worker that stays in ACTIVE_RUNS longer than this is treated as
@@ -5395,22 +5069,14 @@ def _handle_session_anchor_scene(handler, body):
     except ValueError as exc:
         return bad(handler, str(exc), 400)
     try:
-        s = _get_or_materialize_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+        s = load_owned_session(handler, sid, load=_get_or_materialize_session)
     except PermissionError:
         return bad(handler, "Read-only imported sessions cannot persist anchor scenes", 403)
-    # Active-profile visibility guard (parity with GET /api/session, routes.py:~8922).
-    # _get_or_materialize_session loads by id with no profile scoping, so without
-    # this an authenticated request under profile A could persist anchor scenes
-    # onto a session owned by profile B (cross-profile write). Reject as 404 —
-    # same shape the read path uses — and leave anchor_activity_scenes untouched.
-    # #7710: cross-profile writes are rejected with 409
-    # ``session_profile_mismatch`` so the client can offer to switch
-    # to the owning profile (mirrors the detail-load endpoint's
-    # contract at #13043 / #13493). 404 is preserved for the
-    # None-profile (unknown/legacy) case so the frontend self-heal
-    # path still fires for actually-missing sids.
+    if s is None:
+        return True
+    # A session materialized from CLI/state.db metadata is not in the WebUI
+    # store the accessor asked about, so ask session ownership again about the
+    # session as loaded (409 naming a known other Profile, #7710; else 404).
     _refusal = request_session_ownership().refuse_found_session(sid, s)
     if _refusal is not None:
         return _refusal.answer(handler, sid)
@@ -5566,145 +5232,6 @@ def _get_or_materialize_session(sid: str, *, refresh_cli_messages: bool = False)
         _apply_source_meta(s)
 
     return s
-
-
-def _share_snapshot_messages_for_session(session, *, cli_meta: dict | None = None) -> list:
-    """Return the visible transcript that a public share should snapshot.
-
-    External sessions (Telegram/Discord/Slack/CLI/etc.) may have no WebUI sidecar
-    or may persist only local metadata in the sidecar while the transcript lives
-    in state.db. Public sharing should snapshot the same visible conversation the
-    session page renders, not the bare local sidecar payload.
-    """
-    sid = str(getattr(session, "session_id", "") or "").strip()
-    current_messages = list(getattr(session, "messages", None) or [])
-    if not sid:
-        return current_messages
-    profile = getattr(session, "profile", None)
-    is_messaging = (
-        _is_messaging_session_record(session)
-        or _is_messaging_session_record(cli_meta)
-    )
-    if is_messaging or not current_messages:
-        cli_messages = get_cli_session_messages(sid, profile=profile)
-        if cli_messages:
-            if is_messaging:
-                return _merged_session_messages_for_display(session, cli_messages)
-            return list(cli_messages)
-    return current_messages
-
-
-def _build_share_metadata_sidecar(
-    sid: str,
-    snapshot_session,
-    *,
-    cli_meta: dict | None = None,
-):
-    """Create a minimal WebUI sidecar for share metadata on external sessions."""
-    cli_meta = dict(cli_meta or {})
-    workspace = (
-        cli_meta.get("workspace")
-        or cli_meta.get("cwd")
-        or getattr(snapshot_session, "workspace", None)
-    )
-    if not workspace:
-        workspace = get_last_workspace()
-    session = Session(
-        session_id=sid,
-        title=(
-            cli_meta.get("title")
-            or getattr(snapshot_session, "title", None)
-            or title_from(getattr(snapshot_session, "messages", None) or [], "CLI Session")
-        ),
-        workspace=workspace,
-        messages=[],
-        model=cli_meta.get("model") or getattr(snapshot_session, "model", None) or "unknown",
-        model_provider=(
-            cli_meta.get("model_provider")
-            or getattr(snapshot_session, "model_provider", None)
-        ),
-        created_at=cli_meta.get("created_at") or getattr(snapshot_session, "created_at", None),
-        updated_at=cli_meta.get("updated_at") or getattr(snapshot_session, "updated_at", None),
-        profile=cli_meta.get("profile") or getattr(snapshot_session, "profile", None),
-    )
-    session.is_cli_session = bool(
-        getattr(snapshot_session, "is_cli_session", False)
-        or is_cli_session_row(cli_meta)
-    )
-    session.source_tag = cli_meta.get("source_tag") or getattr(snapshot_session, "source_tag", None)
-    session.raw_source = (
-        cli_meta.get("raw_source")
-        or getattr(snapshot_session, "raw_source", None)
-        or session.source_tag
-    )
-    session.session_source = (
-        cli_meta.get("session_source")
-        or getattr(snapshot_session, "session_source", None)
-    )
-    session.source_label = (
-        cli_meta.get("source_label")
-        or getattr(snapshot_session, "source_label", None)
-    )
-    session.read_only = bool(
-        cli_meta.get("read_only") or getattr(snapshot_session, "read_only", False)
-    )
-    for attr in (
-        "user_id",
-        "chat_id",
-        "chat_type",
-        "thread_id",
-        "session_key",
-        "platform",
-        "origin_chat_id",
-        "origin_user_id",
-        "parent_session_id",
-    ):
-        value = cli_meta.get(attr)
-        if value is None:
-            value = getattr(snapshot_session, attr, None)
-        if value is not None:
-            setattr(session, attr, value)
-    return session
-
-
-def _resolve_share_session_pair(sid: str, handler):
-    """Resolve a shareable session plus the sidecar that stores share metadata.
-
-    Returns ``(snapshot_session, stored_session_or_none, cli_meta)``. The
-    snapshot session always carries the transcript that should become the public
-    share payload. ``stored_session`` is the WebUI-owned sidecar to mutate for
-    share_token/share_created_at persistence; it may be absent for pure external
-    sessions that have not yet created local metadata.
-    """
-    try:
-        stored_session = get_session(sid)
-        cli_meta = (
-            _lookup_cli_session_metadata(sid)
-            if _session_requires_cli_metadata_lookup(stored_session)
-            else {}
-        )
-        effective_profile = (
-            (cli_meta or {}).get("profile")
-            or getattr(stored_session, "profile", None)
-            or None
-        )
-        if request_session_ownership().refuse_found_session(sid, {"profile": effective_profile}) is not None:
-            raise KeyError(sid)
-        stored_session = _ensure_full_session_before_mutation(sid, stored_session)
-        snapshot_session = copy.copy(stored_session)
-        snapshot_session.messages = _share_snapshot_messages_for_session(
-            stored_session,
-            cli_meta=cli_meta,
-        )
-        return snapshot_session, stored_session, cli_meta or {}
-    except KeyError:
-        cli_meta = _lookup_cli_session_metadata(sid) or {}
-        if request_session_ownership().refuse_found_session(sid, cli_meta) is not None:
-            raise KeyError(sid) from None
-        synth, reason = _claim_or_synthesize_cli_session(sid, cli_meta=cli_meta)
-        if reason == "was_webui" or synth is None:
-            raise KeyError(sid) from None
-        return synth, None, cli_meta
 
 
 def _reconcile_stale_stream_state_for_session_rows(session_rows) -> bool:
@@ -5882,14 +5409,6 @@ def apply_cors_preflight_headers(handler) -> None:
     handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 
-def _csrf_exempt_path(path: str) -> bool:
-    """Paths that cannot or must not carry a session CSRF token."""
-    return path in {
-        "/api/auth/login",
-        "/api/csp-report",
-    }
-
-
 _CSRF_FAILURE_ATTR = "_hermes_csrf_failure_reason"
 
 
@@ -5935,10 +5454,7 @@ def _check_csrf(handler) -> bool:
         return True  # non-browser clients (curl, MCP, agent) have no Origin/Referer
 
     from api.auth import CSRF_HEADER_NAME, parse_cookie, verify_csrf_token
-    from api.directory import is_directory_enabled
 
-    if not is_directory_enabled():
-        return True
     cookie_val = parse_cookie(handler)
     submitted = handler.headers.get(CSRF_HEADER_NAME) or handler.headers.get("X-CSRF-Token")
     if verify_csrf_token(cookie_val or "", submitted or ""):
@@ -5949,255 +5465,6 @@ def _check_csrf(handler) -> bool:
     # no `Content-Length`: 403 + `Connection: close`, follow-up dropped.
     arm_connection_close_if_body_pending(handler)
     return _set_csrf_failure_reason(handler, "token_mismatch")
-
-
-_EXTENSION_SIDECAR_PROXY_RE = _re.compile(
-    r"^/api/extensions/(?P<extension_id>[^/]+)/sidecar(?:/(?P<proxy_path>.*))?$"
-)
-_HOP_BY_HOP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "proxy-connection",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-}
-
-
-def _connection_bound_header_names(headers) -> set[str]:
-    names = set(_HOP_BY_HOP_HEADERS)
-    if not headers or not hasattr(headers, "items"):
-        return names
-    connection_values = []
-    if hasattr(headers, "get_all"):
-        connection_values.extend(headers.get_all("Connection", []))
-    else:
-        for name, value in headers.items():
-            if str(name).lower() == "connection":
-                connection_values.append(value)
-    for value in connection_values:
-        for token in str(value).split(","):
-            normalized = token.strip().lower()
-            if normalized:
-                names.add(normalized)
-    return names
-
-
-def _match_extension_sidecar_proxy_path(path: str) -> tuple[str, str] | None:
-    match = _EXTENSION_SIDECAR_PROXY_RE.match(path or "")
-    if not match:
-        return None
-    return match.group("extension_id"), match.group("proxy_path") or ""
-
-
-def _read_body_bytes(handler) -> bytes:
-    raw_length = handler.headers.get("Content-Length", 0)
-    try:
-        length = int(raw_length)
-    except (TypeError, ValueError):
-        try:
-            handler.close_connection = True
-        except Exception:
-            pass
-        raise ValueError(f"Invalid Content-Length: {raw_length!r}") from None
-    if length < 0:
-        try:
-            handler.close_connection = True
-        except Exception:
-            pass
-        raise ValueError(f"Invalid Content-Length: {length}")
-    if length > MAX_BODY_BYTES:
-        try:
-            handler.close_connection = True
-        except Exception:
-            pass
-        raise ValueError(f"Request body too large ({length} bytes, max {MAX_BODY_BYTES})")
-    return handler.rfile.read(length) if length else b""
-
-
-def _extension_sidecar_proxy_request_headers(handler) -> dict[str, str]:
-    headers = {}
-    raw_headers = getattr(handler, "headers", None)
-    if not raw_headers or not hasattr(raw_headers, "items"):
-        return headers
-    blocked_headers = _connection_bound_header_names(raw_headers)
-    for name, value in raw_headers.items():
-        lower = str(name).lower()
-        if (
-            lower in blocked_headers
-            or lower in {"authorization", "cookie", "content-length", "host", "origin", "referer"}
-            or lower.startswith("x-csrf")
-            or lower.startswith("x-hermes-")
-        ):
-            continue
-        headers[str(name)] = str(value)
-    return headers
-
-
-def _send_extension_sidecar_proxy_response(handler, status: int, body: bytes, headers) -> bool:
-    handler.send_response(status)
-    sent_content_type = False
-    blocked_headers = _connection_bound_header_names(headers)
-    if headers and hasattr(headers, "items"):
-        for name, value in headers.items():
-            lower = str(name).lower()
-            if (
-                lower in blocked_headers
-                or lower in {"content-length", "set-cookie"}
-                or lower.startswith("x-hermes-")
-            ):
-                continue
-            if lower == "content-type":
-                sent_content_type = True
-            handler.send_header(str(name), str(value))
-    if not sent_content_type:
-        handler.send_header("Content-Type", "application/octet-stream")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Cache-Control", "no-store")
-    _security_headers(handler)
-    handler.end_headers()
-    handler.wfile.write(body)
-    return True
-
-
-def _read_extension_sidecar_proxy_body(stream) -> bytes:
-    body = stream.read(_EXTENSION_SIDECAR_PROXY_MAX_RESPONSE_BYTES + 1)
-    if len(body) > _EXTENSION_SIDECAR_PROXY_MAX_RESPONSE_BYTES:
-        raise ValueError("Extension sidecar response too large")
-    return body
-
-
-def _extension_sidecar_proxy_redirect_url(
-    allowed_origin: str,
-    request_url: str,
-    redirect_url: str,
-) -> str | None:
-    resolved = urljoin(request_url, redirect_url or "")
-    allowed = urlsplit(allowed_origin or "")
-    parts = urlsplit(resolved)
-    if not allowed.scheme or not allowed.netloc or not parts.scheme or not parts.netloc:
-        return None
-    allowed_scheme = allowed.scheme.lower()
-    redirect_scheme = parts.scheme.lower()
-    if redirect_scheme != allowed_scheme:
-        return None
-    allowed_name, allowed_port = _normalize_host_port(allowed.netloc)
-    redirect_name, redirect_port = _normalize_host_port(parts.netloc)
-    if redirect_name != allowed_name or not _ports_match(
-        allowed_scheme,
-        redirect_port,
-        allowed_port,
-    ):
-        return None
-    return resolved
-
-
-def _extension_sidecar_proxy_same_origin_opener(allowed_origin: str):
-    class _SameOriginRedirectHandler(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            resolved = _extension_sidecar_proxy_redirect_url(
-                allowed_origin,
-                req.full_url,
-                newurl,
-            )
-            if not resolved:
-                raise URLError("Extension sidecar redirect crossed declared origin")
-            return super().redirect_request(req, fp, code, msg, headers, resolved)
-
-    return build_opener(ProxyHandler({}), _SameOriginRedirectHandler)
-
-
-def _handle_extension_sidecar_proxy(
-    handler,
-    parsed,
-    method: str,
-    *,
-    read_request_body: bool = False,
-):
-    matched = _match_extension_sidecar_proxy_path(parsed.path)
-    if matched is None:
-        return False
-    # Require same-origin browser provenance on EVERY proxied method, not just
-    # GET. Browser extensions (the only legitimate caller) always send Origin/
-    # Referer/Sec-Fetch-Site, so this costs nothing on the real path while
-    # closing the GET-vs-unsafe-method asymmetry: without it, POST/PATCH/PUT/
-    # DELETE fell through the CSRF compatibility path that intentionally admits
-    # non-browser clients, giving unsafe methods weaker provenance than GET.
-    if not _check_same_origin_browser_request(handler, require_provenance=True):
-        # Provenance rejection runs before read_body(), so close-and-advertise
-        # whenever the request DECLARED a body (Content-Length non-zero, or any
-        # Transfer-Encoding): those bytes are still queued in rfile and a reused
-        # HTTP/1.1 connection would parse them as the next request line (same
-        # class as _check_csrf). Gating on read_request_body instead was wrong in
-        # both directions — it missed a GET that carries a declared body, and it
-        # closed a healthy connection on a body-less DELETE/PUT/PATCH.
-        arm_connection_close_if_body_pending(handler)
-        return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-    try:
-        request_body = _read_body_bytes(handler) if read_request_body else None
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    from api.extensions import (
-        ExtensionSidecarProxyError,
-        resolve_extension_sidecar_proxy_target,
-    )
-
-    extension_id, proxy_path = matched
-    try:
-        target = resolve_extension_sidecar_proxy_target(
-            extension_id,
-            proxy_path,
-            query=parsed.query,
-        )
-        proxied_headers = _extension_sidecar_proxy_request_headers(handler)
-        # token-v1: inject the per-extension shared secret core minted. The
-        # inbound x-hermes-* strip above guarantees the client cannot have
-        # forged this header.
-        _auth_token = target.get("auth_token")
-        if _auth_token:
-            proxied_headers["X-Hermes-Sidecar-Token"] = _auth_token
-        request = Request(
-            target["upstream_url"],
-            data=request_body,
-            headers=proxied_headers,
-            method=method,
-        )
-        opener = _extension_sidecar_proxy_same_origin_opener(target["origin"])
-        with opener.open(request, timeout=10) as response:
-            body = _read_extension_sidecar_proxy_body(response)
-            return _send_extension_sidecar_proxy_response(
-                handler,
-                getattr(response, "status", 200),
-                body,
-                response.headers,
-            )
-    except ExtensionSidecarProxyError as exc:
-        return bad(handler, str(exc), status=exc.status)
-    except ValueError as exc:
-        return bad(handler, str(exc), status=502)
-    except HTTPError as exc:
-        try:
-            body = _read_extension_sidecar_proxy_body(exc)
-        except ValueError as read_exc:
-            return bad(handler, str(read_exc), status=502)
-        return _send_extension_sidecar_proxy_response(
-            handler,
-            exc.code,
-            body,
-            exc.headers,
-        )
-    except (TimeoutError, URLError, OSError):
-        logger.warning(
-            "extension sidecar proxy failed for %s %s",
-            method,
-            parsed.path,
-            exc_info=True,
-        )
-        return bad(handler, "Failed to reach extension sidecar", status=502)
 
 
 def _client_ip_for_rate_limit(handler) -> str:
@@ -6243,8 +5510,7 @@ def _onboarding_request_is_local(handler) -> bool:
       cannot promote itself to "local" by sending X-Forwarded-For: 127.0.0.1.
     * When the peer is NOT a trusted proxy, forwarded headers are ignored and the
       request is classified by the raw socket peer directly. A direct loopback or
-      private/LAN client (no proxy) is therefore still correctly local — so
-      onboarding and embedded-terminal access with login off keep working on the common direct-LAN deployment.
+      private/LAN client (no proxy) is therefore still correctly local.
     * HERMES_WEBUI_TRUST_FORWARDED_FOR=1 is the opt-in that makes us CONSULT the
       forwarded chain at all; without it the raw peer is authoritative. Either
       way the classification fails closed on malformed/empty chains.
@@ -6284,8 +5550,7 @@ def _onboarding_request_is_local(handler) -> bool:
     # (public) client we can't see. Deny in that case; require the operator to
     # opt in via HERMES_WEBUI_TRUST_FORWARDED_FOR (+ HERMES_WEBUI_TRUSTED_PROXY_CIDRS
     # for a non-loopback proxy). With NO forwarded header, a direct private/LAN
-    # client (the common direct-LAN deployment) stays local so onboarding and
-    # the terminal keep working with login off.
+    # client (the common direct-LAN deployment) stays local.
     forwarded_present = bool(
         (handler.headers.get("X-Forwarded-For", "") or "").strip()
         or (handler.headers.get("X-Real-IP", "") or "").strip()
@@ -6293,41 +5558,6 @@ def _onboarding_request_is_local(handler) -> bool:
     if forwarded_present:
         return False
     return bool(is_local)
-
-
-def _onboarding_gate_allows(handler, auth_enabled: bool | None = None) -> bool:
-    from api.directory import is_directory_enabled
-
-    auth_enabled = is_directory_enabled() if auth_enabled is None else auth_enabled
-    if auth_enabled or _truthy_env("HERMES_WEBUI_ONBOARDING_OPEN"):
-        return True
-    return _onboarding_request_is_local(handler)
-
-
-# Operator-facing copy reused by every embedded-terminal endpoint refusal.
-_EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE = (
-    "Embedded terminal is only available from local networks when login is off. "
-    "Configure the Directory (HERMES_WEBUI_DIRECTORY=ldap and the "
-    "HERMES_WEBUI_LDAP_* settings) to turn login on, or set "
-    "HERMES_WEBUI_ONBOARDING_OPEN=1 to allow it on a deliberately-exposed server."
-)
-
-
-def _embedded_terminal_gate_allows(handler) -> bool:
-    """Local-origin gate for the embedded-terminal endpoints.
-
-    The embedded terminal spawns a PTY shell that runs arbitrary commands as the
-    server-process user, so admitting an unauthenticated remote caller is remote
-    code execution. When auth is enabled, ``check_auth()`` has already verified
-    the session cookie before the request reaches these handlers, so this returns
-    True. When auth is DISABLED (the default out-of-the-box state) ``check_auth()``
-    admits every caller unconditionally, so restrict the terminal to local/private
-    origins — the same trust model the onboarding/bootstrap endpoints use, ignoring
-    spoofable forwarded headers unless an operator has opted into trusting them.
-    A deliberately-exposed server with login off (access secured at another layer)
-    opts out with ``HERMES_WEBUI_ONBOARDING_OPEN=1``.
-    """
-    return _onboarding_gate_allows(handler)
 
 
 # Above this many distinct client keys, sweep out entries whose timestamps have
@@ -6348,21 +5578,6 @@ def _prune_stale_rate_limit_keys(mapping: dict, cutoff: float) -> None:
         del mapping[k]
 
 
-def _csp_report_rate_limited(handler, *, now: float | None = None) -> bool:
-    now = time.time() if now is None else now
-    key = _client_ip_for_rate_limit(handler)
-    cutoff = now - _CSP_REPORT_RATE_LIMIT_WINDOW_SECONDS
-    with _CSP_REPORT_RATE_LIMIT_LOCK:
-        _prune_stale_rate_limit_keys(_CSP_REPORT_RATE_LIMIT, cutoff)
-        timestamps = [ts for ts in _CSP_REPORT_RATE_LIMIT.get(key, []) if ts >= cutoff]
-        if len(timestamps) >= _CSP_REPORT_RATE_LIMIT_MAX:
-            _CSP_REPORT_RATE_LIMIT[key] = timestamps
-            return True
-        timestamps.append(now)
-        _CSP_REPORT_RATE_LIMIT[key] = timestamps
-    return False
-
-
 def _client_event_rate_limited(handler, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     key = _client_ip_for_rate_limit(handler)
@@ -6376,13 +5591,6 @@ def _client_event_rate_limited(handler, *, now: float | None = None) -> bool:
         timestamps.append(now)
         _CLIENT_EVENT_RATE_LIMIT[key] = timestamps
     return False
-
-
-def _send_no_content(handler, status: int = 204) -> bool:
-    handler.send_response(status)
-    handler.send_header("Content-Length", "0")
-    handler.end_headers()
-    return True
 
 
 def _safe_content_length(handler, max_bytes: int) -> int:
@@ -6408,45 +5616,6 @@ def _safe_content_length(handler, max_bytes: int) -> int:
             pass
         raise OverflowError(f"Request body too large ({length} bytes, max {max_bytes})")
     return length
-
-
-def _read_csp_report_payload(handler):
-    try:
-        length = _safe_content_length(handler, _CSP_REPORT_MAX_BODY_BYTES)
-    except OverflowError as exc:
-        try:
-            handler.rfile.read(_CSP_REPORT_MAX_BODY_BYTES)
-        except Exception:
-            pass
-        return {"discarded": "body_too_large", "error": str(exc)}
-    except ValueError as exc:
-        return {"discarded": "invalid_content_length", "error": str(exc)}
-    raw = handler.rfile.read(length) if length else b"{}"
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except Exception:
-        return {"invalid": True, "bytes": len(raw)}
-
-
-def _handle_csp_report(handler) -> bool:
-    """Collect browser CSP report-only violations without requiring auth."""
-    if _csp_report_rate_limited(handler):
-        _CSP_REPORT_LOGGER.warning(
-            "Dropped CSP report from %s: rate limit exceeded",
-            _client_ip_for_rate_limit(handler),
-        )
-        # Rate-limit rejection runs before the body is read; close-and-advertise
-        # so the unread report can't corrupt the next pooled request -- but only
-        # when a body was really declared. A body-less report answered 204 WITH
-        # `Connection: close` once the 100-per-60s limiter tripped (reproduced on
-        # the wire at request 101; the pipelined `GET /api/health/agent` was
-        # dropped), so a browser that keeps reporting loses its socket each time.
-        arm_connection_close_if_body_pending(handler)
-        return _send_no_content(handler)
-
-    payload = _read_csp_report_payload(handler)
-    _CSP_REPORT_LOGGER.info("CSP report from %s: %s", _client_ip_for_rate_limit(handler), payload)
-    return _send_no_content(handler)
 
 
 def _bounded_client_event_string(value, limit: int) -> str | None:
@@ -7493,9 +6662,8 @@ def _resolve_compatible_session_model_state(
         return _moa_fast_path_model_state(model)
     if model and requested_provider and model.startswith(f"@{requested_provider}:"):
         try:
-            from api.config import cfg as _active_cfg
-
-            providers_cfg = _active_cfg.get("providers") if isinstance(_active_cfg, dict) else {}
+            _request_cfg = profile_config if isinstance(profile_config, dict) else get_config()
+            providers_cfg = _request_cfg.get("providers") if isinstance(_request_cfg, dict) else {}
         except Exception:
             providers_cfg = {}
         if isinstance(providers_cfg, dict) and requested_provider in providers_cfg:
@@ -8161,11 +7329,11 @@ def _lookup_gateway_session_identity(session_id: str) -> dict:
     return metadata if isinstance(metadata, dict) else {}
 
 
-def _lookup_cli_session_metadata(session_id: str, *, all_profiles: bool = False) -> dict:
+def _lookup_cli_session_metadata(session_id: str) -> dict:
     if not session_id:
         return {}
     try:
-        for row in get_cli_sessions(all_profiles=all_profiles):
+        for row in get_cli_sessions():
             if row.get("session_id") == session_id:
                 return row
     except Exception:
@@ -8190,10 +7358,10 @@ def _session_index_marks_was_webui(sid: str) -> bool:
     ``is_cli_session``/``read_only`` markers — are NOT treated as deleted
     WebUI sessions, even when the sidecar is absent.
     """
-    if not SESSION_INDEX_FILE.exists():
+    if not api_config.SESSION_INDEX_FILE.exists():
         return False
     try:
-        entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+        entries = json.loads(api_config.SESSION_INDEX_FILE.read_bytes())
     except Exception:
         return False
     for entry in entries if isinstance(entries, list) else []:
@@ -8585,15 +7753,6 @@ def _claim_or_synthesize_cli_session(sid: str, cli_meta: dict = None):
     return build_session(sid, cli_meta, msgs, read_only_flag=False), "materialized"
 
 
-def _request_wants_all_profiles_import(body) -> bool:
-    if not isinstance(body, dict):
-        return False
-    value = body.get("all_profiles")
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
 def _normalize_import_profile_value(value):
     profile = str(value or "").strip()
     if not profile:
@@ -8636,16 +7795,11 @@ def _load_branch_source_or_refuse(handler, sid: str):
     return source
 
 
-def _resolve_cli_import_metadata(session_id: str, *, requested_profile=None, allow_all_profiles: bool = False) -> dict:
+def _resolve_cli_import_metadata(session_id: str, *, requested_profile=None) -> dict:
     cli_meta = _lookup_cli_session_metadata(session_id)
     if cli_meta and (not requested_profile or _profiles_match(cli_meta.get("profile"), requested_profile)):
         return cli_meta
-    if not allow_all_profiles:
-        return {}
-    cli_meta = _lookup_cli_session_metadata(session_id, all_profiles=True)
-    if cli_meta and requested_profile and not _profiles_match(cli_meta.get("profile"), requested_profile):
-        return {}
-    return cli_meta or {}
+    return {}
 
 
 def _messaging_session_identity(session: dict, raw_source: str) -> str:
@@ -8696,7 +7850,7 @@ def _is_pre_compression_snapshot_id(session_id: str) -> bool:
     if not sid or not all(c in "0123456789abcdefghijklmnopqrstuvwxyz_" for c in sid):
         return False
     try:
-        path = SESSION_DIR / f"{sid}.json"
+        path = api_config.SESSION_DIR / f"{sid}.json"
         if not path.exists():
             return False
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -9386,7 +8540,7 @@ def _display_merge_cache_key(
     sid = str(getattr(session, "session_id", "") or "")
     if not sid or not is_safe_session_id(sid):
         return None
-    self_sig = _sidecar_stat_signature(SESSION_DIR / f"{sid}.json")
+    self_sig = _sidecar_stat_signature(api_config.SESSION_DIR / f"{sid}.json")
     if self_sig is None:
         return None
     # Lineage parents: reuse the signatures recorded by the (already memoized)
@@ -9686,9 +8840,8 @@ def _state_db_rows_fingerprint(rows) -> str | None:
 
 def _sidecar_file_exceeds_threshold(session_id, threshold_bytes) -> bool:
     """Check if the sidecar JSON file for ``session_id`` exceeds ``threshold_bytes``."""
-    from api.config import SESSION_DIR
     try:
-        p = SESSION_DIR / f"{session_id}.json"
+        p = api_config.SESSION_DIR / f"{session_id}.json"
         return os.path.isfile(p) and os.path.getsize(p) > threshold_bytes
     except Exception:
         return False
@@ -9813,7 +8966,7 @@ def _webui_sidecar_lineage_messages_for_display(session, *, max_hops: int = 20) 
     sid = str(getattr(session, "session_id", "") or "")
     self_sig = None
     if sid and is_safe_session_id(sid):
-        self_sig = _sidecar_stat_signature(SESSION_DIR / f"{sid}.json")
+        self_sig = _sidecar_stat_signature(api_config.SESSION_DIR / f"{sid}.json")
     if cache_allowed and self_sig is not None:
         with _lineage_display_cache_lock:
             entry = _lineage_display_cache.get(sid)
@@ -9854,7 +9007,7 @@ def _webui_sidecar_lineage_messages_for_display(session, *, max_hops: int = 20) 
         if parent_id in seen or not is_safe_session_id(parent_id):
             parent_signatures_complete = False
             break
-        parent_path = SESSION_DIR / f"{parent_id}.json"
+        parent_path = api_config.SESSION_DIR / f"{parent_id}.json"
         parent_sig_before = _sidecar_stat_signature(parent_path)
         parent = Session.load(parent_id)
         if not parent:
@@ -10629,7 +9782,6 @@ from api.models import (
     new_session,
     all_sessions,
     title_from,
-    SESSION_INDEX_FILE,
     _active_state_db_path,
     load_projects,
     save_projects,
@@ -10724,10 +9876,10 @@ def _pre_compression_continuation_session_id(session) -> str | None:
         return rows
 
     def _child_rows_from_index(seen_ids: set[str]) -> list | None:
-        if not SESSION_INDEX_FILE.exists():
+        if not api_config.SESSION_INDEX_FILE.exists():
             return None
         try:
-            entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+            entries = json.loads(api_config.SESSION_INDEX_FILE.read_bytes())
         except Exception:
             return None
         if not isinstance(entries, list):
@@ -10735,7 +9887,7 @@ def _pre_compression_continuation_session_id(session) -> str | None:
         try:
             persisted_sidecar_ids = {
                 path.stem
-                for path in SESSION_DIR.glob("*.json")
+                for path in api_config.SESSION_DIR.glob("*.json")
                 if not path.name.startswith("_") and is_safe_session_id(path.stem)
             }
         except Exception:
@@ -10767,7 +9919,7 @@ def _pre_compression_continuation_session_id(session) -> str | None:
     def _child_rows_from_sidecars(seen_ids: set[str]) -> list:
         rows = []
         try:
-            for path in SESSION_DIR.glob("*.json"):
+            for path in api_config.SESSION_DIR.glob("*.json"):
                 if path.name.startswith("_"):
                     continue
                 child_sid = path.stem
@@ -10790,7 +9942,7 @@ def _pre_compression_continuation_session_id(session) -> str | None:
             return False
         if not isinstance(row, dict):
             return True
-        return (SESSION_DIR / f"{child_sid}.json").exists()
+        return (api_config.SESSION_DIR / f"{child_sid}.json").exists()
 
     def _resolve_from_rows(rows: list) -> str | None:
         children_by_parent: dict[str, list] = {}
@@ -10861,17 +10013,12 @@ from api.workspace import (
     get_profile_default_workspace,
     set_last_workspace,
     git_info_for_workspace,
-    authorize_escape_target,
-    EscapeAuthorizationExpiredError,
     list_dir,
-    list_authorized_escape_dir,
     serialize_workspace_entries_for_browser,
     dir_signature,
     list_workspace_suggestions,
     read_file_content,
-    read_authorized_escape_file_content,
     resolve_in_workspace,
-    raw_authorized_escape_target,
     resolve_trusted_workspace,
     _resolve_path,
     resolve_implicit_workspace_with_recovery,
@@ -10883,7 +10030,6 @@ from api.workspace import (
     rename_anchored,
     make_anchored_dir,
     _strip_surrounding_quotes,
-    _is_remote_terminal_backend,
     _workspace_blocked_roots,
 )
 from api.upload import (
@@ -10919,68 +10065,35 @@ from api.run_journal import (
     SSE_RELAY_CLOSE_EVENTS,
 )
 from api.todo_state import attach_todo_state
-from api.providers import (
-    get_providers,
-    get_provider_quota,
-    get_provider_cost_history,
-    provider_has_process_wakeup_recovery_credential,
-    set_provider_key,
-    remove_provider_key,
-)
-from api.onboarding import (
-    apply_onboarding_setup,
-    get_onboarding_status,
-    complete_onboarding,
-    probe_provider_endpoint,
-)
-from api.oauth import (
-    cancel_onboarding_oauth_flow,
-    poll_onboarding_oauth_flow,
-    start_onboarding_oauth_flow,
-)
+from api.providers import provider_has_process_wakeup_recovery_credential
 
-# Approval system -- state and helpers live in api.route_approvals; imported
-# here for backward compatibility so existing call sites continue to resolve.
-from api.route_approvals import (  # noqa: F401 — re-exports for backward compat
-    _submit_pending_raw,
+# Approval system -- state and helpers live in api.route_approvals.
+from api.route_approvals import (
     approve_session,
     approve_permanent,
     save_permanent_allowlist,
-    is_approved,
     _pending,
     _lock,
     _permanent_approved,
     _gateway_queues,
     resolve_gateway_approval,
-    enable_session_yolo,
-    disable_session_yolo,
-    is_session_yolo_enabled,
     _approval_sse_subscribers,
-    _approval_sse_subscribe,
     _approval_sse_unsubscribe,
     _approval_sse_notify_locked,
-    _approval_sse_notify,
     _GATEWAY_AGENT_IDENTITY_V1,
     _GATEWAY_MIRROR_FLAG,
     _GATEWAY_MIRROR_TOKEN,
     _gateway_mirror_entry_token,
-    gateway_yolo_handoff,
-    begin_session_yolo_transition,
     claim_gateway_approval_relay_owner,
-    finish_session_yolo_transition,
     gateway_pending_mirror,
-    gateway_pending_mirrors,
     release_gateway_approval_relay_owner,
     retire_gateway_pending_mirror,
     settle_gateway_pending_run,
     reconcile_gateway_pending_mirror_locked,
     resolve_gateway_pending_local,
     resolve_gateway_pending_run,
-    resolve_gateway_pending_local_all,
     resolve_gateway_pending_local_no_run_mirror,
-    set_session_yolo_enabled,
-    submit_gateway_pending_mirror,
-    submit_pending,
+    submit_pending,  # noqa: F401  (tests submit approvals through the route module)
 )
 
 # Clarify prompts (optional -- graceful fallback if agent not available)
@@ -11295,55 +10408,17 @@ button:hover{background:rgba(124,185,255,.25)}
 </body></html>"""
 
 
-def _directory_session_role(handler) -> str | None:
-    """The GFIT-CoWork role (``admin``/``user``) of this request's Directory session, if any.
-
-    The role is the request's Admission: a session with none has no role.
-    """
-    from api.access import request_admission
-    from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
-
-    info = ensure_request_session(handler)
-    if not info or info.get("auth_type") != DIRECTORY_AUTH_TYPE:
-        return None
-    admission = request_admission()
-    return admission.role if admission is not None else None
-
-
-def _app_shell_for_role(html: str, role) -> str:
-    """The app shell for the caller's role (GFIT-CoWork).
-
-    ``<html>`` carries the role and the features the caller may use
-    (``data-gfit-may``, from :func:`api.access.shell_features`): the stylesheet
-    hides the others and the scripts do not call them (cosmetic; the server
-    gate is the source of truth). Extensions are Admin-only, so a User's shell
-    does not load them.
-    """
-    from api.access import ROLE_USER, shell_features
-    from api.extensions import inject_extension_tags
-
-    if role:
-        may = " ".join(shell_features(role))
-        html = html.replace("<html ", f'<html data-gfit-role="{role}" data-gfit-may="{may}" ', 1)
-    return html if role == ROLE_USER else inject_extension_tags(html)
-
-
 def _handle_directory_login(handler, body) -> bool:
     """POST /api/auth/login for a GFIT-CoWork Directory login (employee ID + password)."""
-    from api.helpers import build_profile_cookie
     from api.login import attempt_login, rate_limit_key
 
     outcome = attempt_login(body.get("username"), body.get("password"), rate_limit_key(handler))
     if outcome.status != 200:
         return j(handler, {"error": outcome.error}, status=outcome.status)
-    return _send_login_success(
-        handler,
-        outcome.session_cookie,
-        build_profile_cookie(outcome.bound_profile, session_cookie_value=outcome.session_cookie),
-    )
+    return _send_login_success(handler, outcome.session_cookie)
 
 
-def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bool:
+def _send_login_success(handler, session_cookie: str) -> bool:
     """Answer a successful login: ``{"ok": true}`` plus the session cookie."""
     from api.auth import set_auth_cookie
 
@@ -11354,86 +10429,10 @@ def _send_login_success(handler, session_cookie: str, *extra_cookies: str) -> bo
     handler.send_header("Cache-Control", "no-store")
     _security_headers(handler)
     set_auth_cookie(handler, session_cookie)
-    for cookie in extra_cookies:
-        handler.send_header("Set-Cookie", cookie)
     handler.end_headers()
     handler.wfile.write(payload)
     return True
 
-
-# ── Logs endpoint ─────────────────────────────────────────────────────────────
-_LOG_FILE_WHITELIST = {
-    "agent": "agent.log",
-    "errors": "errors.log",
-    "gateway": "gateway.log",
-}
-_LOG_TAIL_VALUES = {100, 200, 500, 1000}
-_LOG_DEFAULT_TAIL = 200
-_LOG_MAX_BYTES = 4 * 1024 * 1024
-
-
-def _normalize_logs_tail(raw_tail) -> int:
-    try:
-        tail = int(str(raw_tail or "").strip())
-    except (TypeError, ValueError):
-        return _LOG_DEFAULT_TAIL
-    return tail if tail in _LOG_TAIL_VALUES else _LOG_DEFAULT_TAIL
-
-
-def _handle_logs(handler, parsed) -> bool:
-    """Return a bounded tail window for an active-profile Hermes log file."""
-    query = parse_qs(parsed.query)
-    file_key = (query.get("file", ["agent"])[0] or "agent").strip().lower()
-    filename = _LOG_FILE_WHITELIST.get(file_key)
-    if not filename:
-        return bad(handler, "Unknown log file", status=400)
-
-    tail = _normalize_logs_tail(query.get("tail", [None])[0])
-    try:
-        from api.profiles import get_active_hermes_home
-
-        hermes_home = Path(get_active_hermes_home()).expanduser()
-    except Exception:
-        hermes_home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")).expanduser()
-
-    log_dir = hermes_home / "logs"
-    log_path = log_dir / filename
-    try:
-        # Defense in depth: the filename is hardcoded above, but keep the final
-        # path anchored under the active profile's logs directory.
-        if log_path.resolve(strict=False).parent != log_dir.resolve(strict=False):
-            return bad(handler, "Invalid log file", status=400)
-        if not log_path.exists() or not log_path.is_file():
-            return j(handler, {
-                "file": file_key,
-                "tail": tail,
-                "lines": [],
-                "truncated": False,
-                "total_bytes": 0,
-                "mtime": None,
-                "hint": f"Log file for {file_key} not found yet.",
-            })
-        st = log_path.stat()
-        total_bytes = int(st.st_size)
-        read_bytes = min(total_bytes, _LOG_MAX_BYTES)
-        with log_path.open("rb") as fh:
-            if total_bytes > read_bytes:
-                fh.seek(total_bytes - read_bytes)
-            raw = fh.read(read_bytes)
-        text = raw.decode("utf-8", errors="replace")
-        lines = text.splitlines()[-tail:]
-        return j(handler, {
-            "file": file_key,
-            "tail": tail,
-            "lines": lines,
-            "truncated": total_bytes > read_bytes,
-            "total_bytes": total_bytes,
-            "mtime": st.st_mtime,
-            "hint": "",
-        })
-    except Exception as exc:
-        logger.exception("Failed to read whitelisted log file %s", file_key)
-        return bad(handler, _sanitize_error(exc), status=500)
 
 # ── Insights endpoint ──────────────────────────────────────────────────────────
 
@@ -12054,7 +11053,7 @@ def _handle_insights(handler, parsed) -> bool:
 
     # Walk session index (fast, no full JSON parse)
     sessions_data = []
-    idx_path = SESSION_DIR / "_index.json"
+    idx_path = api_config.SESSION_DIR / "_index.json"
     if idx_path.exists():
         try:
             idx = json.loads(idx_path.read_text(encoding="utf-8"))
@@ -12064,7 +11063,7 @@ def _handle_insights(handler, parsed) -> bool:
         idx = []
 
     # The index holds every Profile's sessions: a User counts only their own;
-    # the Admin, and Upstream's isolated profile mode, every one in the index.
+    # code with no caller, every one in the index.
     reach = request_caller_reach()
     for entry in idx:
         if not reach.includes(entry.get("profile")):
@@ -12505,7 +11504,7 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
     from api.workspace_policy import request_workspace_policy
 
     # Every folder the dashboard reads comes from somewhere a User does not
-    # control alone (the shared Kanban store, a file inside a project), so each
+    # control alone (a file inside a project), so each
     # one asks the request's Workspace policy. A refused folder is no folder.
     policy = request_workspace_policy()
 
@@ -12522,23 +11521,6 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
     requested_board = str((qs.get("board") or [""])[0] or "").strip()
     workspace_raw = str(get_last_workspace() or "").strip()
     repo_root = usable(Path(workspace_raw).expanduser()) if workspace_raw else None
-    selected_board_meta = None
-    if requested_board:
-        try:
-            from api.kanban_bridge import _kb, _board_meta_dict
-            kb = _kb()
-            for meta in kb.list_boards(include_archived=True) or []:
-                board = _board_meta_dict(meta)
-                if str(board.get("slug") or "") == requested_board:
-                    selected_board_meta = board
-                    workdir = str(board.get("default_workdir") or "").strip()
-                    if workdir:
-                        candidate = usable(Path(workdir).expanduser())
-                        if candidate is not None and candidate.exists():
-                            repo_root = candidate
-                    break
-        except Exception:
-            selected_board_meta = None
     repo_root = usable(_project_os_resolve_repo_root_for_board(repo_root, requested_board, usable))
     if not repo_root or not repo_root.exists():
         j(handler, {
@@ -12610,14 +11592,11 @@ def _handle_project_os_dashboard(handler, parsed) -> bool:
             board_dict = raw_board
         board_name = board_dict.get("display_name") or board_dict.get("name") or board_dict.get("slug")
         board_desc = handoff.get("goal_summary") or board_dict.get("repo_corroboration")
-    if selected_board_meta:
-        board_name = board_name or selected_board_meta.get("name") or selected_board_meta.get("slug")
-        board_desc = board_desc or selected_board_meta.get("description")
 
     j(handler, {
         "workspace": str(repo_root),
         "repo_root": str(repo_root),
-        "selected_board_slug": requested_board or (selected_board_meta or {}).get("slug"),
+        "selected_board_slug": requested_board or None,
         "git": git,
         "docs": {
             "project": project_md,
@@ -12658,6 +11637,7 @@ def _streams_lock_health(timeout_seconds: float = 0.5) -> dict:
     try:
         return {
             "status": "ok",
+            # This probe holds STREAMS_LOCK to time it, so it counts directly.
             "active_streams": len(STREAMS),
             "ms": elapsed_ms,
         }
@@ -13094,66 +12074,6 @@ def _shutdown_log_value(value, *, default: str = "unknown", max_len: int = 160) 
     return text
 
 
-def _handle_shutdown(handler) -> bool:
-    """Shut down the WebUI server process."""
-    headers = getattr(handler, "headers", {})
-    ua = headers.get("User-Agent", "no-ua") if hasattr(headers, "get") else "no-ua"
-    remote = "unknown"
-    if getattr(handler, "client_address", None):
-        remote = getattr(handler, "client_address", ("unknown",))[0]
-    logger.info(
-        "[shutdown-request] remote=%s method=%s path=%s ua=%s",
-        _shutdown_log_value(remote),
-        _shutdown_log_value(getattr(handler, "command", None)),
-        _shutdown_log_value(getattr(handler, "path", None), max_len=240),
-        _shutdown_log_value(ua, default="no-ua", max_len=240),
-    )
-    j(handler, {"status": "shutting_down"})
-    import signal
-    import threading
-
-    def _do_shutdown():
-        import time
-        time.sleep(0.3)
-        os.kill(os.getpid(), signal.SIGINT)
-
-    threading.Thread(target=_do_shutdown, daemon=True).start()
-    return True
-
-
-def _handle_health_restart(handler) -> bool:
-    """Restart the Hermes messaging gateway service."""
-    # This endpoint never consumes its request body on any outcome, so close when
-    # one was DECLARED -- and only then. Arming unconditionally closed the socket
-    # on every call including the successful, body-less one the WebUI actually
-    # makes: verified on the wire, `POST /api/health/restart` with no
-    # `Content-Length` answered with `Connection: close` and the pipelined
-    # `GET /api/health/agent` was never served. The single arming covers every
-    # outcome below (completed / in_progress / busy / error) because the framing,
-    # not the result, decides.
-    arm_connection_close_if_body_pending(handler)
-    outcome = restart_active_profile_gateway()
-
-    if outcome.get("status") == "completed":
-        return j(handler, {"ok": True, "message": "Gateway service restarted successfully"})
-
-    if outcome.get("status") == "in_progress":
-        return j(handler, {"ok": True, "message": "Gateway service restart initiated (in progress)"})
-
-    if outcome.get("status") == "busy":
-        return j(
-            handler,
-            {"ok": False, "error": outcome.get("message", "Restart already in progress. Please wait a moment and try again.")},
-            status=429,
-        )
-
-    return j(
-        handler,
-        {"ok": False, "error": outcome.get("message", "Internal error running restart")},
-        status=500,
-    )
-
-
 def _serve_manifest(handler) -> bool:
     """Serve static/manifest.json with the correct PWA Content-Type.
 
@@ -13243,22 +12163,6 @@ def _render_index_shell_base() -> str:
     return base
 
 
-def _mark_read_only_for_caller(session: dict, found) -> None:
-    """Mark a loaded session read-only when session ownership says it is, for
-    this caller (the Admin's view of another Profile's session), with the reason
-    and the owner, so the web app's read-only handling applies before any write."""
-    reason = request_session_ownership().read_only_reason(found)
-    if not reason:
-        return
-    from api import roster
-
-    owner = str(session.get("profile") or "")
-    session["read_only"] = True
-    session["read_only_reason"] = reason
-    session["owner_profile"] = owner
-    session["owner_label"] = roster.view(owner).get("label") if owner else ""
-
-
 def _handle_session_get(handler, parsed) -> bool:
     """GET /api/session — full session payload (messages, tool calls, lineage...). Extracted verbatim from handle_get; every early-return path calls _diag.finish() (see the tier2c note inside)."""
     import time as _time
@@ -13322,9 +12226,9 @@ def _handle_session_get(handler, parsed) -> bool:
         if _diag: _diag.stage("t1_after_get_session_check")
         s = get_session(sid, metadata_only=(not load_messages))
         _session_profile = getattr(s, 'profile', None) or None
-        # Session ownership answers: a KNOWN other profile's session is the
-        # Admin's 409 so the client can offer to switch to it (#5419); a
-        # legacy None-profile sidecar keeps the 404 self-heal.
+        # Session ownership answers: for a User, another Profile's session is
+        # "not found", like a missing one (the unconfined 409 of #5419 has no
+        # HTTP caller since ADR 0006).
         _refusal = request_session_ownership().refuse_found_session(sid, s)
         if _refusal is not None:
             if _diag: _diag.finish()
@@ -13718,7 +12622,6 @@ def _handle_session_get(handler, parsed) -> bool:
         ):
             raw["is_cli_session"] = False
             raw["read_only"] = True
-        _mark_read_only_for_caller(raw, s)
         imported_turn_marker = any(
             isinstance(row, dict) and row.get("_active_turn_token")
             for row in _all_msgs
@@ -13785,10 +12688,9 @@ def _handle_session_get(handler, parsed) -> bool:
         # gate (via _is_claimable_cli_source) so the two endpoints can't
         # drift on foreign-session semantics.
         cli_meta = _lookup_cli_session_metadata(sid)
-        # Session ownership answers from the listed row: another KNOWN
-        # profile's CLI/foreign session is the Admin's 409 (#5419); a missing
-        # session keeps the 404 self-heal; a Profile-less Claude Code row opens
-        # under any profile for the Admin, and never for a User.
+        # Session ownership answers from the listed row: for a User, another
+        # Profile's CLI/foreign session and a Profile-less Claude Code row are
+        # "not found", like a missing session (404 self-heal).
         _refusal = request_session_ownership().refuse_listed_session(sid, cli_meta or {})
         if _refusal is not None:
             return _refusal.answer(handler, sid)
@@ -13848,572 +12750,513 @@ def _handle_session_get(handler, parsed) -> bool:
         }
         attach_todo_state(sess, msgs)
         sess = _merge_cli_sidebar_metadata(sess, cli_meta)
-        _mark_read_only_for_caller(sess, sess)
         return j(handler, {"session": public_session_projection(sess)})
 
 
+# A route handler that did not serve the request: dispatch goes on to the
+# GET fallback (a dashboard plugin's page).
+_NOT_HANDLED = object()
+
+
+def _route_handler(route):
+    """The route module's function for *route*, looked up on each request so a
+    patch of the route module takes effect."""
+    return globals()[route.handler]
+
+
 def handle_get(handler, parsed) -> bool:
-    """Handle all GET routes. Returns True if handled, False for 404."""
-    proxy_result = _handle_extension_sidecar_proxy(handler, parsed, "GET")
-    if proxy_result is not False:
-        return proxy_result
+    """Handle all GET routes through the route table. Returns True if handled, False for 404."""
+    route = route_table.match("GET", parsed.path)
+    if route is not None:
+        if route.session_guard and not _guard_request_session_visibility(handler, parsed, method="GET"):
+            return True
+        result = _route_handler(route)(handler, parsed)
+        if result is not _NOT_HANDLED:
+            return result
+    return _get_dashboard_plugin_page(handler, parsed)
 
-    if parsed.path.startswith("/session/static/"):
-        # Strip the leading "/session" so _serve_static() sees a path that
-        # starts with "/static/" (its required prefix). _serve_static enforces
-        # its own path-traversal sandbox via Path.resolve()+relative_to().
-        stripped = parsed._replace(path=parsed.path[len("/session"):])
-        return _serve_static(handler, stripped)
 
-    # Firefox Android resolves <link rel="manifest"> against the page URL
-    # before the dynamic <base href> script runs when installing from
-    # /session/<id>, producing requests like /session/manifest.json.
-    # Without this guard the catch-all below returns index.html instead of
-    # the manifest, and Firefox falls back to a generated letter icon.
-    # See #2226.
-    if parsed.path in ("/session/manifest.json", "/session/manifest.webmanifest"):
-        return _serve_manifest(handler)
+def _get_session_events(handler, parsed):
+    session_id = _session_events_path_session_id(parsed.path)
+    return _handle_session_run_journal_stream_for_session(handler, parsed, session_id)
 
-    if parsed.path in ("/", "/index.html", "/sessions") or parsed.path.startswith("/session/"):
+
+def _get_session_static(handler, parsed):
+    # Strip the leading "/session" so _serve_static() sees a path that
+    # starts with "/static/" (its required prefix). _serve_static enforces
+    # its own path-traversal sandbox via Path.resolve()+relative_to().
+    stripped = parsed._replace(path=parsed.path[len("/session"):])
+    return _serve_static(handler, stripped)
+
+
+# Firefox Android resolves <link rel="manifest"> against the page URL
+# before the dynamic <base href> script runs when installing from
+# /session/<id>, producing requests like /session/manifest.json.
+# Without this guard the catch-all below returns index.html instead of
+# the manifest, and Firefox falls back to a generated letter icon.
+# See #2226.
+def _get_session_manifest(handler, parsed):
+    return _serve_manifest(handler)
+
+
+def _get_app_shell(handler, parsed):
+    try:
+        csrf_token = ""
         try:
+            from api.auth import csrf_token_for_session, parse_cookie, verify_session
+
+            cookie_val = parse_cookie(handler)
+            if cookie_val and verify_session(cookie_val):
+                csrf_token = csrf_token_for_session(cookie_val) or ""
+        except Exception:
             csrf_token = ""
-            try:
-                from api.auth import csrf_token_for_session, parse_cookie, verify_session
-                from api.directory import is_directory_enabled
 
-                if is_directory_enabled():
-                    cookie_val = parse_cookie(handler)
-                    if cookie_val and verify_session(cookie_val):
-                        csrf_token = csrf_token_for_session(cookie_val) or ""
-            except Exception:
-                csrf_token = ""
-
-            # The disk read + process-constant token substitutions are cached;
-            # only the per-session CSRF token and per-request extension tags are
-            # applied here (see _render_index_shell_base).
-            html = _render_index_shell_base().replace(
-                "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
-            )
-            return t(
-                handler,
-                _app_shell_for_role(html, _directory_session_role(handler)),
-                content_type="text/html; charset=utf-8",
-            )
-        except Exception as exc:
-            return _serve_shell_unavailable(handler, exc)
-
-    if parsed.path == "/share" or parsed.path.startswith("/share/"):
-        share_path = (Path(__file__).parent.parent / "static" / "share.html").resolve()
-        return t(
-            handler,
-            share_path.read_text(encoding="utf-8"),
-            content_type="text/html; charset=utf-8",
-            extra_headers={
-                "X-Robots-Tag": "noindex, nofollow",
-            },
+        # The disk read + process-constant token substitutions are cached;
+        # only the per-session CSRF token and per-request extension tags are
+        # applied here (see _render_index_shell_base).
+        html = _render_index_shell_base().replace(
+            "__CSRF_TOKEN_JSON__", json.dumps(csrf_token)
         )
+        return t(handler, html, content_type="text/html; charset=utf-8")
+    except Exception as exc:
+        return _serve_shell_unavailable(handler, exc)
 
-    if parsed.path == "/login":
-        _settings = load_settings()
-        _lang = _settings.get("language", "en")
-        _login_strings = dict(_LOGIN_LOCALE[
-            _resolve_login_locale_key(_lang)
-        ])
+
+def _get_login(handler, parsed):
+    _settings = load_settings()
+    _lang = _settings.get("language", "en")
+    _login_strings = dict(_LOGIN_LOCALE[
+        _resolve_login_locale_key(_lang)
+    ])
+    from urllib.parse import quote
+    from api.version import WEBUI_VERSION
+    # GFIT-CoWork: the Directory login (employee ID + password) is the only
+    # way in (ADR 0004), so it is the only form. Locales without Directory
+    # copy yet fall back to English.
+    for _key in ("directory_subtitle", "username_placeholder"):
+        _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
+    _login_strings["subtitle"] = _login_strings["directory_subtitle"]
+    _login_form_html = (
+        '<input type="text" id="username" name="username" '
+        f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
+        'autocomplete="username" '
+        'autocapitalize="none" spellcheck="false" autofocus required>'
+        f'<input type="password" id="pw" name="password" '
+        f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
+        'autocomplete="current-password" required>'
+        f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
+    )
+    version_token = quote(WEBUI_VERSION, safe="")
+    _page = (
+        _LOGIN_PAGE_HTML.replace("{{APP_NAME}}", _html.escape(APP_NAME))
+        .replace("{{APP_NAME_INITIAL}}", _html.escape(APP_NAME[0].upper()))
+        .replace("{{WEBUI_VERSION}}", version_token)
+        .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
+        .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))
+        .replace("{{LOGIN_SUBTITLE}}", _html.escape(_login_strings["subtitle"]))
+        .replace("{{LOGIN_FORM_HTML}}", _login_form_html)
+        .replace("{{LOGIN_INVALID_PW}}", _html.escape(_login_strings["invalid_pw"]))
+        .replace(
+            "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])
+        )
+    )
+    return t(handler, _page, content_type="text/html; charset=utf-8")
+
+
+def _get_api_auth_status(handler, parsed):
+    from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
+
+    session_info = ensure_request_session(handler)
+    payload = {"logged_in": bool(session_info)}
+    if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
+        from api.login import session_identity
+
+        payload["auth_type"] = session_info.get("auth_type")
+        payload["user"] = session_info.get("username")
+        payload["bound_profile"] = session_info.get("bound_profile")
+        payload.update(session_identity(session_info))
+    return j(handler, payload)
+
+
+def _get_manifest(handler, parsed):
+    return _serve_manifest(handler)
+
+
+def _get_sw_js(handler, parsed):
+    static_root = api_config.get_static_root()
+    sw_path = (static_root / "sw.js").resolve()
+    if sw_path.exists():
+        # Inject the current git-derived version as the cache name so the
+        # service worker cache busts automatically on every new deploy.
         from urllib.parse import quote
         from api.version import WEBUI_VERSION
-        # GFIT-CoWork: the Directory login (employee ID + password) is the only
-        # way in (ADR 0004), so it is the only form. Locales without Directory
-        # copy yet fall back to English.
-        for _key in ("directory_subtitle", "username_placeholder"):
-            _login_strings.setdefault(_key, _LOGIN_LOCALE["en"][_key])
-        _login_strings["subtitle"] = _login_strings["directory_subtitle"]
-        _login_form_html = (
-            '<input type="text" id="username" name="username" '
-            f'placeholder="{_html.escape(_login_strings["username_placeholder"])}" '
-            'autocomplete="username" '
-            'autocapitalize="none" spellcheck="false" autofocus required>'
-            f'<input type="password" id="pw" name="password" '
-            f'placeholder="{_html.escape(_login_strings["placeholder"])}" '
-            'autocomplete="current-password" required>'
-            f'<button type="submit">{_html.escape(_login_strings["btn"])}</button>'
-        )
         version_token = quote(WEBUI_VERSION, safe="")
-        _page = (
-            _LOGIN_PAGE_HTML.replace("{{APP_NAME}}", _html.escape(APP_NAME))
-            .replace("{{APP_NAME_INITIAL}}", _html.escape(APP_NAME[0].upper()))
-            .replace("{{WEBUI_VERSION}}", version_token)
-            .replace("{{LANG}}", _html.escape(_login_strings["lang"]))
-            .replace("{{LOGIN_TITLE}}", _html.escape(_login_strings["title"]))
-            .replace("{{LOGIN_SUBTITLE}}", _html.escape(_login_strings["subtitle"]))
-            .replace("{{LOGIN_FORM_HTML}}", _login_form_html)
-            .replace("{{LOGIN_INVALID_PW}}", _html.escape(_login_strings["invalid_pw"]))
-            .replace(
-                "{{LOGIN_CONN_FAILED}}", _html.escape(_login_strings["conn_failed"])
-            )
+        text = sw_path.read_text(encoding="utf-8").replace(
+            "__WEBUI_VERSION__", version_token
         )
-        return t(handler, _page, content_type="text/html; charset=utf-8")
-
-    if parsed.path == "/api/auth/status":
-        from api.auth import DIRECTORY_AUTH_TYPE, ensure_request_session
-        from api.directory import is_directory_enabled
-        logged_in = False
-        session_info = None
-        auth_enabled = is_directory_enabled()
-        if auth_enabled:
-            session_info = ensure_request_session(handler)
-            logged_in = bool(session_info)
-        payload = {
-            "auth_enabled": auth_enabled,
-            "logged_in": logged_in,
-            "auth_disabled_acknowledged": bool(load_settings().get("auth_disabled_acknowledged")) if not auth_enabled else False,
-        }
-        if auth_enabled:
-            payload["directory_auth_enabled"] = True
-        if session_info and session_info.get("auth_type") == DIRECTORY_AUTH_TYPE:
-            from api.login import session_identity
-
-            payload["auth_type"] = session_info.get("auth_type")
-            payload["user"] = session_info.get("username")
-            payload["bound_profile"] = session_info.get("bound_profile")
-
-            payload["role"] = _directory_session_role(handler)
-            payload.update(session_identity(session_info))
-        return j(handler, payload)
-
-    if parsed.path.startswith("/api/share/"):
-        token = parsed.path[len("/api/share/"):].strip()
-        share = load_share(token)
-        if not share:
-            return bad(handler, "Shared conversation not found", 404)
-        return j(
-            handler,
-            {"share": share},
-            extra_headers={
-                "Cache-Control": "no-store",
-                "X-Robots-Tag": "noindex, nofollow",
-            },
-        )
-
-    if parsed.path in ("/manifest.json", "/manifest.webmanifest"):
-        return _serve_manifest(handler)
-
-    if parsed.path == "/sw.js":
-        static_root = api_config.get_static_root()
-        sw_path = (static_root / "sw.js").resolve()
-        if sw_path.exists():
-            # Inject the current git-derived version as the cache name so the
-            # service worker cache busts automatically on every new deploy.
-            from urllib.parse import quote
-            from api.version import WEBUI_VERSION
-            version_token = quote(WEBUI_VERSION, safe="")
-            text = sw_path.read_text(encoding="utf-8").replace(
-                "__WEBUI_VERSION__", version_token
-            )
-            data = text.encode("utf-8")
-            handler.send_response(200)
-            handler.send_header("Content-Type", "application/javascript; charset=utf-8")
-            handler.send_header("Cache-Control", "no-store")
-            handler.send_header("Service-Worker-Allowed", "/")
-            handler.send_header("Content-Length", str(len(data)))
-            handler.end_headers()
-            handler.wfile.write(data)
-            return True
-        return j(handler, {"error": "not found"}, status=404)
-
-    if parsed.path == "/favicon.ico":
-        static_root = api_config.get_static_root()
-        ico_path = (static_root / "favicon.ico").resolve()
-        if ico_path.exists() and ico_path.is_file():
-            data = ico_path.read_bytes()
-            handler.send_response(200)
-            handler.send_header("Content-Type", "image/x-icon")
-            handler.send_header("Content-Length", str(len(data)))
-            handler.send_header("Cache-Control", "public, max-age=86400")
-            handler.end_headers()
-            handler.wfile.write(data)
-        else:
-            handler.send_response(204)
-            handler.end_headers()
+        data = text.encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "application/javascript; charset=utf-8")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Service-Worker-Allowed", "/")
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
         return True
+    return j(handler, {"error": "not found"}, status=404)
 
-    if parsed.path.startswith("/api/") and not _guard_request_session_visibility(handler, parsed, method="GET"):
-        return True
 
-    # ── Insights / knowledge status ──
-    if parsed.path == "/api/insights":
-        return _handle_insights(handler, parsed)
-    if parsed.path == "/api/project-os/dashboard":
-        return _handle_project_os_dashboard(handler, parsed)
+def _get_favicon_ico(handler, parsed):
+    static_root = api_config.get_static_root()
+    ico_path = (static_root / "favicon.ico").resolve()
+    if ico_path.exists() and ico_path.is_file():
+        data = ico_path.read_bytes()
+        handler.send_response(200)
+        handler.send_header("Content-Type", "image/x-icon")
+        handler.send_header("Content-Length", str(len(data)))
+        handler.send_header("Cache-Control", "public, max-age=86400")
+        handler.end_headers()
+        handler.wfile.write(data)
+    else:
+        handler.send_response(204)
+        handler.end_headers()
+    return True
 
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_get
 
-        # Only treat an explicit False as "no route matched". None means the
-        # bridge already sent a response via bad()/j() — emitting our own 404
-        # on top of that produces concatenated JSON bodies on the wire.
-        result = handle_kanban_get(handler, parsed)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "GET")
-        return True
-    if parsed.path == "/api/wiki/status":
-        return _handle_llm_wiki_status(handler, parsed)
-    if parsed.path == "/api/wiki/browse":
-        wiki_root, _, _ = _llm_wiki_resolve_path()
-        if not wiki_root or not os.path.isdir(wiki_root):
-            return bad(handler, "Wiki not configured or directory not found", status=404)
-        allowlisted_entries = _llm_wiki_allowlisted_entries(Path(wiki_root))
-        pages = []
-        for rel_path, (fp, identity) in sorted(allowlisted_entries.items(), key=lambda item: item[0].lower()):
-            try:
-                st = fp.stat()
-            except OSError:
-                continue
-            if (st.st_dev, st.st_ino) != identity:
-                continue
-            pages.append({"name": Path(rel_path).name, "path": rel_path, "size": st.st_size, "mtime": int(st.st_mtime)})
-        return j(handler, {"pages": pages})
-    if parsed.path == "/api/wiki/page":
-        wiki_root, _, _ = _llm_wiki_resolve_path()
-        page_path = parse_qs(parsed.query or "").get("path", [""])[0]
-        if not wiki_root or not page_path:
-            return bad(handler, "Wiki not configured or path not provided", status=400)
-        if "\\" in page_path:
-            return bad(handler, "Invalid path", status=400)
-        # Reject a real `..` path SEGMENT (or absolute path), not the bare
-        # substring — a legitimate listed filename like `v1..v2.md` contains
-        # ".." without being traversal. Containment + the resolved-allowlist
-        # membership check below are the actual security boundary.
-        requested_key = page_path.replace("\\", "/")
-        _page_parts = requested_key.split("/")
-        if os.path.isabs(page_path) or any(part == ".." for part in _page_parts):
-            return bad(handler, "Invalid path", status=400)
-        if any(part in ("", ".") for part in _page_parts):
-            return bad(handler, "Invalid path", status=400)
-        full_path = Path(os.path.join(wiki_root, page_path))
-        if not _skill_path_within(Path(wiki_root), full_path):
-            return bad(handler, "Invalid path", status=400)
+# ── Insights / knowledge status ──
+def _get_api_insights(handler, parsed):
+    return _handle_insights(handler, parsed)
+
+
+def _get_api_project_os_dashboard(handler, parsed):
+    return _handle_project_os_dashboard(handler, parsed)
+
+
+def _get_api_wiki_status(handler, parsed):
+    return _handle_llm_wiki_status(handler, parsed)
+
+
+def _get_api_wiki_browse(handler, parsed):
+    wiki_root, _, _ = _llm_wiki_resolve_path()
+    if not wiki_root or not os.path.isdir(wiki_root):
+        return bad(handler, "Wiki not configured or directory not found", status=404)
+    allowlisted_entries = _llm_wiki_allowlisted_entries(Path(wiki_root))
+    pages = []
+    for rel_path, (fp, identity) in sorted(allowlisted_entries.items(), key=lambda item: item[0].lower()):
         try:
-            wiki_real = Path(wiki_root).resolve()
+            st = fp.stat()
         except OSError:
-            return bad(handler, "Page not found", status=404)
-        # Only serve files the browse/list path would surface (same allowlist:
-        # *.md under the wiki page-dirs, no dotfiles, forbidden-roots guard).
-        # Without this the read endpoint could return ANY file inside the wiki
-        # root (e.g. .env / .git/config / non-.md), since containment alone
-        # doesn't constrain which files are readable (Opus review finding).
-        # Capture each allowlisted page's STABLE IDENTITY (st_dev, st_ino) so the
-        # post-open fstat below can detect a file/parent-dir swapped in after the
-        # allowlist check (TOCTOU write-race, Codex finding) — a pathname re-open
-        # alone can't, since O_NOFOLLOW only guards the final component, not a
-        # swapped parent directory.
-        allowed_identity = _llm_wiki_allowlisted_entries(wiki_real)
+            continue
+        if (st.st_dev, st.st_ino) != identity:
+            continue
+        pages.append({"name": Path(rel_path).name, "path": rel_path, "size": st.st_size, "mtime": int(st.st_mtime)})
+    return j(handler, {"pages": pages})
+
+
+def _get_api_wiki_page(handler, parsed):
+    wiki_root, _, _ = _llm_wiki_resolve_path()
+    page_path = parse_qs(parsed.query or "").get("path", [""])[0]
+    if not wiki_root or not page_path:
+        return bad(handler, "Wiki not configured or path not provided", status=400)
+    if "\\" in page_path:
+        return bad(handler, "Invalid path", status=400)
+    # Reject a real `..` path SEGMENT (or absolute path), not the bare
+    # substring — a legitimate listed filename like `v1..v2.md` contains
+    # ".." without being traversal. Containment + the resolved-allowlist
+    # membership check below are the actual security boundary.
+    requested_key = page_path.replace("\\", "/")
+    _page_parts = requested_key.split("/")
+    if os.path.isabs(page_path) or any(part == ".." for part in _page_parts):
+        return bad(handler, "Invalid path", status=400)
+    if any(part in ("", ".") for part in _page_parts):
+        return bad(handler, "Invalid path", status=400)
+    full_path = Path(os.path.join(wiki_root, page_path))
+    if not _skill_path_within(Path(wiki_root), full_path):
+        return bad(handler, "Invalid path", status=400)
+    try:
+        wiki_real = Path(wiki_root).resolve()
+    except OSError:
+        return bad(handler, "Page not found", status=404)
+    # Only serve files the browse/list path would surface (same allowlist:
+    # *.md under the wiki page-dirs, no dotfiles, forbidden-roots guard).
+    # Without this the read endpoint could return ANY file inside the wiki
+    # root (e.g. .env / .git/config / non-.md), since containment alone
+    # doesn't constrain which files are readable (Opus review finding).
+    # Capture each allowlisted page's STABLE IDENTITY (st_dev, st_ino) so the
+    # post-open fstat below can detect a file/parent-dir swapped in after the
+    # allowlist check (TOCTOU write-race, Codex finding) — a pathname re-open
+    # alone can't, since O_NOFOLLOW only guards the final component, not a
+    # swapped parent directory.
+    allowed_identity = _llm_wiki_allowlisted_entries(wiki_real)
+    try:
+        resolved_target = full_path.resolve()
+    except OSError:
+        return bad(handler, "Page not found", status=404)
+    requested_entry = allowed_identity.get(requested_key)
+    if requested_entry is None:
+        return bad(handler, "Page not found", status=404)
+    allowlisted_target, allowlisted_identity = requested_entry
+    if resolved_target != allowlisted_target:
+        return bad(handler, "Page not found", status=404)
+    # Read the ALREADY-RESOLVED, allowlisted real path with O_NOFOLLOW so a
+    # symlink swapped in for the final component between the allowlist check
+    # and the read is refused rather than followed. Then fstat the open fd
+    # and require its (st_dev, st_ino) to match the identity captured during
+    # allowlisting — this closes a parent-directory swap that O_NOFOLLOW
+    # would otherwise follow. Any mismatch / vanished / swapped page returns
+    # a clean 404, never a 500.
+    try:
+        fd = os.open(str(resolved_target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
-            resolved_target = full_path.resolve()
-        except OSError:
-            return bad(handler, "Page not found", status=404)
-        requested_entry = allowed_identity.get(requested_key)
-        if requested_entry is None:
-            return bad(handler, "Page not found", status=404)
-        allowlisted_target, allowlisted_identity = requested_entry
-        if resolved_target != allowlisted_target:
-            return bad(handler, "Page not found", status=404)
-        # Read the ALREADY-RESOLVED, allowlisted real path with O_NOFOLLOW so a
-        # symlink swapped in for the final component between the allowlist check
-        # and the read is refused rather than followed. Then fstat the open fd
-        # and require its (st_dev, st_ino) to match the identity captured during
-        # allowlisting — this closes a parent-directory swap that O_NOFOLLOW
-        # would otherwise follow. Any mismatch / vanished / swapped page returns
-        # a clean 404, never a 500.
-        try:
-            fd = os.open(str(resolved_target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            try:
-                st_open = os.fstat(fd)
-                if (st_open.st_dev, st_open.st_ino) != allowlisted_identity:
-                    return bad(handler, "Page not found", status=404)
-                raw = os.read(fd, _LLM_WIKI_MAX_PAGE_BYTES + 1)
-            finally:
-                os.close(fd)
-            if len(raw) > _LLM_WIKI_MAX_PAGE_BYTES:
-                raw = raw[:_LLM_WIKI_MAX_PAGE_BYTES]
-            content = raw.decode("utf-8", errors="replace")
-        except (FileNotFoundError, IsADirectoryError):
-            return bad(handler, "Page not found", status=404)
-        except OSError:
-            # ELOOP (symlink swapped in under O_NOFOLLOW) or any other read
-            # failure → clean 404, never a 500.
-            return bad(handler, "Could not read page", status=404)
-        return j(handler, {"content": content, "path": page_path})
-    if parsed.path == "/api/logs":
-        return _handle_logs(handler, parsed)
-
-    if parsed.path == "/health":
-        return _handle_health(handler, parsed)
-
-    if parsed.path == "/api/health/agent":
-        payload = build_agent_health_payload()
-        payload["gateway_chat"] = gateway_chat_config_status()
-        j(handler, payload)
-        return True
-
-    if parsed.path == "/api/system/health":
-        j(handler, build_system_health_payload())
-        return True
-
-    if parsed.path == "/api/models":
-        # Profile-scoping for non-default profiles (#3957) is handled INSIDE
-        # get_available_models() — it binds the active profile's env + TLS on
-        # the detached rebuild worker (and the legacy synchronous rebuild),
-        # which the request-thread wrapper could not reach. See
-        # api.config.get_available_models cold path + profile_scope_for_detached_worker.
-        freshness = parse_qs(parsed.query or "").get("freshness", [""])[0].strip().lower()
-        diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-        try:
-            diag.stage(f"enter:freshness={freshness or 'default'}") if diag else None
-            if freshness == "session_visit":
-                result = get_available_models_for_session_visit()
-                diag.stage("response_serialize") if diag else None
-                return j(handler, result)
-            if freshness:
-                return bad(handler, f"unknown models freshness: {freshness}", status=400)
-            return j(handler, get_available_models())
+            st_open = os.fstat(fd)
+            if (st_open.st_dev, st_open.st_ino) != allowlisted_identity:
+                return bad(handler, "Page not found", status=404)
+            raw = os.read(fd, _LLM_WIKI_MAX_PAGE_BYTES + 1)
         finally:
-            if diag:
-                diag.finish()
+            os.close(fd)
+        if len(raw) > _LLM_WIKI_MAX_PAGE_BYTES:
+            raw = raw[:_LLM_WIKI_MAX_PAGE_BYTES]
+        content = raw.decode("utf-8", errors="replace")
+    except (FileNotFoundError, IsADirectoryError):
+        return bad(handler, "Page not found", status=404)
+    except OSError:
+        # ELOOP (symlink swapped in under O_NOFOLLOW) or any other read
+        # failure → clean 404, never a 500.
+        return bad(handler, "Could not read page", status=404)
+    return j(handler, {"content": content, "path": page_path})
 
-    if parsed.path == "/api/models/live":
-        from api.profiles import profile_env_for_active_request
-        with profile_env_for_active_request("/api/models/live", logger_override=logger):
-            return _handle_live_models(handler, parsed)
 
-    # ── Auxiliary models (GET/POST) ──
-    if parsed.path == "/api/model/auxiliary":
-        from api.config import get_auxiliary_models
-        return j(handler, get_auxiliary_models())
+def _get_health(handler, parsed):
+    return _handle_health(handler, parsed)
 
-    if parsed.path == "/api/dashboard/status":
-        from api import dashboard_probe
 
-        j(handler, dashboard_probe.get_dashboard_status())
+def _get_api_health_agent(handler, parsed):
+    payload = build_agent_health_payload()
+    payload["gateway_chat"] = gateway_chat_config_status()
+    j(handler, payload)
+    return True
+
+
+def _get_api_system_health(handler, parsed):
+    j(handler, build_system_health_payload())
+    return True
+
+
+def _get_api_models(handler, parsed):
+    # Profile-scoping for non-default profiles (#3957) is handled INSIDE
+    # get_available_models() — it binds the active profile's env + TLS on
+    # the detached rebuild worker (and the legacy synchronous rebuild),
+    # which the request-thread wrapper could not reach. See
+    # api.config.get_available_models cold path + profile_scope_for_detached_worker.
+    freshness = parse_qs(parsed.query or "").get("freshness", [""])[0].strip().lower()
+    diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    try:
+        diag.stage(f"enter:freshness={freshness or 'default'}") if diag else None
+        if freshness == "session_visit":
+            result = get_available_models_for_session_visit()
+            diag.stage("response_serialize") if diag else None
+            return j(handler, result)
+        if freshness:
+            return bad(handler, f"unknown models freshness: {freshness}", status=400)
+        return j(handler, get_available_models())
+    finally:
+        if diag:
+            diag.finish()
+
+
+def _get_api_models_live(handler, parsed):
+    from api.profiles import profile_env_for_active_request
+    with profile_env_for_active_request("/api/models/live", logger_override=logger):
+        return _handle_live_models(handler, parsed)
+
+
+# ── Auxiliary models (GET/POST) ──
+def _get_api_model_auxiliary(handler, parsed):
+    from api.config import get_auxiliary_models
+    return j(handler, get_auxiliary_models())
+
+
+# ── Plugins/hooks visibility (read-only, no callback/source internals) ──
+def _get_api_plugins(handler, parsed):
+    return _handle_plugins(handler, parsed)
+
+
+def _get_api_settings(handler, parsed):
+    settings = load_settings()
+    settings["persisted_speech_keys"] = persisted_speech_settings_keys()
+    # A password hash stored by the Upstream password login is left on disk
+    # and ignored; never send it to a client.
+    settings.pop("password_hash", None)
+    settings.setdefault("max_tokens", None)
+    settings.setdefault("max_tokens_effective", None)
+    settings.setdefault("max_tokens_fallback", None)
+    try:
+        from api.config import get_max_tokens_status
+        settings.update(get_max_tokens_status())
+    except Exception:
+        settings["max_tokens"] = None
+        settings["max_tokens_effective"] = None
+        settings["max_tokens_fallback"] = None
+    # Inject the running version so the UI badge stays in sync with git tags
+    # without any manual release step.
+    try:
+        from api.version import AGENT_VERSION, WEBUI_VERSION
+        settings["webui_version"] = WEBUI_VERSION
+        settings["agent_version"] = AGENT_VERSION
+    except Exception:
+        pass
+    return j(handler, settings)
+
+
+def _get_api_transcribe_capability(handler, parsed):
+    return handle_transcribe_capability(handler)
+
+
+def _get_api_reasoning(handler, parsed):
+    # Current reasoning config (shared source of truth with the CLI —
+    # reads display.show_reasoning and agent.reasoning_effort from
+    # the active profile's config.yaml).
+    query = parse_qs(parsed.query)
+    model_id = (query.get("model", [""])[0] or "").strip() or None
+    provider_id = (query.get("provider", [""])[0] or "").strip() or None
+    base_url = (query.get("base_url", [""])[0] or "").strip() or None
+    return j(
+        handler,
+        get_reasoning_status(
+            model_id=model_id,
+            provider_id=provider_id,
+            base_url=base_url,
+        ),
+    )
+
+
+def _get_static(handler, parsed):
+    return _serve_static(handler, parsed)
+
+
+def _get_api_session_worktree_status(handler, parsed):
+    query = parse_qs(parsed.query)
+    sid = query.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id is required", status=400)
+    s = load_owned_session(handler, sid, load=get_session, metadata_only=True)
+    if s is None:
         return True
+    try:
+        from api.worktrees import worktree_status_for_session
 
-    if parsed.path == "/api/dashboard/config":
-        from api import dashboard_probe
+        return j(handler, {"status": worktree_status_for_session(s)})
+    except ValueError as exc:
+        return bad(handler, str(exc), status=400)
+    except Exception as exc:
+        logger.exception("failed to read worktree status for session %s", sid)
+        return bad(handler, _sanitize_error(exc), status=500)
 
-        try:
-            j(handler, dashboard_probe.get_dashboard_config())
-        except ValueError as exc:
-            bad(handler, str(exc), status=400)
+
+def _get_api_session_compress_status(handler, parsed):
+    query = parse_qs(parsed.query)
+    _handle_session_compress_status(handler, query.get("session_id", [""])[0])
+    return True
+
+
+def _get_api_session(handler, parsed):
+    return _handle_session_get(handler, parsed)
+
+
+def _get_api_session_lineage_report(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id required", 400)
+    report = read_session_lineage_report(_active_state_db_path(), sid)
+    if not report.get("found"):
+        return bad(handler, "Session not found", 404)
+    return j(handler, report)
+
+
+def _get_api_session_status(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    s = load_owned_session(handler, sid, load=get_session, metadata_only=True)
+    if s is None:
         return True
+    try:
+        from api.session_ops import session_status
+        _clear_stale_stream_state(s)
+        return j(handler, session_status(sid))
+    except KeyError:
+        return bad(handler, "Session not found", 404)
 
-    # ── Providers (GET) ──
-    if parsed.path == "/api/providers":
-        # Apply the active per-request profile's env so provider auth probes
-        # resolve against that profile's credentials, not the process-default
-        # profile's (#3957). Without this, get_auth_status() probes on a
-        # non-default profile resolve the wrong/empty creds and can stall past
-        # the 30s frontend timeout. No-op for the default profile.
-        from api.profiles import profile_env_for_active_request_readonly
-        with profile_env_for_active_request_readonly("/api/providers", logger_override=logger):
-            return j(handler, get_providers())
 
-    # ── Plugins/hooks visibility (read-only, no callback/source internals) ──
-    if parsed.path == "/api/plugins":
-        return _handle_plugins(handler, parsed)
-    if parsed.path == "/api/provider/quota":
-        query = parse_qs(parsed.query)
-        provider_id = (query.get("provider", [""])[0] or None)
-        refresh = (query.get("refresh", [""])[0] or "").strip().lower() in {"1", "true", "yes", "on"}
-        # Bind the active request's profile env (matches /api/providers and
-        # /api/models/live). #4365 added a credential_pool.load_pool() path in
-        # get_provider_quota for all pooled providers; without this wrapper that
-        # read/write runs under the process-default profile, so a multi-profile
-        # client would see (and seed) the default profile's pool instead of its
-        # own (#4247/#4067 profile-isolation class).
-        from api.profiles import profile_env_for_active_request_readonly
-        with profile_env_for_active_request_readonly("/api/provider/quota", logger_override=logger):
-            return j(handler, get_provider_quota(provider_id, refresh=refresh))
+def _get_api_session_usage(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    try:
+        from api.session_ops import session_usage
+        return j(handler, session_usage(sid))
+    except KeyError:
+        return bad(handler, "Session not found", 404)
 
-    if parsed.path == "/api/provider/cost-history":
-        query = parse_qs(parsed.query)
-        provider_id = (query.get("provider", [""])[0] or None)
-        days_raw = (query.get("days", ["7"])[0] or "7").strip()
-        try:
-            days = max(1, min(int(days_raw), 365))
-        except (ValueError, TypeError):
-            days = 7
-        return j(handler, get_provider_cost_history(provider_id, days))
 
-    if parsed.path == "/api/settings":
+def _get_api_background_status(handler, parsed):
+    sid = parse_qs(parsed.query).get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "Missing session_id")
+    from api.background import get_results
+    return j(handler, {"results": get_results(sid)})
+
+
+def _get_api_sessions(handler, parsed):
+    diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    try:
+        from api import profiles as profiles_api
+
+        diag.stage("load_settings")
         settings = load_settings()
-        settings["persisted_speech_keys"] = persisted_speech_settings_keys()
-        # A password hash stored by the Upstream password login is left on disk
-        # and ignored; never send it to a client.
-        settings.pop("password_hash", None)
-        settings.setdefault("max_tokens", None)
-        settings.setdefault("max_tokens_effective", None)
-        settings.setdefault("max_tokens_fallback", None)
-        try:
-            from api.config import get_max_tokens_status
-            settings.update(get_max_tokens_status())
-        except Exception:
-            settings["max_tokens"] = None
-            settings["max_tokens_effective"] = None
-            settings["max_tokens_fallback"] = None
-        # Auth-state field for the frontend's unauthenticated warning
-        from api.directory import is_directory_enabled
-        settings["auth_enabled"] = is_directory_enabled()
-        # Inject the running version so the UI badge stays in sync with git tags
-        # without any manual release step.
-        try:
-            from api.version import AGENT_VERSION, WEBUI_VERSION
-            settings["webui_version"] = WEBUI_VERSION
-            settings["agent_version"] = AGENT_VERSION
-        except Exception:
-            pass
-        return j(handler, settings)
-
-    if parsed.path == "/api/transcribe/capability":
-        return handle_transcribe_capability(handler)
-
-    if parsed.path == "/api/reasoning":
-        # Current reasoning config (shared source of truth with the CLI —
-        # reads display.show_reasoning and agent.reasoning_effort from
-        # the active profile's config.yaml).
-        query = parse_qs(parsed.query)
-        model_id = (query.get("model", [""])[0] or "").strip() or None
-        provider_id = (query.get("provider", [""])[0] or "").strip() or None
-        base_url = (query.get("base_url", [""])[0] or "").strip() or None
-        return j(
-            handler,
-            get_reasoning_status(
-                model_id=model_id,
-                provider_id=provider_id,
-                base_url=base_url,
-            ),
+        show_cli_sessions = bool(settings.get("show_cli_sessions"))
+        show_claude_code_sessions = bool(settings.get("show_claude_code_sessions"))
+        show_previous_messaging_sessions = bool(
+            settings.get("show_previous_messaging_sessions")
         )
-
-    if parsed.path == "/api/onboarding/status":
-        return j(handler, get_onboarding_status())
-
-    if parsed.path == "/api/extensions/status":
-        from api.extensions import get_extension_status
-
-        return j(handler, get_extension_status())
-
-    if parsed.path.startswith("/extensions/"):
-        from api.extensions import serve_extension_static
-
-        return serve_extension_static(handler, parsed)
-
-    if parsed.path.startswith("/static/"):
-        return _serve_static(handler, parsed)
-
-
-    if parsed.path == "/api/session/worktree/status":
-        query = parse_qs(parsed.query)
-        sid = query.get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "session_id is required", status=400)
-        try:
-            s = get_session(sid, metadata_only=True)
-        except KeyError:
-            return bad(handler, "Session not found", status=404)
-        try:
-            from api.worktrees import worktree_status_for_session
-
-            return j(handler, {"status": worktree_status_for_session(s)})
-        except ValueError as exc:
-            return bad(handler, str(exc), status=400)
-        except Exception as exc:
-            logger.exception("failed to read worktree status for session %s", sid)
-            return bad(handler, _sanitize_error(exc), status=500)
-
-    if parsed.path == "/api/session/compress/status":
-        query = parse_qs(parsed.query)
-        _handle_session_compress_status(handler, query.get("session_id", [""])[0])
-        return True
-
-    if parsed.path == "/api/session":
-        return _handle_session_get(handler, parsed)
-
-    if parsed.path == "/api/session/lineage/report":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "session_id required", 400)
-        report = read_session_lineage_report(_active_state_db_path(), sid)
-        if not report.get("found"):
-            return bad(handler, "Session not found", 404)
-        return j(handler, report)
-
-    if parsed.path == "/api/session/recovery/audit":
-        from api.session_recovery import audit_session_recovery
-        return j(handler, audit_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path()))
-
-    if parsed.path == "/api/session/status":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        try:
-            from api.session_ops import session_status
-            _clear_stale_stream_state(get_session(sid, metadata_only=True))
-            return j(handler, session_status(sid))
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-
-    if parsed.path == "/api/session/yolo":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        return j(handler, {"yolo_enabled": is_session_yolo_enabled(sid)})
-
-    if parsed.path == "/api/session/usage":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        try:
-            from api.session_ops import session_usage
-            return j(handler, session_usage(sid))
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-
-    if parsed.path == "/api/background/status":
-        sid = parse_qs(parsed.query).get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "Missing session_id")
-        from api.background import get_results
-        return j(handler, {"results": get_results(sid)})
-
-    if parsed.path == "/api/sessions":
-        diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-        try:
-            from api import profiles as profiles_api
-
-            diag.stage("load_settings")
-            settings = load_settings()
-            show_cli_sessions = bool(settings.get("show_cli_sessions"))
-            show_claude_code_sessions = bool(settings.get("show_claude_code_sessions"))
-            show_previous_messaging_sessions = bool(
-                settings.get("show_previous_messaging_sessions")
-            )
-            show_cron_sessions = bool(settings.get("show_cron_sessions"))
-            show_webhook_sessions = bool(settings.get("show_webhook_sessions"))
-            show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
-            agent_session_source_filter = settings.get("agent_session_source_filter")
-            active_profile = profiles_api.get_active_profile_name()
-            reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-            all_profiles = reach.every_profile
-            include_archived = _query_flag(parsed, "include_archived")
-            exclude_hidden = _query_flag(parsed, "exclude_hidden")
-            archived_limit = _query_positive_int(parsed, "archived_limit", default=None, maximum=2000)
-            archived_offset = _query_positive_int(parsed, "archived_offset", default=0, maximum=200000)
-            sidebar_source = parse_qs(parsed.query).get("sidebar_source", [""])[0].strip().lower() or None
-            if sidebar_source not in ("webui", "cli"):
-                sidebar_source = None
-            # /api/sessions is the default sidebar contract, so keep the route-owned
-            # visible-row filter in the shared cache builder for both cache hits and misses.
-            key = _session_list_cache_key(
+        show_cron_sessions = bool(settings.get("show_cron_sessions"))
+        show_webhook_sessions = bool(settings.get("show_webhook_sessions"))
+        show_kanban_sessions = bool(settings.get("show_kanban_sessions"))
+        agent_session_source_filter = settings.get("agent_session_source_filter")
+        active_profile = profiles_api.get_active_profile_name()
+        reach = request_profile_reach(active_profile)
+        include_archived = _query_flag(parsed, "include_archived")
+        exclude_hidden = _query_flag(parsed, "exclude_hidden")
+        archived_limit = _query_positive_int(parsed, "archived_limit", default=None, maximum=2000)
+        archived_offset = _query_positive_int(parsed, "archived_offset", default=0, maximum=200000)
+        sidebar_source = parse_qs(parsed.query).get("sidebar_source", [""])[0].strip().lower() or None
+        if sidebar_source not in ("webui", "cli"):
+            sidebar_source = None
+        # /api/sessions is the default sidebar contract, so keep the route-owned
+        # visible-row filter in the shared cache builder for both cache hits and misses.
+        key = _session_list_cache_key(
+            active_profile=active_profile,
+            show_cli_sessions=show_cli_sessions,
+            show_claude_code_sessions=show_claude_code_sessions,
+            show_previous_messaging_sessions=show_previous_messaging_sessions,
+            show_cron_sessions=show_cron_sessions,
+            include_archived=include_archived,
+            exclude_hidden=exclude_hidden,
+            visible_only=True,
+            show_webhook_sessions=show_webhook_sessions,
+            show_kanban_sessions=show_kanban_sessions,
+            source_filter=agent_session_source_filter,
+            sidebar_source=sidebar_source,
+            archived_limit=archived_limit,
+            archived_offset=archived_offset,
+        )
+        # Keep the visible /api/sessions contract unchanged even though the
+        # heavy lifting now lives in the cache builder: the view's profile
+        # scoping still happens before `_keep_latest_messaging_session_per_source(`.
+        payload = _get_cached_session_list_payload(
+            key=key,
+            builder=lambda: _build_session_list_view(
                 active_profile=active_profile,
-                all_profiles=all_profiles,
                 show_cli_sessions=show_cli_sessions,
                 show_claude_code_sessions=show_claude_code_sessions,
                 show_previous_messaging_sessions=show_previous_messaging_sessions,
@@ -14427,662 +13270,619 @@ def handle_get(handler, parsed) -> bool:
                 sidebar_source=sidebar_source,
                 archived_limit=archived_limit,
                 archived_offset=archived_offset,
-            )
-            # Keep the visible /api/sessions contract unchanged even though the
-            # heavy lifting now lives in the cache builder: the view's profile
-            # scoping still happens before `_keep_latest_messaging_session_per_source(`.
-            payload = _get_cached_session_list_payload(
-                key=key,
-                builder=lambda: _build_session_list_view(
-                    active_profile=active_profile,
-                    all_profiles=all_profiles,
-                    show_cli_sessions=show_cli_sessions,
-                    show_claude_code_sessions=show_claude_code_sessions,
-                    show_previous_messaging_sessions=show_previous_messaging_sessions,
-                    show_cron_sessions=show_cron_sessions,
-                    include_archived=include_archived,
-                    exclude_hidden=exclude_hidden,
-                    visible_only=True,
-                    show_webhook_sessions=show_webhook_sessions,
-                    show_kanban_sessions=show_kanban_sessions,
-                    source_filter=agent_session_source_filter,
-                    sidebar_source=sidebar_source,
-                    archived_limit=archived_limit,
-                    archived_offset=archived_offset,
-                    diag=diag,
-                ),
                 diag=diag,
-            )
-            payload = _session_list_rows_for_caller(payload, active_profile, reach)
-            diag.stage("response_write")
-            return j(handler, _session_list_payload_to_response(payload), pretty=False)
-        finally:
-            diag.finish()
-
-    if parsed.path == "/api/projects":
-        # ── Profile scoping (#1614) ────────────────────────────────────────
-        # Default: filter to the active profile. ?all_profiles=1 returns the
-        # aggregate list so settings/admin UIs can still see everything.
-        from api import profiles as profiles_api
-
-        active_profile = profiles_api.get_active_profile_name()
-        all_projects = load_projects()
-        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-        all_profiles = reach.every_profile
-        scoped = [p for p in all_projects if reach.includes(p.get("profile"))]
-        other_profile_count = len(all_projects) - len(scoped) if reach.counts_other_profiles else 0
-        return j(handler, {
-            "projects": scoped,
-            "all_profiles": all_profiles,
-            "active_profile": active_profile,
-            "other_profile_count": other_profile_count,
-        })
-
-    if parsed.path == "/api/prompts":
-        return j(handler, {"prompts": _load_saved_prompts()})
-
-    if parsed.path == "/api/session/export":
-        return _handle_session_export(handler, parsed)
-
-    if parsed.path == "/api/workspaces":
-        from api.profiles import get_active_profile_name
-        active_profile = get_active_profile_name()
-        try:
-            wss = load_workspaces(profile=active_profile)
-        except TypeError:
-            wss = load_workspaces()
-        try:
-            lw = get_last_workspace(profile=active_profile)
-        except TypeError:
-            lw = get_last_workspace()
-        return j(
-            handler,
-            {
-                "workspaces": wss,
-                "last": lw,
-                "terminal_remote_backend": _terminal_remote_backend_enabled(),
-            },
+            ),
+            diag=diag,
         )
+        payload = _session_list_rows_for_caller(payload, active_profile, reach)
+        diag.stage("response_write")
+        return j(handler, _session_list_payload_to_response(payload), pretty=False)
+    finally:
+        diag.finish()
 
-    if parsed.path == "/api/workspaces/suggest":
-        from api.profiles import get_active_profile_name
 
-        qs = parse_qs(parsed.query)
-        prefix = qs.get("prefix", [""])[0]
-        active_profile = get_active_profile_name()
-        try:
-            suggestions = list_workspace_suggestions(prefix, profile=active_profile)
-        except TypeError:
-            suggestions = list_workspace_suggestions(prefix)
-        return j(
-            handler,
-            {
-                "suggestions": suggestions,
-                "prefix": prefix,
-            },
-        )
+def _get_api_projects(handler, parsed):
+    # ── Profile scoping (#1614) ────────────────────────────────────────
+    # The active Profile's projects (one Profile's view, ADR 0006).
+    from api import profiles as profiles_api
 
-    if parsed.path == "/api/sessions/search":
-        return _handle_sessions_search(handler, parsed)
+    active_profile = profiles_api.get_active_profile_name()
+    reach = request_profile_reach(active_profile)
+    scoped = [p for p in load_projects() if reach.includes(p.get("profile"))]
+    return j(handler, {"projects": scoped, "active_profile": active_profile})
 
-    if parsed.path == "/api/list":
-        return _handle_list_dir(handler, parsed)
 
-    if parsed.path == "/api/escape/list":
-        return _handle_escape_list_dir(handler, parsed)
+def _get_api_prompts(handler, parsed):
+    return j(handler, {"prompts": _load_saved_prompts()})
 
-    if parsed.path == "/api/git/status":
-        return _handle_git_status(handler, parsed)
 
-    if parsed.path == "/api/git/branches":
-        return _handle_git_branches(handler, parsed)
+def _get_api_session_export(handler, parsed):
+    return _handle_session_export(handler, parsed)
 
-    if parsed.path == "/api/git/diff":
-        return _handle_git_diff(handler, parsed)
 
-    if parsed.path == "/api/personalities":
-        # Read personalities from config.yaml agent.personalities section
-        # (matches hermes-agent CLI behavior, not filesystem SOUL.md approach)
-        from api.config import reload_config as _reload_cfg
+def _get_api_workspaces(handler, parsed):
+    from api.profiles import get_active_profile_name
+    active_profile = get_active_profile_name()
+    try:
+        wss = load_workspaces(profile=active_profile)
+    except TypeError:
+        wss = load_workspaces()
+    try:
+        lw = get_last_workspace(profile=active_profile)
+    except TypeError:
+        lw = get_last_workspace()
+    return j(
+        handler,
+        {
+            "workspaces": wss,
+            "last": lw,
+        },
+    )
 
-        _reload_cfg()  # pick up config.yaml changes without server restart
-        from api.config import get_config as _get_cfg
 
-        _cfg = _get_cfg()
-        agent_cfg = _cfg.get("agent", {})
-        raw_personalities = agent_cfg.get("personalities", {})
-        personalities = []
-        if isinstance(raw_personalities, dict):
-            for name, value in raw_personalities.items():
-                desc = ""
-                if isinstance(value, dict):
-                    desc = value.get("description", "")
-                elif isinstance(value, str):
-                    desc = value[:80] + ("..." if len(value) > 80 else "")
-                personalities.append({"name": name, "description": desc})
-        return j(handler, {"personalities": personalities})
+def _get_api_workspaces_suggest(handler, parsed):
+    from api.profiles import get_active_profile_name
 
-    if parsed.path == "/api/git-info":
-        qs = parse_qs(parsed.query)
-        sid = qs.get("session_id", [""])[0]
-        if not sid:
-            return bad(handler, "session_id required")
-        try:
-            workspace = get_session(sid).workspace
-        except KeyError:
-            # state.db-only sessions (CLI, delegated subagents): same fallback as /api/list.
-            cli_meta = _lookup_cli_session_metadata(sid)
-            if not cli_meta:
-                return bad(handler, "Session not found", 404)
-            if not cli_meta.get("workspace"):
-                return j(handler, {"git": None})
-            try:
-                workspace = resolve_trusted_workspace(cli_meta["workspace"])
-            except (FileNotFoundError, ValueError):
-                return j(handler, {"git": None})
-        from api.workspace_git import GitWorkspaceError, git_status
-        from api.workspace_policy import request_workspace_policy
+    qs = parse_qs(parsed.query)
+    prefix = qs.get("prefix", [""])[0]
+    active_profile = get_active_profile_name()
+    try:
+        suggestions = list_workspace_suggestions(prefix, profile=active_profile)
+    except TypeError:
+        suggestions = list_workspace_suggestions(prefix)
+    return j(
+        handler,
+        {
+            "suggestions": suggestions,
+            "prefix": prefix,
+        },
+    )
 
-        try:
-            workspace = request_workspace_policy().confine(Path(workspace))
-        except ValueError:
+
+def _get_api_sessions_search(handler, parsed):
+    return _handle_sessions_search(handler, parsed)
+
+
+def _get_api_list(handler, parsed):
+    return _handle_list_dir(handler, parsed)
+
+
+def _get_api_git_status(handler, parsed):
+    return _handle_git_status(handler, parsed)
+
+
+def _get_api_git_branches(handler, parsed):
+    return _handle_git_branches(handler, parsed)
+
+
+def _get_api_git_diff(handler, parsed):
+    return _handle_git_diff(handler, parsed)
+
+
+def _get_api_personalities(handler, parsed):
+    # Read personalities from config.yaml agent.personalities section
+    # (matches hermes-agent CLI behavior, not filesystem SOUL.md approach)
+    from api.config import reload_config as _reload_cfg
+
+    _reload_cfg()  # pick up config.yaml changes without server restart
+    from api.config import get_config as _get_cfg
+
+    _cfg = _get_cfg()
+    agent_cfg = _cfg.get("agent", {})
+    raw_personalities = agent_cfg.get("personalities", {})
+    personalities = []
+    if isinstance(raw_personalities, dict):
+        for name, value in raw_personalities.items():
+            desc = ""
+            if isinstance(value, dict):
+                desc = value.get("description", "")
+            elif isinstance(value, str):
+                desc = value[:80] + ("..." if len(value) > 80 else "")
+            personalities.append({"name": name, "description": desc})
+    return j(handler, {"personalities": personalities})
+
+
+def _get_api_git_info(handler, parsed):
+    qs = parse_qs(parsed.query)
+    sid = qs.get("session_id", [""])[0]
+    if not sid:
+        return bad(handler, "session_id required")
+    try:
+        workspace = get_session(sid).workspace
+    except KeyError:
+        # state.db-only sessions (CLI, delegated subagents): same fallback as /api/list.
+        cli_meta = _lookup_cli_session_metadata(sid)
+        if not cli_meta:
+            return bad(handler, "Session not found", 404)
+        if not cli_meta.get("workspace"):
             return j(handler, {"git": None})
         try:
-            status = git_status(Path(workspace))
-        except GitWorkspaceError as e:
-            return _git_bad(handler, e)
-        totals = status.get("totals") or {}
-        info = None if not status.get("is_git") else {
-            "branch": status.get("branch"),
-            "dirty": totals.get("changed", 0),
-            "modified": (totals.get("staged", 0) or 0) + (totals.get("unstaged", 0) or 0),
-            "untracked": totals.get("untracked", 0),
-            "ahead": status.get("ahead", 0),
-            "behind": status.get("behind", 0),
-            "is_git": True,
-        }
-        return j(handler, {"git": info})
+            workspace = resolve_trusted_workspace(cli_meta["workspace"])
+        except (FileNotFoundError, ValueError):
+            return j(handler, {"git": None})
+    from api.workspace_git import GitWorkspaceError, git_status
+    from api.workspace_policy import request_workspace_policy
 
-    if parsed.path == "/api/commands":
-        from api.commands import list_commands
-        return j(handler, {"commands": list_commands()})
+    try:
+        workspace = request_workspace_policy().confine(Path(workspace))
+    except ValueError:
+        return j(handler, {"git": None})
+    try:
+        status = git_status(Path(workspace))
+    except GitWorkspaceError as e:
+        return _git_bad(handler, e)
+    totals = status.get("totals") or {}
+    info = None if not status.get("is_git") else {
+        "branch": status.get("branch"),
+        "dirty": totals.get("changed", 0),
+        "modified": (totals.get("staged", 0) or 0) + (totals.get("unstaged", 0) or 0),
+        "untracked": totals.get("untracked", 0),
+        "ahead": status.get("ahead", 0),
+        "behind": status.get("behind", 0),
+        "is_git": True,
+    }
+    return j(handler, {"git": info})
 
-    if parsed.path == "/api/commands/bundles":
-        from api.commands import list_command_bundles
-        return j(handler, {"bundles": list_command_bundles()})
 
-    if parsed.path == "/api/commands/moa/resolve":
-        from api.commands import resolve_moa_config
-        try:
-            return j(handler, resolve_moa_config())
-        except RuntimeError as e:
-            return bad(handler, str(e), 503)
+def _get_api_commands(handler, parsed):
+    from api.commands import list_commands
+    return j(handler, {"commands": list_commands()})
 
-    if parsed.path == "/api/chat/stream/status":
-        stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
-        if not _stream_id_visible_to_request_profile(handler, stream_id):
-            return True
-        active = stream_id in STREAMS
-        payload = {"active": active, "stream_id": stream_id, "replay_available": False}
-        try:
-            journal = find_run_summary(stream_id) if stream_id else None
-        except Exception:
-            journal = None
-        if journal:
-            payload["replay_available"] = True
-            payload["journal"] = _run_journal_status_payload(journal, active=active)
-        return j(handler, payload)
 
-    if parsed.path == "/api/chat/cancel":
-        stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
-        if not stream_id:
-            return bad(handler, "stream_id required")
-        if not _stream_id_visible_to_request_profile(handler, stream_id):
-            return True
-        gateway_stop_blocked = False
-        try:
-            from api.gateway_chat import (
-                GATEWAY_RUN_ID_WAIT_TIMEOUT,
-                stop_gateway_run,
-                wait_for_gateway_run_id,
-            )
+def _get_api_commands_bundles(handler, parsed):
+    from api.commands import list_command_bundles
+    return j(handler, {"bundles": list_command_bundles()})
 
-            structured_gateway, run_id = wait_for_gateway_run_id(stream_id, GATEWAY_RUN_ID_WAIT_TIMEOUT)
-            if not run_id and structured_gateway:
-                gateway_stop_blocked = True
-            if run_id:
-                if stop_gateway_run(run_id):
-                    owner_sid = stream_owner_session_id(stream_id)
-                    if owner_sid:
-                        settle_gateway_pending_run(
-                            owner_sid,
-                            run_id,
-                            reason="Gateway run was cancelled before approval resolution",
-                        )
-                else:
-                    gateway_stop_blocked = True
-        except Exception:
-            logger.debug("Failed to stop gateway run during chat cancellation", exc_info=True)
+
+def _get_api_commands_moa_resolve(handler, parsed):
+    from api.commands import resolve_moa_config
+    try:
+        return j(handler, resolve_moa_config())
+    except RuntimeError as e:
+        return bad(handler, str(e), 503)
+
+
+def _get_api_chat_stream_status(handler, parsed):
+    stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
+    active = stream_id in STREAMS
+    payload = {"active": active, "stream_id": stream_id, "replay_available": False}
+    try:
+        journal = find_run_summary(stream_id) if stream_id else None
+    except Exception:
+        journal = None
+    if journal:
+        payload["replay_available"] = True
+        payload["journal"] = _run_journal_status_payload(journal, active=active)
+    return j(handler, payload)
+
+
+def _get_api_chat_cancel(handler, parsed):
+    stream_id = parse_qs(parsed.query).get("stream_id", [""])[0]
+    if not stream_id:
+        return bad(handler, "stream_id required")
+    gateway_stop_blocked = False
+    try:
+        from api.gateway_chat import (
+            GATEWAY_RUN_ID_WAIT_TIMEOUT,
+            stop_gateway_run,
+            wait_for_gateway_run_id,
+        )
+
+        structured_gateway, run_id = wait_for_gateway_run_id(stream_id, GATEWAY_RUN_ID_WAIT_TIMEOUT)
+        if not run_id and structured_gateway:
             gateway_stop_blocked = True
-        if gateway_stop_blocked:
-            return j(
-                handler,
-                {
-                    "ok": False,
-                    "cancelled": False,
-                    "stream_id": stream_id,
-                    "error": "Gateway stop failed",
-                },
-                status=502,
-            )
-
-        from api.runtime_adapter import LegacyJournalRuntimeAdapter, runtime_adapter_enabled
-
-        if runtime_adapter_enabled():
-            adapter = LegacyJournalRuntimeAdapter(cancel_delegate=cancel_stream)
-            cancelled = adapter.cancel_run(stream_id).accepted
-        else:
-            cancelled = cancel_stream(stream_id)
-        return j(handler, {"ok": True, "cancelled": cancelled, "stream_id": stream_id})
-
-    if parsed.path == "/api/chat/stream":
-        return _handle_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/terminal/output":
-        return _handle_terminal_output(handler, parsed)
-
-    if parsed.path == '/api/sessions/gateway/stream':
-        return _handle_gateway_sse_stream(handler, parsed)
-
-    if parsed.path == '/api/sessions/events':
-        return _handle_session_events_stream(handler)
-
-    session_events_session_id = _session_events_path_session_id(parsed.path)
-    if session_events_session_id is not None:
-        return _handle_session_run_journal_stream_for_session(handler, parsed, session_events_session_id)
-
-    if parsed.path == "/api/media":
-        return _handle_media(handler, parsed)
-
-    if parsed.path == "/api/file/raw":
-        return _handle_file_raw(handler, parsed)
-
-    if parsed.path == "/api/escape/file/raw":
-        return _handle_escape_file_raw(handler, parsed)
-
-    if parsed.path == "/api/folder/download":
-        return _handle_folder_download(handler, parsed)
-
-    if parsed.path == "/api/file":
-        return _handle_file_read(handler, parsed)
-
-    if parsed.path == "/api/escape/file/read":
-        return _handle_escape_file_read(handler, parsed)
-
-    if parsed.path == "/api/approval/pending":
-        return _handle_approval_pending(handler, parsed)
-
-    if parsed.path == "/api/approval/stream":
-        return _handle_approval_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/approval/inject_test":
-        # Loopback-only: used by automated tests; blocked from any remote client
-        if handler.client_address[0] != "127.0.0.1":
-            return j(handler, {"error": "not found"}, status=404)
-        return _handle_approval_inject(handler, parsed)
-
-    if parsed.path == "/api/clarify/pending":
-        return _handle_clarify_pending(handler, parsed)
-
-    if parsed.path == "/api/clarify/stream":
-        return _handle_clarify_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/session/stream":
-        return _handle_session_sse_stream(handler, parsed)
-
-    if parsed.path == "/api/clarify/inject_test":
-        # Loopback-only: used by automated tests; blocked from any remote client
-        if handler.client_address[0] != "127.0.0.1":
-            return j(handler, {"error": "not found"}, status=404)
-        return _handle_clarify_inject(handler, parsed)
-
-    if parsed.path == "/api/onboarding/oauth/poll":
-        qs = parse_qs(parsed.query)
-        flow_id = qs.get("flow_id", [""])[0]
-        try:
-            return j(
-                handler,
-                poll_onboarding_oauth_flow(flow_id),
-                extra_headers={"Cache-Control": "no-store"},
-            )
-        except ValueError as e:
-            return bad(handler, str(e))
-        except KeyError as e:
-            return bad(handler, str(e), 404)
-
-    # ── Cron API (GET) ──
-    # Cron reads are active-profile-scoped by default. The list route now
-    # aggregates per visible profile home so the UI can surface hidden-row
-    # counts and, when opted in, read-only foreign rows.
-    if parsed.path == "/api/crons":
-        # #4768: in split-container / minimal Docker deployments the WebUI image may
-        # not ship the agent's `cron` package on its import path. Degrade gracefully
-        # (empty list + cron_unavailable flag) instead of 500ing the whole Task tab.
-        # Only treat a genuinely-absent cron package as "unavailable"; a
-        # ModuleNotFoundError whose missing module is an internal dependency of an
-        # existing cron/jobs.py is a real bug and must still surface.
-        _ensure_agent_cron_import_path()
-        active_profile = _get_active_profile_name() or "default"
-        try:
-            active_jobs, other_jobs = _cron_jobs_cross_profile(active_profile)
-        except ModuleNotFoundError as exc:
-            if exc.name in ("cron", "cron.jobs"):
-                return j(handler, {"jobs": [], "cron_unavailable": True})
-            raise
-        reach = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed))
-        all_profiles = reach.every_profile
-        jobs = active_jobs + other_jobs if all_profiles else active_jobs
-        hidden_other_count = len(other_jobs) if reach.counts_other_profiles else 0
-        return j(handler, {
-            "jobs": jobs,
-            "all_profiles": all_profiles,
-            "active_profile": active_profile,
-            "other_profile_count": hidden_other_count,
-        })
-
-    if parsed.path == "/api/crons/output":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_output(handler, parsed)
-
-    if parsed.path == "/api/crons/history":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_history(handler, parsed)
-
-    if parsed.path == "/api/crons/run":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_run_detail(handler, parsed)
-
-    if parsed.path == "/api/crons/recent":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_recent(handler, parsed)
-
-    if parsed.path == "/api/crons/status":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            return _handle_cron_status(handler, parsed)
-
-    if parsed.path == "/api/crons/delivery-options":
-        from api.profiles import cron_profile_context
-
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_delivery_options(handler)
-
-    # ── Skills API (GET) ──
-    if parsed.path == "/api/skills":
-        qs = parse_qs(parsed.query)
-        category = qs.get("category", [None])[0]
-        data = _skills_list_from_dir(_active_skills_dir(), category=category)
-        return j(handler, {"skills": data.get("skills", [])})
-
-    if parsed.path == "/api/skills/usage":
-        from api.skill_usage import read_skill_usage
-        raw = read_skill_usage(_active_skills_dir())
-        # Pass through agent's format as-is; defensive coercion for fields
-        usage = {}
-        if isinstance(raw, dict):
-            for k, v in raw.items():
-                if not isinstance(v, dict):
-                    usage[k] = {"use_count": 0, "view_count": 0, "patch_count": 0}
-                    continue
-                usage[k] = {
-                    "use_count": (int(v["use_count"]) if v.get("use_count") is not None else 0),
-                    "view_count": (int(v["view_count"]) if v.get("view_count") is not None else 0),
-                    "patch_count": (int(v["patch_count"]) if v.get("patch_count") is not None else 0),
-                }
-                # Preserve agent's metadata (timestamps, state, etc.)
-                for meta_key in v:
-                    if meta_key not in usage[k]:
-                        usage[k][meta_key] = v[meta_key]
-        skills_data = _skills_list_from_dir(_active_skills_dir()).get("skills", [])
-        skill_names = sorted({s["name"] for s in skills_data})
-        total = sum(
-            e.get("use_count", 0) + e.get("view_count", 0) + e.get("patch_count", 0)
-            for e in usage.values()
-        )
-        unique = sum(
-            1 for e in usage.values()
-            if e.get("use_count", 0) > 0 or e.get("view_count", 0) > 0 or e.get("patch_count", 0) > 0
-        )
-        return j(handler, {
-            "usage": usage,
-            "skill_names": skill_names,
-            "total_invocations": total,
-            "unique_skills_used": unique,
-        })
-
-    if parsed.path == "/api/skills/content":
-        qs = parse_qs(parsed.query)
-        name = qs.get("name", [""])[0]
-        if not name:
-            return j(handler, {"error": "name required"}, status=400)
-        file_path = qs.get("file", [""])[0]
-        if file_path:
-            # Serve a linked file from the skill directory
-            import re as _re
-
-            if _re.search(r"[*?\[\]]", name):
-                return bad(handler, "Invalid skill name", 400)
-            skills_dir = _active_skills_dir()
-            skill_dir, _skill_md = _find_skill_in_dirs(
-                name, _active_skill_search_dirs(skills_dir)
-            )
-            if not skill_dir:
-                return bad(handler, "Skill not found", 404)
-            target = (skill_dir / file_path).resolve()
-            try:
-                target.relative_to(skill_dir.resolve())
-            except ValueError:
-                return bad(handler, "Invalid file path", 400)
-            if not target.exists() or not target.is_file():
-                return bad(handler, "File not found", 404)
-            return j(
-                handler,
-                {"content": target.read_text(encoding="utf-8"), "path": file_path},
-            )
-        data = _skill_view_from_active_dir(name)
-        if not isinstance(data.get("linked_files"), dict):
-            data["linked_files"] = {}
-        return j(handler, data)
-
-    # ── Memory API (GET) ──
-    if parsed.path == "/api/memory":
-        return _handle_memory_read(handler, parsed)
-
-    # ── Profile API (GET) ──
-    if parsed.path == "/api/profiles":
-        from api import profiles as profiles_api
-        diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-        try:
-            diag.stage("list_profiles_api") if diag else None
-            from api import roster
-
-            diag.stage("active_profile_lookup") if diag else None
-            active = profiles_api.get_active_profile_name()
-            diag.stage("isolated_mode_check") if diag else None
-            # The Profile list is an all-Profiles view: the cached rows are
-            # everyone's, and this request's reach picks the ones it may see.
-            reach = request_profile_reach(active, all_profiles=True)
-            profiles_payload = roster.label_rows([
-                row for row in profiles_api.list_profiles_api()
-                if isinstance(row, dict) and reach.includes(row.get("name"))
-            ])
-            return j(
-                handler,
-                {
-                    "profiles": profiles_payload,
-                    "active": active,
-                    "single_profile_mode": reach.single_profile,
-                    "may_switch_profile": request_session_ownership().may_switch_profile(),
-                },
-            )
-        finally:
-            if diag:
-                diag.finish()
-
-    if parsed.path == "/api/profile/active":
-        from api import profiles as profiles_api
-
-        active_profile_name = profiles_api.get_active_profile_name()
-        # Resolve the ACTIVE PROFILE's configured workspace so a cold boot with a
-        # profile cookie shows the right composer workspace chip on a blank
-        # new-chat page (#5169). Use get_profile_default_workspace() (NOT
-        # get_last_workspace) so a named profile without its own last_workspace.txt
-        # resolves to its config.yaml workspace/terminal.cwd rather than leaking the
-        # GLOBAL last-workspace file (the #5169 regression Codex flagged). It is
-        # profile-scoped via the per-request hermes_profile cookie set in server.py.
-        # Fail open: a resolution error must never 500 this boot-critical endpoint.
-        try:
-            try:
-                _profile_default_workspace = get_profile_default_workspace(profile=active_profile_name)
-            except TypeError:
-                _profile_default_workspace = get_profile_default_workspace()
-        except Exception:
-            logger.debug("Failed to resolve profile default workspace for /api/profile/active", exc_info=True)
-            _profile_default_workspace = None
+        if run_id:
+            if stop_gateway_run(run_id):
+                owner_sid = stream_owner_session_id(stream_id)
+                if owner_sid:
+                    settle_gateway_pending_run(
+                        owner_sid,
+                        run_id,
+                        reason="Gateway run was cancelled before approval resolution",
+                    )
+            else:
+                gateway_stop_blocked = True
+    except Exception:
+        logger.debug("Failed to stop gateway run during chat cancellation", exc_info=True)
+        gateway_stop_blocked = True
+    if gateway_stop_blocked:
         return j(
             handler,
             {
-                "name": active_profile_name,
-                "path": str(profiles_api.get_active_hermes_home()),
-                "is_default": profiles_api._is_root_profile(active_profile_name),
-                "default_workspace": _profile_default_workspace,
+                "ok": False,
+                "cancelled": False,
+                "stream_id": stream_id,
+                "error": "Gateway stop failed",
             },
+            status=502,
         )
 
-    # ── Gateway Status (GET) ──
-    if parsed.path == "/api/gateway/status":
-        return j(handler, _gateway_status_payload())
+    from api.runtime_adapter import LegacyJournalRuntimeAdapter, runtime_adapter_enabled
 
-    # ── MCP Servers (GET) ──
-    if parsed.path == "/api/mcp/servers":
-        return _handle_mcp_servers_list(handler)
+    if runtime_adapter_enabled():
+        adapter = LegacyJournalRuntimeAdapter(cancel_delegate=cancel_stream)
+        cancelled = adapter.cancel_run(stream_id).accepted
+    else:
+        cancelled = cancel_stream(stream_id)
+    return j(handler, {"ok": True, "cancelled": cancelled, "stream_id": stream_id})
 
-    # ── MCP Tools (GET) ──
-    if parsed.path == "/api/mcp/tools":
-        return _handle_mcp_tools_list(handler)
 
-    if parsed.path == "/api/notes/sources":
-        return _handle_notes_sources_list(handler)
-    if parsed.path == "/api/notes/search":
-        return _handle_notes_search(handler, parsed)
-    if parsed.path == "/api/notes/item":
-        return _handle_notes_item(handler, parsed)
+def _get_api_chat_stream(handler, parsed):
+    return _handle_sse_stream(handler, parsed)
 
-    # ── Checkpoints / Rollback (GET) ──
-    if parsed.path == "/api/rollback/list":
-        qs = parse_qs(parsed.query)
-        workspace = qs.get("workspace", [""])[0]
-        if not workspace:
-            return bad(handler, "workspace query parameter is required")
+
+def _get_api_sessions_gateway_stream(handler, parsed):
+    return _handle_gateway_sse_stream(handler, parsed)
+
+
+def _get_api_sessions_events(handler, parsed):
+    return _handle_session_events_stream(handler)
+
+
+def _get_api_media(handler, parsed):
+    return _handle_media(handler, parsed)
+
+
+def _get_api_file_raw(handler, parsed):
+    return _handle_file_raw(handler, parsed)
+
+
+def _get_api_folder_download(handler, parsed):
+    return _handle_folder_download(handler, parsed)
+
+
+def _get_api_file(handler, parsed):
+    return _handle_file_read(handler, parsed)
+
+
+def _get_api_approval_pending(handler, parsed):
+    return _handle_approval_pending(handler, parsed)
+
+
+def _get_api_approval_stream(handler, parsed):
+    return _handle_approval_sse_stream(handler, parsed)
+
+
+def _get_api_clarify_pending(handler, parsed):
+    return _handle_clarify_pending(handler, parsed)
+
+
+def _get_api_clarify_stream(handler, parsed):
+    return _handle_clarify_sse_stream(handler, parsed)
+
+
+def _get_api_session_stream(handler, parsed):
+    return _handle_session_sse_stream(handler, parsed)
+
+
+# ── Cron API (GET) ──
+# Cron reads are the active Profile's (a User's own, ADR 0006).
+def _get_api_crons(handler, parsed):
+    # #4768: in split-container / minimal Docker deployments the WebUI image may
+    # not ship the agent's `cron` package on its import path. Degrade gracefully
+    # (empty list + cron_unavailable flag) instead of 500ing the whole Task tab.
+    # Only treat a genuinely-absent cron package as "unavailable"; a
+    # ModuleNotFoundError whose missing module is an internal dependency of an
+    # existing cron/jobs.py is a real bug and must still surface.
+    _ensure_agent_cron_import_path()
+    active_profile = _get_active_profile_name() or "default"
+    try:
+        jobs = _cron_jobs_for_profile(active_profile)
+    except ModuleNotFoundError as exc:
+        if exc.name in ("cron", "cron.jobs"):
+            return j(handler, {"jobs": [], "cron_unavailable": True})
+        raise
+    return j(handler, {"jobs": jobs, "active_profile": active_profile})
+
+
+def _get_api_crons_output(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_output(handler, parsed)
+
+
+def _get_api_crons_history(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_history(handler, parsed)
+
+
+def _get_api_crons_run(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_run_detail(handler, parsed)
+
+
+def _get_api_crons_recent(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_recent(handler, parsed)
+
+
+def _get_api_crons_status(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        return _handle_cron_status(handler, parsed)
+
+
+def _get_api_crons_delivery_options(handler, parsed):
+    from api.profiles import cron_profile_context
+
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_delivery_options(handler)
+
+
+# ── Skills API (GET) ──
+def _get_api_skills(handler, parsed):
+    qs = parse_qs(parsed.query)
+    category = qs.get("category", [None])[0]
+    data = _skills_list_from_dir(_active_skills_dir(), category=category)
+    return j(handler, {"skills": data.get("skills", [])})
+
+
+def _get_api_skills_usage(handler, parsed):
+    from api.skill_usage import read_skill_usage
+    raw = read_skill_usage(_active_skills_dir())
+    # Pass through agent's format as-is; defensive coercion for fields
+    usage = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if not isinstance(v, dict):
+                usage[k] = {"use_count": 0, "view_count": 0, "patch_count": 0}
+                continue
+            usage[k] = {
+                "use_count": (int(v["use_count"]) if v.get("use_count") is not None else 0),
+                "view_count": (int(v["view_count"]) if v.get("view_count") is not None else 0),
+                "patch_count": (int(v["patch_count"]) if v.get("patch_count") is not None else 0),
+            }
+            # Preserve agent's metadata (timestamps, state, etc.)
+            for meta_key in v:
+                if meta_key not in usage[k]:
+                    usage[k][meta_key] = v[meta_key]
+    skills_data = _skills_list_from_dir(_active_skills_dir()).get("skills", [])
+    skill_names = sorted({s["name"] for s in skills_data})
+    total = sum(
+        e.get("use_count", 0) + e.get("view_count", 0) + e.get("patch_count", 0)
+        for e in usage.values()
+    )
+    unique = sum(
+        1 for e in usage.values()
+        if e.get("use_count", 0) > 0 or e.get("view_count", 0) > 0 or e.get("patch_count", 0) > 0
+    )
+    return j(handler, {
+        "usage": usage,
+        "skill_names": skill_names,
+        "total_invocations": total,
+        "unique_skills_used": unique,
+    })
+
+
+def _get_api_skills_content(handler, parsed):
+    qs = parse_qs(parsed.query)
+    name = qs.get("name", [""])[0]
+    if not name:
+        return j(handler, {"error": "name required"}, status=400)
+    file_path = qs.get("file", [""])[0]
+    if file_path:
+        # Serve a linked file from the skill directory
+        import re as _re
+
+        if _re.search(r"[*?\[\]]", name):
+            return bad(handler, "Invalid skill name", 400)
+        skills_dir = _active_skills_dir()
+        skill_dir, _skill_md = _find_skill_in_dirs(
+            name, _active_skill_search_dirs(skills_dir)
+        )
+        if not skill_dir:
+            return bad(handler, "Skill not found", 404)
+        target = (skill_dir / file_path).resolve()
         try:
-            from api.rollback import list_checkpoints
-            return j(handler, list_checkpoints(workspace))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except Exception as e:
-            logger.exception("rollback/list failed")
-            return bad(handler, str(e), status=500)
-
-    if parsed.path == "/api/rollback/diff":
-        qs = parse_qs(parsed.query)
-        workspace = qs.get("workspace", [""])[0]
-        checkpoint = qs.get("checkpoint", [""])[0]
-        if not workspace or not checkpoint:
-            return bad(handler, "workspace and checkpoint query parameters are required")
-        try:
-            from api.rollback import get_checkpoint_diff
-            return j(handler, get_checkpoint_diff(workspace, checkpoint))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except Exception as e:
-            logger.exception("rollback/diff failed")
-            return bad(handler, str(e), status=500)
-
-    # ── Plugin shared assets (e.g. /plugins/plugin.css) ──
-    # Restricted to shared plugin assets only — no cross-plugin file access.
-    if parsed.path.startswith("/plugins/"):
-        from api.plugins import _get_plugin_base
-        plugin_base = _get_plugin_base()
-        rel = parsed.path[len("/plugins/"):]
-        allowed = {"plugin.css"}
-        if rel not in allowed:
-            return False  # 404
-        safe = (plugin_base / rel).resolve()
-        try:
-            safe.relative_to(plugin_base.resolve())
+            target.relative_to(skill_dir.resolve())
         except ValueError:
-            return False  # path traversal — 404
-        if safe.is_file():
-            import os as _os
-            data = safe.read_bytes()
-            ext = _os.path.splitext(rel.lower())[1]
-            ct = {
-                ".css": "text/css; charset=utf-8",
-                ".js": "application/javascript; charset=utf-8",
-                ".json": "application/json; charset=utf-8",
-                ".png": "image/png",
-                ".svg": "image/svg+xml",
-            }.get(ext, "application/octet-stream")
+            return bad(handler, "Invalid file path", 400)
+        if not target.exists() or not target.is_file():
+            return bad(handler, "File not found", 404)
+        return j(
+            handler,
+            {"content": target.read_text(encoding="utf-8"), "path": file_path},
+        )
+    data = _skill_view_from_active_dir(name)
+    if not isinstance(data.get("linked_files"), dict):
+        data["linked_files"] = {}
+    return j(handler, data)
+
+
+# ── Memory API (GET) ──
+def _get_api_memory(handler, parsed):
+    return _handle_memory_read(handler, parsed)
+
+
+# ── Profile API (GET) ──
+def _get_api_profiles(handler, parsed):
+    from api import profiles as profiles_api
+    diag = RequestDiagnostics.maybe_start("GET", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    try:
+        diag.stage("list_profiles_api") if diag else None
+        from api import roster
+
+        diag.stage("active_profile_lookup") if diag else None
+        active = profiles_api.get_active_profile_name()
+        diag.stage("isolated_mode_check") if diag else None
+        # The cached rows are everyone's; the caller's reach picks the ones
+        # it may see (a User: their own Profile).
+        reach = request_caller_reach()
+        profiles_payload = roster.label_rows([
+            row for row in profiles_api.list_profiles_api()
+            if isinstance(row, dict) and reach.includes(row.get("name"))
+        ])
+        return j(
+            handler,
+            {
+                "profiles": profiles_payload,
+                "active": active,
+            },
+        )
+    finally:
+        if diag:
+            diag.finish()
+
+
+def _get_api_profile_active(handler, parsed):
+    from api import profiles as profiles_api
+
+    active_profile_name = profiles_api.get_active_profile_name()
+    # Resolve the ACTIVE PROFILE's configured workspace so a cold boot with a
+    # profile cookie shows the right composer workspace chip on a blank
+    # new-chat page (#5169). Use get_profile_default_workspace() (NOT
+    # get_last_workspace) so a named profile without its own last_workspace.txt
+    # resolves to its config.yaml workspace/terminal.cwd rather than leaking the
+    # GLOBAL last-workspace file (the #5169 regression Codex flagged). It is
+    # profile-scoped via the request's Profile (its Admission's, settle_request).
+    # Fail open: a resolution error must never 500 this boot-critical endpoint.
+    try:
+        try:
+            _profile_default_workspace = get_profile_default_workspace(profile=active_profile_name)
+        except TypeError:
+            _profile_default_workspace = get_profile_default_workspace()
+    except Exception:
+        logger.debug("Failed to resolve profile default workspace for /api/profile/active", exc_info=True)
+        _profile_default_workspace = None
+    return j(
+        handler,
+        {
+            "name": active_profile_name,
+            "path": str(profiles_api.get_active_hermes_home()),
+            "is_default": profiles_api._is_root_profile(active_profile_name),
+            "default_workspace": _profile_default_workspace,
+        },
+    )
+
+
+# ── Gateway Status (GET) ──
+def _get_api_gateway_status(handler, parsed):
+    return j(handler, _gateway_status_payload())
+
+
+def _get_api_notes_sources(handler, parsed):
+    return _handle_notes_sources_list(handler)
+
+
+def _get_api_notes_search(handler, parsed):
+    return _handle_notes_search(handler, parsed)
+
+
+def _get_api_notes_item(handler, parsed):
+    return _handle_notes_item(handler, parsed)
+
+
+# ── Checkpoints / Rollback (GET) ──
+def _get_api_rollback_list(handler, parsed):
+    qs = parse_qs(parsed.query)
+    workspace = qs.get("workspace", [""])[0]
+    if not workspace:
+        return bad(handler, "workspace query parameter is required")
+    try:
+        from api.rollback import list_checkpoints
+        return j(handler, list_checkpoints(workspace))
+    except ValueError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        logger.exception("rollback/list failed")
+        return bad(handler, str(e), status=500)
+
+
+def _get_api_rollback_diff(handler, parsed):
+    qs = parse_qs(parsed.query)
+    workspace = qs.get("workspace", [""])[0]
+    checkpoint = qs.get("checkpoint", [""])[0]
+    if not workspace or not checkpoint:
+        return bad(handler, "workspace and checkpoint query parameters are required")
+    try:
+        from api.rollback import get_checkpoint_diff
+        return j(handler, get_checkpoint_diff(workspace, checkpoint))
+    except ValueError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        logger.exception("rollback/diff failed")
+        return bad(handler, str(e), status=500)
+
+
+# ── Plugin shared assets (e.g. /plugins/plugin.css) ──
+# Restricted to shared plugin assets only — no cross-plugin file access.
+def _get_plugins(handler, parsed):
+    from api.plugins import _get_plugin_base
+    plugin_base = _get_plugin_base()
+    rel = parsed.path[len("/plugins/"):]
+    allowed = {"plugin.css"}
+    if rel not in allowed:
+        return False  # 404
+    safe = (plugin_base / rel).resolve()
+    try:
+        safe.relative_to(plugin_base.resolve())
+    except ValueError:
+        return False  # path traversal — 404
+    if safe.is_file():
+        import os as _os
+        data = safe.read_bytes()
+        ext = _os.path.splitext(rel.lower())[1]
+        ct = {
+            ".css": "text/css; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".png": "image/png",
+            ".svg": "image/svg+xml",
+        }.get(ext, "application/octet-stream")
+        handler.send_response(200)
+        handler.send_header("Content-Type", ct)
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
+        return True
+    return _NOT_HANDLED
+
+
+# ── Plugin static assets ──
+def _get_dashboard_plugins(handler, parsed):
+    parts = parsed.path.split("/", 3)
+    if len(parts) >= 3:
+        plugin_name = parts[2]
+        rel_path = parts[3] if len(parts) > 3 else ""
+        # Server-side enable-gate: a plugin disabled in Settings must have its
+        # entire URL surface shut off, not merely hidden in the UI.
+        if not _dashboard_plugin_enabled(plugin_name):
+            return False  # 404 — disabled plugins serve nothing
+        from api.plugins import serve_plugin_static
+        result = serve_plugin_static(plugin_name, rel_path)
+        if result:
+            data, content_type = result
             handler.send_response(200)
-            handler.send_header("Content-Type", ct)
+            handler.send_header("Content-Type", content_type)
+            # Defense-in-depth: plugin-controlled assets are served from the
+            # WebUI's own origin. Sandbox them (null origin) so a plugin's
+            # .html/.svg can't run privileged same-origin script if navigated
+            # to directly (the in-panel iframe sandbox doesn't cover direct
+            # navigation). nosniff prevents content-type confusion.
+            handler.send_header("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups")
+            handler.send_header("X-Content-Type-Options", "nosniff")
             handler.send_header("Content-Length", str(len(data)))
             handler.end_headers()
             handler.wfile.write(data)
             return True
+    return _NOT_HANDLED
 
-    # ── Plugin static assets ──
-    if parsed.path.startswith("/dashboard-plugins/"):
-        parts = parsed.path.split("/", 3)
-        if len(parts) >= 3:
-            plugin_name = parts[2]
-            rel_path = parts[3] if len(parts) > 3 else ""
-            # Server-side enable-gate: a plugin disabled in Settings must have its
-            # entire URL surface shut off, not merely hidden in the UI.
-            if not _dashboard_plugin_enabled(plugin_name):
-                return False  # 404 — disabled plugins serve nothing
-            from api.plugins import serve_plugin_static
-            result = serve_plugin_static(plugin_name, rel_path)
-            if result:
-                data, content_type = result
-                handler.send_response(200)
-                handler.send_header("Content-Type", content_type)
-                # Defense-in-depth: plugin-controlled assets are served from the
-                # WebUI's own origin. Sandbox them (null origin) so a plugin's
-                # .html/.svg can't run privileged same-origin script if navigated
-                # to directly (the in-panel iframe sandbox doesn't cover direct
-                # navigation). nosniff prevents content-type confusion.
-                handler.send_header("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups")
-                handler.send_header("X-Content-Type-Options", "nosniff")
-                handler.send_header("Content-Length", str(len(data)))
-                handler.end_headers()
-                handler.wfile.write(data)
-                return True
 
-    # ── Plugin pages (HTML shell) ──
+def _get_dashboard_plugin_page(handler, parsed):
+    """A dashboard plugin's page, at the tab path its manifest names; else 404."""
     from api.plugins import PLUGIN_MANIFESTS, _PLUGIN_STATIC_ROOTS
     for name, manifest in PLUGIN_MANIFESTS.items():
         tab = manifest.get("tab", {})
@@ -15149,6 +13949,7 @@ def handle_get(handler, parsed) -> bool:
     return False  # 404
 
 
+
 # ── POST auth helpers
 
 def _validate_session_toolsets_shape(toolsets):
@@ -15200,112 +14001,49 @@ def _resolve_new_session_workspace(body, visible_prev_session_id, profile=None):
     return str(workspace)
 
 
-def _profile_refused(handler, refusal):
-    """Answer a refused Profile management action (``roster.ProfileRefused``) with its HTTP status."""
-    from api import roster
-
-    status = {
-        roster.REFUSED_BAD_REQUEST: 400,
-        roster.REFUSED_FORBIDDEN: 403,
-        roster.REFUSED_NOT_FOUND: 404,
-        roster.REFUSED_CONFLICT: 409,
-    }.get(refusal.kind, 500)
-    return bad(handler, _sanitize_error(refusal), status)
-
-
 def handle_post(handler, parsed) -> bool:
-    """Handle all POST routes. Returns True if handled, False for 404."""
-    diag = RequestDiagnostics.maybe_start("POST", parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
-    if parsed.path == "/api/csp-report":
+    """Handle all POST routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "POST")
+
+
+def handle_put(handler, parsed) -> bool:
+    """Handle all PUT routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "PUT")
+
+
+def handle_patch(handler, parsed) -> bool:
+    """Handle all PATCH routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "PATCH")
+
+
+def handle_delete(handler, parsed) -> bool:
+    """Handle all DELETE routes through the route table. Returns True if handled, False for 404."""
+    return _dispatch_write(handler, parsed, "DELETE")
+
+
+def _dispatch_write(handler, parsed, method: str) -> bool:
+    """One preamble for every unsafe method, driven by the request's route-table row:
+    CSRF (unless the row is exempt), then the handler at
+    once when it reads its own body, else the JSON body, the session guard and
+    the handler. A path with no row has its body read and guarded before the 404."""
+    diag = None
+    if method == "POST":
+        diag = RequestDiagnostics.maybe_start(method, parsed.path, logger=logger, print_fn=getattr(handler, '_safe_webui_print', None))
+    route = route_table.match(method, parsed.path)
+    # CSRF: reject cross-origin or tokenless authenticated browser requests,
+    # unless the row is exempt (see api.route_table).
+    if route is None or route.csrf:
         if diag:
-            diag.stage("csp_report")
-        try:
-            return _handle_csp_report(handler)
-        finally:
-            if diag:
-                diag.finish()
-    # T1 deprecation alias for the legacy ack endpoint that the pre-rename
-    # WebUI used to POST to after handling ``process_complete``. The new
-    # canonical SSE event is ``bg_task_complete`` and the new ack endpoint
-    # will be ``/api/bg-task-complete-ack`` (introduced by PR (b), the WebUI
-    # half of the split). Until PR (b) lands we keep the old path responding
-    # with HTTP 410 Gone + ``X-Replaced-By`` so any stale tab posting under
-    # the old name fails loudly with a discoverable hint. The handler runs
-    # BEFORE the CSRF gate on purpose: an old tab will not carry a CSRF token
-    # for the deprecated path, and surfacing 410 (not 403) is the correct
-    # contract here.
-    if parsed.path == "/api/process-complete-ack":
-        if diag:
-            diag.stage("process_complete_ack_deprecated")
-        try:
-            # The 410 runs before the stale tab's JSON body is read;
-            # close-and-advertise so those unread bytes can't corrupt the next
-            # pooled request -- but a body-less ack has none, and closing then
-            # just kills keep-alive (on the wire: 410 + `Connection: close` with
-            # no `Content-Length`, pipelined follow-up dropped).
-            arm_connection_close_if_body_pending(handler)
-            j(
-                handler,
-                {
-                    "error": (
-                        "gone: /api/process-complete-ack was replaced by "
-                        "/api/bg-task-complete-ack as part of the "
-                        "process_complete -> bg_task_complete event rename"
-                    ),
-                    "replaced_by": "/api/bg-task-complete-ack",
-                },
-                status=410,
-                extra_headers={"X-Replaced-By": "/api/bg-task-complete-ack"},
-            )
-            return True
-        finally:
-            if diag:
-                diag.finish()
-    # CSRF: reject cross-origin or tokenless authenticated browser requests.
-    # /api/auth/login has no authenticated session token yet, and /api/csp-report
-    # is intentionally unauthenticated for browser-generated violation reports.
-    if diag:
-        diag.stage("csrf")
-    if not _csrf_exempt_path(parsed.path) and not _check_csrf(handler):
-        try:
-            return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-        finally:
-            if diag:
-                diag.finish()
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "POST",
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        if diag:
-            diag.finish()
-        return proxy_result
-
-    if parsed.path == "/api/shutdown":
-        return _handle_shutdown(handler)
-
-    if parsed.path == "/api/health/restart":
-        return _handle_health_restart(handler)
-
-    if parsed.path == "/api/upload":
-        return handle_upload(handler)
-    if parsed.path == "/api/upload/extract":
-        return handle_upload_extract(handler)
-    if parsed.path == "/api/workspace/upload":
-        return handle_workspace_upload(handler)
-
-    if parsed.path == "/api/transcribe":
-        return handle_transcribe(handler)
-
-    if parsed.path == "/api/tts":
-        return _handle_tts(handler, parsed)
-
-    if parsed.path == "/api/client-events/log":
-        if diag:
-            diag.stage("read_client_event_body")
-        return _handle_client_event_log(handler, _read_client_event_payload(handler))
+            diag.stage("csrf")
+        if not _check_csrf(handler):
+            try:
+                return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
+            finally:
+                if diag:
+                    diag.finish()
+    if route is not None and route.body == "own":
+        # The route reads its own body (multipart uploads, raw reports).
+        return _route_handler(route)(handler, parsed, None, diag)
 
     if diag:
         diag.stage("read_body")
@@ -15320,2278 +14058,1828 @@ def handle_post(handler, parsed) -> bool:
         if diag:
             diag.finish()
         raise
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="POST"):
+    if not _guard_request_session_visibility(handler, parsed, body=body, method=method):
         if diag:
             diag.finish()
         return True
+    if route is None:
+        return False  # 404
+    return _route_handler(route)(handler, parsed, body, diag)
 
-    if parsed.path == "/api/escape/authorize":
-        return _handle_escape_authorize(handler, parsed, body)
 
-    if parsed.path == "/api/extensions/toggle":
-        from api.extensions import ExtensionToggleError, set_extension_user_enabled
-
-        try:
-            return j(
-                handler,
-                set_extension_user_enabled(body.get("id"), body.get("enabled")),
-            )
-        except ExtensionToggleError as exc:
-            return bad(handler, str(exc), status=exc.status)
-        except Exception:
-            logger.exception("extension toggle failed")
-            return bad(handler, "Failed to update extension state", status=500)
-
-    if parsed.path == "/api/extensions/sidecar-proxy-consent":
-        from api.extensions import (
-            ExtensionSidecarProxyError,
-            set_extension_sidecar_proxy_consent,
-        )
-
-        try:
-            return j(
-                handler,
-                set_extension_sidecar_proxy_consent(
-                    body.get("id"),
-                    body.get("approved"),
-                ),
-            )
-        except ExtensionSidecarProxyError as exc:
-            return bad(handler, str(exc), status=exc.status)
-        except Exception:
-            logger.exception("extension sidecar proxy consent update failed")
-            return bad(handler, "Failed to update extension state", status=500)
-
-    if parsed.path == "/api/session/recovery/repair-safe":
-        from api.session_recovery import repair_safe_session_recovery
-        result = repair_safe_session_recovery(SESSION_DIR, state_db_path=_active_state_db_path())
-        return j(handler, result, status=200 if result.get("clean") else 409)
-
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_post
-
-        result = handle_kanban_post(handler, parsed, body)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "POST")
-        return True
-    if parsed.path == "/api/dashboard/config":
-        from api import dashboard_probe
-
-        try:
-            j(handler, dashboard_probe.save_dashboard_config(body))
-        except ValueError as exc:
-            bad(handler, str(exc), status=400)
-        except Exception as exc:
-            logger.exception("dashboard config save failed")
-            bad(handler, str(exc), status=500)
-        return True
-
-    if parsed.path == "/api/prompts":
-        text = str(body.get("text") or "").strip()
-        label = str(body.get("label") or "").strip()
-        if not text:
-            return bad(handler, "text is required")
-        if len(text) > 8000:
-            return bad(handler, "text too long (max 8000 chars)")
-        prompts = _load_saved_prompts()
-        if len(prompts) >= 200:
-            return bad(handler, "saved prompts limit reached (max 200)")
-        new_prompt = {"id": uuid.uuid4().hex[:12], "label": label or text[:60], "text": text, "created_at": time.time()}
-        prompts.append(new_prompt)
-        _save_saved_prompts(prompts)
-        return j(handler, {"ok": True, "prompt": new_prompt})
-
-    if parsed.path == "/api/share/create":
-        sid = str(body.get("session_id") or "").strip()
-        if not sid:
-            return bad(handler, "session_id is required", 400)
-        try:
-            snapshot_session, stored_session, cli_meta = _resolve_share_session_pair(sid, handler)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        try:
-            share_meta = create_or_refresh_share(snapshot_session)
-        except ValueError as exc:
-            return bad(handler, str(exc), 400)
-        persisted_session = stored_session
-        if persisted_session is None:
-            persisted_session = _build_share_metadata_sidecar(
-                sid,
-                snapshot_session,
-                cli_meta=cli_meta,
-            )
-        persisted_session.share_token = share_meta["share_token"]
-        persisted_session.share_created_at = share_meta["share_created_at"]
-        persisted_session.save(touch_updated_at=False)
-        _publish_session_list_changed(
-            "session_share_create",
-            profile=getattr(persisted_session, "profile", None),
-            session_id=sid,
-        )
-        response_session = copy.copy(persisted_session)
-        response_session.messages = list(getattr(snapshot_session, "messages", None) or [])
-        return j(
+# T1 deprecation alias for the legacy ack endpoint that the pre-rename
+# WebUI used to POST to after handling ``process_complete``. The new
+# canonical SSE event is ``bg_task_complete`` and the new ack endpoint
+# will be ``/api/bg-task-complete-ack`` (introduced by PR (b), the WebUI
+# half of the split). Until PR (b) lands we keep the old path responding
+# with HTTP 410 Gone + ``X-Replaced-By`` so any stale tab posting under
+# the old name fails loudly with a discoverable hint. The handler runs
+# BEFORE the CSRF gate on purpose: an old tab will not carry a CSRF token
+# for the deprecated path, and surfacing 410 (not 403) is the correct
+# contract here.
+def _post_api_process_complete_ack(handler, parsed, body, diag):
+    if diag:
+        diag.stage("process_complete_ack_deprecated")
+    try:
+        # The 410 runs before the stale tab's JSON body is read;
+        # close-and-advertise so those unread bytes can't corrupt the next
+        # pooled request -- but a body-less ack has none, and closing then
+        # just kills keep-alive (on the wire: 410 + `Connection: close` with
+        # no `Content-Length`, pipelined follow-up dropped).
+        arm_connection_close_if_body_pending(handler)
+        j(
             handler,
             {
-                "ok": True,
-                "share": {
-                    "token": share_meta["share_token"],
-                    "url": f"/share/{share_meta['share_token']}",
-                    "title": share_meta["share_title"],
-                    "message_count": share_meta["share_message_count"],
-                    "created_at": share_meta["share_created_at"],
-                    "updated_at": share_meta["share_updated_at"],
-                },
-                "session": public_session_projection(
-                    response_session.compact() | {"messages": response_session.messages}
+                "error": (
+                    "gone: /api/process-complete-ack was replaced by "
+                    "/api/bg-task-complete-ack as part of the "
+                    "process_complete -> bg_task_complete event rename"
                 ),
+                "replaced_by": "/api/bg-task-complete-ack",
             },
+            status=410,
+            extra_headers={"X-Replaced-By": "/api/bg-task-complete-ack"},
         )
+        return True
+    finally:
+        if diag:
+            diag.finish()
 
-    if parsed.path == "/api/share/revoke":
-        sid = str(body.get("session_id") or "").strip()
-        if not sid:
-            return bad(handler, "session_id is required", 400)
-        try:
-            snapshot_session, stored_session, cli_meta = _resolve_share_session_pair(sid, handler)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        target_session = stored_session
-        if target_session is None:
-            token = str(getattr(snapshot_session, "share_token", "") or "").strip()
-            if not token:
-                return bad(handler, "Session not found", 404)
-            target_session = _build_share_metadata_sidecar(
-                sid,
-                snapshot_session,
-                cli_meta=cli_meta,
-            )
-            target_session.share_token = token
-            target_session.share_created_at = getattr(snapshot_session, "share_created_at", None)
-        revoke_share(target_session)
-        target_session.share_token = None
-        target_session.share_created_at = None
-        target_session.save(touch_updated_at=False)
-        _publish_session_list_changed(
-            "session_share_revoke",
-            profile=getattr(target_session, "profile", None),
-            session_id=sid,
-        )
-        response_session = copy.copy(target_session)
-        response_session.messages = list(getattr(snapshot_session, "messages", None) or [])
-        return j(
-            handler,
-            {
-                "ok": True,
-                "session": public_session_projection(
-                    response_session.compact() | {"messages": response_session.messages}
-                ),
-            },
-        )
 
-    if parsed.path == "/api/session/new":
-        workspace_prev_session_id = body.get("prev_session_id")
-        if workspace_prev_session_id and not _session_id_visible_to_request_profile(
-            handler, workspace_prev_session_id, emit_error=False
-        ):
-            workspace_prev_session_id = None
+def _post_api_upload(handler, parsed, body, diag):
+    return handle_upload(handler)
+
+
+def _post_api_upload_extract(handler, parsed, body, diag):
+    return handle_upload_extract(handler)
+
+
+def _post_api_workspace_upload(handler, parsed, body, diag):
+    return handle_workspace_upload(handler)
+
+
+def _post_api_transcribe(handler, parsed, body, diag):
+    return handle_transcribe(handler)
+
+
+def _post_api_tts(handler, parsed, body, diag):
+    return _handle_tts(handler, parsed)
+
+
+def _post_api_client_events_log(handler, parsed, body, diag):
+    if diag:
+        diag.stage("read_client_event_body")
+    return _handle_client_event_log(handler, _read_client_event_payload(handler))
+
+
+def _post_api_prompts(handler, parsed, body, diag):
+    text = str(body.get("text") or "").strip()
+    label = str(body.get("label") or "").strip()
+    if not text:
+        return bad(handler, "text is required")
+    if len(text) > 8000:
+        return bad(handler, "text too long (max 8000 chars)")
+    prompts = _load_saved_prompts()
+    if len(prompts) >= 200:
+        return bad(handler, "saved prompts limit reached (max 200)")
+    new_prompt = {"id": uuid.uuid4().hex[:12], "label": label or text[:60], "text": text, "created_at": time.time()}
+    prompts.append(new_prompt)
+    _save_saved_prompts(prompts)
+    return j(handler, {"ok": True, "prompt": new_prompt})
+
+
+def _post_api_session_new(handler, parsed, body, diag):
+    workspace_prev_session_id = body.get("prev_session_id")
+    if workspace_prev_session_id and not _session_id_visible_to_request_profile(
+        handler, workspace_prev_session_id, emit_error=False
+    ):
+        workspace_prev_session_id = None
+    try:
+        workspace = _resolve_new_session_workspace(
+            body, workspace_prev_session_id, profile=body.get("profile") or None
+        )
+    except (TypeError, ValueError) as e:
+        return bad(handler, str(e))
+    worktree_info = None
+    worktree_skipped = None
+    # Three-value worktree model (#6022): an explicit body value always
+    # wins; an ABSENT key falls back to the agent's config-level
+    # ``worktree:`` default so WebUI sessions and CLI sessions agree on
+    # isolation for the same repo.  Clients that must never create a
+    # worktree (e.g. the boot-time auto-bind) send ``worktree: false``
+    # explicitly.
+    raw_worktree = body.get("worktree")
+    # Presence-based, not truthiness-based: a client that sends the key at
+    # all (even ``worktree: null``) has spoken explicitly and never falls
+    # through to the config default.  ``null`` parses as non-true below,
+    # i.e. an explicit opt-out — only a genuinely ABSENT key inherits.
+    worktree_explicit = "worktree" in body
+    if worktree_explicit:
+        worktree_requested = (
+            raw_worktree is True
+            or str(raw_worktree).strip().lower() in {"1", "true", "yes", "on"}
+        )
+    else:
+        worktree_requested = _worktree_default_from_config(body.get("profile") or None)
+    if worktree_requested:
         try:
-            workspace = _resolve_new_session_workspace(
-                body, workspace_prev_session_id, profile=body.get("profile") or None
-            )
+            from api.worktrees import create_worktree_for_workspace
+            base_workspace = workspace
+            if not base_workspace:
+                _new_profile = body.get("profile") or None
+                try:
+                    _lw = get_last_workspace(profile=_new_profile)
+                except TypeError:
+                    _lw = get_last_workspace()
+                try:
+                    base_workspace = str(
+                        resolve_trusted_workspace(_lw, profile=_new_profile)
+                    )
+                except TypeError:
+                    base_workspace = str(resolve_trusted_workspace(_lw))
+            worktree_info = create_worktree_for_workspace(base_workspace)
+            workspace = worktree_info["path"]
         except (TypeError, ValueError) as e:
-            return bad(handler, str(e))
-        worktree_info = None
-        worktree_skipped = None
-        # Three-value worktree model (#6022): an explicit body value always
-        # wins; an ABSENT key falls back to the agent's config-level
-        # ``worktree:`` default so WebUI sessions and CLI sessions agree on
-        # isolation for the same repo.  Clients that must never create a
-        # worktree (e.g. the boot-time auto-bind) send ``worktree: false``
-        # explicitly.
-        raw_worktree = body.get("worktree")
-        # Presence-based, not truthiness-based: a client that sends the key at
-        # all (even ``worktree: null``) has spoken explicitly and never falls
-        # through to the config default.  ``null`` parses as non-true below,
-        # i.e. an explicit opt-out — only a genuinely ABSENT key inherits.
-        worktree_explicit = "worktree" in body
-        if worktree_explicit:
-            worktree_requested = (
-                raw_worktree is True
-                or str(raw_worktree).strip().lower() in {"1", "true", "yes", "on"}
-            )
-        else:
-            worktree_requested = _worktree_default_from_config(body.get("profile") or None)
-        if worktree_requested:
-            try:
-                from api.worktrees import create_worktree_for_workspace
-                base_workspace = workspace
-                if not base_workspace:
-                    _new_profile = body.get("profile") or None
-                    try:
-                        _lw = get_last_workspace(profile=_new_profile)
-                    except TypeError:
-                        _lw = get_last_workspace()
-                    try:
-                        base_workspace = str(
-                            resolve_trusted_workspace(_lw, profile=_new_profile)
-                        )
-                    except TypeError:
-                        base_workspace = str(resolve_trusted_workspace(_lw))
-                worktree_info = create_worktree_for_workspace(base_workspace)
-                workspace = worktree_info["path"]
-            except (TypeError, ValueError) as e:
-                # Explicit requests keep the hard failure.  A config-default
-                # request on a non-git workspace (create_worktree_for_workspace
-                # raises ValueError) degrades to a plain session instead —
-                # otherwise `worktree: true` in config.yaml would 400 every
-                # session in every non-git directory.
-                if worktree_explicit:
-                    return bad(handler, str(e), status=400)
-                worktree_info = None
-                worktree_skipped = str(e)
-            except Exception as e:
-                logger.exception("failed to create worktree-backed session")
-                return bad(handler, f"Failed to create worktree: {e}", status=500)
-        model, model_provider = _session_model_state_from_request(
-            body.get("model"),
-            body.get("model_provider"),
-        )
-        try:
-            enabled_toolsets = _validate_session_toolsets_shape(body.get("enabled_toolsets"))
-        except ValueError as e:
-            return bad(handler, str(e), status=400)
-        # Use the profile sent by the client tab (if any) so that two tabs on
-        # different profiles never clobber each other via the process-level global.
-        # ── Memory lifecycle: commit the previous session before starting a new one ──
-        prev_session_id = body.get("prev_session_id")
-        if prev_session_id:
-            if not _session_id_visible_to_request_profile(
-                handler, prev_session_id, emit_error=False
-            ):
-                # Cross-profile hand-off after a profile switch: skip memory
-                # commit for the previous profile's session, but still create
-                # the new session (#5420).
-                prev_session_id = None
-            if prev_session_id:
-                # Fire-and-forget: commit_memory_session() can take 1-5+ seconds
-                # (extraction call to the memory provider), and blocking the
-                # response here made "+ New Chat" feel slow/unresponsive.
-                # commit_session_memory() already serialises overlapping commits
-                # for a session via its own in-flight guard, so running it off
-                # the request thread is safe.
-                def _commit_prev_session_memory(_sid=prev_session_id):
-                    try:
-                        from api.session_lifecycle import commit_session_memory
-                        from api.config import SESSION_AGENT_CACHE, SESSION_AGENT_CACHE_LOCK
-                        prev_agent = None
-                        with SESSION_AGENT_CACHE_LOCK:
-                            _cached = SESSION_AGENT_CACHE.get(_sid)
-                            if _cached:
-                                prev_agent = _cached[0]
-                        commit_session_memory(_sid, agent=prev_agent)
-                    except Exception:
-                        logger.warning(
-                            "Lifecycle commit for prev_session %s failed",
-                            _sid,
-                            exc_info=True,
-                        )
-                    finally:
-                        # Self-unregister so the background-commit registry does
-                        # not leak completed threads; drain only tracks live ones.
-                        try:
-                            from api.session_lifecycle import _unregister_background_commit_thread
-                            _unregister_background_commit_thread(threading.current_thread())
-                        except Exception:
-                            pass
-
-                t = threading.Thread(
-                    target=_commit_prev_session_memory,
-                    daemon=True,
-                    name=f"commit-memory-{prev_session_id}",
-                )
-                from api.session_lifecycle import _register_background_commit_thread
-                # Refused only if shutdown draining has already begun; in that
-                # window the inline drain commits the pending generation instead,
-                # so skipping the worker start is safe (avoids a late daemon
-                # thread the drain snapshot already missed).
-                if _register_background_commit_thread(t):
-                    t.start()
-        s = new_session(
-            workspace=workspace,
-            model=model,
-            model_provider=model_provider,
-            profile=body.get("profile") or None,
-            project_id=body.get("project_id") or None,
-            worktree_info=worktree_info,
-            enabled_toolsets=enabled_toolsets,
-        )
-        if worktree_info:
-            publish_session_list_changed(
-                "session_new",
-                profile=getattr(s, "profile", None),
-                session_id=getattr(s, "session_id", None),
-            )
-        payload = {
-            "session": public_session_projection(s.compact() | {"messages": s.messages})
-        }
-        if worktree_skipped:
-            # Config-default worktree was skipped (non-git workspace); tell the
-            # client the session is plain so the UI doesn't assume isolation.
-            payload["worktree_skipped"] = worktree_skipped
-        return j(handler, payload)
-
-    if parsed.path == "/api/session/compression-recovery/start":
-        return _handle_session_compression_recovery_start(handler, body)
-
-    if parsed.path == "/api/session/duplicate":
-        try:
-            sid = body.get("session_id")
-            if not sid:
-                return bad(handler, "session_id is required")
-            if _session_is_subagent_view_only(sid):
-                return bad(handler, "Subagent sessions are view-only and cannot be duplicated from WebUI", 400)
-
-            session = Session.load(sid)
-            if not session:
-                # 404, not 400 — missing resource, not a malformed request.
-                return bad(handler, "Session not found", status=404)
-
-            # Deep-copy mutable lists so the duplicate is *actually* independent.
-            # `Session.__init__` does `self.messages = messages or []` — plain
-            # assignment, no copy. Without deepcopy, both sessions share the same
-            # list object in memory; appending to one mutates the other.
-            # Items inside `messages` are dicts with mutable values (tool_calls,
-            # content arrays), so a shallow `list(...)` is not enough.
-            copied_session = Session(
-                session_id=uuid.uuid4().hex[:12],
-                # Defensive: legacy sessions may have title=None on disk; fall back to 'Untitled'
-                # so `+ " (copy)"` doesn't TypeError.
-                title=(session.title or "Untitled") + " (copy)",
-                workspace=session.workspace,
-                model=session.model,
-                model_provider=session.model_provider,
-                messages=copy.deepcopy(session.messages),
-                tool_calls=copy.deepcopy(session.tool_calls),
-                # Reset ephemeral / per-session-instance flags. Duplicating an
-                # archived conversation should produce a visible (un-archived)
-                # copy; pinned status doesn't transfer either.
-                pinned=False,
-                archived=False,
-                project_id=session.project_id,
-                profile=session.profile,
-                input_tokens=session.input_tokens,
-                output_tokens=session.output_tokens,
-                estimated_cost=session.estimated_cost,
-                cache_read_tokens=getattr(session, "cache_read_tokens", 0),
-                cache_write_tokens=getattr(session, "cache_write_tokens", 0),
-                # Per-session settings the user may have customized — carry them over
-                # so the duplicate behaves identically until further edits. Compression
-                # anchor + last_prompt_tokens are intentionally NOT carried — those
-                # re-derive on the next turn.
-                personality=session.personality,
-                enabled_toolsets=getattr(session, "enabled_toolsets", None),
-                context_length=getattr(session, "context_length", None),
-                threshold_tokens=getattr(session, "threshold_tokens", None),
-                truncation_watermark=getattr(session, "truncation_watermark", None),
-                truncation_boundary=getattr(session, "truncation_boundary", None),
-                # context_messages is the authoritative model-facing prefix — must be
-                # deepcopied so the duplicate has its own independent context that won't
-                # be mutated when the original session's context changes (#2914).
-                context_messages=copy.deepcopy(getattr(session, "context_messages", None) or []),
-                # Gateway routing — if the user customized routing for this session,
-                # the duplicate should behave identically.
-                gateway_routing=copy.deepcopy(getattr(session, "gateway_routing", None)),
-                gateway_routing_history=copy.deepcopy(getattr(session, "gateway_routing_history", None) or []),
-                # Preserve LLM-generated title flag so we don't regenerate title on duplicate.
-                llm_title_generated=getattr(session, "llm_title_generated", False),
-                manual_title=getattr(session, "manual_title", False),
-                # Composer draft — preserve per-session draft state.
-                composer_draft=copy.deepcopy(getattr(session, "composer_draft", None) or {}),
-                # Context engine state — preserve so the duplicate's context engine
-                # starts from the same point as the original.
-                context_engine=getattr(session, "context_engine", None),
-                context_engine_state=copy.deepcopy(getattr(session, "context_engine_state", None) or {}),
-                created_at=time.time(),
-                updated_at=time.time(),
-            )
-
-            with LOCK:
-                SESSIONS[copied_session.session_id] = copied_session
-                SESSIONS.move_to_end(copied_session.session_id)
-                _evict_sessions_over_cap()  # #4765: safe LRU eviction (never active/unsaved)
-            # Persist immediately. The pre-PR flow (/api/session/new + /api/session/rename)
-            # accidentally avoided this because `/api/session/rename` calls `s.save()`.
-            # Without this explicit save, the duplicate is in-memory only — if the user
-            # refreshes before sending a turn, the duplicate vanishes.
-            copied_session.save()
-            publish_session_list_changed(
-                "session_duplicate",
-                profile=getattr(copied_session, "profile", None),
-                session_id=getattr(copied_session, "session_id", None),
-            )
-
-            return j(
-                handler,
-                {
-                    "session": public_session_projection(
-                        copied_session.compact() | {"messages": copied_session.messages}
-                    )
-                },
-            )
+            # Explicit requests keep the hard failure.  A config-default
+            # request on a non-git workspace (create_worktree_for_workspace
+            # raises ValueError) degrades to a plain session instead —
+            # otherwise `worktree: true` in config.yaml would 400 every
+            # session in every non-git directory.
+            if worktree_explicit:
+                return bad(handler, str(e), status=400)
+            worktree_info = None
+            worktree_skipped = str(e)
         except Exception as e:
-            return bad(handler, str(e))
-
-    if parsed.path == "/api/default-model":
-        try:
-            advanced = body.get("advanced") if isinstance(body, dict) else None
-            provider = body.get("provider") if isinstance(body, dict) else None
-            if str(provider or "").strip().lower() == "auto":
-                provider = None
-            return j(handler, set_hermes_default_model(body.get("model"), provider=provider, advanced=advanced))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except RuntimeError as e:
-            return bad(handler, str(e), 500)
-
-    # ── Auxiliary model set (POST) ──
-    if parsed.path == "/api/model/set":
-        scope = str(body.get("scope") or "").strip()
-        task = str(body.get("task") or "").strip()
-        provider = str(body.get("provider") or "auto").strip()
-        model = str(body.get("model") or "").strip()
-        advanced = body.get("advanced") if isinstance(body, dict) else None
-        if scope == "auxiliary":
-            from api.config import set_auxiliary_model
-            try:
-                return j(handler, set_auxiliary_model(task, provider, model, advanced=advanced))
-            except Exception as exc:
-                return bad(handler, str(exc), status=400)
-        if scope == "main":
-            try:
-                main_provider = provider if provider != "auto" else None
-                return j(handler, set_hermes_default_model(model, provider=main_provider, advanced=advanced))
-            except ValueError as exc:
-                return bad(handler, str(exc), status=400)
-        return bad(handler, f"unknown scope: {scope}", status=400)
-
-    # ── Providers (POST) ──
-    if parsed.path == "/api/providers":
-        provider_id = (body.get("provider") or "").strip().lower()
-        api_key = body.get("api_key")
-        if not provider_id:
-            return bad(handler, "provider is required")
-        if api_key is not None:
-            api_key = str(api_key).strip() or None
-        result = set_provider_key(provider_id, api_key)
-        if not result.get("ok"):
-            return bad(handler, result.get("error", "Unknown error"))
-        return j(handler, result)
-
-    if parsed.path == "/api/providers/delete":
-        provider_id = (body.get("provider") or "").strip().lower()
-        if not provider_id:
-            return bad(handler, "provider is required")
-        result = remove_provider_key(provider_id)
-        if not result.get("ok"):
-            return bad(handler, result.get("error", "Unknown error"))
-        return j(handler, result)
-
-    if parsed.path == "/api/providers/self-hosted":
-        try:
-            from api.onboarding import apply_self_hosted_provider_setup
-            return j(handler, apply_self_hosted_provider_setup(body))
-        except ValueError as exc:
-            return bad(handler, str(exc), 400)
-
-    if parsed.path == "/api/models/refresh":
-        provider_id = (body.get("provider") or "").strip().lower()
-        if not provider_id:
-            return bad(handler, "provider is required")
-        from api.config import invalidate_provider_models_cache
-        invalidate_provider_models_cache(provider_id)
-        return j(handler, {"ok": True, "provider": provider_id})
-
-    if parsed.path == "/api/reasoning":
-        # CLI-parity /reasoning handler — writes to the same config.yaml keys
-        # the CLI uses (display.show_reasoning, agent.reasoning_effort) so a
-        # preference set via WebUI is honoured in the terminal REPL and vice
-        # versa.  Body is one of:
-        #   {"display": "show"|"hide"|"on"|"off"}   → display.show_reasoning
-        #   {"effort":  "none"|"minimal"|"low"|"medium"|"high"|"xhigh"}
-        #                                            → agent.reasoning_effort
-        try:
-            display = body.get("display")
-            effort = body.get("effort")
-            if display is not None:
-                flag = str(display).strip().lower()
-                if flag in ("show", "on", "true", "1"):
-                    return j(handler, set_reasoning_display(True))
-                if flag in ("hide", "off", "false", "0"):
-                    return j(handler, set_reasoning_display(False))
-                return bad(handler, f"display must be show|hide|on|off (got '{display}')")
-            if effort is not None:
-                model_id = str(body.get("model") or "").strip() or None
-                provider_id = str(body.get("provider") or "").strip() or None
-                base_url = str(body.get("base_url") or "").strip() or None
-                return j(
-                    handler,
-                    set_reasoning_effort(
-                        effort,
-                        model_id=model_id,
-                        provider_id=provider_id,
-                        base_url=base_url,
-                    ),
-                )
-            return bad(handler, "reasoning: must supply 'display' or 'effort'")
-        except ValueError as e:
-            return bad(handler, str(e))
-        except RuntimeError as e:
-            return bad(handler, str(e), 500)
-
-    if parsed.path == "/api/admin/reload":
-        # Hot-reload api.models module to pick up code changes without restart.
-        import importlib
-        from api import models as _models
-        importlib.reload(_models)
-        # Also re-expose get_session from the reloaded module so routes.py
-        # continues to work (routes.py imported it at module level).
-        import api.routes as _routes
-        _routes.get_session = _models.get_session
-        _routes.Session = _models.Session
-        return j(handler, {"status": "ok", "reloaded": "api.models"})
-
-    if parsed.path == "/api/sessions/cleanup":
-        return _handle_sessions_cleanup(handler, body, zero_only=False)
-
-    if parsed.path == "/api/sessions/cleanup_zero_message":
-        return _handle_sessions_cleanup(handler, body, zero_only=True)
-
-    if parsed.path == "/api/session/anchor-scene":
-        return _handle_session_anchor_scene(handler, body)
-
-    if parsed.path == "/api/session/rename":
-        try:
-            require(body, "session_id", "title")
-        except ValueError as e:
-            return bad(handler, str(e))
-        try:
-            s = _get_or_materialize_session(body["session_id"])
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        except PermissionError:
-            return bad(handler, "Read-only imported sessions cannot be renamed from WebUI", 403)
-        with _get_session_agent_lock(body["session_id"]):
-            from api.session_ops import apply_session_title_rename
-            apply_session_title_rename(s, body["title"])
-            s.save()
-        _sync_session_title_to_insights(s)
-        publish_session_list_changed(
-            "session_rename",
-            profile=getattr(s, "profile", None),
-            session_id=getattr(s, "session_id", body["session_id"]),
-        )
-        return j(handler, {"session": s.compact()})
-
-
-    if parsed.path == "/api/session/title/regenerate":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        sid = body["session_id"]
-        prefer_latest = bool(body.get("prefer_latest", False))
-        try:
-            s = _get_or_materialize_session(sid)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        except PermissionError:
-            return bad(handler, "Read-only imported sessions cannot regenerate titles", 403)
-        next_title, reason, raw_preview = generate_session_title_for_session(s, prefer_latest=prefer_latest)
-        if not next_title:
-            return bad(handler, f"Could not generate a better title ({reason or 'empty'})", 422)
-        _persist_generated_session_title(s, next_title, event_reason="session_title_regenerate")
-        return j(handler, {
-            "session": s.compact(),
-            "title": s.title,
-            "status": reason,
-            "raw_preview": (raw_preview or "")[:240],
-        })
-
-    if parsed.path == "/api/personality/set":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        if "name" not in body:
-            return bad(handler, "Missing required field: name")
-        sid = body["session_id"]
-        if _session_is_subagent_view_only(sid):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-        name = body["name"].strip()
-        try:
-            s = get_session(sid)
-            s = _ensure_full_session_before_mutation(sid, s)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        # Resolve personality from config.yaml agent.personalities section
-        # (matches hermes-agent CLI behavior)
-        prompt = ""
-        if name:
-            from api.config import reload_config as _reload_cfg2
-
-            _reload_cfg2()  # pick up config changes without restart
-            from api.config import get_config as _get_cfg2
-
-            _cfg2 = _get_cfg2()
-            agent_cfg = _cfg2.get("agent", {})
-            raw_personalities = agent_cfg.get("personalities", {})
-            if not isinstance(raw_personalities, dict) or name not in raw_personalities:
-                return bad(
-                    handler, f'Personality "{name}" not found in config.yaml', 404
-                )
-            value = raw_personalities[name]
-            # Resolve prompt using the same logic as hermes-agent cli.py
-            if isinstance(value, dict):
-                parts = [value.get("system_prompt", "") or value.get("prompt", "")]
-                if value.get("tone"):
-                    parts.append(f"Tone: {value['tone']}")
-                if value.get("style"):
-                    parts.append(f"Style: {value['style']}")
-                prompt = "\n".join(p for p in parts if p)
-            else:
-                prompt = str(value)
-        with _get_session_agent_lock(sid):
-            s.personality = name if name else None
-            s.save()
-        return j(handler, {"ok": True, "personality": s.personality, "prompt": prompt})
-
-    if parsed.path == "/api/session/toolsets":
-        """Set or clear per-session toolset override (#493).
-
-        POST body: { session_id, toolsets: [...] | null }
-        - toolsets: list of toolset names to restrict the session to, or null to clear.
-        """
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        sid = body["session_id"]
-        if _session_is_subagent_view_only(sid):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-        toolsets = body.get("toolsets")
-        try:
-            toolsets = _validate_session_toolsets_shape(toolsets)
-        except ValueError as e:
-            return bad(handler, str(e), status=400)
-        try:
-            s = get_session(sid)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        with _get_session_agent_lock(sid):
-            s.enabled_toolsets = toolsets
-            s.save()
-        return j(handler, {"ok": True, "enabled_toolsets": s.enabled_toolsets})
-
-    if parsed.path == "/api/session/draft":
-        # GET ?session_id=X  → return current draft
-        # POST body          → save draft { session_id, text?, files? }
-        # HTTP method is in handler.command (e.g. "POST", "GET"), parsed has no .method
-        import time as _draft_time
-        _draft_t0 = _draft_time.monotonic()
-        _draft_stages = []
-
-        def _draft_mark(name):
-            _draft_stages.append((name, _draft_time.monotonic()))
-        _draft_mark("enter")
-        if handler.command == "GET":
-            query = parse_qs(parsed.query)
-            sid = query.get("session_id", [""])[0] if parsed.query else ""
-            if not sid:
-                return bad(handler, "session_id is required", 400)
-            try:
-                s = get_session(sid)
-            except KeyError:
-                return bad(handler, "Session not found", 404)
-            draft = getattr(s, "composer_draft", {}) or {}
-            return j(handler, {"draft": draft})
-        # POST
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        sid = body["session_id"]
-        if _session_is_subagent_view_only(sid):
-            return bad(handler, "Subagent sessions are view-only and cannot store a draft from WebUI", 400)
-        text = body.get("text")
-        files = body.get("files")
-        # Stage-326 hardening (per Opus advisor): size + type validation on
-        # the draft inputs. Without this, a misbehaving or malicious client
-        # can persist multi-MB strings into the session JSON on every keystroke
-        # via the 400ms debounced auto-save.
-        _MAX_DRAFT_TEXT = 50_000  # 50 KB cap on textarea content
-        _MAX_DRAFT_FILES = 50  # max number of attached file references
-        if text is not None and not isinstance(text, str):
-            text = ""
-        if isinstance(text, str) and len(text) > _MAX_DRAFT_TEXT:
-            text = text[:_MAX_DRAFT_TEXT]
-        if files is not None and not isinstance(files, list):
-            files = []
-        if isinstance(files, list) and len(files) > _MAX_DRAFT_FILES:
-            files = files[:_MAX_DRAFT_FILES]
-        try:
-            s = get_session(sid)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        _draft_mark("after_get_session")
-        unchanged = False
-        with _get_session_agent_lock(sid):
-            _draft_mark("acquired_lock")
-            current_draft = dict(getattr(s, "composer_draft", {}) or {})
-            next_draft = dict(current_draft)
-            if text is not None:
-                next_draft["text"] = text
-            if files is not None:
-                next_draft["files"] = files
-            if next_draft == current_draft:
-                unchanged = True
-                saved_draft = current_draft
-            else:
-                s.composer_draft = next_draft
-                # Draft persistence is not conversation activity. Touching updated_at
-                # here makes the active-session external-refresh poll force-reload the
-                # current chat every few seconds while the user is typing, and that
-                # delayed reload can restore an older draft over newer local input.
-                _draft_mark("before_save")
-                s.save(touch_updated_at=False, skip_index=True)
-                _draft_mark("after_save")
-                saved_draft = s.composer_draft
-        _draft_mark("released_lock")
-        payload = {"ok": True, "draft": saved_draft}
-        if unchanged:
-            payload["unchanged"] = True
-        _draft_mark("before_json")
-        j(handler, payload)
-        _draft_mark("after_json")
-        _draft_stages.append(("end", _draft_time.monotonic()))
-        if _draft_stages[-1][1] - _draft_t0 > 0.2:
-            parts = " ".join(
-                f"{n}={((t - prev[1]) * 1000):.1f}ms"
-                for (n, t), prev in zip(_draft_stages[1:], _draft_stages[:-1], strict=True)
-            )
-            handler._safe_webui_print(
-                "[SLOW] /api/session/draft total=%.1fms stages: %s" % (
-                    (_draft_stages[-1][1] - _draft_t0) * 1000,
-                    parts,
-                )
-            )
-        return True
-
-    if parsed.path == "/api/session/update":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        try:
-            s = _get_or_materialize_session(body["session_id"])
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        except PermissionError:
-            return bad(handler, "Read-only imported sessions cannot be updated from WebUI", 403)
-        old_ws = getattr(s, "workspace", "")
-        old_model = getattr(s, "model", None)
-        old_provider = getattr(s, "model_provider", None)
-        try:
-            new_ws = str(resolve_trusted_workspace(body.get("workspace", s.workspace), profile=getattr(s, "profile", None)))
-        except ValueError as e:
-            return bad(handler, str(e))
-        with _get_session_agent_lock(body["session_id"]):
-            s.workspace = new_ws
-            if "model" in body or "model_provider" in body:
-                model, provider = _session_model_state_from_request(
-                    body.get("model", s.model),
-                    body.get("model_provider") if "model_provider" in body else None,
-                    getattr(s, "model_provider", None),
-                )
-                if model is not None:
-                    s.model = model
-                s.model_provider = provider
-                if (
-                    str(old_model or "") != str(getattr(s, "model", "") or "")
-                    or str(old_provider or "") != str(getattr(s, "model_provider", "") or "")
-                ):
-                    s.context_length = _resolve_context_length_for_session_model(
-                        getattr(s, "model", None),
-                        getattr(s, "model_provider", None),
+            logger.exception("failed to create worktree-backed session")
+            return bad(handler, f"Failed to create worktree: {e}", status=500)
+    model, model_provider = _session_model_state_from_request(
+        body.get("model"),
+        body.get("model_provider"),
+    )
+    try:
+        enabled_toolsets = _validate_session_toolsets_shape(body.get("enabled_toolsets"))
+    except ValueError as e:
+        return bad(handler, str(e), status=400)
+    # Use the profile sent by the client tab (if any) so that two tabs on
+    # different profiles never clobber each other via the process-level global.
+    # ── Memory lifecycle: commit the previous session before starting a new one ──
+    prev_session_id = body.get("prev_session_id")
+    if prev_session_id:
+        if not _session_id_visible_to_request_profile(
+            handler, prev_session_id, emit_error=False
+        ):
+            # Cross-profile hand-off after a profile switch: skip memory
+            # commit for the previous profile's session, but still create
+            # the new session (#5420).
+            prev_session_id = None
+        if prev_session_id:
+            # Fire-and-forget: commit_memory_session() can take 1-5+ seconds
+            # (extraction call to the memory provider), and blocking the
+            # response here made "+ New Chat" feel slow/unresponsive.
+            # commit_session_memory() already serialises overlapping commits
+            # for a session via its own in-flight guard, so running it off
+            # the request thread is safe.
+            def _commit_prev_session_memory(_sid=prev_session_id):
+                try:
+                    from api.session_lifecycle import commit_session_memory
+                    from api.config import SESSION_AGENT_CACHE, SESSION_AGENT_CACHE_LOCK
+                    prev_agent = None
+                    with SESSION_AGENT_CACHE_LOCK:
+                        _cached = SESSION_AGENT_CACHE.get(_sid)
+                        if _cached:
+                            prev_agent = _cached[0]
+                    commit_session_memory(_sid, agent=prev_agent)
+                except Exception:
+                    logger.warning(
+                        "Lifecycle commit for prev_session %s failed",
+                        _sid,
+                        exc_info=True,
                     )
-                    s.threshold_tokens = 0
-                    s.last_prompt_tokens = 0
-                    from api.config import _evict_session_agent
+                finally:
+                    # Self-unregister so the background-commit registry does
+                    # not leak completed threads; drain only tracks live ones.
+                    try:
+                        from api.session_lifecycle import _unregister_background_commit_thread
+                        _unregister_background_commit_thread(threading.current_thread())
+                    except Exception:
+                        pass
 
-                    _evict_session_agent(body["session_id"])
-            s.save()
-        if str(old_ws or "") != str(new_ws or ""):
-            try:
-                from api.terminal import close_terminal
-                close_terminal(body["session_id"])
-            except Exception:
-                logger.debug("Failed to close workspace terminal after workspace update")
-        set_last_workspace(new_ws, profile=getattr(s, "profile", None))
-        return j(
-            handler,
-            {"session": public_session_projection(s.compact() | {"messages": s.messages})},
+            t = threading.Thread(
+                target=_commit_prev_session_memory,
+                daemon=True,
+                name=f"commit-memory-{prev_session_id}",
+            )
+            from api.session_lifecycle import _register_background_commit_thread
+            # Refused only if shutdown draining has already begun; in that
+            # window the inline drain commits the pending generation instead,
+            # so skipping the worker start is safe (avoids a late daemon
+            # thread the drain snapshot already missed).
+            if _register_background_commit_thread(t):
+                t.start()
+    s = new_session(
+        workspace=workspace,
+        model=model,
+        model_provider=model_provider,
+        profile=body.get("profile") or None,
+        project_id=body.get("project_id") or None,
+        worktree_info=worktree_info,
+        enabled_toolsets=enabled_toolsets,
+    )
+    if worktree_info:
+        publish_session_list_changed(
+            "session_new",
+            profile=getattr(s, "profile", None),
+            session_id=getattr(s, "session_id", None),
         )
-    if parsed.path == "/api/session/worktree/remove":
-        sid = body.get("session_id", "")
-        if not sid or not isinstance(sid, str) or not sid.strip():
-            return bad(handler, "session_id must be a non-empty string", status=400)
-        sid = sid.strip()
-        if not is_safe_session_id(sid):
-            return bad(handler, "Invalid session_id", 400)
-        try:
-            s = get_session(sid, metadata_only=True)
-        except KeyError:
-            return bad(handler, "Session not found", status=404)
-        force = bool(body.get("force", False))
-        try:
-            from api.worktrees import remove_worktree_for_session
+    payload = {
+        "session": public_session_projection(s.compact() | {"messages": s.messages})
+    }
+    if worktree_skipped:
+        # Config-default worktree was skipped (non-git workspace); tell the
+        # client the session is plain so the UI doesn't assume isolation.
+        payload["worktree_skipped"] = worktree_skipped
+    return j(handler, payload)
 
-            result = remove_worktree_for_session(s, force=force)
-            return j(handler, result)
-        except ValueError as exc:
-            return bad(handler, str(exc), status=400)
-        except Exception as exc:
-            logger.exception("failed to remove worktree for session %s", sid)
-            return bad(handler, _sanitize_error(exc), status=500)
 
-    if parsed.path == "/api/session/delete":
-        sid = body.get("session_id", "")
+def _post_api_session_compression_recovery_start(handler, parsed, body, diag):
+    return _handle_session_compression_recovery_start(handler, body)
+
+
+def _post_api_session_duplicate(handler, parsed, body, diag):
+    try:
+        sid = body.get("session_id")
         if not sid:
             return bad(handler, "session_id is required")
-        if not is_safe_session_id(sid):
-            return bad(handler, "Invalid session_id", 400)
-        cli_meta_for_delete = _lookup_cli_session_metadata(sid)
-        if cli_meta_for_delete.get("read_only"):
-            return bad(handler, "Read-only imported sessions cannot be deleted from WebUI", 400)
-        # A delegated subagent child (#5307) is view-only and owned by the
-        # delegate runner. Deleting it here would call delete_cli_session() and
-        # erase the child's state.db transcript — refuse it.
         if _session_is_subagent_view_only(sid):
-            return bad(handler, "Subagent sessions are view-only and cannot be deleted from WebUI", 400)
-        is_messaging_session = _is_messaging_session_id(sid)
-        worktree_retained = _worktree_retained_payload_for_session_id(sid)
-        try:
-            event_profile = getattr(get_session(sid, metadata_only=True), "profile", None)
-        except KeyError:
-            event_profile = None
-        except Exception:
-            logger.debug("Failed to resolve profile for deleted session %s", sid, exc_info=True)
-            event_profile = None
-        # Serialize with recovery, but bound contention so a browser timeout
-        # cannot be followed by a delayed server-side delete.
-        session_lock = _get_session_agent_lock(sid)
-        if not session_lock.acquire(timeout=5):
-            return bad(handler, "Session busy, try again", 503)
-        try:
-            with LOCK:
-                SESSIONS.pop(sid, None)
-            try:
-                p = (SESSION_DIR / f"{sid}.json").resolve()
-                p.relative_to(SESSION_DIR.resolve())
-            except Exception:
-                return bad(handler, "Invalid session_id", 400)
-            sidecar_deleted = False
-            try:
-                p.unlink(missing_ok=True)
-            except Exception:
-                logger.debug("Failed to unlink session file %s", p)
-            sidecar_deleted = not p.exists()
-            try:
-                prune_session_from_index(sid)
-            except Exception:
-                logger.debug("Failed to prune deleted session from index: %s", sid, exc_info=True)
-            try:
-                p.with_suffix('.json.bak').unlink(missing_ok=True)
-            except Exception:
-                logger.debug("Failed to unlink session backup file %s", p.with_suffix('.json.bak'))
-            if sidecar_deleted and not is_messaging_session:
-                try:
-                    _record_webui_deleted_session_tombstone(sid)
-                except Exception:
-                    logger.debug("Failed to tombstone deleted WebUI session %s", sid, exc_info=True)
-        finally:
-            session_lock.release()
-        # Evict outside the mutation lock: lifecycle commit may perform provider
-        # I/O and must not hold a per-session Session lock.
-        from api.config import _evict_session_agent
-        _evict_session_agent(sid)
-        try:
-            from api.upload import _session_attachment_dir
+            return bad(handler, "Subagent sessions are view-only and cannot be duplicated from WebUI", 400)
 
-            shutil.rmtree(_session_attachment_dir(sid), ignore_errors=True)
-        except Exception:
-            logger.debug("Failed to clean attachment dir for deleted session %s", sid)
-        # Remove the turn-journal shards and the run-journal directory so a
-        # deleted conversation is not recoverable from disk. The session JSON +
-        # state.db rows are cleared above, but these journals retain the user's
-        # messages (turn journal) and the full request/response payloads (run
-        # journal) in plaintext. (#3802)
-        try:
-            from api.turn_journal import delete_turn_journal
+        session = Session.load(sid)
+        if not session:
+            # 404, not 400 — missing resource, not a malformed request.
+            return bad(handler, "Session not found", status=404)
 
-            delete_turn_journal(sid)
-        except Exception:
-            logger.debug("Failed to delete turn journal for deleted session %s", sid)
-        try:
-            from api.run_journal import delete_run_journal
+        # Deep-copy mutable lists so the duplicate is *actually* independent.
+        # `Session.__init__` does `self.messages = messages or []` — plain
+        # assignment, no copy. Without deepcopy, both sessions share the same
+        # list object in memory; appending to one mutates the other.
+        # Items inside `messages` are dicts with mutable values (tool_calls,
+        # content arrays), so a shallow `list(...)` is not enough.
+        copied_session = Session(
+            session_id=uuid.uuid4().hex[:12],
+            # Defensive: legacy sessions may have title=None on disk; fall back to 'Untitled'
+            # so `+ " (copy)"` doesn't TypeError.
+            title=(session.title or "Untitled") + " (copy)",
+            workspace=session.workspace,
+            model=session.model,
+            model_provider=session.model_provider,
+            messages=copy.deepcopy(session.messages),
+            tool_calls=copy.deepcopy(session.tool_calls),
+            # Reset ephemeral / per-session-instance flags. Duplicating an
+            # archived conversation should produce a visible (un-archived)
+            # copy; pinned status doesn't transfer either.
+            pinned=False,
+            archived=False,
+            project_id=session.project_id,
+            profile=session.profile,
+            input_tokens=session.input_tokens,
+            output_tokens=session.output_tokens,
+            estimated_cost=session.estimated_cost,
+            cache_read_tokens=getattr(session, "cache_read_tokens", 0),
+            cache_write_tokens=getattr(session, "cache_write_tokens", 0),
+            # Per-session settings the user may have customized — carry them over
+            # so the duplicate behaves identically until further edits. Compression
+            # anchor + last_prompt_tokens are intentionally NOT carried — those
+            # re-derive on the next turn.
+            personality=session.personality,
+            enabled_toolsets=getattr(session, "enabled_toolsets", None),
+            context_length=getattr(session, "context_length", None),
+            threshold_tokens=getattr(session, "threshold_tokens", None),
+            truncation_watermark=getattr(session, "truncation_watermark", None),
+            truncation_boundary=getattr(session, "truncation_boundary", None),
+            # context_messages is the authoritative model-facing prefix — must be
+            # deepcopied so the duplicate has its own independent context that won't
+            # be mutated when the original session's context changes (#2914).
+            context_messages=copy.deepcopy(getattr(session, "context_messages", None) or []),
+            # Gateway routing — if the user customized routing for this session,
+            # the duplicate should behave identically.
+            gateway_routing=copy.deepcopy(getattr(session, "gateway_routing", None)),
+            gateway_routing_history=copy.deepcopy(getattr(session, "gateway_routing_history", None) or []),
+            # Preserve LLM-generated title flag so we don't regenerate title on duplicate.
+            llm_title_generated=getattr(session, "llm_title_generated", False),
+            manual_title=getattr(session, "manual_title", False),
+            # Composer draft — preserve per-session draft state.
+            composer_draft=copy.deepcopy(getattr(session, "composer_draft", None) or {}),
+            # Context engine state — preserve so the duplicate's context engine
+            # starts from the same point as the original.
+            context_engine=getattr(session, "context_engine", None),
+            context_engine_state=copy.deepcopy(getattr(session, "context_engine_state", None) or {}),
+            created_at=time.time(),
+            updated_at=time.time(),
+        )
 
-            delete_run_journal(sid)
-        except Exception:
-            logger.debug("Failed to delete run journal for deleted session %s", sid)
-        # The weak lock registry releases this entry automatically after all
-        # holders and waiters drop their strong references.
-        # Prune the completion-dedup entry too. The reaper sweeps it once the
-        # completion is delivered (drained from PENDING); a session deleted
-        # while a completion is still pending would otherwise keep its entry.
-        try:
-            from api.background_process import forget_bg_task_completion_dedup
+        with LOCK:
+            SESSIONS[copied_session.session_id] = copied_session
+            SESSIONS.move_to_end(copied_session.session_id)
+            _evict_sessions_over_cap()  # #4765: safe LRU eviction (never active/unsaved)
+        # Persist immediately. The pre-PR flow (/api/session/new + /api/session/rename)
+        # accidentally avoided this because `/api/session/rename` calls `s.save()`.
+        # Without this explicit save, the duplicate is in-memory only — if the user
+        # refreshes before sending a turn, the duplicate vanishes.
+        copied_session.save()
+        publish_session_list_changed(
+            "session_duplicate",
+            profile=getattr(copied_session, "profile", None),
+            session_id=getattr(copied_session, "session_id", None),
+        )
 
-            forget_bg_task_completion_dedup(sid)
-        except Exception:
-            logger.debug("Failed to prune bg-task dedup entry for deleted session %s", sid)
-        try:
-            from api.terminal import close_terminal
-            close_terminal(sid)
-        except Exception:
-            logger.debug("Failed to close workspace terminal for deleted session %s", sid)
-        # Also delete from CLI state.db for CLI sessions shown in sidebar,
-        # but never erase external messaging channel memory via WebUI delete.
-        state_db_cleanup_failed = False
-        if not is_messaging_session:
-            try:
-                from api.models import delete_cli_session
-
-                state_db_cleanup_failed = not delete_cli_session(sid)
-            except Exception:
-                state_db_cleanup_failed = True
-                logger.warning("Failed to delete CLI session %s", sid, exc_info=True)
-        _publish_session_list_changed("session_delete", profile=event_profile)
         return j(
             handler,
             {
-                "ok": True,
-                "state_db_cleanup_failed": state_db_cleanup_failed,
-                **worktree_retained,
+                "session": public_session_projection(
+                    copied_session.compact() | {"messages": copied_session.messages}
+                )
             },
         )
+    except Exception as e:
+        return bad(handler, str(e))
 
-    if parsed.path == "/api/session/clear":
+
+# A User chooses their own Profile's models (ADR 0006), but a model's
+# endpoint and key are provider setup, which is the Operator's.
+_OPERATOR_MODEL_OPTIONS = ("base_url", "api_key", "api_key_clear")
+
+
+def _refuse_operator_model_options(handler, advanced):
+    """Answer 403 when *advanced* sets a model's endpoint or key; else None."""
+    named = sorted(k for k in _OPERATOR_MODEL_OPTIONS if isinstance(advanced, dict) and k in advanced)
+    if not named:
+        return None
+    return bad(handler, "A model's endpoint and API key are set by the Deployment's Operator: " + ", ".join(named), 403)
+
+
+def _post_api_default_model(handler, parsed, body, diag):
+    try:
+        advanced = body.get("advanced") if isinstance(body, dict) else None
+        refused = _refuse_operator_model_options(handler, advanced)
+        if refused is not None:
+            return refused
+        provider = body.get("provider") if isinstance(body, dict) else None
+        if str(provider or "").strip().lower() == "auto":
+            provider = None
+        return j(handler, set_hermes_default_model(body.get("model"), provider=provider, advanced=advanced))
+    except ValueError as e:
+        return bad(handler, str(e))
+    except RuntimeError as e:
+        return bad(handler, str(e), 500)
+
+
+# ── Auxiliary model set (POST) ──
+def _post_api_model_set(handler, parsed, body, diag):
+    scope = str(body.get("scope") or "").strip()
+    task = str(body.get("task") or "").strip()
+    provider = str(body.get("provider") or "auto").strip()
+    model = str(body.get("model") or "").strip()
+    advanced = body.get("advanced") if isinstance(body, dict) else None
+    refused = _refuse_operator_model_options(handler, advanced)
+    if refused is not None:
+        return refused
+    if scope == "auxiliary":
+        from api.config import set_auxiliary_model
         try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        if _session_is_subagent_view_only(body["session_id"]):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+            return j(handler, set_auxiliary_model(task, provider, model, advanced=advanced))
+        except Exception as exc:
+            return bad(handler, str(exc), status=400)
+    if scope == "main":
         try:
-            s = get_session(body["session_id"])
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        sid = body["session_id"]
-        with _get_session_agent_lock(sid):
-            had_sidecar_messages = bool(s.messages or [])
-            # Clear is a full truncate-to-empty: route through the SAME helper the
-            # /api/session/truncate handler uses (single source of truth) so the
-            # display + context arrays are emptied AND the truncation watermark is
-            # set via _truncation_watermark_for([]) == 0.0 — the #2914
-            # truncate-to-empty sentinel that blocks state.db replay. Before this,
-            # /clear wiped s.messages but left the watermark unset, so the
-            # append-only state.db merge treated it as "keep everything" and the
-            # cleared history resurrected on the next /api/session read (#5532).
-            from api.session_ops import truncate_session_at_keep
-            truncate_session_at_keep(s, 0)
-            s.tool_calls = []
-            # A compressed-continuation child keeps its archived transcript in a
-            # parent sidecar marked pre_compression_snapshot;
-            # _webui_sidecar_lineage_messages_for_display() stitches that parent
-            # back with truncation_watermark=None, so the 0.0 sentinel on the
-            # CHILD does NOT stop the parent from resurrecting the cleared history
-            # on refresh. Detach the compression lineage (#5532/#5553) — but ONLY
-            # when the parent is actually a pre_compression_snapshot; a genuine
-            # fork parent (session_source="fork" from /api/session/branch) must
-            # keep its link so the child still nests + shows "Forked from"
-            # (sessions.js:5720/5964/7105). Dropping every parent broke that
-            # (#5532 Codex gate).
-            _parent_sid = getattr(s, "parent_session_id", None)
-            if _parent_sid:
-                _parent_is_compression_snapshot = False
-                try:
-                    _parent = get_session(_parent_sid, metadata_only=True)
-                    _parent_is_compression_snapshot = bool(
-                        getattr(_parent, "pre_compression_snapshot", False)
-                    )
-                except Exception:
-                    _parent_is_compression_snapshot = False
-                if _parent_is_compression_snapshot:
-                    s.parent_session_id = None
-                    s.compression_anchor_visible_idx = None
-                    s.compression_anchor_message_key = None
-            s.active_stream_id = None
-            s.pending_user_message = None
-            s.pending_attachments = []
-            s.pending_started_at = None
-            s.pending_user_source = None
-            s.clear_generation = uuid.uuid4().hex if had_sidecar_messages else None
-            # Reset the title via the rename helper so clearing a manually-named
-            # session also clears manual_title/llm_title_generated — otherwise the
-            # reused session keeps its manual-title protection and never auto-names
-            # again (#3542 lifecycle gap).
-            from api.session_ops import apply_session_title_rename
-            apply_session_title_rename(s, "Untitled")
-            s.save()
-            persisted_clear = False
-            try:
-                persisted = json.loads(s.path.read_text(encoding="utf-8"))
-                persisted_clear = (
-                    persisted.get("messages") == []
-                    and persisted.get("context_messages") == []
-                    and persisted.get("truncation_watermark") == 0.0
-                    and persisted.get("truncation_boundary") == 0.0
-                    and persisted.get("active_stream_id") is None
-                    and persisted.get("pending_user_message") is None
-                    and persisted.get("pending_attachments") == []
-                    and persisted.get("pending_started_at") is None
-                    and persisted.get("pending_user_source") is None
-                    and persisted.get("clear_generation") == s.clear_generation
+            main_provider = provider if provider != "auto" else None
+            return j(handler, set_hermes_default_model(model, provider=main_provider, advanced=advanced))
+        except ValueError as exc:
+            return bad(handler, str(exc), status=400)
+    return bad(handler, f"unknown scope: {scope}", status=400)
+
+
+def _post_api_reasoning(handler, parsed, body, diag):
+    # CLI-parity /reasoning handler — writes to the same config.yaml keys
+    # the CLI uses (display.show_reasoning, agent.reasoning_effort) so a
+    # preference set via WebUI is honoured in the terminal REPL and vice
+    # versa.  Body is one of:
+    #   {"display": "show"|"hide"|"on"|"off"}   → display.show_reasoning
+    #   {"effort":  "none"|"minimal"|"low"|"medium"|"high"|"xhigh"}
+    #                                            → agent.reasoning_effort
+    try:
+        display = body.get("display")
+        effort = body.get("effort")
+        if display is not None:
+            flag = str(display).strip().lower()
+            if flag in ("show", "on", "true", "1"):
+                return j(handler, set_reasoning_display(True))
+            if flag in ("hide", "off", "false", "0"):
+                return j(handler, set_reasoning_display(False))
+            return bad(handler, f"display must be show|hide|on|off (got '{display}')")
+        if effort is not None:
+            model_id = str(body.get("model") or "").strip() or None
+            provider_id = str(body.get("provider") or "").strip() or None
+            base_url = str(body.get("base_url") or "").strip() or None
+            return j(
+                handler,
+                set_reasoning_effort(
+                    effort,
+                    model_id=model_id,
+                    provider_id=provider_id,
+                    base_url=base_url,
+                ),
+            )
+        return bad(handler, "reasoning: must supply 'display' or 'effort'")
+    except ValueError as e:
+        return bad(handler, str(e))
+    except RuntimeError as e:
+        return bad(handler, str(e), 500)
+
+
+def _post_api_session_anchor_scene(handler, parsed, body, diag):
+    return _handle_session_anchor_scene(handler, body)
+
+
+def _post_api_session_rename(handler, parsed, body, diag):
+    try:
+        require(body, "session_id", "title")
+    except ValueError as e:
+        return bad(handler, str(e))
+    try:
+        s = load_owned_session(handler, body["session_id"], load=_get_or_materialize_session)
+    except PermissionError:
+        return bad(handler, "Read-only imported sessions cannot be renamed from WebUI", 403)
+    if s is None:
+        return True
+    with _get_session_agent_lock(body["session_id"]):
+        from api.session_ops import apply_session_title_rename
+        apply_session_title_rename(s, body["title"])
+        s.save()
+    _sync_session_title_to_insights(s)
+    publish_session_list_changed(
+        "session_rename",
+        profile=getattr(s, "profile", None),
+        session_id=getattr(s, "session_id", body["session_id"]),
+    )
+    return j(handler, {"session": s.compact()})
+
+
+def _post_api_session_title_regenerate(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    sid = body["session_id"]
+    prefer_latest = bool(body.get("prefer_latest", False))
+    try:
+        s = load_owned_session(handler, sid, load=_get_or_materialize_session)
+    except PermissionError:
+        return bad(handler, "Read-only imported sessions cannot regenerate titles", 403)
+    if s is None:
+        return True
+    next_title, reason, raw_preview = generate_session_title_for_session(s, prefer_latest=prefer_latest)
+    if not next_title:
+        return bad(handler, f"Could not generate a better title ({reason or 'empty'})", 422)
+    _persist_generated_session_title(s, next_title, event_reason="session_title_regenerate")
+    return j(handler, {
+        "session": s.compact(),
+        "title": s.title,
+        "status": reason,
+        "raw_preview": (raw_preview or "")[:240],
+    })
+
+
+def _post_api_personality_set(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    if "name" not in body:
+        return bad(handler, "Missing required field: name")
+    sid = body["session_id"]
+    if _session_is_subagent_view_only(sid):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    name = body["name"].strip()
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
+    try:
+        s = _ensure_full_session_before_mutation(sid, s)
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    # Resolve personality from config.yaml agent.personalities section
+    # (matches hermes-agent CLI behavior)
+    prompt = ""
+    if name:
+        from api.config import reload_config as _reload_cfg2
+
+        _reload_cfg2()  # pick up config changes without restart
+        from api.config import get_config as _get_cfg2
+
+        _cfg2 = _get_cfg2()
+        agent_cfg = _cfg2.get("agent", {})
+        raw_personalities = agent_cfg.get("personalities", {})
+        if not isinstance(raw_personalities, dict) or name not in raw_personalities:
+            return bad(
+                handler, f'Personality "{name}" not found in config.yaml', 404
+            )
+        value = raw_personalities[name]
+        # Resolve prompt using the same logic as hermes-agent cli.py
+        if isinstance(value, dict):
+            parts = [value.get("system_prompt", "") or value.get("prompt", "")]
+            if value.get("tone"):
+                parts.append(f"Tone: {value['tone']}")
+            if value.get("style"):
+                parts.append(f"Style: {value['style']}")
+            prompt = "\n".join(p for p in parts if p)
+        else:
+            prompt = str(value)
+    with _get_session_agent_lock(sid):
+        s.personality = name if name else None
+        s.save()
+    return j(handler, {"ok": True, "personality": s.personality, "prompt": prompt})
+
+
+def _post_api_session_toolsets(handler, parsed, body, diag):
+    """Set or clear per-session toolset override (#493).
+
+    POST body: { session_id, toolsets: [...] | null }
+    - toolsets: list of toolset names to restrict the session to, or null to clear.
+    """
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    sid = body["session_id"]
+    if _session_is_subagent_view_only(sid):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    toolsets = body.get("toolsets")
+    try:
+        toolsets = _validate_session_toolsets_shape(toolsets)
+    except ValueError as e:
+        return bad(handler, str(e), status=400)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
+    with _get_session_agent_lock(sid):
+        s.enabled_toolsets = toolsets
+        s.save()
+    return j(handler, {"ok": True, "enabled_toolsets": s.enabled_toolsets})
+
+
+def _post_api_session_draft(handler, parsed, body, diag):
+    # GET ?session_id=X  → return current draft
+    # POST body          → save draft { session_id, text?, files? }
+    # HTTP method is in handler.command (e.g. "POST", "GET"), parsed has no .method
+    import time as _draft_time
+    _draft_t0 = _draft_time.monotonic()
+    _draft_stages = []
+
+    def _draft_mark(name):
+        _draft_stages.append((name, _draft_time.monotonic()))
+    _draft_mark("enter")
+    if handler.command == "GET":
+        query = parse_qs(parsed.query)
+        sid = query.get("session_id", [""])[0] if parsed.query else ""
+        if not sid:
+            return bad(handler, "session_id is required", 400)
+        s = load_owned_session(handler, sid, load=get_session)
+        if s is None:
+            return True
+        draft = getattr(s, "composer_draft", {}) or {}
+        return j(handler, {"draft": draft})
+    # POST
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    sid = body["session_id"]
+    if _session_is_subagent_view_only(sid):
+        return bad(handler, "Subagent sessions are view-only and cannot store a draft from WebUI", 400)
+    text = body.get("text")
+    files = body.get("files")
+    # Stage-326 hardening (per Opus advisor): size + type validation on
+    # the draft inputs. Without this, a misbehaving or malicious client
+    # can persist multi-MB strings into the session JSON on every keystroke
+    # via the 400ms debounced auto-save.
+    _MAX_DRAFT_TEXT = 50_000  # 50 KB cap on textarea content
+    _MAX_DRAFT_FILES = 50  # max number of attached file references
+    if text is not None and not isinstance(text, str):
+        text = ""
+    if isinstance(text, str) and len(text) > _MAX_DRAFT_TEXT:
+        text = text[:_MAX_DRAFT_TEXT]
+    if files is not None and not isinstance(files, list):
+        files = []
+    if isinstance(files, list) and len(files) > _MAX_DRAFT_FILES:
+        files = files[:_MAX_DRAFT_FILES]
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
+    _draft_mark("after_get_session")
+    unchanged = False
+    with _get_session_agent_lock(sid):
+        _draft_mark("acquired_lock")
+        current_draft = dict(getattr(s, "composer_draft", {}) or {})
+        next_draft = dict(current_draft)
+        if text is not None:
+            next_draft["text"] = text
+        if files is not None:
+            next_draft["files"] = files
+        if next_draft == current_draft:
+            unchanged = True
+            saved_draft = current_draft
+        else:
+            s.composer_draft = next_draft
+            # Draft persistence is not conversation activity. Touching updated_at
+            # here makes the active-session external-refresh poll force-reload the
+            # current chat every few seconds while the user is typing, and that
+            # delayed reload can restore an older draft over newer local input.
+            _draft_mark("before_save")
+            s.save(touch_updated_at=False, skip_index=True)
+            _draft_mark("after_save")
+            saved_draft = s.composer_draft
+    _draft_mark("released_lock")
+    payload = {"ok": True, "draft": saved_draft}
+    if unchanged:
+        payload["unchanged"] = True
+    _draft_mark("before_json")
+    j(handler, payload)
+    _draft_mark("after_json")
+    _draft_stages.append(("end", _draft_time.monotonic()))
+    if _draft_stages[-1][1] - _draft_t0 > 0.2:
+        parts = " ".join(
+            f"{n}={((t - prev[1]) * 1000):.1f}ms"
+            for (n, t), prev in zip(_draft_stages[1:], _draft_stages[:-1], strict=True)
+        )
+        handler._safe_webui_print(
+            "[SLOW] /api/session/draft total=%.1fms stages: %s" % (
+                (_draft_stages[-1][1] - _draft_t0) * 1000,
+                parts,
+            )
+        )
+    return True
+
+
+def _post_api_session_update(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    try:
+        s = load_owned_session(handler, body["session_id"], load=_get_or_materialize_session)
+    except PermissionError:
+        return bad(handler, "Read-only imported sessions cannot be updated from WebUI", 403)
+    if s is None:
+        return True
+    old_model = getattr(s, "model", None)
+    old_provider = getattr(s, "model_provider", None)
+    try:
+        new_ws = str(resolve_trusted_workspace(body.get("workspace", s.workspace), profile=getattr(s, "profile", None)))
+    except ValueError as e:
+        return bad(handler, str(e))
+    with _get_session_agent_lock(body["session_id"]):
+        s.workspace = new_ws
+        if "model" in body or "model_provider" in body:
+            model, provider = _session_model_state_from_request(
+                body.get("model", s.model),
+                body.get("model_provider") if "model_provider" in body else None,
+                getattr(s, "model_provider", None),
+            )
+            if model is not None:
+                s.model = model
+            s.model_provider = provider
+            if (
+                str(old_model or "") != str(getattr(s, "model", "") or "")
+                or str(old_provider or "") != str(getattr(s, "model_provider", "") or "")
+            ):
+                s.context_length = _resolve_context_length_for_session_model(
+                    getattr(s, "model", None),
+                    getattr(s, "model_provider", None),
                 )
-            except (OSError, json.JSONDecodeError, ValueError):
-                logger.warning("session clear could not verify persisted empty state for %s", sid, exc_info=True)
-            if had_sidecar_messages and persisted_clear:
-                try:
-                    s.path.with_suffix('.json.bak').unlink(missing_ok=True)
-                except OSError:
-                    logger.warning("session clear could not remove stale backup for %s", sid, exc_info=True)
-        # Evict cached agent outside the per-session lock.  Eviction may run a
-        # boundary memory commit for batch-extraction providers, and provider
-        # I/O must not hold the session mutation lock.
-        from api.config import _evict_session_agent
-        _evict_session_agent(sid)
-        return j(handler, {"ok": True, "session": s.compact()})
+                s.threshold_tokens = 0
+                s.last_prompt_tokens = 0
+                from api.config import _evict_session_agent
 
-    if parsed.path == "/api/session/truncate":
+                _evict_session_agent(body["session_id"])
+        s.save()
+    set_last_workspace(new_ws, profile=getattr(s, "profile", None))
+    return j(
+        handler,
+        {"session": public_session_projection(s.compact() | {"messages": s.messages})},
+    )
+
+
+def _post_api_session_delete(handler, parsed, body, diag):
+    sid = body.get("session_id", "")
+    if not sid:
+        return bad(handler, "session_id is required")
+    if not is_safe_session_id(sid):
+        return bad(handler, "Invalid session_id", 400)
+    cli_meta_for_delete = _lookup_cli_session_metadata(sid)
+    if cli_meta_for_delete.get("read_only"):
+        return bad(handler, "Read-only imported sessions cannot be deleted from WebUI", 400)
+    # A delegated subagent child (#5307) is view-only and owned by the
+    # delegate runner. Deleting it here would call delete_cli_session() and
+    # erase the child's state.db transcript — refuse it.
+    if _session_is_subagent_view_only(sid):
+        return bad(handler, "Subagent sessions are view-only and cannot be deleted from WebUI", 400)
+    is_messaging_session = _is_messaging_session_id(sid)
+    worktree_retained = _worktree_retained_payload_for_session_id(sid)
+    try:
+        event_profile = getattr(get_session(sid, metadata_only=True), "profile", None)
+    except KeyError:
+        event_profile = None
+    except Exception:
+        logger.debug("Failed to resolve profile for deleted session %s", sid, exc_info=True)
+        event_profile = None
+    # Serialize with recovery, but bound contention so a browser timeout
+    # cannot be followed by a delayed server-side delete.
+    session_lock = _get_session_agent_lock(sid)
+    if not session_lock.acquire(timeout=5):
+        return bad(handler, "Session busy, try again", 503)
+    try:
+        with LOCK:
+            SESSIONS.pop(sid, None)
         try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        if _session_is_subagent_view_only(body["session_id"]):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-        if body.get("keep_count") is None:
-            return bad(handler, "Missing required field(s): keep_count")
+            p = (api_config.SESSION_DIR / f"{sid}.json").resolve()
+            p.relative_to(api_config.SESSION_DIR.resolve())
+        except Exception:
+            return bad(handler, "Invalid session_id", 400)
+        sidecar_deleted = False
         try:
-            s = get_session(body["session_id"])
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        # Validate keep_count before it reaches the destructive `messages[:keep]`
-        # slice. A non-numeric value would raise ValueError and surface as a
-        # confusing 500; a NEGATIVE value slices as `messages[:-N]`, which
-        # silently DELETES the most recent N messages (e.g. keep_count=-5 on a
-        # 3-message session wipes the whole transcript) and then persists it via
-        # save(). Mirror the explicit guard the /api/session/branch handler
-        # already applies to its own keep_count. (Opus pre-release follow-up.)
+            p.unlink(missing_ok=True)
+        except Exception:
+            logger.debug("Failed to unlink session file %s", p)
+        sidecar_deleted = not p.exists()
         try:
-            keep = int(body["keep_count"])
+            prune_session_from_index(sid)
+        except Exception:
+            logger.debug("Failed to prune deleted session from index: %s", sid, exc_info=True)
+        try:
+            p.with_suffix('.json.bak').unlink(missing_ok=True)
+        except Exception:
+            logger.debug("Failed to unlink session backup file %s", p.with_suffix('.json.bak'))
+        if sidecar_deleted and not is_messaging_session:
+            try:
+                _record_webui_deleted_session_tombstone(sid)
+            except Exception:
+                logger.debug("Failed to tombstone deleted WebUI session %s", sid, exc_info=True)
+    finally:
+        session_lock.release()
+    # Evict outside the mutation lock: lifecycle commit may perform provider
+    # I/O and must not hold a per-session Session lock.
+    from api.config import _evict_session_agent
+    _evict_session_agent(sid)
+    try:
+        from api.upload import _session_attachment_dir
+
+        shutil.rmtree(_session_attachment_dir(sid), ignore_errors=True)
+    except Exception:
+        logger.debug("Failed to clean attachment dir for deleted session %s", sid)
+    # Remove the turn-journal shards and the run-journal directory so a
+    # deleted conversation is not recoverable from disk. The session JSON +
+    # state.db rows are cleared above, but these journals retain the user's
+    # messages (turn journal) and the full request/response payloads (run
+    # journal) in plaintext. (#3802)
+    try:
+        from api.turn_journal import delete_turn_journal
+
+        delete_turn_journal(sid)
+    except Exception:
+        logger.debug("Failed to delete turn journal for deleted session %s", sid)
+    try:
+        from api.run_journal import delete_run_journal
+
+        delete_run_journal(sid)
+    except Exception:
+        logger.debug("Failed to delete run journal for deleted session %s", sid)
+    # The weak lock registry releases this entry automatically after all
+    # holders and waiters drop their strong references.
+    # Prune the completion-dedup entry too. The reaper sweeps it once the
+    # completion is delivered (drained from PENDING); a session deleted
+    # while a completion is still pending would otherwise keep its entry.
+    try:
+        from api.background_process import forget_bg_task_completion_dedup
+
+        forget_bg_task_completion_dedup(sid)
+    except Exception:
+        logger.debug("Failed to prune bg-task dedup entry for deleted session %s", sid)
+    # Also delete from CLI state.db for CLI sessions shown in sidebar,
+    # but never erase external messaging channel memory via WebUI delete.
+    state_db_cleanup_failed = False
+    if not is_messaging_session:
+        try:
+            from api.models import delete_cli_session
+
+            state_db_cleanup_failed = not delete_cli_session(sid)
+        except Exception:
+            state_db_cleanup_failed = True
+            logger.warning("Failed to delete CLI session %s", sid, exc_info=True)
+    _publish_session_list_changed("session_delete", profile=event_profile)
+    return j(
+        handler,
+        {
+            "ok": True,
+            "state_db_cleanup_failed": state_db_cleanup_failed,
+            **worktree_retained,
+        },
+    )
+
+
+def _post_api_session_clear(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    if _session_is_subagent_view_only(body["session_id"]):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
+    sid = body["session_id"]
+    with _get_session_agent_lock(sid):
+        had_sidecar_messages = bool(s.messages or [])
+        # Clear is a full truncate-to-empty: route through the SAME helper the
+        # /api/session/truncate handler uses (single source of truth) so the
+        # display + context arrays are emptied AND the truncation watermark is
+        # set via _truncation_watermark_for([]) == 0.0 — the #2914
+        # truncate-to-empty sentinel that blocks state.db replay. Before this,
+        # /clear wiped s.messages but left the watermark unset, so the
+        # append-only state.db merge treated it as "keep everything" and the
+        # cleared history resurrected on the next /api/session read (#5532).
+        from api.session_ops import truncate_session_at_keep
+        truncate_session_at_keep(s, 0)
+        s.tool_calls = []
+        # A compressed-continuation child keeps its archived transcript in a
+        # parent sidecar marked pre_compression_snapshot;
+        # _webui_sidecar_lineage_messages_for_display() stitches that parent
+        # back with truncation_watermark=None, so the 0.0 sentinel on the
+        # CHILD does NOT stop the parent from resurrecting the cleared history
+        # on refresh. Detach the compression lineage (#5532/#5553) — but ONLY
+        # when the parent is actually a pre_compression_snapshot; a genuine
+        # fork parent (session_source="fork" from /api/session/branch) must
+        # keep its link so the child still nests + shows "Forked from"
+        # (sessions.js:5720/5964/7105). Dropping every parent broke that
+        # (#5532 Codex gate).
+        _parent_sid = getattr(s, "parent_session_id", None)
+        if _parent_sid:
+            _parent_is_compression_snapshot = False
+            try:
+                _parent = get_session(_parent_sid, metadata_only=True)
+                _parent_is_compression_snapshot = bool(
+                    getattr(_parent, "pre_compression_snapshot", False)
+                )
+            except Exception:
+                _parent_is_compression_snapshot = False
+            if _parent_is_compression_snapshot:
+                s.parent_session_id = None
+                s.compression_anchor_visible_idx = None
+                s.compression_anchor_message_key = None
+        s.active_stream_id = None
+        s.pending_user_message = None
+        s.pending_attachments = []
+        s.pending_started_at = None
+        s.pending_user_source = None
+        s.clear_generation = uuid.uuid4().hex if had_sidecar_messages else None
+        # Reset the title via the rename helper so clearing a manually-named
+        # session also clears manual_title/llm_title_generated — otherwise the
+        # reused session keeps its manual-title protection and never auto-names
+        # again (#3542 lifecycle gap).
+        from api.session_ops import apply_session_title_rename
+        apply_session_title_rename(s, "Untitled")
+        s.save()
+        persisted_clear = False
+        try:
+            persisted = json.loads(s.path.read_text(encoding="utf-8"))
+            persisted_clear = (
+                persisted.get("messages") == []
+                and persisted.get("context_messages") == []
+                and persisted.get("truncation_watermark") == 0.0
+                and persisted.get("truncation_boundary") == 0.0
+                and persisted.get("active_stream_id") is None
+                and persisted.get("pending_user_message") is None
+                and persisted.get("pending_attachments") == []
+                and persisted.get("pending_started_at") is None
+                and persisted.get("pending_user_source") is None
+                and persisted.get("clear_generation") == s.clear_generation
+            )
+        except (OSError, json.JSONDecodeError, ValueError):
+            logger.warning("session clear could not verify persisted empty state for %s", sid, exc_info=True)
+        if had_sidecar_messages and persisted_clear:
+            try:
+                s.path.with_suffix('.json.bak').unlink(missing_ok=True)
+            except OSError:
+                logger.warning("session clear could not remove stale backup for %s", sid, exc_info=True)
+    # Evict cached agent outside the per-session lock.  Eviction may run a
+    # boundary memory commit for batch-extraction providers, and provider
+    # I/O must not hold the session mutation lock.
+    from api.config import _evict_session_agent
+    _evict_session_agent(sid)
+    return j(handler, {"ok": True, "session": s.compact()})
+
+
+def _post_api_session_truncate(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    if _session_is_subagent_view_only(body["session_id"]):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    if body.get("keep_count") is None:
+        return bad(handler, "Missing required field(s): keep_count")
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
+    # Validate keep_count before it reaches the destructive `messages[:keep]`
+    # slice. A non-numeric value would raise ValueError and surface as a
+    # confusing 500; a NEGATIVE value slices as `messages[:-N]`, which
+    # silently DELETES the most recent N messages (e.g. keep_count=-5 on a
+    # 3-message session wipes the whole transcript) and then persists it via
+    # save(). Mirror the explicit guard the /api/session/branch handler
+    # already applies to its own keep_count. (Opus pre-release follow-up.)
+    try:
+        keep = int(body["keep_count"])
+    except (ValueError, TypeError):
+        return bad(handler, "keep_count must be an integer")
+    if keep < 0:
+        return bad(handler, "keep_count must be non-negative")
+    with _get_session_agent_lock(body["session_id"]):
+        from api.session_ops import truncate_session_at_keep
+
+        old_msg_count, old_ctx_count = truncate_session_at_keep(s, keep)
+        s.save()
+        logger.info(
+            "truncate %s: messages %d→%d, context_messages %d→%d, watermark=%.2f",
+            body["session_id"], old_msg_count, len(s.messages or []),
+            old_ctx_count, len(getattr(s, 'context_messages', None) or []),
+            s.truncation_watermark or 0,
+        )
+    from api.config import _evict_session_agent
+    _evict_session_agent(body["session_id"])
+    return j(
+        handler,
+        {
+            "ok": True,
+            "session": public_session_projection(
+                s.compact() | {"messages": s.messages}
+            ),
+        },
+    )
+
+
+def _post_api_session_branch(handler, parsed, body, diag):
+    # Fork a conversation from any message point (#465).
+    # Accepts: {session_id, keep_count?, title?}
+    #   keep_count: number of messages to copy (0=empty, undefined=full history)
+    #   title: custom title (defaults to "<original title> (fork)")
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    # Reject non-string session_id explicitly so the failure surfaces as a
+    # 400 instead of a generic 500 from get_session() raising TypeError.
+    # (Opus pre-release follow-up.)
+    if not isinstance(body["session_id"], str):
+        return bad(handler, "session_id must be a string")
+    source = _load_branch_source_or_refuse(handler, body["session_id"])
+    if source is None:
+        return True
+
+    keep_count = body.get("keep_count")
+    if keep_count is not None:
+        try:
+            keep_count = int(keep_count)
         except (ValueError, TypeError):
             return bad(handler, "keep_count must be an integer")
-        if keep < 0:
+        # Negative slice (`messages[:-N]`) returns "all but last N", which
+        # is a confusing fork semantic. Reject explicitly so the user
+        # doesn't accidentally fork a session with the tail truncated when
+        # they meant to copy the prefix. (Opus pre-release follow-up.)
+        if keep_count < 0:
             return bad(handler, "keep_count must be non-negative")
-        with _get_session_agent_lock(body["session_id"]):
-            from api.session_ops import truncate_session_at_keep
 
-            old_msg_count, old_ctx_count = truncate_session_at_keep(s, keep)
-            s.save()
-            logger.info(
-                "truncate %s: messages %d→%d, context_messages %d→%d, watermark=%.2f",
-                body["session_id"], old_msg_count, len(s.messages or []),
-                old_ctx_count, len(getattr(s, 'context_messages', None) or []),
-                s.truncation_watermark or 0,
-            )
-        from api.config import _evict_session_agent
-        _evict_session_agent(body["session_id"])
-        return j(
-            handler,
-            {
-                "ok": True,
-                "session": public_session_projection(
-                    s.compact() | {"messages": s.messages}
-                ),
-            },
-        )
+    custom_title = body.get("title")
+    if custom_title:
+        custom_title = str(custom_title).strip()[:80] or None
 
-    if parsed.path == "/api/session/branch":
-        # Fork a conversation from any message point (#465).
-        # Accepts: {session_id, keep_count?, title?}
-        #   keep_count: number of messages to copy (0=empty, undefined=full history)
-        #   title: custom title (defaults to "<original title> (fork)")
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        # Reject non-string session_id explicitly so the failure surfaces as a
-        # 400 instead of a generic 500 from get_session() raising TypeError.
-        # (Opus pre-release follow-up.)
-        if not isinstance(body["session_id"], str):
-            return bad(handler, "session_id must be a string")
-        source = _load_branch_source_or_refuse(handler, body["session_id"])
-        if source is None:
-            return True
-
-        keep_count = body.get("keep_count")
-        if keep_count is not None:
-            try:
-                keep_count = int(keep_count)
-            except (ValueError, TypeError):
-                return bad(handler, "keep_count must be an integer")
-            # Negative slice (`messages[:-N]`) returns "all but last N", which
-            # is a confusing fork semantic. Reject explicitly so the user
-            # doesn't accidentally fork a session with the tail truncated when
-            # they meant to copy the prefix. (Opus pre-release follow-up.)
-            if keep_count < 0:
-                return bad(handler, "keep_count must be non-negative")
-
-        custom_title = body.get("title")
-        if custom_title:
-            custom_title = str(custom_title).strip()[:80] or None
-
-        # Build messages slice in the same coordinate space exposed by GET
-        # /api/session so frontend keep_count values from merged messaging
-        # transcripts do not silently become full sidecar copies.
-        try:
-            if not getattr(source, "_branch_source_readonly", False): source.save()
-        except Exception:
-            pass
-        cli_meta = _lookup_cli_session_metadata(source.session_id) if _session_requires_cli_metadata_lookup(source) else {}
-        is_messaging_session = _is_messaging_session_record(source) or _is_messaging_session_record(cli_meta)
-        cli_messages = get_cli_session_messages(source.session_id) if is_messaging_session else []
-        if is_messaging_session:
-            if cli_messages:
-                source_messages = _merged_session_messages_for_display(source, cli_messages)
-            else:
-                # Match GET /api/session: a messaging session with no CLI
-                # transcript does not fall back to state.db rows.
-                source_messages = merge_session_messages_append_only(
-                    _webui_sidecar_lineage_messages_for_display(source),
-                    [],
-                    truncation_watermark=getattr(source, "truncation_watermark", None),
-                    truncation_boundary=getattr(source, "truncation_boundary", None),
-                )
-                source_messages = _merged_webui_lineage_messages_for_display(source, source_messages)
+    # Build messages slice in the same coordinate space exposed by GET
+    # /api/session so frontend keep_count values from merged messaging
+    # transcripts do not silently become full sidecar copies.
+    try:
+        if not getattr(source, "_branch_source_readonly", False): source.save()
+    except Exception:
+        pass
+    cli_meta = _lookup_cli_session_metadata(source.session_id) if _session_requires_cli_metadata_lookup(source) else {}
+    is_messaging_session = _is_messaging_session_record(source) or _is_messaging_session_record(cli_meta)
+    cli_messages = get_cli_session_messages(source.session_id) if is_messaging_session else []
+    if is_messaging_session:
+        if cli_messages:
+            source_messages = _merged_session_messages_for_display(source, cli_messages)
         else:
-            # Match GET /api/session's full-transcript display path exactly:
-            # sidecar lineage stitched across compression snapshots, merged
-            # append-only with state.db rows, then parent-row backfill for
-            # partial continuations. The frontend's keep_count is an index
-            # into THAT merged list; slicing the raw sidecar instead landed
-            # the cut too early whenever the merged view deduplicates rows
-            # (replayed sidecar/state.db doubles, filtered prefixes), so the
-            # fork stopped mid tool-run and dropped the final conclusion.
-            _state_db_reader_kwargs = {
-                "profile": getattr(source, "profile", None) or None,
-            }
-            _backstop = _state_db_backstop_limit_for_display(source, None)
-            if _backstop is not None:
-                _state_db_reader_kwargs["limit"] = _backstop
+            # Match GET /api/session: a messaging session with no CLI
+            # transcript does not fall back to state.db rows.
             source_messages = merge_session_messages_append_only(
                 _webui_sidecar_lineage_messages_for_display(source),
-                get_state_db_session_messages(
-                    source.session_id,
-                    **_state_db_reader_kwargs,
-                ),
+                [],
                 truncation_watermark=getattr(source, "truncation_watermark", None),
                 truncation_boundary=getattr(source, "truncation_boundary", None),
             )
             source_messages = _merged_webui_lineage_messages_for_display(source, source_messages)
-        if keep_count is not None:
-            forked_messages = source_messages[:keep_count]
-        else:
-            forked_messages = list(source_messages)
-
-        # Derive title
-        if custom_title:
-            branch_title = custom_title
-        else:
-            source_title = source.title or "Untitled"
-            branch_title = f"{source_title} (fork)"
-
-        # Create new session inheriting workspace/model/profile
-        from api.session_ops import truncate_context_for_display_keep
-
-        fork_keep = keep_count if keep_count is not None else len(source_messages)
-        forked_context = copy.deepcopy(
-            truncate_context_for_display_keep(
-                getattr(source, "context_messages", None),
-                source_messages,
-                fork_keep,
-            )
+    else:
+        # Match GET /api/session's full-transcript display path exactly:
+        # sidecar lineage stitched across compression snapshots, merged
+        # append-only with state.db rows, then parent-row backfill for
+        # partial continuations. The frontend's keep_count is an index
+        # into THAT merged list; slicing the raw sidecar instead landed
+        # the cut too early whenever the merged view deduplicates rows
+        # (replayed sidecar/state.db doubles, filtered prefixes), so the
+        # fork stopped mid tool-run and dropped the final conclusion.
+        _state_db_reader_kwargs = {
+            "profile": getattr(source, "profile", None) or None,
+        }
+        _backstop = _state_db_backstop_limit_for_display(source, None)
+        if _backstop is not None:
+            _state_db_reader_kwargs["limit"] = _backstop
+        source_messages = merge_session_messages_append_only(
+            _webui_sidecar_lineage_messages_for_display(source),
+            get_state_db_session_messages(
+                source.session_id,
+                **_state_db_reader_kwargs,
+            ),
+            truncation_watermark=getattr(source, "truncation_watermark", None),
+            truncation_boundary=getattr(source, "truncation_boundary", None),
         )
-        # `truncate_context_for_display_keep` aligns rows by visible display
-        # identity but intentionally does not carry provider replay sidecars.
-        # Reconcile only the retained prefix before constructing the branch so
-        # its persisted model context receives the same conservative
-        # api_content bytes as the forked display messages.  The helper mutates
-        # the freshly aligned context copy; the source session and
-        # forked_messages ownership remain untouched.
-        _reconcile_api_content_sidecars(forked_context, forked_messages)
-        branch = Session(
-            workspace=source.workspace,
-            model=source.model,
-            model_provider=getattr(source, "model_provider", None),
-            profile=getattr(source, "profile", None),
-            title=branch_title,
-            messages=forked_messages,
-            project_id=getattr(source, "project_id", None),
-            personality=getattr(source, "personality", None),
-            enabled_toolsets=getattr(source, "enabled_toolsets", None),
-            context_length=getattr(source, "context_length", None),
-            threshold_tokens=getattr(source, "threshold_tokens", None),
-            # context_messages — truncated to fork prefix (not full parent copy)
-            context_messages=copy.deepcopy(forked_context),
-            # Gateway routing — inherit from source
-            gateway_routing=copy.deepcopy(getattr(source, "gateway_routing", None)),
-            # Context engine — inherit state so branch's context engine starts correctly
-            context_engine=getattr(source, "context_engine", None),
-            context_engine_state=copy.deepcopy(getattr(source, "context_engine_state", None) or {}),
-            parent_session_id=source.session_id,
-            session_source="fork",
+        source_messages = _merged_webui_lineage_messages_for_display(source, source_messages)
+    if keep_count is not None:
+        forked_messages = source_messages[:keep_count]
+    else:
+        forked_messages = list(source_messages)
+
+    # Derive title
+    if custom_title:
+        branch_title = custom_title
+    else:
+        source_title = source.title or "Untitled"
+        branch_title = f"{source_title} (fork)"
+
+    # Create new session inheriting workspace/model/profile
+    from api.session_ops import truncate_context_for_display_keep
+
+    fork_keep = keep_count if keep_count is not None else len(source_messages)
+    forked_context = copy.deepcopy(
+        truncate_context_for_display_keep(
+            getattr(source, "context_messages", None),
+            source_messages,
+            fork_keep,
         )
-        with LOCK:
-            SESSIONS[branch.session_id] = branch
-            SESSIONS.move_to_end(branch.session_id)
-            _evict_sessions_over_cap()  # #4765: safe LRU eviction (never active/unsaved)
-
-        # Persist only if there are messages (matches new_session pattern)
-        if forked_messages:
-            branch.save()
-            publish_session_list_changed(
-                "session_branch",
-                profile=getattr(branch, "profile", None),
-                session_id=getattr(branch, "session_id", None),
-            )
-
-        return j(handler, {
-            "session_id": branch.session_id,
-            "title": branch_title,
-            "parent_session_id": source.session_id,
-        })
-
-    if parsed.path == "/api/session/compress/start":
-        return _handle_session_compress_start(handler, body)
-
-    if parsed.path == "/api/session/compress":
-        return _handle_session_compress(handler, body)
-
-    if parsed.path == "/api/session/conversation-rounds":
-        return _handle_conversation_rounds(handler, body)
-
-    if parsed.path == "/api/session/handoff-summary":
-        return _handle_handoff_summary(handler, body)
-
-    if parsed.path == "/api/session/retry":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        if _session_is_subagent_view_only(body["session_id"]):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-        try:
-            from api.session_ops import retry_last
-            result = retry_last(body["session_id"])
-            return j(handler, {"ok": True, **result})
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        except ValueError as e:
-            return j(handler, {"error": str(e)})
-
-    if parsed.path == "/api/session/undo":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        if _session_is_subagent_view_only(body["session_id"]):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-        try:
-            from api.session_ops import undo_last
-            result = undo_last(body["session_id"])
-            return j(handler, {"ok": True, **result})
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        except ValueError as e:
-            return j(handler, {"error": str(e)})
-
-    # ── YOLO mode toggle (POST) ──
-    # Session-scoped only — stored in-memory on the server side.
-    # Important lifecycle notes:
-    #   • Page reload: state PERSISTS (frontend re-fetches via GET endpoint)
-    #   • Cross-tab: state is SHARED (same server-side flag per session)
-    #   • Server restart: state is LOST (in-memory only)
-    #   • Cross-session: isolated (each session has its own flag)
-    # Fixes #467
-    if parsed.path == "/api/session/yolo":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        sid = str(body["session_id"] or "").strip()
-        enabled = bool(body.get("enabled", True))
-        if not enabled:
-            with gateway_yolo_handoff(sid):
-                set_session_yolo_enabled(sid, False)
-                return j(handler, {"ok": True, "yolo_enabled": bool(is_session_yolo_enabled(sid))})
-
-        payload, status = _enable_session_yolo_and_release_pending(sid, choice="once")
-        return j(handler, payload, status=status)
-
-    if parsed.path == "/api/btw":
-        return _handle_btw(handler, body)
-
-    if parsed.path == "/api/background":
-        return _handle_background(handler, body)
-
-    if parsed.path == "/api/goal":
-        return _handle_goal_command(handler, body)
-
-    if parsed.path == "/api/bg-task-complete-ack":
-        return _handle_bg_task_complete_ack(handler, body)
-
-    if parsed.path == "/api/chat/start":
-        return _handle_chat_start(handler, body, diag=diag)
+    )
+    # `truncate_context_for_display_keep` aligns rows by visible display
+    # identity but intentionally does not carry provider replay sidecars.
+    # Reconcile only the retained prefix before constructing the branch so
+    # its persisted model context receives the same conservative
+    # api_content bytes as the forked display messages.  The helper mutates
+    # the freshly aligned context copy; the source session and
+    # forked_messages ownership remain untouched.
+    _reconcile_api_content_sidecars(forked_context, forked_messages)
+    branch = Session(
+        workspace=source.workspace,
+        model=source.model,
+        model_provider=getattr(source, "model_provider", None),
+        profile=getattr(source, "profile", None),
+        title=branch_title,
+        messages=forked_messages,
+        project_id=getattr(source, "project_id", None),
+        personality=getattr(source, "personality", None),
+        enabled_toolsets=getattr(source, "enabled_toolsets", None),
+        context_length=getattr(source, "context_length", None),
+        threshold_tokens=getattr(source, "threshold_tokens", None),
+        # context_messages — truncated to fork prefix (not full parent copy)
+        context_messages=copy.deepcopy(forked_context),
+        # Gateway routing — inherit from source
+        gateway_routing=copy.deepcopy(getattr(source, "gateway_routing", None)),
+        # Context engine — inherit state so branch's context engine starts correctly
+        context_engine=getattr(source, "context_engine", None),
+        context_engine_state=copy.deepcopy(getattr(source, "context_engine_state", None) or {}),
+        parent_session_id=source.session_id,
+        session_source="fork",
+    )
+    with LOCK:
+        SESSIONS[branch.session_id] = branch
+        SESSIONS.move_to_end(branch.session_id)
+        _evict_sessions_over_cap()  # #4765: safe LRU eviction (never active/unsaved)
+
+    # Persist only if there are messages (matches new_session pattern)
+    if forked_messages:
+        branch.save()
+        publish_session_list_changed(
+            "session_branch",
+            profile=getattr(branch, "profile", None),
+            session_id=getattr(branch, "session_id", None),
+        )
+
+    return j(handler, {
+        "session_id": branch.session_id,
+        "title": branch_title,
+        "parent_session_id": source.session_id,
+    })
+
+
+def _post_api_session_compress_start(handler, parsed, body, diag):
+    return _handle_session_compress_start(handler, body)
+
+
+def _post_api_session_compress(handler, parsed, body, diag):
+    return _handle_session_compress(handler, body)
+
+
+def _post_api_session_conversation_rounds(handler, parsed, body, diag):
+    return _handle_conversation_rounds(handler, body)
+
+
+def _post_api_session_handoff_summary(handler, parsed, body, diag):
+    return _handle_handoff_summary(handler, body)
 
-    if parsed.path == "/api/chat":
-        return _handle_chat_sync(handler, body)
 
-    if parsed.path == "/api/chat/steer":
-        from api.streaming import _handle_chat_steer
-        return _handle_chat_steer(handler, body)
+def _post_api_session_retry(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    if _session_is_subagent_view_only(body["session_id"]):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    try:
+        from api.session_ops import retry_last
+        result = retry_last(body["session_id"])
+        return j(handler, {"ok": True, **result})
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    except ValueError as e:
+        return j(handler, {"error": str(e)})
 
-    if parsed.path == "/api/terminal/start":
-        return _handle_terminal_start(handler, body)
 
-    if parsed.path == "/api/terminal/input":
-        return _handle_terminal_input(handler, body)
+def _post_api_session_undo(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    if _session_is_subagent_view_only(body["session_id"]):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    try:
+        from api.session_ops import undo_last
+        result = undo_last(body["session_id"])
+        return j(handler, {"ok": True, **result})
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    except ValueError as e:
+        return j(handler, {"error": str(e)})
 
-    if parsed.path == "/api/terminal/resize":
-        return _handle_terminal_resize(handler, body)
 
-    if parsed.path == "/api/terminal/close":
-        return _handle_terminal_close(handler, body)
+def _post_api_btw(handler, parsed, body, diag):
+    return _handle_btw(handler, body)
 
-    # ── Cron API (POST) ──
-    # See GET-side comment above: wrap in cron_profile_context so writes go
-    # to the TLS-active profile's jobs.json instead of the process default.
-    if parsed.path == "/api/crons/create":
-        from api.profiles import cron_profile_context
 
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_create(handler, body)
+def _post_api_background(handler, parsed, body, diag):
+    return _handle_background(handler, body)
 
-    if parsed.path == "/api/crons/update":
-        from api.profiles import cron_profile_context
 
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_update(handler, body)
+def _post_api_goal(handler, parsed, body, diag):
+    return _handle_goal_command(handler, body)
 
-    if parsed.path == "/api/crons/delete":
-        from api.profiles import cron_profile_context
 
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_delete(handler, body)
+def _post_api_bg_task_complete_ack(handler, parsed, body, diag):
+    return _handle_bg_task_complete_ack(handler, body)
 
-    if parsed.path == "/api/crons/run":
-        from api.profiles import cron_profile_context
 
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_run(handler, body)
+def _post_api_chat_start(handler, parsed, body, diag):
+    return _handle_chat_start(handler, body, diag=diag)
 
-    if parsed.path == "/api/crons/pause":
-        from api.profiles import cron_profile_context
 
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_pause(handler, body)
+def _post_api_chat(handler, parsed, body, diag):
+    return _handle_chat_sync(handler, body)
 
-    if parsed.path == "/api/crons/resume":
-        from api.profiles import cron_profile_context
 
-        with cron_profile_context():
-            _ensure_agent_cron_import_path()
-            return _handle_cron_resume(handler, body)
+def _post_api_chat_steer(handler, parsed, body, diag):
+    from api.streaming import _handle_chat_steer
+    return _handle_chat_steer(handler, body)
 
-    # ── Git workspace ops (POST) ──
-    if parsed.path == "/api/git/stage":
-        return _handle_git_stage(handler, body)
 
-    if parsed.path == "/api/git/unstage":
-        return _handle_git_unstage(handler, body)
+# ── Cron API (POST) ──
+# See GET-side comment above: wrap in cron_profile_context so writes go
+# to the TLS-active profile's jobs.json instead of the process default.
+def _post_api_crons_create(handler, parsed, body, diag):
+    from api.profiles import cron_profile_context
 
-    if parsed.path == "/api/git/discard":
-        return _handle_git_discard(handler, body)
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_create(handler, body)
 
-    if parsed.path == "/api/git/commit-message":
-        return _handle_git_commit_message(handler, body)
 
-    if parsed.path == "/api/git/commit-message-selected":
-        return _handle_git_commit_message_selected(handler, body)
+def _post_api_crons_update(handler, parsed, body, diag):
+    from api.profiles import cron_profile_context
 
-    if parsed.path == "/api/git/commit":
-        return _handle_git_commit(handler, body)
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_update(handler, body)
 
-    if parsed.path == "/api/git/commit-selected":
-        return _handle_git_commit_selected(handler, body)
 
-    if parsed.path == "/api/git/fetch":
-        return _handle_git_remote_action(handler, body, "fetch")
+def _post_api_crons_delete(handler, parsed, body, diag):
+    from api.profiles import cron_profile_context
 
-    if parsed.path == "/api/git/pull":
-        return _handle_git_remote_action(handler, body, "pull")
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_delete(handler, body)
 
-    if parsed.path == "/api/git/push":
-        return _handle_git_remote_action(handler, body, "push")
 
-    if parsed.path == "/api/git/checkout":
-        return _handle_git_checkout(handler, body)
+def _post_api_crons_run(handler, parsed, body, diag):
+    from api.profiles import cron_profile_context
 
-    if parsed.path == "/api/git/stash-checkout":
-        return _handle_git_stash_checkout(handler, body)
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_run(handler, body)
 
-    # ── File ops (POST) ──
-    if parsed.path == "/api/file/delete":
-        return _handle_file_delete(handler, body)
 
-    if parsed.path == "/api/file/save":
-        return _handle_file_save(handler, body)
+def _post_api_crons_pause(handler, parsed, body, diag):
+    from api.profiles import cron_profile_context
 
-    if parsed.path == "/api/file/office-save":
-        return _handle_office_file_save(handler, body)
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_pause(handler, body)
 
-    if parsed.path == "/api/file/create":
-        return _handle_file_create(handler, body)
 
-    if parsed.path == "/api/file/rename":
-        return _handle_file_rename(handler, body)
+def _post_api_crons_resume(handler, parsed, body, diag):
+    from api.profiles import cron_profile_context
 
-    if parsed.path == "/api/file/move":
-        return _handle_file_move(handler, body)
+    with cron_profile_context():
+        _ensure_agent_cron_import_path()
+        return _handle_cron_resume(handler, body)
 
-    if parsed.path == "/api/file/create-dir":
-        return _handle_create_dir(handler, body)
 
-    if parsed.path == "/api/file/reveal":
-        return _handle_file_reveal(handler, body)
+# ── File ops (POST) ──
+def _post_api_file_delete(handler, parsed, body, diag):
+    return _handle_file_delete(handler, body)
 
-    if parsed.path == "/api/file/path":
-        return _handle_file_path(handler, body)
 
-    if parsed.path == "/api/file/open-vscode":
-        return _handle_file_open_vscode(handler, body)
+def _post_api_file_save(handler, parsed, body, diag):
+    return _handle_file_save(handler, body)
 
-    # ── Workspace management (POST) ──
-    if parsed.path == "/api/workspaces/add":
-        return _handle_workspace_add(handler, body)
-
-    if parsed.path == "/api/workspaces/remove":
-        return _handle_workspace_remove(handler, body)
-
-    if parsed.path == "/api/workspaces/rename":
-        return _handle_workspace_rename(handler, body)
-
-    if parsed.path == "/api/workspaces/reorder":
-        return _handle_workspace_reorder(handler, body)
-
-    # ── Approval (POST) ──
-    if parsed.path == "/api/approval/respond":
-        return _handle_approval_respond(handler, body)
-
-    # ── Clarify (POST) ──
-    if parsed.path == "/api/clarify/respond":
-        return _handle_clarify_respond(handler, body)
-
-    # ── Commands (POST) ──
-    if parsed.path == "/api/commands/bundles/resolve":
-        from api.commands import resolve_bundle_command
-
-        command = str(body.get("command", "") or "").strip()
-        if not command:
-            return bad(handler, "command is required")
-
-        try:
-            return j(handler, resolve_bundle_command(command))
-        except KeyError:
-            return bad(handler, "Bundle command not found", 404)
-        except ValueError as e:
-            return bad(handler, str(e), 400)
-        except RuntimeError as e:
-            return bad(handler, _sanitize_error(e), 500)
-
-    if parsed.path == "/api/commands/exec":
-        from api.commands import execute_agent_command, execute_plugin_command
-
-        command = str(body.get("command", "") or "").strip()
-        if not command:
-            return bad(handler, "command is required")
-
-        try:
-            return j(handler, {"output": execute_agent_command(command)})
-        except KeyError:
-            pass
-        except ValueError as e:
-            return bad(handler, str(e), 400)
-        except RuntimeError as e:
-            return bad(handler, _sanitize_error(e), 500)
-
-        try:
-            return j(handler, {"output": execute_plugin_command(command)})
-        except ValueError as e:
-            return bad(handler, str(e), 400)
-        except KeyError:
-            return bad(handler, "Plugin command not found", 404)
-        except RuntimeError as e:
-            return bad(handler, _sanitize_error(e), 500)
-
-    # ── Skills (POST) ──
-    if parsed.path == "/api/skills/save":
-        return _handle_skill_save(handler, body)
-
-    if parsed.path == "/api/skills/delete":
-        return _handle_skill_delete(handler, body)
-
-    if parsed.path == "/api/skills/toggle":
-        return _handle_skill_toggle(handler, body)
-
-    # ── Memory (POST) ──
-    if parsed.path == "/api/memory/write":
-        return _handle_memory_write(handler, body)
-
-    if parsed.path in {"/api/gateway/start", "/api/gateway/stop", "/api/gateway/restart"}:
-        return _handle_gateway_lifecycle(handler, parsed.path.rsplit("/", 1)[-1], body)
-
-    # ── Profile API (POST) ──
-    if parsed.path == "/api/profile/switch":
-        name = body.get("name", "").strip()
-        if not name:
-            return bad(handler, "name is required")
-        try:
-            from api.profiles import switch_profile, _validate_profile_name
-            from api.helpers import build_profile_cookie
-            if name != 'default':
-                _validate_profile_name(name)
-            # A Directory session never gets here: the Bound guard refuses the
-            # switch (session ownership's may_switch_profile). Only login off
-            # switches, so the side effects below follow a real switch.
-            # process_wide=False: don't mutate the process-global _active_profile.
-            # Per-client profile is managed via cookie + thread-local (#798).
-            result = switch_profile(name, process_wide=False)
-            # Invalidate the models cache so the very next /api/models request
-            # rebuilds from the new profile's config.yaml rather than returning
-            # the old profile's cached model list (#1200 — profile-switch model bug).
-            # The per-profile disk snapshot is fingerprint-guarded, so keep it.
-            from api.config import invalidate_models_cache
-            invalidate_models_cache(delete_disk=False)
-            try:
-                from api.gateway_watcher import restart_watcher_for_profile
-                restart_watcher_for_profile(name)
-            except Exception as exc:
-                logger.warning("Failed to restart gateway watcher for profile %s: %s", name, exc)
-            return j(handler, result, extra_headers={
-                'Set-Cookie': build_profile_cookie(name, handler),
-            })
-        except PermissionError as e:
-            return bad(handler, _sanitize_error(e), 403)
-        except (ValueError, FileNotFoundError) as e:
-            return bad(handler, _sanitize_error(e), 404)
-        except RuntimeError as e:
-            return bad(handler, str(e), 409)
-
-    if parsed.path == "/api/profile/create":
-        name = body.get("name", "").strip()
-        if not name:
-            return bad(handler, "name is required")
-        display_name = body.get("display_name")
-        if display_name is not None and not isinstance(display_name, str):
-            return bad(handler, "display_name must be text")
-        clone_from = body.get("clone_from")
-        if clone_from is not None:
-            clone_from = str(clone_from).strip()
-        base_url = body.get("base_url", "").strip() if body.get("base_url") else None
-        api_key = body.get("api_key", "").strip() if body.get("api_key") else None
-        default_model = body.get("default_model", "").strip() if body.get("default_model") else None
-        model_provider = body.get("model_provider", "").strip() if body.get("model_provider") else None
-        if base_url and not base_url.startswith(("http://", "https://")):
-            return bad(handler, "base_url must start with http:// or https://")
-        from api import roster
-
-        try:
-            profile = roster.create_profile(
-                name,
-                display_name or "",
-                clone_from=clone_from,
-                clone_config=bool(body.get("clone_config", False)),
-                base_url=base_url,
-                api_key=api_key,
-                default_model=default_model,
-                model_provider=model_provider,
-            )
-        except roster.ProfileRefused as e:
-            return _profile_refused(handler, e)
-        return j(handler, {"ok": True, "profile": profile})
-
-    if parsed.path in ("/api/profile/disable", "/api/profile/enable"):
-        name = body.get("name", "").strip()
-        if not name:
-            return bad(handler, "name is required")
-        from api import roster
-
-        action = roster.disable_profile if parsed.path == "/api/profile/disable" else roster.enable_profile
-        try:
-            return j(handler, {"ok": True, "profile": action(name)})
-        except roster.ProfileRefused as e:
-            return _profile_refused(handler, e)
-
-    if parsed.path == "/api/profile/delete":
-        name = body.get("name", "").strip()
-        if not name:
-            return bad(handler, "name is required")
-        # Deleting is permanent: the caller confirms by repeating the name.
-        if str(body.get("confirm") or "").strip() != name:
-            return bad(handler, "Confirm the deletion: send confirm set to the Profile name")
-        from api import roster
-
-        try:
-            return j(handler, roster.delete_profile(name))
-        except roster.ProfileRefused as e:
-            return _profile_refused(handler, e)
-
-    # ── Settings (POST) ──
-    if parsed.path == "/api/settings":
-        from api.directory import is_directory_enabled
-
-        if "bot_name" in body:
-            body["bot_name"] = (str(body["bot_name"]) or "").strip() or "Hermes"
-
-        max_tokens_provided = "max_tokens" in body
-        max_tokens_status = None
-        max_tokens_value = body.pop("max_tokens", None) if max_tokens_provided else None
-
-        # Handle auth_disabled_acknowledged setting
-        ack = body.pop("_auth_disabled_acknowledged", None)
-        if ack is not None and not is_directory_enabled():
-            body["auth_disabled_acknowledged"] = bool(ack)
-        elif is_directory_enabled():
-            body["auth_disabled_acknowledged"] = False
-
-        from api.config import get_max_tokens_status, set_max_tokens
 
+def _post_api_file_office_save(handler, parsed, body, diag):
+    return _handle_office_file_save(handler, body)
+
+
+def _post_api_file_create(handler, parsed, body, diag):
+    return _handle_file_create(handler, body)
+
+
+def _post_api_file_rename(handler, parsed, body, diag):
+    return _handle_file_rename(handler, body)
+
+
+def _post_api_file_move(handler, parsed, body, diag):
+    return _handle_file_move(handler, body)
+
+
+def _post_api_file_create_dir(handler, parsed, body, diag):
+    return _handle_create_dir(handler, body)
+
+
+def _post_api_file_path(handler, parsed, body, diag):
+    return _handle_file_path(handler, body)
+
+
+# ── Workspace management (POST) ──
+def _post_api_workspaces_add(handler, parsed, body, diag):
+    return _handle_workspace_add(handler, body)
+
+
+def _post_api_workspaces_remove(handler, parsed, body, diag):
+    return _handle_workspace_remove(handler, body)
+
+
+def _post_api_workspaces_rename(handler, parsed, body, diag):
+    return _handle_workspace_rename(handler, body)
+
+
+def _post_api_workspaces_reorder(handler, parsed, body, diag):
+    return _handle_workspace_reorder(handler, body)
+
+
+# ── Approval (POST) ──
+def _post_api_approval_respond(handler, parsed, body, diag):
+    return _handle_approval_respond(handler, body)
+
+
+# ── Clarify (POST) ──
+def _post_api_clarify_respond(handler, parsed, body, diag):
+    return _handle_clarify_respond(handler, body)
+
+
+# ── Commands (POST) ──
+def _post_api_commands_bundles_resolve(handler, parsed, body, diag):
+    from api.commands import resolve_bundle_command
+
+    command = str(body.get("command", "") or "").strip()
+    if not command:
+        return bad(handler, "command is required")
+
+    try:
+        return j(handler, resolve_bundle_command(command))
+    except KeyError:
+        return bad(handler, "Bundle command not found", 404)
+    except ValueError as e:
+        return bad(handler, str(e), 400)
+    except RuntimeError as e:
+        return bad(handler, _sanitize_error(e), 500)
+
+
+# ── Skills (POST) ──
+def _post_api_skills_save(handler, parsed, body, diag):
+    return _handle_skill_save(handler, body)
+
+
+def _post_api_skills_delete(handler, parsed, body, diag):
+    return _handle_skill_delete(handler, body)
+
+
+def _post_api_skills_toggle(handler, parsed, body, diag):
+    return _handle_skill_toggle(handler, body)
+
+
+# ── Memory (POST) ──
+def _post_api_memory_write(handler, parsed, body, diag):
+    return _handle_memory_write(handler, body)
+
+
+# ── Settings (POST) ──
+def _post_api_settings(handler, parsed, body, diag):
+    # bot_name is the Deployment's (ADR 0006): save_settings refuses it from a User.
+    max_tokens_provided = "max_tokens" in body
+    max_tokens_status = None
+    max_tokens_value = body.pop("max_tokens", None) if max_tokens_provided else None
+
+    from api.config import SettingsRefused, get_max_tokens_status, set_max_tokens
+
+    try:
         saved = save_settings(body)
-        saved["persisted_speech_keys"] = persisted_speech_settings_keys()
-        if max_tokens_provided:
-            max_tokens_status = set_max_tokens(max_tokens_value)
-        # A password hash stored by the Upstream password login is left on disk
-        # and ignored; never send it to a client.
-        saved.pop("password_hash", None)
-        saved.update(max_tokens_status if max_tokens_provided else get_max_tokens_status())
+    except SettingsRefused as e:
+        return bad(handler, str(e), 403)
+    saved["persisted_speech_keys"] = persisted_speech_settings_keys()
+    if max_tokens_provided:
+        max_tokens_status = set_max_tokens(max_tokens_value)
+    # A password hash stored by the Upstream password login is left on disk
+    # and ignored; never send it to a client.
+    saved.pop("password_hash", None)
+    saved.update(max_tokens_status if max_tokens_provided else get_max_tokens_status())
 
-        # Settings that change which sessions appear in the sidebar must
-        # invalidate the session-list cache directly. Relying on the cache's
-        # settings-file mtime stamp is fragile: a toggle that writes the
-        # settings file within the same mtime granularity as a cached entry (and
-        # produces the default-valued key, e.g. show_cli_sessions back to its
-        # True default) can leave a stale row set served for up to the cache TTL.
-        # This is the root cause of the intermittent gateway_sync test flake
-        # (a freshly-inserted CLI/gateway session occasionally absent from
-        # /api/sessions right after the visibility toggle). Invalidate explicitly.
-        if any(
-            k in body
-            for k in (
-                "show_cli_sessions",
-                "show_claude_code_sessions",
-                "show_cron_sessions",
-                "show_webhook_sessions",
-                "show_kanban_sessions",
-                "show_previous_messaging_sessions",
-            )
-        ):
-            try:
-                _clear_session_list_cache()
-            except Exception:
-                pass
-            try:
-                from api.models import clear_cli_sessions_cache
-                clear_cli_sessions_cache()
-            except Exception:
-                pass
-
-        saved["auth_enabled"] = is_directory_enabled()
-        return j(handler, saved)
-
-    if parsed.path == "/api/onboarding/oauth/start":
-        if not _onboarding_gate_allows(handler):
-            return bad(handler, "Onboarding OAuth is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
+    # Settings that change which sessions appear in the sidebar must
+    # invalidate the session-list cache directly. Relying on the cache's
+    # settings-file mtime stamp is fragile: a toggle that writes the
+    # settings file within the same mtime granularity as a cached entry (and
+    # produces the default-valued key, e.g. show_cli_sessions back to its
+    # True default) can leave a stale row set served for up to the cache TTL.
+    # This is the root cause of the intermittent gateway_sync test flake
+    # (a freshly-inserted CLI/gateway session occasionally absent from
+    # /api/sessions right after the visibility toggle). Invalidate explicitly.
+    if any(
+        k in body
+        for k in (
+            "show_cli_sessions",
+            "show_claude_code_sessions",
+            "show_cron_sessions",
+            "show_webhook_sessions",
+            "show_kanban_sessions",
+            "show_previous_messaging_sessions",
+        )
+    ):
         try:
-            return j(handler, start_onboarding_oauth_flow(body), extra_headers={"Cache-Control": "no-store"})
-        except ValueError as e:
-            return bad(handler, str(e))
-        except RuntimeError as e:
-            return bad(handler, str(e), 500)
-
-    if parsed.path == "/api/onboarding/oauth/cancel":
+            _clear_session_list_cache()
+        except Exception:
+            pass
         try:
-            return j(handler, cancel_onboarding_oauth_flow(body), extra_headers={"Cache-Control": "no-store"})
-        except ValueError as e:
-            return bad(handler, str(e))
+            from api.models import clear_cli_sessions_cache
+            clear_cli_sessions_cache()
+        except Exception:
+            pass
 
-    if parsed.path == "/api/onboarding/setup":
-        # Writing API keys to disk - restrict to local/private networks unless auth is active.
-        # In Docker, requests arrive from the bridge network (172.x.x.x), not 127.0.0.1,
-        # even when the user accesses via localhost:8787 on the host.
-        # Behind a reverse proxy (nginx/Caddy/Traefik) or SSH tunnel, X-Forwarded-For
-        # carries the real origin IP — read it first before falling back to the raw socket addr.
-        # HERMES_WEBUI_ONBOARDING_OPEN=1 lets operators on remote servers explicitly bypass
-        # the check when they control network access themselves (e.g. firewall + VPN).
-        if not _onboarding_gate_allows(handler):
-            return bad(handler, "Onboarding setup is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-        try:
-            return j(handler, apply_onboarding_setup(body))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except RuntimeError as e:
-            return bad(handler, str(e), 500)
+    return j(handler, saved)
 
-    if parsed.path == "/api/onboarding/complete":
-        # Marking onboarding complete flips the first-run wizard off (persists
-        # onboarding_completed=True). Gate it on the same local-network check as
-        # the other onboarding mutators so an unauthenticated public client on a
-        # bind with login off can't hide the first-run wizard. (#3765)
-        if not _onboarding_gate_allows(handler):
-            return bad(handler, "Onboarding is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-        return j(handler, complete_onboarding())
 
-    if parsed.path == "/api/onboarding/probe":
-        # Probe a self-hosted provider endpoint (#1499).  Validates the
-        # configured base URL is reachable + parses /models, returns the
-        # model catalog so the wizard can populate its dropdown.
-        # Read-only: no config.yaml or .env writes happen here.  Same local-
-        # network gate as /api/onboarding/setup (also writing-adjacent in
-        # spirit because it carries an api_key the user typed).
-        if not _onboarding_gate_allows(handler):
-            return bad(handler, "Onboarding probe is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
-        provider = str((body or {}).get("provider") or "").strip().lower()
-        base_url = str((body or {}).get("base_url") or "")
-        api_key = str((body or {}).get("api_key") or "").strip() or None
-        try:
-            return j(handler, probe_provider_endpoint(provider, base_url, api_key))
-        except Exception as e:
-            return bad(handler, f"probe failed: {e}", 500)
-
-    # ── Session pin (POST) ──
-    if parsed.path == "/api/session/pin":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        if _session_is_subagent_view_only(body["session_id"]):
-            return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
-        try:
-            s = get_session(body["session_id"])
-            s = _ensure_full_session_before_mutation(body["session_id"], s)
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        pin_requested = bool(body.get("pinned", True))
-        # TOCTOU guard (Opus stage-389): the count check and the pin write
-        # must happen under the same lock, otherwise two parallel pin
-        # requests can both pass `len(pinned_ids) >= 3` against the same
-        # snapshot and both succeed, leaving the user with 4 pins. The check
-        # must be careful not to nest `all_sessions()` (which acquires LOCK
-        # internally) inside a `with LOCK:` block — that's a deadlock since
-        # LOCK is a non-reentrant `threading.Lock`. We snapshot the
-        # persisted index outside the lock, then re-check the in-memory
-        # mutation set inside the lock and commit the pin atomically.
-        if pin_requested and not getattr(s, "pinned", False):
-            # Pre-snapshot from persisted index (acquires LOCK internally,
-            # so must run outside our own LOCK acquire below).
-            persisted_rows = [
-                existing for existing in all_sessions()
+# ── Session pin (POST) ──
+def _post_api_session_pin(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    if _session_is_subagent_view_only(body["session_id"]):
+        return bad(handler, "Subagent sessions are view-only and cannot be modified from WebUI", 400)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
+    try:
+        s = _ensure_full_session_before_mutation(body["session_id"], s)
+    except KeyError:
+        return bad(handler, "Session not found", 404)
+    pin_requested = bool(body.get("pinned", True))
+    # TOCTOU guard (Opus stage-389): the count check and the pin write
+    # must happen under the same lock, otherwise two parallel pin
+    # requests can both pass `len(pinned_ids) >= 3` against the same
+    # snapshot and both succeed, leaving the user with 4 pins. The check
+    # must be careful not to nest `all_sessions()` (which acquires LOCK
+    # internally) inside a `with LOCK:` block — that's a deadlock since
+    # LOCK is a non-reentrant `threading.Lock`. We snapshot the
+    # persisted index outside the lock, then re-check the in-memory
+    # mutation set inside the lock and commit the pin atomically.
+    if pin_requested and not getattr(s, "pinned", False):
+        # Pre-snapshot from persisted index (acquires LOCK internally,
+        # so must run outside our own LOCK acquire below).
+        persisted_rows = [
+            existing for existing in all_sessions()
+            if _session_counts_toward_pin_quota(existing)
+        ]
+        with LOCK:
+            # Final authoritative count: merge persisted pinned rows with the
+            # in-memory SESSIONS snapshot. Count logical sidebar-visible pin
+            # lineages rather than raw session rows so continuation siblings
+            # in the same visible lineage do not consume extra pin quota.
+            candidate_rows = list(persisted_rows)
+            candidate_rows.extend(
+                existing.compact() for existing in SESSIONS.values()
                 if _session_counts_toward_pin_quota(existing)
-            ]
-            with LOCK:
-                # Final authoritative count: merge persisted pinned rows with the
-                # in-memory SESSIONS snapshot. Count logical sidebar-visible pin
-                # lineages rather than raw session rows so continuation siblings
-                # in the same visible lineage do not consume extra pin quota.
-                candidate_rows = list(persisted_rows)
-                candidate_rows.extend(
-                    existing.compact() for existing in SESSIONS.values()
-                    if _session_counts_toward_pin_quota(existing)
-                )
-                target_row = s.compact()
-                candidate_rows.append(target_row)
-                pinned_lineage_ids = _visible_pinned_lineage_ids(candidate_rows)
-                target_lineage = _session_row_lineage_root_id(
-                    target_row,
-                    {
-                        str(_session_field(row, "session_id", "") or ""): row
-                        for row in candidate_rows
-                        if _session_field(row, "session_id", None)
-                    },
-                )
-                pinned_lineage_ids.discard(target_lineage)
-                pinned_sessions_limit = int(load_settings().get("pinned_sessions_limit", 3) or 3)
-                if len(pinned_lineage_ids) >= pinned_sessions_limit:
-                    return bad(handler, f"Up to {pinned_sessions_limit} sessions can be pinned. Unpin one before pinning another.", 400)
-                # Mark in-memory pin state under LOCK so concurrent pin
-                # requests see the increment immediately, even before
-                # save() finishes flushing to disk.
-                s.pinned = True
-            with _get_session_agent_lock(body["session_id"]):
-                s.save()
-        else:
-            with _get_session_agent_lock(body["session_id"]):
-                s.pinned = pin_requested
-                s.save()
-        publish_session_list_changed(
-            "session_pin",
-            profile=getattr(s, "profile", None),
-            session_id=getattr(s, "session_id", body["session_id"]),
-        )
-        return j(handler, {"ok": True, "session": s.compact()})
-
-    # ── Session archive (POST) ──
-    if parsed.path == "/api/session/archive":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        sid = body["session_id"]
-        if _session_is_subagent_view_only(sid):
-            return bad(handler, "Subagent sessions are view-only and cannot be archived from WebUI", 400)
-        try:
-            s = get_session(sid)
-            # #1558: save() refuses metadata-only session stubs because their
-            # messages list is intentionally empty. If a sidebar/status preload
-            # left one in the LRU cache, upgrade to a full disk load before
-            # mutating archived state so the guard stays intact.
-            if getattr(s, "_loaded_metadata_only", False):
-                s = Session.load(sid)
-                if s is None:
-                    raise KeyError(sid)
-                with LOCK:
-                    SESSIONS[sid] = s
-        except KeyError:
-            cli_meta = _lookup_cli_session_metadata(sid)
-            if not cli_meta:
-                return bad(handler, "Session not found", 404)
-            if cli_meta.get("read_only"):
-                return bad(handler, "Read-only imported sessions cannot be archived from WebUI", 400)
-            # Delegated subagent children (#5307) are view-only and owned by the
-            # delegate runner — never materialize one into a writable WebUI
-            # sidecar via the archive fallback (the 3rd of the shared
-            # import_cli_session write paths).
-            _arch_source_tag = (cli_meta.get("source_tag") or cli_meta.get("raw_source") or "").strip().lower()
-            if _arch_source_tag == "subagent" or _is_subagent_child_session_id(sid):
-                return bad(handler, "Subagent sessions cannot be archived from WebUI", 400)
-            if _is_messaging_session_record(cli_meta):
-                _arch_profile = cli_meta.get("profile") or None
-                s = Session(
-                    session_id=sid,
-                    title=cli_meta.get("title") or title_from(get_cli_session_messages(sid), "CLI Session"),
-                    workspace=get_last_workspace(profile=_arch_profile),
-                    messages=[],
-                    model=cli_meta.get("model") or "unknown",
-                    created_at=cli_meta.get("created_at"),
-                    updated_at=cli_meta.get("updated_at"),
-                    profile=_arch_profile,
-                )
-                s.is_cli_session = is_cli_session_row(cli_meta)
-                s.source_tag = cli_meta.get("source_tag")
-                s.raw_source = cli_meta.get("raw_source") or cli_meta.get("source_tag")
-                s.session_source = cli_meta.get("session_source")
-                s.source_label = cli_meta.get("source_label")
-                s.user_id = cli_meta.get("user_id")
-                s.chat_id = cli_meta.get("chat_id")
-                s.chat_type = cli_meta.get("chat_type")
-                s.thread_id = cli_meta.get("thread_id")
-                s.session_key = cli_meta.get("session_key")
-                s.platform = cli_meta.get("platform")
-                s.save(touch_updated_at=False)
-            else:
-                msgs = get_cli_session_messages(sid)
-                if not msgs:
-                    return bad(handler, "Session not found", 404)
-                s = import_cli_session(
-                    sid,
-                    cli_meta.get("title") or title_from(msgs, "CLI Session"),
-                    msgs,
-                    cli_meta.get("model") or "unknown",
-                    profile=cli_meta.get("profile"),
-                    created_at=cli_meta.get("created_at"),
-                    updated_at=cli_meta.get("updated_at"),
-                )
-                s.is_cli_session = is_cli_session_row(cli_meta)
-                s.source_tag = cli_meta.get("source_tag")
-                s.raw_source = cli_meta.get("raw_source") or cli_meta.get("source_tag")
-                s.session_source = cli_meta.get("session_source")
-                s.source_label = cli_meta.get("source_label")
-                s.user_id = cli_meta.get("user_id")
-                s.chat_id = cli_meta.get("chat_id")
-                s.chat_type = cli_meta.get("chat_type")
-                s.thread_id = cli_meta.get("thread_id")
-                s.session_key = cli_meta.get("session_key")
-                s.platform = cli_meta.get("platform")
-        with _get_session_agent_lock(sid):
-            s.archived = bool(body.get("archived", True))
-            s.save(touch_updated_at=False)
-        publish_session_list_changed(
-            "session_archive",
-            profile=getattr(s, "profile", None),
-            session_id=getattr(s, "session_id", sid),
-        )
-        return j(handler, {"ok": True, "session": s.compact(), **_worktree_retained_payload(s)})
-
-    # ── Session move to project (POST) ──
-    if parsed.path == "/api/session/move":
-        try:
-            require(body, "session_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        try:
-            s = _get_or_materialize_session(body["session_id"])
-        except KeyError:
-            return bad(handler, "Session not found", 404)
-        except PermissionError:
-            return bad(handler, "Read-only imported sessions cannot be moved from WebUI", 403)
-        # #1614: refuse moves into a project owned by another profile.
-        target_pid = body.get("project_id") or None
-        if target_pid:
-            # Use the session's own profile for authorization, not the global
-            # active profile. A session belongs to a specific profile set at
-            # creation; projects from that profile should always be assignable,
-            # regardless of which profile is "active" at the process level.
-            # Matches the same principle as the profile chip fix — prefer
-            # session-scoped state over global active profile. (#3325 follow-up)
-            _session_profile = getattr(s, 'profile', None) or get_active_profile_name()
-            target = next(
-                (p for p in load_projects() if p["project_id"] == target_pid),
-                None,
             )
-            if not target:
-                return bad(handler, "Project not found", 404)
-            if not _profiles_match(target.get("profile"), _session_profile):
-                return bad(handler, "Project not found", 404)
-        # #3746: acquire the per-session agent lock with a bounded timeout
-        # instead of blocking indefinitely. The streaming thread holds this same
-        # lock during checkpoint saves; on slow file I/O (e.g. WSL/DrvFs) a bare
-        # blocking acquire could outlast the client's 30s abort and surface as a
-        # silent "Request timed out" toast with no server-side signal. Bounding
-        # the wait converts that into an actionable HTTP 503 the client can retry.
-        # We keep the lock (rather than dropping it for this metadata-only write)
-        # because s.save() still races the streaming thread's atomic writer.
-        _move_lock = _get_session_agent_lock(body["session_id"])
-        if not _move_lock.acquire(timeout=5):
-            return j(
-                handler,
-                {"error": "Session is busy (streaming). Please try again in a moment."},
-                status=503,
+            target_row = s.compact()
+            candidate_rows.append(target_row)
+            pinned_lineage_ids = _visible_pinned_lineage_ids(candidate_rows)
+            target_lineage = _session_row_lineage_root_id(
+                target_row,
+                {
+                    str(_session_field(row, "session_id", "") or ""): row
+                    for row in candidate_rows
+                    if _session_field(row, "session_id", None)
+                },
             )
-        try:
-            s.project_id = target_pid
+            pinned_lineage_ids.discard(target_lineage)
+            pinned_sessions_limit = int(load_settings().get("pinned_sessions_limit", 3) or 3)
+            if len(pinned_lineage_ids) >= pinned_sessions_limit:
+                return bad(handler, f"Up to {pinned_sessions_limit} sessions can be pinned. Unpin one before pinning another.", 400)
+            # Mark in-memory pin state under LOCK so concurrent pin
+            # requests see the increment immediately, even before
+            # save() finishes flushing to disk.
+            s.pinned = True
+        with _get_session_agent_lock(body["session_id"]):
             s.save()
-        finally:
-            _move_lock.release()
-        publish_session_list_changed(
-            "session_move",
-            profile=getattr(s, "profile", None),
-            session_id=getattr(s, "session_id", body["session_id"]),
+    else:
+        with _get_session_agent_lock(body["session_id"]):
+            s.pinned = pin_requested
+            s.save()
+    publish_session_list_changed(
+        "session_pin",
+        profile=getattr(s, "profile", None),
+        session_id=getattr(s, "session_id", body["session_id"]),
+    )
+    return j(handler, {"ok": True, "session": s.compact()})
+
+
+# ── Session archive (POST) ──
+def _post_api_session_archive(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    sid = body["session_id"]
+    if _session_is_subagent_view_only(sid):
+        return bad(handler, "Subagent sessions are view-only and cannot be archived from WebUI", 400)
+    try:
+        s = get_session(sid)
+        # #1558: save() refuses metadata-only session stubs because their
+        # messages list is intentionally empty. If a sidebar/status preload
+        # left one in the LRU cache, upgrade to a full disk load before
+        # mutating archived state so the guard stays intact.
+        if getattr(s, "_loaded_metadata_only", False):
+            s = Session.load(sid)
+            if s is None:
+                raise KeyError(sid)
+            with LOCK:
+                SESSIONS[sid] = s
+    except KeyError:
+        cli_meta = _lookup_cli_session_metadata(sid)
+        if not cli_meta:
+            return bad(handler, "Session not found", 404)
+        if cli_meta.get("read_only"):
+            return bad(handler, "Read-only imported sessions cannot be archived from WebUI", 400)
+        # Delegated subagent children (#5307) are view-only and owned by the
+        # delegate runner — never materialize one into a writable WebUI
+        # sidecar via the archive fallback (the 3rd of the shared
+        # import_cli_session write paths).
+        _arch_source_tag = (cli_meta.get("source_tag") or cli_meta.get("raw_source") or "").strip().lower()
+        if _arch_source_tag == "subagent" or _is_subagent_child_session_id(sid):
+            return bad(handler, "Subagent sessions cannot be archived from WebUI", 400)
+        if _is_messaging_session_record(cli_meta):
+            _arch_profile = cli_meta.get("profile") or None
+            s = Session(
+                session_id=sid,
+                title=cli_meta.get("title") or title_from(get_cli_session_messages(sid), "CLI Session"),
+                workspace=get_last_workspace(profile=_arch_profile),
+                messages=[],
+                model=cli_meta.get("model") or "unknown",
+                created_at=cli_meta.get("created_at"),
+                updated_at=cli_meta.get("updated_at"),
+                profile=_arch_profile,
+            )
+            s.is_cli_session = is_cli_session_row(cli_meta)
+            s.source_tag = cli_meta.get("source_tag")
+            s.raw_source = cli_meta.get("raw_source") or cli_meta.get("source_tag")
+            s.session_source = cli_meta.get("session_source")
+            s.source_label = cli_meta.get("source_label")
+            s.user_id = cli_meta.get("user_id")
+            s.chat_id = cli_meta.get("chat_id")
+            s.chat_type = cli_meta.get("chat_type")
+            s.thread_id = cli_meta.get("thread_id")
+            s.session_key = cli_meta.get("session_key")
+            s.platform = cli_meta.get("platform")
+            s.save(touch_updated_at=False)
+        else:
+            msgs = get_cli_session_messages(sid)
+            if not msgs:
+                return bad(handler, "Session not found", 404)
+            s = import_cli_session(
+                sid,
+                cli_meta.get("title") or title_from(msgs, "CLI Session"),
+                msgs,
+                cli_meta.get("model") or "unknown",
+                profile=cli_meta.get("profile"),
+                created_at=cli_meta.get("created_at"),
+                updated_at=cli_meta.get("updated_at"),
+            )
+            s.is_cli_session = is_cli_session_row(cli_meta)
+            s.source_tag = cli_meta.get("source_tag")
+            s.raw_source = cli_meta.get("raw_source") or cli_meta.get("source_tag")
+            s.session_source = cli_meta.get("session_source")
+            s.source_label = cli_meta.get("source_label")
+            s.user_id = cli_meta.get("user_id")
+            s.chat_id = cli_meta.get("chat_id")
+            s.chat_type = cli_meta.get("chat_type")
+            s.thread_id = cli_meta.get("thread_id")
+            s.session_key = cli_meta.get("session_key")
+            s.platform = cli_meta.get("platform")
+    with _get_session_agent_lock(sid):
+        s.archived = bool(body.get("archived", True))
+        s.save(touch_updated_at=False)
+    publish_session_list_changed(
+        "session_archive",
+        profile=getattr(s, "profile", None),
+        session_id=getattr(s, "session_id", sid),
+    )
+    return j(handler, {"ok": True, "session": s.compact(), **_worktree_retained_payload(s)})
+
+
+# ── Session move to project (POST) ──
+def _post_api_session_move(handler, parsed, body, diag):
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    try:
+        s = load_owned_session(handler, body["session_id"], load=_get_or_materialize_session)
+    except PermissionError:
+        return bad(handler, "Read-only imported sessions cannot be moved from WebUI", 403)
+    if s is None:
+        return True
+    # #1614: refuse moves into a project owned by another profile.
+    target_pid = body.get("project_id") or None
+    if target_pid:
+        # Use the session's own profile for authorization, not the global
+        # active profile. A session belongs to a specific profile set at
+        # creation; projects from that profile should always be assignable,
+        # regardless of which profile is "active" at the process level.
+        # Matches the same principle as the profile chip fix — prefer
+        # session-scoped state over global active profile. (#3325 follow-up)
+        _session_profile = getattr(s, 'profile', None) or get_active_profile_name()
+        target = next(
+            (p for p in load_projects() if p["project_id"] == target_pid),
+            None,
         )
-        return j(handler, {"ok": True, "session": s.compact()})
+        if not target:
+            return bad(handler, "Project not found", 404)
+        if not _profiles_match(target.get("profile"), _session_profile):
+            return bad(handler, "Project not found", 404)
+    # #3746: acquire the per-session agent lock with a bounded timeout
+    # instead of blocking indefinitely. The streaming thread holds this same
+    # lock during checkpoint saves; on slow file I/O (e.g. WSL/DrvFs) a bare
+    # blocking acquire could outlast the client's 30s abort and surface as a
+    # silent "Request timed out" toast with no server-side signal. Bounding
+    # the wait converts that into an actionable HTTP 503 the client can retry.
+    # We keep the lock (rather than dropping it for this metadata-only write)
+    # because s.save() still races the streaming thread's atomic writer.
+    _move_lock = _get_session_agent_lock(body["session_id"])
+    if not _move_lock.acquire(timeout=5):
+        return j(
+            handler,
+            {"error": "Session is busy (streaming). Please try again in a moment."},
+            status=503,
+        )
+    try:
+        s.project_id = target_pid
+        s.save()
+    finally:
+        _move_lock.release()
+    publish_session_list_changed(
+        "session_move",
+        profile=getattr(s, "profile", None),
+        session_id=getattr(s, "session_id", body["session_id"]),
+    )
+    return j(handler, {"ok": True, "session": s.compact()})
 
-    # ── Project CRUD (POST) ──
-    if parsed.path == "/api/projects/create":
-        try:
-            require(body, "name")
-        except ValueError as e:
-            return bad(handler, str(e))
-        import re as _re
 
-        name = body["name"].strip()[:128]
-        if not name:
-            return bad(handler, "name required")
-        color = body.get("color")
+# ── Project CRUD (POST) ──
+def _post_api_projects_create(handler, parsed, body, diag):
+    try:
+        require(body, "name")
+    except ValueError as e:
+        return bad(handler, str(e))
+    import re as _re
+
+    name = body["name"].strip()[:128]
+    if not name:
+        return bad(handler, "name required")
+    color = body.get("color")
+    if color and not _re.match(r"^#[0-9a-fA-F]{3,8}$", color):
+        return bad(handler, "Invalid color format")
+    projects = load_projects()
+    # #3331 follow-up (Codex+Opus gate): validate the optional client-supplied
+    # `profile` before stamping it, mirroring /api/profile/switch — otherwise a
+    # client could create a project tagged with an arbitrary/unknown profile,
+    # producing hidden cross-profile rows that can't be managed normally.
+    _requested_profile = str(body.get('profile') or "").strip()
+    if _requested_profile and _requested_profile != "default":
+        from api.profiles import _PROFILE_ID_RE
+        if not _PROFILE_ID_RE.fullmatch(_requested_profile):
+            return bad(handler, "invalid profile")
+    proj = {
+        "project_id": uuid.uuid4().hex[:12],
+        "name": name,
+        "color": color,
+        "profile": _requested_profile or get_active_profile_name() or 'default',
+        "created_at": time.time(),
+    }
+    projects.append(proj)
+    save_projects(projects)
+    return j(handler, {"ok": True, "project": proj})
+
+
+def _post_api_projects_rename(handler, parsed, body, diag):
+    try:
+        require(body, "project_id", "name")
+    except ValueError as e:
+        return bad(handler, str(e))
+    import re as _re
+
+    projects = load_projects()
+    proj = next(
+        (p for p in projects if p["project_id"] == body["project_id"]), None
+    )
+    if not proj:
+        return bad(handler, "Project not found", 404)
+    # #1614: a project can only be renamed by the profile that owns it.
+    if not request_profile_reach().includes(proj.get("profile")):
+        return bad(handler, "Project not found", 404)
+    proj["name"] = body["name"].strip()[:128]
+    if "color" in body:
+        color = body["color"]
         if color and not _re.match(r"^#[0-9a-fA-F]{3,8}$", color):
             return bad(handler, "Invalid color format")
-        projects = load_projects()
-        # #3331 follow-up (Codex+Opus gate): validate the optional client-supplied
-        # `profile` before stamping it, mirroring /api/profile/switch — otherwise a
-        # client could create a project tagged with an arbitrary/unknown profile,
-        # producing hidden cross-profile rows that can't be managed normally.
-        _requested_profile = str(body.get('profile') or "").strip()
-        if _requested_profile and _requested_profile != "default":
-            from api.profiles import _PROFILE_ID_RE
-            if not _PROFILE_ID_RE.fullmatch(_requested_profile):
-                return bad(handler, "invalid profile")
-        proj = {
-            "project_id": uuid.uuid4().hex[:12],
-            "name": name,
-            "color": color,
-            "profile": _requested_profile or get_active_profile_name() or 'default',
-            "created_at": time.time(),
-        }
-        projects.append(proj)
-        save_projects(projects)
-        return j(handler, {"ok": True, "project": proj})
-
-    if parsed.path == "/api/projects/rename":
-        try:
-            require(body, "project_id", "name")
-        except ValueError as e:
-            return bad(handler, str(e))
-        import re as _re
-
-        projects = load_projects()
-        proj = next(
-            (p for p in projects if p["project_id"] == body["project_id"]), None
-        )
-        if not proj:
-            return bad(handler, "Project not found", 404)
-        # #1614: a project can only be renamed by the profile that owns it.
-        if not request_profile_reach().includes(proj.get("profile")):
-            return bad(handler, "Project not found", 404)
-        proj["name"] = body["name"].strip()[:128]
-        if "color" in body:
-            color = body["color"]
-            if color and not _re.match(r"^#[0-9a-fA-F]{3,8}$", color):
-                return bad(handler, "Invalid color format")
-            proj["color"] = color
-        save_projects(projects)
-        return j(handler, {"ok": True, "project": proj})
-
-    if parsed.path == "/api/projects/delete":
-        try:
-            require(body, "project_id")
-        except ValueError as e:
-            return bad(handler, str(e))
-        projects = load_projects()
-        proj = next(
-            (p for p in projects if p["project_id"] == body["project_id"]), None
-        )
-        if not proj:
-            return bad(handler, "Project not found", 404)
-        # #1614: a project can only be deleted by the profile that owns it.
-        if not request_profile_reach().includes(proj.get("profile")):
-            return bad(handler, "Project not found", 404)
-        projects = [p for p in projects if p["project_id"] != body["project_id"]]
-        save_projects(projects)
-        # Unassign all sessions that belonged to this project.
-        # #3746: this loop is O(N) full-JSON read+save per session, and each
-        # save() reserializes the entire messages array. For a project with many
-        # messageful sessions that throughput alone can blow past the client's
-        # 30s timeout. For an actively-streaming session we must NOT issue our own
-        # s.save() — it would race the streaming thread's atomic writer and it
-        # carries the largest in-memory message array. Instead we clear project_id
-        # on the live cached Session object (under LOCK); the streaming thread owns
-        # that object and persists it on its next checkpoint/final save (the worker
-        # always does a final s.save() at turn completion), so the unlink still
-        # lands without a competing write. (If the streaming session isn't in the
-        # cache for some reason, fall back to a direct save.) Guard each per-session
-        # update so one slow/failing session can't abort the whole request.
-        if SESSION_INDEX_FILE.exists():
-            try:
-                index = json.loads(SESSION_INDEX_FILE.read_bytes())
-                active_ids = _active_stream_ids()
-                deferred_to_stream = []
-                for entry in index:
-                    if entry.get("project_id") != body["project_id"]:
-                        continue
-                    sid = entry.get("session_id")
-                    try:
-                        if entry.get("active_stream_id") in active_ids:
-                            # Clear on the live cached object so the streaming
-                            # thread's own next save persists project_id=None.
-                            cleared_in_cache = False
-                            with LOCK:
-                                cached = SESSIONS.get(sid)
-                                if cached is not None:
-                                    cached.project_id = None
-                                    cleared_in_cache = True
-                            if cleared_in_cache:
-                                deferred_to_stream.append(sid)
-                                continue
-                            # Not cached — fall through to a direct save.
-                        s = get_session(sid)
-                        s.project_id = None
-                        s.save()
-                    except Exception:
-                        logger.debug("Failed to update session %s", sid)
-                if deferred_to_stream:
-                    logger.info(
-                        "projects/delete: cleared project_id on %d streaming session(s) "
-                        "in-cache; streaming thread will persist: %s",
-                        len(deferred_to_stream), deferred_to_stream,
-                    )
-            except Exception:
-                logger.debug("Failed to load session index for project unlink")
-        return j(handler, {"ok": True})
-
-    # ── Session import from JSON (POST) ──
-    if parsed.path == "/api/session/import":
-        return _handle_session_import(handler, body)
-
-    # ── CLI session import (POST) ──
-    if parsed.path == "/api/session/import_cli":
-        return _handle_session_import_cli(handler, body)
-
-    # ── Auth endpoints (POST) ──
-    if parsed.path == "/api/auth/login":
-        from api.directory import is_directory_enabled
-
-        if not is_directory_enabled():
-            return j(handler, {"ok": True, "message": "Auth not enabled"})
-        # GFIT-CoWork: the Directory is the only way in (ADR 0004).
-        return _handle_directory_login(handler, body)
-
-    if parsed.path == "/api/auth/logout":
-        from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
-        from api.helpers import clear_profile_cookie
-
-        cookie_val = parse_cookie(handler)
-        if cookie_val:
-            invalidate_session(cookie_val)
-        body = json.dumps({"ok": True}).encode()
-        handler.send_response(200)
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(body)))
-        handler.send_header("Cache-Control", "no-store")
-        _security_headers(handler)
-        clear_auth_cookie(handler)
-        clear_profile_cookie(handler)
-        handler.end_headers()
-        handler.wfile.write(body)
-        return True
-
-    # ── Checkpoints / Rollback (POST) ──
-    if parsed.path == "/api/rollback/restore":
-        if not body:
-            return bad(handler, "request body is required")
-        workspace = body.get("workspace", "")
-        checkpoint = body.get("checkpoint", "")
-        if not workspace or not checkpoint:
-            return bad(handler, "workspace and checkpoint are required")
-        try:
-            from api.rollback import restore_checkpoint
-            return j(handler, restore_checkpoint(workspace, checkpoint))
-        except ValueError as e:
-            return bad(handler, str(e))
-        except Exception as e:
-            logger.exception("rollback/restore failed")
-            return bad(handler, str(e), status=500)
-
-    return False  # 404
+        proj["color"] = color
+    save_projects(projects)
+    return j(handler, {"ok": True, "project": proj})
 
 
-def handle_patch(handler, parsed) -> bool:
-    """Handle all PATCH routes. Returns True if handled, False for 404."""
-    if not _check_csrf(handler):
-        return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "PATCH",
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        return proxy_result
+def _post_api_projects_delete(handler, parsed, body, diag):
     try:
-        body = read_body(handler)
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="PATCH"):
-        return True
-    if parsed.path.startswith("/api/mcp/servers/"):
-        name = parsed.path[len("/api/mcp/servers/"):]
-        return _handle_mcp_server_toggle(handler, name, body)
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_patch
-
-        result = handle_kanban_patch(handler, parsed, body)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "PATCH")
-        return True
-    return False
-
-
-def handle_delete(handler, parsed) -> bool:
-    """Handle all DELETE routes. Returns True if handled, False for 404."""
-    if not _check_csrf(handler):
-        return j(handler, {"error": _csrf_rejection_error(handler)}, status=403)
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "DELETE",
-        read_request_body=True,
+        require(body, "project_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    projects = load_projects()
+    proj = next(
+        (p for p in projects if p["project_id"] == body["project_id"]), None
     )
-    if proxy_result is not False:
-        return proxy_result
+    if not proj:
+        return bad(handler, "Project not found", 404)
+    # #1614: a project can only be deleted by the profile that owns it.
+    if not request_profile_reach().includes(proj.get("profile")):
+        return bad(handler, "Project not found", 404)
+    projects = [p for p in projects if p["project_id"] != body["project_id"]]
+    save_projects(projects)
+    # Unassign all sessions that belonged to this project.
+    # #3746: this loop is O(N) full-JSON read+save per session, and each
+    # save() reserializes the entire messages array. For a project with many
+    # messageful sessions that throughput alone can blow past the client's
+    # 30s timeout. For an actively-streaming session we must NOT issue our own
+    # s.save() — it would race the streaming thread's atomic writer and it
+    # carries the largest in-memory message array. Instead we clear project_id
+    # on the live cached Session object (under LOCK); the streaming thread owns
+    # that object and persists it on its next checkpoint/final save (the worker
+    # always does a final s.save() at turn completion), so the unlink still
+    # lands without a competing write. (If the streaming session isn't in the
+    # cache for some reason, fall back to a direct save.) Guard each per-session
+    # update so one slow/failing session can't abort the whole request.
+    if api_config.SESSION_INDEX_FILE.exists():
+        try:
+            index = json.loads(api_config.SESSION_INDEX_FILE.read_bytes())
+            active_ids = _active_stream_ids()
+            deferred_to_stream = []
+            for entry in index:
+                if entry.get("project_id") != body["project_id"]:
+                    continue
+                sid = entry.get("session_id")
+                try:
+                    if entry.get("active_stream_id") in active_ids:
+                        # Clear on the live cached object so the streaming
+                        # thread's own next save persists project_id=None.
+                        cleared_in_cache = False
+                        with LOCK:
+                            cached = SESSIONS.get(sid)
+                            if cached is not None:
+                                cached.project_id = None
+                                cleared_in_cache = True
+                        if cleared_in_cache:
+                            deferred_to_stream.append(sid)
+                            continue
+                        # Not cached — fall through to a direct save.
+                    s = get_session(sid)
+                    s.project_id = None
+                    s.save()
+                except Exception:
+                    logger.debug("Failed to update session %s", sid)
+            if deferred_to_stream:
+                logger.info(
+                    "projects/delete: cleared project_id on %d streaming session(s) "
+                    "in-cache; streaming thread will persist: %s",
+                    len(deferred_to_stream), deferred_to_stream,
+                )
+        except Exception:
+            logger.debug("Failed to load session index for project unlink")
+    return j(handler, {"ok": True})
+
+
+# ── Session import from JSON (POST) ──
+def _post_api_session_import(handler, parsed, body, diag):
+    return _handle_session_import(handler, body)
+
+
+# ── CLI session import (POST) ──
+def _post_api_session_import_cli(handler, parsed, body, diag):
+    return _handle_session_import_cli(handler, body)
+
+
+# ── Auth endpoints (POST) ──
+def _post_api_auth_login(handler, parsed, body, diag):
+    # GFIT-CoWork: the Directory is the only way in (ADR 0004).
+    return _handle_directory_login(handler, body)
+
+
+def _post_api_auth_logout(handler, parsed, body, diag):
+    from api.auth import clear_auth_cookie, invalidate_session, parse_cookie
+
+    cookie_val = parse_cookie(handler)
+    if cookie_val:
+        invalidate_session(cookie_val)
+    body = json.dumps({"ok": True}).encode()
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    _security_headers(handler)
+    clear_auth_cookie(handler)
+    handler.end_headers()
+    handler.wfile.write(body)
+    return True
+
+
+# ── Checkpoints / Rollback (POST) ──
+def _post_api_rollback_restore(handler, parsed, body, diag):
+    if not body:
+        return bad(handler, "request body is required")
+    workspace = body.get("workspace", "")
+    checkpoint = body.get("checkpoint", "")
+    if not workspace or not checkpoint:
+        return bad(handler, "workspace and checkpoint are required")
     try:
-        body = read_body(handler)
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="DELETE"):
-        return True
-    if parsed.path.startswith("/api/mcp/servers/"):
-        name = parsed.path[len("/api/mcp/servers/"):]
-        return _handle_mcp_server_delete(handler, name)
-    if parsed.path == "/api/prompts":
-        pid = str(body.get("id") or "").strip()
-        if not pid:
-            return bad(handler, "id is required")
-        prompts = [p for p in _load_saved_prompts() if p.get("id") != pid]
-        _save_saved_prompts(prompts)
-        return j(handler, {"ok": True})
-
-    if parsed.path.startswith("/api/kanban/"):
-        from api.kanban_bridge import handle_kanban_delete
-
-        result = handle_kanban_delete(handler, parsed, body)
-        if result is False:
-            return _kanban_unknown_endpoint(handler, parsed, "DELETE")
-        return True
-    return False
+        from api.rollback import restore_checkpoint
+        return j(handler, restore_checkpoint(workspace, checkpoint))
+    except ValueError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        logger.exception("rollback/restore failed")
+        return bad(handler, str(e), status=500)
 
 
-def handle_put(handler, parsed) -> bool:
-    """Handle all PUT routes. Returns True if handled, False for 404."""
-    if not _check_csrf(handler):
-        return j(handler, {"error": "Cross-origin request rejected"}, status=403)
-    proxy_result = _handle_extension_sidecar_proxy(
-        handler,
-        parsed,
-        "PUT",
-        read_request_body=True,
-    )
-    if proxy_result is not False:
-        return proxy_result
-    try:
-        body = read_body(handler)
-    except ValueError as exc:
-        status = 413 if "too large" in str(exc).lower() else 400
-        return bad(handler, str(exc), status=status)
-    if not _guard_request_session_visibility(handler, parsed, body=body, method="PUT"):
-        return True
-    if parsed.path.startswith("/api/mcp/servers/"):
-        name = parsed.path[len("/api/mcp/servers/"):]
-        return _handle_mcp_server_update(handler, name, body)
-    return False
+def _delete_api_prompts(handler, parsed, body, diag):
+    pid = str(body.get("id") or "").strip()
+    if not pid:
+        return bad(handler, "id is required")
+    prompts = [p for p in _load_saved_prompts() if p.get("id") != pid]
+    _save_saved_prompts(prompts)
+    return j(handler, {"ok": True})
+
 
 # ── GET route helpers ─────────────────────────────────────────────────────────
 
@@ -17716,13 +16004,9 @@ def _handle_session_export(handler, parsed):
     sid = parse_qs(parsed.query).get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    _refusal = request_session_ownership().refuse_found_session(sid, s)
-    if _refusal is not None:
-        return _refusal.answer_not_found(handler)
+    s = load_owned_session(handler, sid, load=get_session, hide_owner=True)
+    if s is None:
+        return True
     # ``public_session_projection`` supersedes the narrower
     # ``redact_session_data`` path so export context_messages uses the same
     # alias-stripping boundary as the visible transcript.
@@ -17815,11 +16099,10 @@ def _handle_sessions_search(handler, parsed):
     content_search = qs.get("content", ["1"])[0] == "1"
     from api.profiles import get_active_profile_name
     active_profile = get_active_profile_name()
-    all_profiles = request_profile_reach(active_profile, all_profiles=_all_profiles_query_flag(parsed)).every_profile
     ownership = request_session_ownership()
     sessions = [
         s for s in all_sessions()
-        if ownership.may_list_row(s, active_profile=active_profile, all_profiles=all_profiles)
+        if ownership.may_list_row(s, active_profile=active_profile)
     ]
     # Reject a malformed depth instead of letting int() raise ValueError and
     # surface as a confusing 500. Clamp to >= 0 so a negative value can't reach
@@ -17848,7 +16131,6 @@ def _handle_sessions_search(handler, parsed):
             safe_sessions.append(item)
         return j(handler, {
             "sessions": safe_sessions,
-            "all_profiles": all_profiles,
             "active_profile": active_profile,
         })
     results = []
@@ -17888,7 +16170,6 @@ def _handle_sessions_search(handler, parsed):
         "sessions": results,
         "query": q,
         "count": len(results),
-        "all_profiles": all_profiles,
         "active_profile": active_profile,
     })
 
@@ -17960,142 +16241,6 @@ def _handle_list_dir(handler, parsed):
         return bad(handler, _sanitize_error(e), 500)
     except (FileNotFoundError, ValueError) as e:
         return bad(handler, _sanitize_error(e), 404)
-
-
-def _read_json_request_body(handler, *, max_bytes: int = 4096) -> dict:
-    try:
-        length = _safe_content_length(handler, max_bytes)
-    except (ValueError, OverflowError) as exc:
-        raise ValueError(_sanitize_error(exc)) from exc
-    raw = handler.rfile.read(length) if length else b"{}"
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except Exception as exc:
-        raise ValueError("invalid JSON body") from exc
-    return payload if isinstance(payload, dict) else {}
-
-
-def _handle_escape_authorize(handler, parsed, body: dict | None = None):
-    if handler.command != "POST":
-        return bad(handler, "method not allowed", 405)
-    if not handler.headers.get("Origin"):
-        return bad(handler, "browser origin required", 403)
-    if not _check_csrf(handler):
-        return bad(handler, _csrf_rejection_error(handler), 403)
-    if body is None:
-        try:
-            body = _read_json_request_body(handler)
-        except ValueError as exc:
-            return bad(handler, _sanitize_error(exc), 400)
-    qs = parse_qs(parsed.query)
-    sid = str(body.get("session_id") or qs.get("session_id", [""])[0] or "").strip()
-    rel = str(body.get("path") or qs.get("path", [""])[0] or "").strip()
-    token = str(body.get("token") or qs.get("token", [""])[0] or "").strip()
-    if token:
-        return bad(handler, "token must not be provided", 400)
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not rel:
-        return bad(handler, "path is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    try:
-        payload = authorize_escape_target(Path(s.workspace), sid, rel)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    return j(handler, payload)
-
-
-def _handle_escape_list_dir(handler, parsed):
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    token = qs.get("token", [""])[0]
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not token:
-        return bad(handler, "token is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    rel_path = qs.get("path", ["."])[0]
-    try:
-        payload = list_authorized_escape_dir(Path(s.workspace), sid, token, rel_path)
-        payload["entries"] = serialize_workspace_entries_for_browser(payload.get("entries"))
-        return j(handler, payload)
-    except FileNotFoundError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    except EscapeAuthorizationExpiredError as exc:
-        return bad(handler, _sanitize_error(exc), 403)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-
-
-def _handle_escape_file_read(handler, parsed):
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    token = qs.get("token", [""])[0]
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not token:
-        return bad(handler, "token is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    rel = qs.get("path", [""])[0]
-    try:
-        return j(handler, read_authorized_escape_file_content(Path(s.workspace), sid, token, rel))
-    except FileNotFoundError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    except EscapeAuthorizationExpiredError as exc:
-        return bad(handler, _sanitize_error(exc), 403)
-    except ImportError as exc:
-        # Optional Office parsers absent on a lean install — mirror
-        # _handle_file_read: a 503 with the install hint, not a 500 traceback.
-        return bad(handler, _sanitize_error(exc), 503)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-
-
-def _handle_escape_file_raw(handler, parsed):
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    token = qs.get("token", [""])[0]
-    if not sid:
-        return bad(handler, "session_id is required")
-    if not token:
-        return bad(handler, "token is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    rel = qs.get("path", [""])[0]
-    force_download = qs.get("download", [""])[0] == "1"
-    try:
-        anchor_root, target = raw_authorized_escape_target(Path(s.workspace), sid, token, rel)
-    except FileNotFoundError:
-        return j(handler, {"error": "not found"}, status=404)
-    except EscapeAuthorizationExpiredError as exc:
-        return bad(handler, _sanitize_error(exc), 403)
-    except ValueError as exc:
-        return bad(handler, _sanitize_error(exc), 404)
-    if not target.exists() or not target.is_file():
-        return j(handler, {"error": "not found"}, status=404)
-    ext = target.suffix.lower()
-    mime = MIME_MAP.get(ext, "application/octet-stream")
-    inline_preview = qs.get("inline", [""])[0] == "1"
-    dangerous_types = {"text/html", "application/xhtml+xml", "image/svg+xml"}
-    html_inline_ok = inline_preview and mime == "text/html"
-    disposition = "attachment" if force_download or (mime in dangerous_types and not html_inline_ok) else "inline"
-    sandbox_csp = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
-    # Content-Security-Policy sandboxing is carried through the csp=sandbox_csp handoff below.
-    csp = sandbox_csp if (inline_preview and not force_download and disposition == "inline") else None
-    if html_inline_ok:
-        return _serve_inline_html_preview(handler, target, "no-store", csp=sandbox_csp, anchor_root=anchor_root)
-    return _serve_file_bytes(handler, target, mime, disposition, "no-store", csp=csp, anchor_root=anchor_root)
 
 
 def _sse_with_id(handler, event, data, event_id=None):
@@ -18189,8 +16334,7 @@ def _chat_stream_resume_cursor(handler, qs: dict, stream_id: str | None = None) 
     ``EventSource`` auto-reconnect, Android/CLI clients) sends automatically on
     reconnect, carrying the ``id:`` of the last event it received. Every
     journaled event on this stream already emits ``id: stream_id:seq`` via
-    ``_sse_with_id()``. Same resolution-chain precedent as
-    ``api/kanban_bridge.py`` (``?since=`` → ``Last-Event-ID``).
+    ``_sse_with_id()``.
     """
     after_seq_raw = qs.get("after_seq", [None])[0]
     has_explicit_query = (
@@ -18671,8 +16815,7 @@ def _stream_runner_run_events(handler, run_id: str, cursor: str | None = None) -
 def _handle_sse_stream(handler, parsed):
     qs = parse_qs(parsed.query)
     stream_id = qs.get("stream_id", [""])[0]
-    if not _stream_id_visible_to_request_profile(handler, stream_id):
-        return True
+    # The dispatch guard has asked session ownership about the stream's owner.
     # Resume cursor: explicit query params (after_event_id/after_seq/replay)
     # win; the Last-Event-ID header that spec-compliant SSE clients auto-send
     # on reconnect is the fallback. Presence is tracked separately from the
@@ -18783,11 +16926,9 @@ def _handle_sse_stream(handler, parsed):
 
 
 def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
-    # The dispatch guard has asked session ownership about the id in the path.
-    try:
-        session = get_session(session_id, metadata_only=True)
-    except KeyError:
-        return j(handler, {"error": "Session not found"}, status=404)
+    session = load_owned_session(handler, session_id, load=get_session, metadata_only=True)
+    if session is None:
+        return True
 
     # Parse the resume cursor and baseline the journal BEFORE committing SSE headers
     # (and thus before any run could complete mid-handler). Capturing after
@@ -18939,184 +17080,6 @@ def _handle_session_run_journal_stream_for_session(handler, parsed, session_id):
                 subscriber_stream.unsubscribe(subscriber)
             except Exception:
                 pass
-    return True
-
-
-def _terminal_session_lookup(body_or_query):
-    sid = str(body_or_query.get("session_id", "")).strip()
-    if not sid:
-        raise ValueError("session_id required")
-    try:
-        s = get_session(sid)
-    except KeyError:
-        raise KeyError("Session not found")
-    return sid, s
-
-
-_REMOTE_TERMINAL_BACKEND_UNSUPPORTED_ERROR = "remote_terminal_backend_unsupported"
-_REMOTE_TERMINAL_BACKEND_UNSUPPORTED_MESSAGE = (
-    "Embedded terminal is only supported for local terminal backends."
-)
-
-
-def _terminal_remote_backend_enabled() -> bool:
-    terminal_cfg = get_config().get("terminal", {})
-    return _is_remote_terminal_backend(terminal_cfg)
-
-
-def _handle_terminal_start(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        sid, session = _terminal_session_lookup(body)
-        if _terminal_remote_backend_enabled():
-            return j(
-                handler,
-                {
-                    "error": _REMOTE_TERMINAL_BACKEND_UNSUPPORTED_ERROR,
-                    "message": _REMOTE_TERMINAL_BACKEND_UNSUPPORTED_MESSAGE,
-                },
-                status=400,
-            )
-        workspace = resolve_trusted_workspace(getattr(session, "workspace", "") or "", profile=getattr(session, "profile", None))
-        from api.terminal import start_terminal
-        term = start_terminal(
-            sid,
-            workspace,
-            rows=int(body.get("rows") or 24),
-            cols=int(body.get("cols") or 80),
-            restart=bool(body.get("restart")),
-        )
-        return j(
-            handler,
-            {
-                "ok": True,
-                "session_id": sid,
-                "workspace": term.workspace,
-                "running": term.is_alive(),
-            },
-        )
-    except KeyError as e:
-        return bad(handler, str(e), 404)
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except Exception as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_terminal_input(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        require(body, "session_id")
-        data = str(body.get("data", ""))
-        if len(data) > 8192:
-            return bad(handler, "input too large", 413)
-        from api.terminal import write_terminal
-        write_terminal(body["session_id"], data)
-        return j(handler, {"ok": True})
-    except KeyError as e:
-        return bad(handler, str(e), 404)
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except Exception as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_terminal_resize(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        require(body, "session_id")
-        from api.terminal import resize_terminal
-        resize_terminal(
-            body["session_id"],
-            rows=int(body.get("rows") or 24),
-            cols=int(body.get("cols") or 80),
-        )
-        return j(handler, {"ok": True})
-    except KeyError as e:
-        return bad(handler, str(e), 404)
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-    except Exception as e:
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_terminal_close(handler, body):
-    try:
-        if not _embedded_terminal_gate_allows(handler):
-            return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-        require(body, "session_id")
-        from api.terminal import close_terminal
-        closed = close_terminal(body["session_id"])
-        return j(handler, {"ok": True, "closed": closed})
-    except ValueError as e:
-        return bad(handler, str(e), 400)
-
-
-def _handle_terminal_output(handler, parsed):
-    if not _embedded_terminal_gate_allows(handler):
-        return bad(handler, _EMBEDDED_TERMINAL_GATE_DENIED_MESSAGE, 403)
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    if not sid:
-        return bad(handler, "session_id required")
-    from api.terminal import attach_terminal
-    # EventSource automatically returns the last received SSE id on transport
-    # reconnect. Seed only newer backlog entries in that case so already-rendered
-    # terminal bytes (including ANSI cursor controls) are not written twice. A
-    # genuinely new viewer has no cursor and receives the full bounded backlog.
-    after_seq = None
-    last_event_id = str(handler.headers.get("Last-Event-ID", "") or "").strip()
-    if last_event_id:
-        try:
-            after_seq = max(0, int(last_event_id))
-        except ValueError:
-            pass
-    # Look up and subscribe in one atomic step. A separate `get_terminal()` then
-    # `term.subscribe()` leaves a window in which the idle reaper can claim and
-    # tear the terminal down, leaving this stream attached to a corpse after we
-    # already committed a 200. Attaching atomically means we either hold a live
-    # viewer (which makes the terminal un-reapable) or learn it is gone in time
-    # to answer 404.
-    attached = attach_terminal(sid, after_seq=after_seq)
-    if attached is None:
-        return j(handler, {"error": "terminal not running"}, status=404)
-    term, output = attached
-
-    # The subscription is live from here on, so EVERY exit path — including a
-    # failure while writing the response headers — must unsubscribe. Writing
-    # headers to a client that already dropped raises BrokenPipeError, and if
-    # that escaped before the try block the queue would stay in
-    # `_subscribers` forever, pinning `unwatched_since` at None and making the
-    # terminal permanently unreapable: the exact fd/thread leak this reaper
-    # exists to prevent. Hence the try starts immediately after the attach.
-    try:
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        handler.send_header("Cache-Control", "no-cache")
-        handler.send_header("X-Accel-Buffering", "no")
-        handler.send_header("Connection", "close")
-        end_sse_headers(handler)
-        _sse_set_write_deadline(handler)  # Defect A: slow tab can't pin this thread
-        while True:
-            try:
-                event_seq, event, data = output.get(timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS)
-            except queue.Empty:
-                handler.wfile.write(b": terminal heartbeat\n\n")
-                handler.wfile.flush()
-                if term.closed.is_set() and output.empty():
-                    _sse(handler, "terminal_closed", {"exit_code": term.proc.poll()})
-                    break
-                continue
-            _sse_with_id(handler, event, data, event_id=event_seq)
-            if event in ("terminal_closed", "terminal_error"):
-                break
-    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-        pass
-    finally:
-        term.unsubscribe(output)
     return True
 
 
@@ -19846,13 +17809,11 @@ def _handle_tts(handler, parsed):
         return _bad(handler, "text too long (max 5000 characters)", 400)
 
     from api.auth import parse_cookie, verify_session
-    from api.directory import is_directory_enabled
-    cv = None
-    if is_directory_enabled():
-        cv = parse_cookie(handler)
-        if not (cv and verify_session(cv)):
-            from api.helpers import bad as _bad
-            return _bad(handler, "unauthorized", 401)
+
+    cv = parse_cookie(handler)
+    if not (cv and verify_session(cv)):
+        from api.helpers import bad as _bad
+        return _bad(handler, "unauthorized", 401)
 
     # High-quality per-client rate limiting for TTS.
     if not hasattr(_handle_tts, "_tts_limiter"):
@@ -20320,8 +18281,7 @@ def _media_deny_reason(target: Path) -> str | None:
     )
     _state_dir = None
     try:
-        from api.config import STATE_DIR as _STATE_DIR
-        _state_dir = Path(_STATE_DIR).resolve()
+        _state_dir = Path(api_config.STATE_DIR).resolve()
     except Exception:
         _state_dir = None
     _base_hermes_home = None
@@ -20475,7 +18435,7 @@ def _handle_media(handler, parsed):
 
     Security:
     - Path must resolve to an allowed root (hermes home, /tmp, common dirs)
-    - Auth-gated when auth is enabled
+    - Auth-gated
     - Safe preview MIME types can render inline when requested; SVG always downloads
     - SVG always served as attachment (XSS risk)
     - No path traversal: resolved path must stay within an allowed root
@@ -20484,21 +18444,19 @@ def _handle_media(handler, parsed):
     """
     import os as _os
     from api.auth import parse_cookie, verify_session
-    from api.directory import is_directory_enabled
     _HOME = Path(_os.path.expanduser("~"))
     _HERMES_HOME = Path(_os.getenv("HERMES_HOME", str(_HOME / ".hermes"))).expanduser()
 
     # Auth check
-    if is_directory_enabled():
-        cv = parse_cookie(handler)
-        if not (cv and verify_session(cv)):
-            body = b'{"error":"Authentication required"}'
-            handler.send_response(401)
-            handler.send_header("Content-Type", "application/json")
-            handler.send_header("Content-Length", str(len(body)))
-            handler.end_headers()
-            handler.wfile.write(body)
-            return
+    cv = parse_cookie(handler)
+    if not (cv and verify_session(cv)):
+        body = b'{"error":"Authentication required"}'
+        handler.send_response(401)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+        return
 
     qs = parse_qs(parsed.query)
     raw_path = qs.get("path", [""])[0].strip()
@@ -20792,10 +18750,9 @@ def _handle_folder_download(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
 
     rel = qs.get("path", [""])[0]
     try:
@@ -20878,10 +18835,9 @@ def _handle_file_raw(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel = qs.get("path", [""])[0]
     force_download = qs.get("download", [""])[0] == "1"
     resolved = _file_raw_target(s, sid, rel)
@@ -20918,10 +18874,9 @@ def _handle_file_read(handler, parsed):
     sid = qs.get("session_id", [""])[0]
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session_for_file_ops(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     rel = qs.get("path", [""])[0]
     if not rel:
         return bad(handler, "path is required")
@@ -21033,26 +18988,6 @@ def _handle_approval_sse_stream(handler, parsed):
         pass  # client went away — normal for long-lived connections
     finally:
         _approval_sse_unsubscribe(sid, q)
-
-
-def _handle_approval_inject(handler, parsed):
-    """Inject a fake pending approval -- loopback-only, used by automated tests."""
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    key = qs.get("pattern_key", ["test_pattern"])[0]
-    cmd = qs.get("command", ["rm -rf /tmp/test"])[0]
-    if sid:
-        submit_pending(
-            sid,
-            {
-                "command": cmd,
-                "pattern_key": key,
-                "pattern_keys": [key],
-                "description": "test pattern",
-            },
-        )
-        return j(handler, {"ok": True, "session_id": sid})
-    return j(handler, {"error": "session_id required"}, status=400)
 
 
 def _handle_clarify_pending(handler, parsed):
@@ -21307,26 +19242,6 @@ def _handle_session_sse_stream(handler, parsed):
         pass  # client went away — normal for long-lived connections
     finally:
         ch.unsubscribe(q)
-
-
-def _handle_clarify_inject(handler, parsed):
-    """Inject a fake pending clarify prompt -- loopback-only, used by automated tests."""
-    qs = parse_qs(parsed.query)
-    sid = qs.get("session_id", [""])[0]
-    question = qs.get("question", ["Which option?"])[0]
-    choices = qs.get("choices", [])
-    if sid:
-        submit_clarify_pending(
-            sid,
-            {
-                "question": question,
-                "choices_offered": choices,
-                "session_id": sid,
-                "kind": "clarify",
-            },
-        )
-        return j(handler, {"ok": True, "session_id": sid})
-    return j(handler, {"error": "session_id required"}, status=400)
 
 
 def _handle_live_models(handler, parsed):
@@ -22331,12 +20246,18 @@ def _handle_memory_read(handler, parsed=None):
 # ── POST route helpers ────────────────────────────────────────────────────────
 
 
-def _handle_sessions_cleanup(handler, body, zero_only=False):
+def cleanup_sessions(zero_only=False) -> int:
+    """Delete empty sessions and index-only ghost rows; return how many went.
+
+    An Operator task (``python3 -m api.operator_cli sessions-cleanup``), run
+    with the server stopped: it works on the session files and index directly.
+    *zero_only* deletes every session with no messages, else only untitled ones.
+    """
     cleaned = 0
     phase1_removed_ids = set()
 
     # Phase 1: Clean orphan session files (existing behavior).
-    for p in SESSION_DIR.glob("*.json"):
+    for p in api_config.SESSION_DIR.glob("*.json"):
         if p.name.startswith("_"):
             continue
         try:
@@ -22368,18 +20289,18 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
     #
     # Holds _INDEX_WRITE_LOCK for the full read-modify-write cycle to
     # prevent races with concurrent Session.save() / prune_session_from_index().
-    if SESSION_INDEX_FILE.exists():
+    if api_config.SESSION_INDEX_FILE.exists():
         try:
             from api.models import _INDEX_WRITE_LOCK, _safe_replace
 
             with _INDEX_WRITE_LOCK:
                 index_file_data = json.loads(
-                    SESSION_INDEX_FILE.read_bytes()
+                    api_config.SESSION_INDEX_FILE.read_bytes()
                 )
                 if isinstance(index_file_data, list):
                     live_ids = {
                         p.stem
-                        for p in SESSION_DIR.glob("*.json")
+                        for p in api_config.SESSION_DIR.glob("*.json")
                         if not p.name.startswith("_")
                     }
                     with LOCK:
@@ -22401,7 +20322,7 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
                         # Ghost not added to survivors — removed from index.
 
                     if cleaned > 0 and len(survivors) < len(index_file_data):
-                        _tmp = SESSION_INDEX_FILE.with_suffix(
+                        _tmp = api_config.SESSION_INDEX_FILE.with_suffix(
                             f".tmp.{os.getpid()}.{threading.current_thread().ident}"
                         )
                         _payload = json.dumps(survivors, ensure_ascii=False, indent=2)
@@ -22410,7 +20331,7 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
                                 f.write(_payload)
                                 f.flush()
                                 os.fsync(f.fileno())
-                            _safe_replace(_tmp, SESSION_INDEX_FILE)
+                            _safe_replace(_tmp, api_config.SESSION_INDEX_FILE)
                             phase2_rewrote_index = True
                         except Exception:
                             try:
@@ -22428,10 +20349,10 @@ def _handle_sessions_cleanup(handler, body, zero_only=False):
     # index, delete the index to force a fresh rebuild from disk on the
     # next sidebar poll.  When Phase 2 succeeded the index is already
     # correct, so keep it (avoids a wasteful rebuild).
-    if phase1_touched and not phase2_rewrote_index and SESSION_INDEX_FILE.exists():
-        SESSION_INDEX_FILE.unlink(missing_ok=True)
+    if phase1_touched and not phase2_rewrote_index and api_config.SESSION_INDEX_FILE.exists():
+        api_config.SESSION_INDEX_FILE.unlink(missing_ok=True)
 
-    return j(handler, {"ok": True, "cleaned": cleaned})
+    return cleaned
 
 
 def _handle_btw(handler, body):
@@ -22450,10 +20371,9 @@ def _handle_btw(handler, body):
         return j(handler, stale_response, status=409)
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot be used for /btw from WebUI", 400)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     question = str(body["question"]).strip()
     if not question:
         return bad(handler, "question is required")
@@ -22481,10 +20401,7 @@ def _handle_btw(handler, body):
     ephemeral.active_stream_id = stream_id
     register_session_writeback_owner(ephemeral.session_id, stream_id)
     ephemeral.save()
-    stream = create_stream_channel()
-    register_stream_owner(stream_id, ephemeral.session_id)
-    with STREAMS_LOCK:
-        STREAMS[stream_id] = stream
+    run_registry.open_stream(ephemeral.session_id, stream_id)
     from api.background import track_btw
     track_btw(body["session_id"], ephemeral.session_id, stream_id, question)
     thr = threading.Thread(
@@ -22511,10 +20428,9 @@ def _handle_background(handler, body):
     stale_response = _agent_runtime_barrier_response(runner_local_owned=False)
     if stale_response is not None:
         return j(handler, stale_response, status=409)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     prompt = str(body["prompt"]).strip()
     if not prompt:
         return bad(handler, "prompt is required")
@@ -22532,10 +20448,7 @@ def _handle_background(handler, body):
     bg.active_stream_id = stream_id
     register_session_writeback_owner(bg.session_id, stream_id)
     bg.save()
-    stream = create_stream_channel()
-    register_stream_owner(stream_id, bg.session_id)
-    with STREAMS_LOCK:
-        STREAMS[stream_id] = stream
+    run_registry.open_stream(bg.session_id, stream_id)
     task_id = uuid.uuid4().hex[:8]
     from api.background import track_background, complete_background
     parent_sid = body["session_id"]
@@ -22579,7 +20492,7 @@ def _handle_background(handler, body):
             # clutter the sidebar or SESSION_DIR. The index is pruned on the
             # next rebuild via _index_entry_exists().
             try:
-                (SESSION_DIR / f"{bg_sid}.json").unlink(missing_ok=True)
+                (api_config.SESSION_DIR / f"{bg_sid}.json").unlink(missing_ok=True)
             except Exception:
                 pass
         except Exception:
@@ -22752,10 +20665,7 @@ def _prepare_chat_start_session_for_stream(
 def _cleanup_chat_start_launch_failure(session, stream_id: str) -> None:
     """Release state registered before a worker thread successfully starts."""
     clear_session_writeback_owner_if_owned(session.session_id, stream_id)
-    unregister_stream_owner(stream_id)
-    with STREAMS_LOCK:
-        STREAMS.pop(stream_id, None)
-    STREAM_GOAL_RELATED.pop(stream_id, None)
+    run_registry.close_stream(stream_id)
     # The session-field reset needs the same concurrency discipline as the
     # registry half: hold the per-session lock and re-resolve the canonical
     # session before clearing anything. Mutating the passed-in stale object
@@ -22917,11 +20827,7 @@ def _start_regeneration_stream_locked(
         )
 
     def _cleanup_owned_start():
-        if goal_related:
-            STREAM_GOAL_RELATED.pop(stream_id, None)
-        with STREAMS_LOCK:
-            STREAMS.pop(stream_id, None)
-        unregister_stream_owner(stream_id)
+        run_registry.close_stream(stream_id)
         clear_session_writeback_owner_if_owned(s.session_id, stream_id)
         if gateway_starting:
             try:
@@ -22988,12 +20894,7 @@ def _start_regeneration_stream_locked(
             },
         )
         diag.stage("stream_registration") if diag else None
-        stream = create_stream_channel()
-        register_stream_owner(stream_id, s.session_id)
-        with STREAMS_LOCK:
-            STREAMS[stream_id] = stream
-        if goal_related:
-            STREAM_GOAL_RELATED[stream_id] = True
+        run_registry.open_stream(s.session_id, stream_id, goal_related=goal_related)
         if backend_is_gateway:
             from api.gateway_chat import _mark_gateway_run_starting
 
@@ -23171,7 +21072,7 @@ def _active_run_stream_for_session(session_id: str | None) -> str | None:
                 # The zombie run is pruned directly here (not via the normal teardown
                 # finally / unregister_active_run), so release its stream-owner entry too
                 # or STREAM_SESSION_OWNERS leaks for every reconciled zombie. (#5198 gate)
-                unregister_stream_owner(stale_stream_id)
+                run_registry.forget_owner(stale_stream_id)
     except Exception:
         return None
     return None
@@ -23348,13 +21249,8 @@ def _start_chat_stream_for_session(
     diag.stage("set_last_workspace") if diag else None
     set_last_workspace(workspace, profile=getattr(s, "profile", None))
     diag.stage("stream_registration") if diag else None
-    stream = create_stream_channel()
-    register_stream_owner(stream_id, s.session_id)
-    with STREAMS_LOCK:
-        STREAMS[stream_id] = stream
-    # #1932: mark stream as goal-related so the streaming hook evaluates the goal.
-    if goal_related:
-        STREAM_GOAL_RELATED[stream_id] = True
+    # #1932: a goal-related stream makes the streaming hook evaluate the goal.
+    run_registry.open_stream(s.session_id, stream_id, goal_related=goal_related)
     diag.stage("worker_thread_start") if diag else None
     worker_target = _run_gateway_chat_streaming if backend_is_gateway else _run_agent_streaming
     worker_kwargs = {"model_provider": model_provider, "goal_related": goal_related}
@@ -23869,10 +21765,9 @@ def _handle_bg_task_complete_ack(handler, body):
     except ValueError as e:
         return bad(handler, str(e))
     sid = str(body.get("session_id") or "").strip()
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     # process_id accepted as transitional alias; see Deprecation response header
     # + maintainer decision on removal milestone / future Sunset header. Only
     # flag Deprecation when the alias was ACTUALLY used (i.e. process_id present
@@ -23907,17 +21802,12 @@ def _handle_session_compression_recovery_start(handler, body):
         return bad(handler, "session_id is required")
     if _session_is_subagent_view_only(sid):
         return bad(handler, "Subagent sessions are view-only and cannot start compression recovery from WebUI", 400)
-    try:
-        source = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    # #7710: same contract as the detail-load endpoint — 409
-    # ``session_profile_mismatch`` for a known other profile, 404 only for the
-    # None-profile self-heal path. Recovery continues only into this
-    # request's own sessions.
-    _refusal = request_session_ownership().refuse_found_session(sid, source)
-    if _refusal is not None:
-        return _refusal.answer(handler, sid)
+    # The accessor answers as the detail load does (#7710): 409
+    # ``session_profile_mismatch`` for a known other Profile, 404 otherwise.
+    # Recovery continues only into this request's own sessions.
+    source = load_owned_session(handler, sid, load=get_session)
+    if source is None:
+        return True
     recovery = compression_recovery_payload_for_session(source)
     if not recovery:
         return bad(handler, "Session does not have a compression recovery action.", 409)
@@ -24013,10 +21903,9 @@ def _handle_goal_command(handler, body):
         )
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot run /goal from WebUI", 400)
-    try:
-        s = get_session(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
 
     requested_profile = str(body.get("profile") or "").strip()
     if requested_profile:
@@ -24622,7 +22511,13 @@ def _handle_chat_sync(handler, body):
         return j(handler, stale_response, status=409)
     if _session_is_subagent_view_only(str(body.get("session_id") or "")):
         return bad(handler, "Subagent sessions are view-only and cannot be written from WebUI", 400)
-    s = get_session(body["session_id"])
+    try:
+        require(body, "session_id")
+    except ValueError as e:
+        return bad(handler, str(e))
+    s = load_owned_session(handler, body["session_id"], load=get_session)
+    if s is None:
+        return True
     msg = str(body.get("message", "")).strip()
     if not msg:
         return j(handler, {"error": "empty message"}, status=400)
@@ -24717,21 +22612,14 @@ def _handle_chat_sync(handler, body):
             _provider = _bundle["provider"]
             _api_key = _bundle["api_key"]
             _base_url = _bundle["base_url"]
-            agent = AIAgent(
+            agent = webui_agent(
+                AIAgent,
+                _bundle,
                 model=_model,
-                provider=_provider,
-                base_url=_base_url,
-                api_key=_api_key,
-                # Identify browser-originated sessions as WebUI so Hermes Agent
-                # does not inject CLI-specific terminal/output guidance.
-                platform="webui",
-                quiet_mode=True,
-                enabled_toolsets=_resolve_cli_toolsets(),
                 session_id=s.session_id,
-                **_agent_bundle_kwargs(AIAgent, _bundle),
+                toolsets=_resolve_cli_toolsets(),
             )
             from api.streaming import (
-                _WEBUI_PROGRESS_PROMPT,
                 _active_turn_boundary,
                 _assign_stable_message_ids,
                 _dedupe_replayed_context_messages,
@@ -24744,27 +22632,22 @@ def _handle_chat_sync(handler, body):
                 _sanitize_messages_for_agent,
                 _compact_session_image_parts_for_persistence,
                 _context_messages_for_new_turn,
-                _workspace_context_prefix,
             )
-            workspace_ctx = _workspace_context_prefix(str(s.workspace))
-            workspace_system_msg = (
-                f"Active workspace at session start: {s.workspace}\n"
-                "Every user message is prefixed with [Workspace::v1: /absolute/path] indicating the "
-                "workspace the user has selected in the web UI at the time they sent that message. "
-                "This tag is the single authoritative source of the active workspace and updates "
-                "with every message. It overrides any prior workspace mentioned in this system "
-                "prompt, memory, or conversation history. Always use the value from the most recent "
-                "[Workspace::v1: ...] tag as your default working directory for ALL file operations: "
-                "write_file, read_file, search_files, terminal workdir, and patch. "
-                "Never fall back to a hardcoded path when this tag is present.\n\n"
-                f"{_WEBUI_PROGRESS_PROMPT}\n\n"
-                "WebUI external-notes/durable-memory policy: Do not copy or dump this browser transcript "
-                "into external notes or durable memory by default. Write or update durable "
-                "notes only for explicit captures, durable preferences, decisions, blockers/open "
-                "issues, runbook-worthy workflows, or other clearly reusable signals; otherwise "
-                "leave external notes and durable memory unchanged. When you do write or update a durable note, briefly tell "
-                "the user what note or section changed so the write is reviewable."
-            )
+            from api.turn_builder import turn_prompts
+
+            # The session's own Profile config, as the streaming turn reads it (#3294).
+            try:
+                from api.profiles import get_hermes_home_for_profile
+
+                _session_cfg = api_config.get_config_for_profile_home(
+                    get_hermes_home_for_profile(getattr(s, "profile", None) or "default")
+                )
+            except Exception:
+                _session_cfg = get_config()
+            _prompts = turn_prompts(s, session_id=s.session_id, config_data=_session_cfg)
+            agent.ephemeral_system_prompt = _prompts.ephemeral_system_prompt
+            workspace_ctx = _prompts.user_prefix
+            workspace_system_msg = _prompts.system_message
 
             _previous_messages = list(s.messages or [])
             _previous_context_messages = list(_context_messages_for_new_turn(s, msg))
@@ -25192,36 +23075,6 @@ def _git_locked_by_active_stream(session) -> bool:
         return False
 
 
-def _git_reject_destructive_if_unsafe(handler, session) -> bool:
-    from api.workspace_git import (
-        GitWorkspaceError,
-        WORKSPACE_GIT_DESTRUCTIVE_ENV,
-        workspace_git_destructive_enabled,
-    )
-
-    if not workspace_git_destructive_enabled():
-        _git_bad(
-            handler,
-            GitWorkspaceError(
-                f"Destructive workspace Git operations are disabled. Set {WORKSPACE_GIT_DESTRUCTIVE_ENV}=1 to enable them.",
-                "destructive_git_disabled",
-            ),
-            status=403,
-        )
-        return True
-    if _git_locked_by_active_stream(session):
-        _git_bad(
-            handler,
-            GitWorkspaceError(
-                "A session run is active. Wait for it to finish before running this Git operation.",
-                "active_stream",
-            ),
-            status=409,
-        )
-        return True
-    return False
-
-
 def _handle_git_status(handler, parsed):
     qs = parse_qs(parsed.query)
     workspace = _git_session_workspace(handler, qs.get("session_id", [""])[0])
@@ -25276,379 +23129,14 @@ def _git_bad(handler, err, status: int = 400):
     )
 
 
-def _git_paths_from_body(body) -> list[str]:
-    raw_paths = body.get("paths")
-    if raw_paths is None and body.get("path"):
-        raw_paths = [body.get("path")]
-    if isinstance(raw_paths, str):
-        raw_paths = [raw_paths]
-    if not isinstance(raw_paths, list):
-        raise ValueError("paths must be a list")
-    return [str(path) for path in raw_paths]
-
-
-def _handle_git_stage(handler, body):
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_stage
-
-        return j(handler, {"ok": True, "git": git_stage(workspace, paths)})
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_unstage(handler, body):
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_unstage
-
-        return j(handler, {"ok": True, "git": git_unstage(workspace, paths)})
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_discard(handler, body):
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_discard
-
-        return j(
-            handler,
-            {
-                "ok": True,
-                "git": git_discard(
-                    workspace,
-                    paths,
-                    delete_untracked=bool(body.get("delete_untracked")),
-                ),
-            },
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _llm_git_commit_message(system_prompt: str, user_prompt: str, session=None) -> str:
-    from api import profiles as profiles_api
-
-    active_profile = profiles_api.get_active_profile_name() or "default"
-    with profiles_api.profile_env_for_background_worker(
-        active_profile,
-        "git commit message",
-        logger_override=logger,
-    ):
-        from api.config import (
-            get_effective_default_model,
-            model_with_provider_context,
-            resolve_model_provider,
-        )
-
-        session_model = str(getattr(session, "model", "") or "").strip()
-        session_provider = str(getattr(session, "model_provider", "") or "").strip() or None
-        model_for_resolution = (
-            model_with_provider_context(session_model, session_provider)
-            if session_model
-            else get_effective_default_model()
-        )
-        _main_model, _main_provider, _main_base_url = resolve_model_provider(model_for_resolution)
-        _main_api_key = None
-        _rt = None
-        try:
-            from api.oauth import resolve_runtime_provider_with_anthropic_env_lock
-            from hermes_cli.runtime_provider import resolve_runtime_provider
-
-            _rt = resolve_runtime_provider_with_anthropic_env_lock(
-                resolve_runtime_provider,
-                requested=_main_provider,
-            )
-            _main_api_key = _rt.get("api_key")
-            if not _main_provider:
-                _main_provider = _rt.get("provider")
-            if not _main_base_url:
-                _main_base_url = _rt.get("base_url")
-        except Exception as _e:
-            logger.debug("git commit message runtime provider resolution failed: %s", _e)
-        # Atomic custom-provider authority (see the /api/chat note): the record
-        # that supplies the endpoint must also supply the credential — and the
-        # wire protocol, credential pool and ACP transport that go with it.
-        _bundle = _resolve_agent_connection_bundle(
-            _main_provider, _main_api_key, _main_base_url, _rt
-        )
-        _main_provider = _bundle["provider"]
-        _main_api_key = _bundle["api_key"]
-        _main_base_url = _bundle["base_url"]
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        main_runtime = _auxiliary_main_runtime(_bundle, _main_model)
-        ensure_agent_runtime_current()
-        try:
-            from agent.auxiliary_client import get_text_auxiliary_client
-
-            aux_client, aux_model = get_text_auxiliary_client(
-                "compression",
-                main_runtime=main_runtime,
-            )
-            if aux_client is not None and aux_model:
-                response = aux_client.chat.completions.create(
-                    model=aux_model,
-                    messages=messages,
-                )
-                return str(response.choices[0].message.content or "").strip()
-        except Exception as _e:
-            logger.debug("git commit message auxiliary model failed; falling back to main model: %s", _e)
-
-        AIAgent = require_ai_agent_class()
-
-        agent = AIAgent(
-            model=_main_model,
-            provider=_main_provider,
-            base_url=_main_base_url,
-            api_key=_main_api_key,
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=[],
-            session_id=f"git-commit-message-{uuid.uuid4().hex[:8]}",
-            **_agent_bundle_kwargs(AIAgent, _bundle),
-        )
-        result = agent.run_conversation(
-            user_message=user_prompt,
-            system_message=system_prompt,
-            conversation_history=[],
-            task_id=f"git-commit-message-{uuid.uuid4().hex[:8]}",
-        )
-        return str(result.get("final_response") or "").strip()
-
-
-def _handle_git_commit_message(handler, body):
-    from api.workspace_git import (
-        GitWorkspaceError,
-        clean_generated_commit_message,
-        staged_commit_message_prompt,
-    )
-
-    try:
-        require(body, "session_id")
-        session = get_session(body["session_id"])
-        workspace = Path(session.workspace)
-
-        prompt = staged_commit_message_prompt(workspace)
-        message = clean_generated_commit_message(
-            _llm_git_commit_message(prompt["system_prompt"], prompt["user_prompt"], session=session)
-        )
-        if not message:
-            raise GitWorkspaceError("No commit message was generated")
-        return j(handler, {"ok": True, "message": message, "truncated": bool(prompt.get("truncated"))})
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-    except AgentRuntimeChangedError as e:
-        return j(handler, agent_runtime_stale_payload(e), status=409)
-    except Exception as e:
-        logger.exception("git commit message generation failed")
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_git_commit_message_selected(handler, body):
-    from api.workspace_git import (
-        GitWorkspaceError,
-        clean_generated_commit_message,
-        selected_commit_message_prompt,
-    )
-
-    try:
-        require(body, "session_id")
-        paths = _git_paths_from_body(body)
-        session = get_session(body["session_id"])
-        workspace = Path(session.workspace)
-
-        prompt = selected_commit_message_prompt(workspace, paths)
-        message = clean_generated_commit_message(
-            _llm_git_commit_message(prompt["system_prompt"], prompt["user_prompt"], session=session)
-        )
-        if not message:
-            raise GitWorkspaceError("No commit message was generated")
-        return j(handler, {"ok": True, "message": message, "truncated": bool(prompt.get("truncated"))})
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-    except AgentRuntimeChangedError as e:
-        return j(handler, agent_runtime_stale_payload(e), status=409)
-    except Exception as e:
-        logger.exception("selected git commit message generation failed")
-        return bad(handler, _sanitize_error(e), 500)
-
-
-def _handle_git_commit(handler, body):
-    try:
-        require(body, "session_id", "message")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_commit
-
-        return j(handler, git_commit(workspace, body.get("message", "")))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_commit_selected(handler, body):
-    try:
-        require(body, "session_id", "message")
-        paths = _git_paths_from_body(body)
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_commit_selected
-
-        return j(handler, git_commit_selected(workspace, body.get("message", ""), paths))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_remote_action(handler, body, action: str):
-    try:
-        require(body, "session_id")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if action in {"pull", "push"} and _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_fetch, git_pull, git_push
-
-        actions = {
-            "fetch": git_fetch,
-            "pull": git_pull,
-            "push": git_push,
-        }
-        return j(handler, actions[action](workspace))
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_checkout(handler, body):
-    try:
-        require(body, "session_id", "ref", "mode")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_checkout
-
-        result = git_checkout(
-            workspace,
-            str(body.get("ref", "")),
-            str(body.get("mode", "local")),
-            new_branch=body.get("new_branch"),
-            track=bool(body.get("track")),
-            dirty_mode=str(body.get("dirty_mode", "block")),
-        )
-        return j(
-            handler,
-            {
-                "ok": True,
-                "git": result.get("status"),
-                "branches": result.get("branches"),
-                "current_branch": result.get("current_branch"),
-                "message": result.get("message", ""),
-            },
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
-def _handle_git_stash_checkout(handler, body):
-    try:
-        require(body, "session_id", "ref", "mode")
-        session, workspace = _git_session_and_workspace(handler, body["session_id"])
-        if workspace is None:
-            return True
-        if _git_reject_destructive_if_unsafe(handler, session):
-            return True
-        from api.workspace_git import GitWorkspaceError, git_stash_and_checkout
-
-        result = git_stash_and_checkout(
-            workspace,
-            str(body.get("ref", "")),
-            str(body.get("mode", "local")),
-            new_branch=body.get("new_branch"),
-            track=bool(body.get("track")),
-        )
-        return j(
-            handler,
-            {
-                "ok": True,
-                "git": result.get("status"),
-                "branches": result.get("branches"),
-                "current_branch": result.get("current_branch"),
-                "message": result.get("message", ""),
-                "stash_name": result.get("stash_name", ""),
-                "stashed": bool(result.get("stashed")),
-                "restored_stash": result.get("restored_stash"),
-                "restore_failed": bool(result.get("restore_failed")),
-                "restore_error": result.get("restore_error", ""),
-                "restore_stash": result.get("restore_stash"),
-            },
-        )
-    except ValueError as e:
-        return bad(handler, str(e))
-    except GitWorkspaceError as e:
-        return _git_bad(handler, e)
-
-
 def _handle_file_delete(handler, body):
     try:
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25677,10 +23165,9 @@ def _handle_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25708,10 +23195,9 @@ def _handle_office_file_save(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25743,10 +23229,9 @@ def _handle_file_create(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25770,10 +23255,9 @@ def _handle_file_rename(handler, body):
         require(body, "session_id", "path", "new_name")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         ws_root_resolved = ws_root.resolve()
@@ -25805,10 +23289,9 @@ def _handle_file_move(handler, body):
         require(body, "session_id", "path", "dest_dir")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         # resolve_in_workspace() returns paths under the RESOLVED root, so compute
@@ -25903,10 +23386,9 @@ def _handle_create_dir(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         ws_root = Path(s.workspace)
         target = resolve_in_workspace(ws_root, body["path"])
@@ -25917,54 +23399,6 @@ def _handle_create_dir(handler, body):
             handler, {"ok": True, "path": target.relative_to(ws_root.resolve()).as_posix()}
         )
     except (ValueError, FileNotFoundError, PermissionError, OSError) as e:
-        return bad(handler, _sanitize_error(e))
-
-
-def _handle_file_reveal(handler, body):
-    try:
-        require(body, "session_id", "path")
-    except ValueError as e:
-        return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    try:
-        target = resolve_in_workspace(Path(s.workspace), body["path"])
-        if not target.exists():
-            # Include the resolved server-side path in the error message so
-            # the frontend toast can show *which* file the system expected.
-            # Useful when a stale session row still references a deleted file
-            # (#1764 — Cygnus's screenshot showed a "Failed to reveal: not
-            # found" toast that dropped the path entirely, leaving no clue
-            # what was missing).
-            return bad(handler, f"File not found: {target}", 404)
-
-        target_str = str(target)
-
-        # Optional Docker host/container path translation (mirrors _handle_file_open_vscode).
-        from api.config import get_config as _get_cfg  # noqa: PLC0415
-        vscode_cfg = _get_cfg().get("vscode", {})
-        if not isinstance(vscode_cfg, dict):
-            vscode_cfg = {}
-        container_prefix = vscode_cfg.get("container_path_prefix", "")
-        host_prefix = vscode_cfg.get("host_path_prefix", "")
-        if container_prefix and host_prefix:
-            _norm = container_prefix.rstrip('/') + '/'
-            if target_str.startswith(_norm) or target_str == container_prefix.rstrip('/'):
-                target_str = host_prefix + target_str[len(container_prefix):]
-
-        system = platform.system()
-        if system == "Darwin":
-            subprocess.Popen(["open", "-R", target_str])
-        elif system == "Windows":
-            subprocess.Popen(["explorer.exe", "/select," + target_str])
-        else:
-            # Linux / other — open parent directory
-            subprocess.Popen(["xdg-open", str(Path(target_str).parent)])
-
-        return j(handler, {"ok": True, "path": body["path"]})
-    except (ValueError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
 
 
@@ -25986,99 +23420,12 @@ def _handle_file_path(handler, body):
         require(body, "session_id", "path")
     except ValueError as e:
         return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, body["session_id"], load=get_session_for_file_ops, hide_owner=True)
+    if s is None:
+        return True
     try:
         target = resolve_in_workspace(Path(s.workspace), body["path"])
         return j(handler, {"ok": True, "path": str(target)})
-    except (ValueError, PermissionError, OSError) as e:
-        return bad(handler, _sanitize_error(e))
-
-
-def _handle_file_open_vscode(handler, body):
-    """Open a workspace file or folder in VS Code (#2735).
-
-    Reads optional ``vscode`` config block from config.yaml:
-
-        vscode:
-          command: code          # executable on PATH; defaults to "code"
-          host_path_prefix: /home/user/projects       # Docker host path
-          container_path_prefix: /app/workspace       # matching container path
-
-    If ``host_path_prefix`` and ``container_path_prefix`` are both set,
-    paths that begin with ``container_path_prefix`` are translated to the
-    host prefix before being handed to VS Code.  This lets users running
-    Hermes WebUI inside Docker still open files in their local editor.
-    """
-    try:
-        require(body, "session_id", "path")
-    except ValueError as e:
-        return bad(handler, str(e))
-    try:
-        s = get_session_for_file_ops(body["session_id"])
-    except KeyError:
-        return bad(handler, "Session not found", 404)
-    try:
-        target = resolve_in_workspace(Path(s.workspace), body["path"])
-        if not target.exists():
-            return bad(handler, f"File not found: {target}", 404)
-
-        target_str = str(target)
-
-        # Optional Docker host/container path translation
-        from api.config import get_config as _get_cfg  # noqa: PLC0415
-        vscode_cfg = _get_cfg().get("vscode", {})
-        if not isinstance(vscode_cfg, dict):
-            vscode_cfg = {}
-        container_prefix = vscode_cfg.get("container_path_prefix", "")
-        host_prefix = vscode_cfg.get("host_path_prefix", "")
-        if container_prefix and host_prefix:
-            _norm = container_prefix.rstrip('/') + '/'
-            if target_str.startswith(_norm) or target_str == container_prefix.rstrip('/'):
-                target_str = host_prefix + target_str[len(container_prefix):]
-
-        cmd = vscode_cfg.get("command", "code")
-        # Resolve the command to an absolute path so subprocess.Popen finds it
-        # even when the server process inherits a minimal PATH (e.g. when
-        # launched via start.sh on macOS where /usr/local/bin may be absent).
-        resolved_cmd = shutil.which(cmd)
-        if resolved_cmd is None:
-            # Try common VS Code installation paths as fallback.
-            # macOS: /usr/local/bin/code (symlink) or app bundle CLI
-            # Linux: /usr/bin/code or snap
-            # Windows: user-install under %LOCALAPPDATA%, system-install under %PROGRAMFILES%
-            _local_app_data = os.environ.get("LOCALAPPDATA", "")
-            _prog_files = os.environ.get("PROGRAMFILES", "C:\\Program Files")
-            _prog_files_x86 = os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")
-            _vscode_fallbacks = [
-                # macOS
-                "/usr/local/bin/code",
-                "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-                # Linux
-                "/usr/bin/code",
-                "/snap/bin/code",
-                # Windows (user install)
-                os.path.join(_local_app_data, "Programs", "Microsoft VS Code", "bin", "code.cmd"),
-                # Windows (system install)
-                os.path.join(_prog_files, "Microsoft VS Code", "bin", "code.cmd"),
-                os.path.join(_prog_files_x86, "Microsoft VS Code", "bin", "code.cmd"),
-            ]
-            for fb in _vscode_fallbacks:
-                if fb and Path(fb).exists():
-                    resolved_cmd = fb
-                    break
-        if resolved_cmd is None:
-            return bad(
-                handler,
-                f"VS Code command not found: {cmd!r}. "
-                "Install VS Code and ensure the 'code' CLI is on PATH, "
-                "or set vscode.command in config.yaml to the full path.",
-            )
-        subprocess.Popen([resolved_cmd, target_str])
-
-        return j(handler, {"ok": True, "path": body["path"]})
     except (ValueError, PermissionError, OSError) as e:
         return bad(handler, _sanitize_error(e))
 
@@ -26390,10 +23737,9 @@ def _gateway_approval_failure(
     code: str,
     error: str,
     status: int,
-    enable_yolo: bool,
     relayed: bool = False,
 ) -> tuple[dict, int]:
-    """Build a failed relay response with authoritative session-YOLO state."""
+    """Build a failed relay response."""
     payload = {
         "ok": False,
         "choice": choice,
@@ -26401,8 +23747,6 @@ def _gateway_approval_failure(
         "code": code,
         "error": error,
     }
-    if enable_yolo:
-        payload["yolo_enabled"] = bool(is_session_yolo_enabled(sid))
     return payload, status
 
 
@@ -26410,14 +23754,11 @@ def _relay_gateway_run_approval(
     sid: str,
     mirror: dict,
     choice: str,
-    *,
-    enable_yolo: bool,
 ) -> tuple[dict, int]:
     """Relay one exact run-backed mirror under the shared `(session, run)` owner.
 
-    The mirror remains actionable unless the remote Runs API confirms success.
-    Both the approval-card endpoint and the ordinary session-YOLO endpoint use
-    this chokepoint so one tab cannot retire another tab's parked remote run.
+    The mirror remains actionable unless the remote Runs API confirms success,
+    so one tab cannot retire another tab's parked remote run.
     """
     from api.config import gateway_supports_approval_identity_v1
     from api.gateway_chat import gateway_run_endpoint
@@ -26433,7 +23774,6 @@ def _relay_gateway_run_approval(
             code="gateway_run_unavailable",
             error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
             status=409,
-            enable_yolo=enable_yolo,
         )
     if not claim_gateway_approval_relay_owner(sid, run_id, approval_id):
         return _gateway_approval_failure(
@@ -26442,7 +23782,6 @@ def _relay_gateway_run_approval(
             code="gateway_approval_in_progress",
             error=_GATEWAY_APPROVAL_RELAY_IN_PROGRESS,
             status=409,
-            enable_yolo=enable_yolo,
         )
 
     try:
@@ -26459,8 +23798,7 @@ def _relay_gateway_run_approval(
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=enable_yolo,
-            )
+                )
 
         base_url, api_key = gateway_run_endpoint(run_id)
         identity_v1 = bool(current_mirror.get(_GATEWAY_AGENT_IDENTITY_V1)) and (
@@ -26475,23 +23813,17 @@ def _relay_gateway_run_approval(
                     code="gateway_run_unavailable",
                     error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                     status=409,
-                    enable_yolo=enable_yolo,
-                )
+                        )
 
-        yolo_transition = begin_session_yolo_transition(sid) if enable_yolo else None
         relay_error = None
-        relay_succeeded = False
         try:
             HttpRunnerClient(base_url=base_url, api_key=api_key).respond_approval(
                 run_id,
                 approval_id if identity_v1 else "",
                 choice,
             )
-            relay_succeeded = True
         except (RunnerClientError, ValueError) as exc:
             relay_error = str(exc)
-        finally:
-            finish_session_yolo_transition(sid, yolo_transition, succeeded=relay_succeeded)
 
         if relay_error is not None:
             return _gateway_approval_failure(
@@ -26500,8 +23832,7 @@ def _relay_gateway_run_approval(
                 code="gateway_approval_relay_failed",
                 error=relay_error,
                 status=502,
-                enable_yolo=enable_yolo,
-                relayed=True,
+                    relayed=True,
             )
 
         # The outbound relay resumes the remote run. Retire the local projection
@@ -26517,132 +23848,9 @@ def _relay_gateway_run_approval(
             "ok": True,
             "choice": choice,
             "relayed": True,
-            **(
-                {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-                if enable_yolo
-                else {}
-            ),
         }, 200
     finally:
         release_gateway_approval_relay_owner(sid, run_id, approval_id)
-
-
-def _pending_approval_owner_state(
-    sid: str,
-    approval_id: str,
-    run_id: str = "",
-    mirror_token: str = "",
-) -> tuple[bool, bool]:
-    """Return `(exact_owner_exists, any_pending_exists)` under queue authority."""
-    approval_id = str(approval_id or "").strip()
-    run_id = str(run_id or "").strip()
-    mirror_token = str(mirror_token or "").strip()
-    with _lock:
-        reconcile_gateway_pending_mirror_locked(sid)
-        queue = _pending.get(sid)
-        entries = queue if isinstance(queue, list) else [queue] if queue else []
-        exact = False
-        for entry in entries:
-            if not isinstance(entry, dict) or str(entry.get("approval_id") or "") != approval_id:
-                continue
-            entry_run_id = str(entry.get("run_id") or "").strip()
-            entry_mirror_token = str(entry.get(_GATEWAY_MIRROR_TOKEN) or "").strip()
-            if run_id and entry_run_id != run_id:
-                continue
-            if mirror_token and entry_mirror_token != mirror_token:
-                continue
-            if (run_id or mirror_token) and not entry.get(_GATEWAY_MIRROR_FLAG):
-                continue
-            exact = True
-            break
-        return exact, bool(entries or _gateway_queues.get(sid))
-
-
-def _enable_session_yolo_and_release_pending(
-    sid: str,
-    *,
-    choice: str,
-    approval_id: str = "",
-    run_id: str = "",
-    mirror_token: str = "",
-    include_choice: bool = False,
-) -> tuple[dict, int]:
-    """Relay every parked remote approval, drain local waiters, then commit YOLO."""
-    approval_id = str(approval_id or "").strip()
-    run_id = str(run_id or "").strip()
-    mirror_token = str(mirror_token or "").strip()
-    has_exact_remote_owner = bool(run_id or mirror_token)
-    if has_exact_remote_owner and (not approval_id or not run_id or not mirror_token):
-        return _gateway_approval_failure(
-            sid,
-            choice,
-            code="gateway_run_unavailable",
-            error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-            status=409,
-            enable_yolo=True,
-        )
-
-    yolo_transition = None
-    try:
-        with gateway_yolo_handoff(sid):
-            yolo_transition = begin_session_yolo_transition(sid)
-            stale_cleared = False
-            if approval_id:
-                exact_owner, any_pending = _pending_approval_owner_state(
-                    sid,
-                    approval_id,
-                    run_id,
-                    mirror_token,
-                )
-                if not exact_owner and (has_exact_remote_owner or any_pending):
-                    return _gateway_approval_failure(
-                        sid,
-                        choice,
-                        code="gateway_run_unavailable",
-                        error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-                        status=409,
-                        enable_yolo=True,
-                    )
-                stale_cleared = not exact_owner
-
-            run_mirrors = gateway_pending_mirrors(sid)
-            relayed = 0
-            for mirror in run_mirrors:
-                relay_payload, relay_status = _relay_gateway_run_approval(
-                    sid,
-                    mirror,
-                    choice,
-                    enable_yolo=False,
-                )
-                if relay_status != 200 or not relay_payload.get("ok"):
-                    finish_session_yolo_transition(
-                        sid,
-                        yolo_transition,
-                        succeeded=False,
-                    )
-                    yolo_transition = None
-                    return {
-                        **relay_payload,
-                        "yolo_enabled": bool(is_session_yolo_enabled(sid)),
-                    }, relay_status
-                relayed += 1
-
-            resolve_gateway_pending_local_all(
-                sid,
-                choice,
-            )
-            finish_session_yolo_transition(sid, yolo_transition, succeeded=True)
-            yolo_transition = None
-            return {
-                "ok": True,
-                "yolo_enabled": bool(is_session_yolo_enabled(sid)),
-                **({"choice": choice} if include_choice or relayed else {}),
-                **({"relayed": True} if relayed else {}),
-                **({"stale_cleared": True} if stale_cleared else {}),
-            }, 200
-    finally:
-        if yolo_transition is not None:
-            finish_session_yolo_transition(sid, yolo_transition, succeeded=False)
 
 
 def _gateway_pending_approval_without_run_id(sid: str, approval_id: str) -> bool:
@@ -26694,20 +23902,11 @@ def _handle_approval_respond(handler, body):
     if choice not in ("once", "session", "always", "deny"):
         return bad(handler, f"Invalid choice: {choice}")
     approval_id = body.get("approval_id", "")
-    enable_yolo = body.get("yolo") is True
+    if body.get("yolo") is True:
+        # Session YOLO went with the Admin (ADR 0006): never auto-approve from here.
+        return bad(handler, "YOLO mode is not available in the web app", 400)
     requested_run_id = str(body.get("run_id") or "").strip()
     requested_mirror_token = str(body.get("mirror_token") or "").strip()
-
-    if enable_yolo:
-        payload, status = _enable_session_yolo_and_release_pending(
-            sid,
-            choice=choice,
-            approval_id=approval_id,
-            run_id=requested_run_id,
-            mirror_token=requested_mirror_token,
-            include_choice=True,
-        )
-        return j(handler, payload, status=status)
 
     if requested_run_id or requested_mirror_token:
         if not approval_id or not requested_run_id or not requested_mirror_token:
@@ -26717,7 +23916,6 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=False,
             )
             return j(handler, relay_payload, status=relay_status)
         exact_mirror = gateway_pending_mirror(
@@ -26733,14 +23931,12 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=False,
             )
             return j(handler, relay_payload, status=relay_status)
         relay_payload, relay_status = _relay_gateway_run_approval(
             sid,
             exact_mirror,
             choice,
-            enable_yolo=False,
         )
         return j(handler, relay_payload, status=relay_status)
 
@@ -26827,8 +24023,7 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=enable_yolo,
-            )
+                )
             return j(handler, relay_payload, status=relay_status)
         matched_mirror = (
             gateway_pending_mirror(sid, approval_id=approval_id, run_id=_candidate_run_id)
@@ -26846,44 +24041,14 @@ def _handle_approval_respond(handler, body):
                     code="gateway_run_unavailable",
                     error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                     status=409,
-                    enable_yolo=enable_yolo,
-                )
+                        )
                 return j(handler, relay_payload, status=relay_status)
         if _run_id:
-            if enable_yolo:
-                # The visible card path must serialize the same session-wide
-                # handoff as the ordinary /api/session/yolo route and the Runs
-                # stream. Revalidate the exact mirror after acquiring it so a
-                # later approval cannot be parked while this relay commits YOLO.
-                with gateway_yolo_handoff(sid):
-                    current_mirror = gateway_pending_mirror(
-                        sid,
-                        approval_id=approval_id,
-                        run_id=_run_id,
-                    )
-                    if current_mirror is None:
-                        relay_payload, relay_status = _gateway_approval_failure(
-                            sid,
-                            choice,
-                            code="gateway_run_unavailable",
-                            error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
-                            status=409,
-                            enable_yolo=True,
-                        )
-                    else:
-                        relay_payload, relay_status = _relay_gateway_run_approval(
-                            sid,
-                            current_mirror,
-                            choice,
-                            enable_yolo=True,
-                        )
-            else:
-                relay_payload, relay_status = _relay_gateway_run_approval(
-                    sid,
-                    matched_mirror or {},
-                    choice,
-                    enable_yolo=False,
-                )
+            relay_payload, relay_status = _relay_gateway_run_approval(
+                sid,
+                matched_mirror or {},
+                choice,
+            )
             return j(handler, relay_payload, status=relay_status)
         if _candidate_run_id:
             relay_payload, relay_status = _gateway_approval_failure(
@@ -26892,8 +24057,7 @@ def _handle_approval_respond(handler, body):
                 code="gateway_run_unavailable",
                 error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                 status=409,
-                enable_yolo=enable_yolo,
-            )
+                )
             return j(handler, relay_payload, status=relay_status)
         # A no-run mirror is local visibility state only. Resolve it only while
         # the exact parked producer still exists; otherwise keep the card live
@@ -26903,17 +24067,10 @@ def _handle_approval_respond(handler, body):
                 sid, approval_id, choice
             )
             if handled_no_run_mirror and resolved_count == 1:
-                if enable_yolo:
-                    set_session_yolo_enabled(sid, True)
                 return j(handler, {
                     "ok": True,
                     "choice": choice,
                     "local_retired": True,
-                    **(
-                        {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-                        if enable_yolo
-                        else {}
-                    ),
                 })
             if handled_no_run_mirror:
                 relay_payload, relay_status = _gateway_approval_failure(
@@ -26922,8 +24079,7 @@ def _handle_approval_respond(handler, body):
                     code="gateway_run_unavailable",
                     error=_GATEWAY_APPROVAL_RELAY_UNAVAILABLE,
                     status=409,
-                    enable_yolo=enable_yolo,
-                )
+                        )
                 return j(handler, relay_payload, status=relay_status)
     except Exception:
         pass  # fall through to local approval path
@@ -26956,28 +24112,14 @@ def _handle_approval_respond(handler, body):
         # card instead of dead-ending. When something IS still pending, keep
         # the protective ok:false. `stale_cleared` lets the frontend log/branch
         # without showing an error toast.
-        if enable_yolo:
-            set_session_yolo_enabled(sid, True)
         return j(handler, {
             "ok": True,
             "choice": choice,
             "stale_cleared": True,
-            **(
-                {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-                if enable_yolo
-                else {}
-            ),
         })
-    if ok and enable_yolo:
-        set_session_yolo_enabled(sid, True)
     return j(handler, {
         "ok": ok,
         "choice": choice,
-        **(
-            {"yolo_enabled": bool(is_session_yolo_enabled(sid))}
-            if ok and enable_yolo
-            else {}
-        ),
     })
 
 
@@ -27106,8 +24248,10 @@ def _run_manual_compression_job(sid, body):
             from api import profiles as profiles_api
 
             with profiles_api.profile_env_for_background_worker(session, "manual compression", logger_override=logger):
-                _handle_session_compress(memory_handler, body)
+                _handle_session_compress(memory_handler, body, worker_session=session)
         else:
+            # Not found by the worker's own load: the handler answers as for a
+            # request (the stale-runtime and stream checks run first).
             _handle_session_compress(memory_handler, body)
         status = int(memory_handler.status or 500)
         payload = memory_handler.payload()
@@ -27179,10 +24323,9 @@ def _handle_session_compress_start(handler, body):
     sid = str(body.get("session_id") or "").strip()
     if not sid:
         return bad(handler, "session_id is required")
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
     if getattr(s, "active_stream_id", None):
         return bad(handler, "Session is still streaming; wait for the current turn to finish.", 409)
 
@@ -27271,7 +24414,10 @@ def _handle_session_compress_status(handler, sid):
         return j(handler, payload)
 
 
-def _handle_session_compress(handler, body):
+def _handle_session_compress(handler, body, *, worker_session=None):
+    """Compress a session now. *worker_session* is the session the background
+    compression job already loaded (it has no request caller to ask session
+    ownership); without it the request's session is loaded under session ownership."""
     def _anchor_message_key(m):
         if not isinstance(m, dict):
             return None
@@ -27342,10 +24488,9 @@ def _handle_session_compress(handler, body):
     # cheap bound-checking.
     focus_topic = str(body.get("focus_topic") or body.get("topic") or "").strip()[:500] or None
 
-    try:
-        s = get_session(sid)
-    except KeyError:
-        return bad(handler, "Session not found", 404)
+    s = worker_session if worker_session is not None else load_owned_session(handler, sid, load=get_session)
+    if s is None:
+        return True
 
     if getattr(s, "active_stream_id", None):
         return bad(handler, "Session is still streaming; wait for the current turn to finish.", 409)
@@ -27482,18 +24627,12 @@ def _handle_session_compress(handler, body):
         )
         approx_tokens = _estimate_messages_tokens_rough(original_messages)
 
-        agent = AIAgent(
+        agent = webui_agent(
+            AIAgent,
+            _bundle,
             model=resolved_model,
-            provider=resolved_provider,
-            base_url=resolved_base_url,
-            api_key=resolved_api_key,
-            # Identify browser-originated sessions as WebUI so Hermes Agent
-            # does not inject CLI-specific terminal/output guidance.
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=_resolve_cli_toolsets(),
             session_id=sid,
-            **_agent_bundle_kwargs(AIAgent, _bundle),
+            toolsets=_resolve_cli_toolsets(),
         )
         compressed = agent.context_compressor.compress(
             original_messages,
@@ -28178,16 +25317,12 @@ def _handle_handoff_summary(handler, body):
                 "fallback": True,
             })
 
-        agent = AIAgent(
+        agent = webui_agent(
+            AIAgent,
+            _bundle,
             model=resolved_model,
-            provider=resolved_provider,
-            base_url=resolved_base_url,
-            api_key=resolved_api_key,
-            platform="webui",
-            quiet_mode=True,
-            enabled_toolsets=[],
             session_id=sid,
-            **_agent_bundle_kwargs(AIAgent, _bundle),
+            toolsets=[],
         )
 
         summary_system_prompt = (
@@ -28579,42 +25714,23 @@ def _handle_session_import_cli(handler, body):
     requested_profile = _normalize_import_profile_value((body or {}).get("profile"))
     if requested_profile == "":
         return bad(handler, "invalid profile", 400)
-    allow_all_profiles = _request_wants_all_profiles_import(body)
-    caller_reach = request_caller_reach()
-    if allow_all_profiles and caller_reach.every_profile and not request_profile_reach(all_profiles=True).every_profile:
-        return bad(handler, "all_profiles import is not allowed in isolated profile mode", 403)
-    if allow_all_profiles and not requested_profile:
-        return bad(handler, "profile is required for all_profiles import", 400)
-    if requested_profile and not caller_reach.includes(requested_profile):
-        # A User's all-Profiles import finds only sessions in their own Profile.
+    if requested_profile and not request_caller_reach().includes(requested_profile):
+        # A User imports only sessions of their own Profile.
         return bad(handler, "Session not found in CLI store", 404)
 
     # Check if already imported — refresh messages from CLI store if new ones arrived
     existing = Session.load(sid)
     if existing:
-        # Cross-profile boundary: an unqualified (non-all-profiles) request must not
-        # read or refresh a session that belongs to another profile, even though the
-        # WebUI session store (SESSION_DIR) is a single global directory. This mirrors
-        # the /api/session detail and /api/session/export profile-scoping gates.
-        # An explicit all_profiles import is still allowed, but only when the request's
-        # profile matches the stored session's profile.
+        # Cross-profile boundary: a request must not read or refresh a session
+        # that belongs to another profile, even though the WebUI session store
+        # (SESSION_DIR) is a single global directory. This mirrors the
+        # /api/session detail and /api/session/export profile-scoping gates.
         existing_profile = getattr(existing, "profile", None)
-        if allow_all_profiles:
-            if requested_profile and not _profiles_match(existing_profile, requested_profile):
-                return bad(handler, "Session not found in CLI store", 404)
-        else:
-            # #7710: same contract as the detail-load endpoint —
-            # 409 ``session_profile_mismatch`` for a known other
-            # profile, 404 only for the None-profile self-heal path.
-            _refusal = request_session_ownership().refuse_found_session(sid, existing)
-            if _refusal is not None:
-                return _refusal.answer(handler, sid, not_found="Session not found in CLI store")
+        _refusal = request_session_ownership().refuse_found_session(sid, existing)
+        if _refusal is not None:
+            return _refusal.answer(handler, sid, not_found="Session not found in CLI store")
         refresh_profile = requested_profile or existing_profile
-        cli_meta = _resolve_cli_import_metadata(
-            sid,
-            requested_profile=refresh_profile,
-            allow_all_profiles=allow_all_profiles,
-        )
+        cli_meta = _resolve_cli_import_metadata(sid, requested_profile=refresh_profile)
         fresh_msgs = get_cli_session_messages(
             sid,
             profile=(cli_meta or {}).get("profile") or refresh_profile,
@@ -28691,12 +25807,8 @@ def _handle_session_import_cli(handler, body):
         )
 
     # Fetch messages from CLI store
-    cli_meta = _resolve_cli_import_metadata(
-        sid,
-        requested_profile=requested_profile,
-        allow_all_profiles=allow_all_profiles,
-    )
-    profile = cli_meta.get("profile") if cli_meta else (requested_profile if allow_all_profiles else None)
+    cli_meta = _resolve_cli_import_metadata(sid, requested_profile=requested_profile)
+    profile = cli_meta.get("profile") if cli_meta else None
     msgs = get_cli_session_messages(sid, profile=profile)
     if not msgs:
         return bad(handler, "Session not found in CLI store", 404)
@@ -28725,10 +25837,7 @@ def _handle_session_import_cli(handler, body):
     # read-only source (return the read-only stub payload, do not import), and
     # keep them out of the _isExternalSession frontend gates (is_cli_session=False).
     _sa_child = _is_subagent_child_session_id(sid)
-    # Also treat a resolved-metadata subagent source as view-only: with
-    # all_profiles=true, cli_meta is resolved from the requested (possibly
-    # non-active) profile, so the active-profile state.db check (_sa_child)
-    # can miss it (#5307 cross-profile edge).
+    # Also treat a resolved-metadata subagent source as view-only (#5307).
     _cli_sa = (cli_source_tag or cli_raw_source or "").strip().lower() == "subagent"
     _sa_child = _sa_child or _cli_sa
     _read_only_view = cli_read_only or _sa_child
@@ -28846,8 +25955,13 @@ def _handle_session_import(handler, body):
     if not isinstance(raw_tool_calls, list):
         return bad(handler, 'JSON "tool_calls" must be an array')
     title = body.get("title", "Imported session")
+    from api.workspace_policy import request_workspace_policy
+
     try:
-        workspace = str(resolve_trusted_workspace(body.get("workspace", str(DEFAULT_WORKSPACE))))
+        # No workspace named: the caller's default (a User's own Workspace),
+        # never the Deployment's, which a User may not use.
+        requested = body.get("workspace") or request_workspace_policy().default_workspace()
+        workspace = str(resolve_trusted_workspace(requested))
     except (TypeError, ValueError) as e:
         return bad(handler, str(e))
     model = body.get("model", DEFAULT_MODEL)
@@ -29188,30 +26302,6 @@ def _mcp_profile_runtime_inventory(servers, purpose, *, include_tools=True):
                 tools = _mcp_tools_from_registry(server_summaries, view)
                 source = "tool_registry" if tools else "none"
     return server_summaries, tools, source, view.scope_label
-
-
-def _handle_mcp_tools_list(handler):
-    """List known MCP tools from already-available runtime inventory only."""
-    cfg = get_config_for_profile_home(get_active_hermes_home())
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    server_summaries, tools, source, runtime_scope = _mcp_profile_runtime_inventory(
-        servers, "/api/mcp/tools"
-    )
-    tools.sort(key=lambda row: (row.get("server", ""), row.get("name", "")))
-    unavailable_servers = [
-        summary["name"] for summary in server_summaries.values()
-        if summary.get("enabled") and not summary.get("active")
-    ]
-    return j(handler, {
-        "tools": tools,
-        "total": len(tools),
-        "source": source,
-        "inventory_scope": "already_known_runtime_only",
-        "runtime_scope": runtime_scope,
-        "unavailable_servers": unavailable_servers,
-    })
 
 
 def _webui_truthy(value) -> bool:
@@ -29692,66 +26782,6 @@ def _handle_notes_item(handler, parsed):
         return j(handler, {"source": "joplin", "error": str(exc)}, status=502)
 
 
-def _handle_mcp_servers_list(handler):
-    """List configured MCP servers with safe, read-only runtime visibility."""
-    cfg = get_config_for_profile_home(get_active_hermes_home())
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    server_summaries, _tools, _source, runtime_scope = _mcp_profile_runtime_inventory(
-        servers, "/api/mcp/servers", include_tools=False
-    )
-    return j(handler, {
-        "servers": list(server_summaries.values()),
-        "toggle_supported": True,
-        "reload_required": True,
-        "runtime_scope": runtime_scope,
-    })
-
-
-def _handle_mcp_server_delete(handler, name):
-    """Delete an MCP server by name."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    if not name:
-        return bad(handler, "name is required")
-    cfg = get_config()
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    if name not in servers:
-        return bad(handler, f"MCP server '{name}' not found", 404)
-    del servers[name]
-    cfg["mcp_servers"] = servers
-    _save_yaml_config_file(_get_config_path(), cfg)
-    reload_config()
-    return j(handler, {"ok": True, "deleted": name})
-
-
-def _handle_mcp_server_toggle(handler, name, body):
-    """Toggle enabled state for an MCP server (PATCH /api/mcp/servers/{name})."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    if not name:
-        return bad(handler, "name is required")
-    if "enabled" not in body:
-        return bad(handler, "enabled field is required")
-    enabled = bool(body["enabled"])
-    cfg = get_config()
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    if name not in servers:
-        return bad(handler, f"MCP server '{name}' not found", 404)
-    if not isinstance(servers[name], dict):
-        return bad(handler, f"MCP server '{name}' has invalid config", 400)
-    servers[name]["enabled"] = enabled
-    cfg["mcp_servers"] = servers
-    _save_yaml_config_file(_get_config_path(), cfg)
-    reload_config()
-    return j(handler, {"ok": True, "name": name, "enabled": enabled})
-
-
 _MASKED_PLACEHOLDER = "••••••"
 
 
@@ -29771,39 +26801,3 @@ def _strip_masked_values(submitted, existing):
             cleaned[k] = v
     return cleaned
 
-
-def _handle_mcp_server_update(handler, name, body):
-    """Add or update an MCP server."""
-    from urllib.parse import unquote
-    name = unquote(name)
-    if not name:
-        return bad(handler, "name is required")
-    # Validate: must have url (http) or command (stdio)
-    server_cfg = {}
-    cfg = get_config()
-    servers = cfg.get("mcp_servers", {})
-    if not isinstance(servers, dict):
-        servers = {}
-    existing_cfg = servers.get(name, {})
-    if body.get("url"):
-        server_cfg["url"] = body["url"].strip()
-        if body.get("headers"):
-            server_cfg["headers"] = _strip_masked_values(body["headers"], existing_cfg.get("headers", {}))
-    elif body.get("command"):
-        server_cfg["command"] = body["command"].strip()
-        if body.get("args"):
-            server_cfg["args"] = body["args"] if isinstance(body["args"], list) else [body["args"]]
-        if body.get("env"):
-            server_cfg["env"] = _strip_masked_values(body["env"], existing_cfg.get("env", {}))
-    else:
-        return bad(handler, "url or command is required")
-    if body.get("timeout") is not None:
-        try:
-            server_cfg["timeout"] = int(body["timeout"])
-        except (ValueError, TypeError):
-            pass
-    servers[name] = server_cfg
-    cfg["mcp_servers"] = servers
-    _save_yaml_config_file(_get_config_path(), cfg)
-    reload_config()
-    return j(handler, {"ok": True, "server": _server_summary(name, server_cfg)})

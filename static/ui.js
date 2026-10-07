@@ -7,16 +7,6 @@
 // See api/todo_state.py for the wire contract.
 const S={session:null,messages:[],entries:[],busy:false,pendingFiles:[],toolCalls:[],activeStreamId:null,currentDir:'.',activeProfile:'default',activeProfileIsDefault:true,showHiddenWorkspaceFiles:false,todos:[],todoStateMeta:null,_pendingSessionToolsets:null};
 
-// GFIT-CoWork: may the caller use this feature of the web app? The server
-// stamps the features its caller may use on <html data-gfit-may="...">, from
-// the Admin gate (api/access.py SHELL_FEATURES). With no stamp (login off)
-// every feature may be used. Ask before calling a feature's route, so a User's
-// web app does not call routes the gate refuses.
-function gfitMay(feature){
-  const may=document.documentElement.dataset.gfitMay;
-  return may===undefined||may.split(' ').includes(feature);
-}
-
 // The web app's own name for page chrome (tab title). The assistant keeps its own name.
 const APP_NAME='GFIT-CoWork';
 function assistantDisplayName(){
@@ -526,16 +516,6 @@ async function startCompressionRecovery(btn){
     const composer=$('msg');
     if(composer&&typeof composer.focus==='function') composer.focus();
   }catch(e){
-    // #7710: a cross-profile refusal now also arrives as 409
-    // (``session_profile_mismatch``). That is NOT a stale recovery action —
-    // the card is still valid, the request was simply refused because the
-    // session belongs to another profile. Retiring it would hide a live card
-    // and show a false "conversation already moved on" note.
-    if(e&&e.status===409&&typeof _sessionProfileMismatchFromError==='function'
-       &&_sessionProfileMismatchFromError(e)){
-      if(typeof setStatus==='function') setStatus('Session belongs to a different profile');
-      return;
-    }
     // A 409 means this session no longer has an active recovery action (the
     // session already moved on — e.g. a substantive prompt cleared it). The
     // persisted card in the transcript is stale, so retire it and show a neutral
@@ -1864,86 +1844,6 @@ async function jumpToTurnQuestion(questionRawIdx, assistantRawIdx){
   }
 }
 
-const DASHBOARD_STATUS_TTL_MS=60000;
-let _dashboardStatusCache=null;
-let _dashboardStatusFetchedAt=0;
-let _dashboardLastNonNeverMode='auto'; // Server-scoped dashboard config keeps this restore target session-global on purpose.
-let _dashboardSettingsLoadSeq=0;
-let _dashboardSettingsWriteSeq=0;
-
-function _dashboardHostIsLoopback(host){
-  // Canonical loopback classifier shared by the browser origin and the
-  // resolved dashboard target. Normalizes brackets, case, zone ids, and a
-  // terminal hostname dot; classifies IPv4 127/8, IPv6 ::1, IPv4-mapped IPv6
-  // whose embedded IPv4 is 127/8, and localhost/.localhost names (RFC 6761).
-  if(!host) return false;
-  let h=String(host).replace(/^\[|\]$/g,'').toLowerCase();
-  if(h.endsWith('.')) h=h.slice(0,-1);
-  if(h==='localhost'||h.endsWith('.localhost')) return true;
-  const ipv4=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if(ipv4){
-    const octets=ipv4.slice(1).map(Number);
-    return octets.every(o=>o>=0&&o<=255)&&octets[0]===127;
-  }
-  if(h.includes(':')){
-    const zone=h.indexOf('%');
-    if(zone!==-1) h=h.slice(0,zone);
-    if(h==='::1'||h==='0:0:0:0:0:0:0:1') return true;
-    const mapped=/^(?:::ffff:|0:0:0:0:0:ffff:)(.+)$/.exec(h);
-    if(mapped){
-      const tail=mapped[1];
-      const dotted=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(tail);
-      if(dotted){
-        const octets=dotted.slice(1).map(Number);
-        return octets.every(o=>o>=0&&o<=255)&&octets[0]===127;
-      }
-      const hex=/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
-      if(hex) return (parseInt(hex[1],16)>>>8)===127;
-      return false;
-    }
-    return false;
-  }
-  return false;
-}
-
-function _dashboardIsBrowserLoopback(){
-  return _dashboardHostIsLoopback(window.location.hostname||'');
-}
-
-function _dashboardUrlIsLoopback(url){
-  if(!url) return false;
-  try{
-    return _dashboardHostIsLoopback(new URL(url).hostname);
-  }catch(_){return false;}
-}
-
-function _normalizeDashboardEnabledMode(mode){
-  return mode==='auto'||mode==='always'||mode==='never'?mode:'auto';
-}
-
-function _setDashboardModeForChip(mode){
-  mode=_normalizeDashboardEnabledMode(mode);
-  if(mode==='auto'||mode==='always') _dashboardLastNonNeverMode=mode;
-}
-
-function _getDashboardChipRestoreMode(){
-  return _dashboardLastNonNeverMode||'auto';
-}
-
-function _dashboardBrowserUrl(status){
-  if(!status||!status.running) return '';
-  if(status.browser_url||status.url){
-    try{return new URL(status.browser_url||status.url).toString().replace(/\/$/,'');}
-    catch(_){}
-  }
-  if(!status.port) return '';
-  let source;
-  try{source=new URL('http://127.0.0.1:'+status.port);}
-  catch(_){return '';}
-  const browserHost=window.location.hostname||source.hostname;
-  const displayHost=browserHost.includes(':')&&!browserHost.startsWith('[')?'['+browserHost+']':browserHost;
-  return source.protocol+'//'+displayHost+':'+status.port;
-}
 function _stripInlineEventHandlers(node){
   if(!node)return;
   const strip=el=>{
@@ -1959,14 +1859,13 @@ function _syncNavActionMirrors(){
   const rail=document.querySelector('.rail');
   const sidebar=document.querySelector('.sidebar-nav');
   if(!rail||!sidebar)return;
-  const anchor=sidebar.querySelector('.dashboard-link,[data-dashboard-link]')||sidebar.querySelector('[data-panel="logs"]');
-  const sources=Array.from(rail.querySelectorAll('.nav-tab:not([data-panel]):not([data-dashboard-link])')).filter(source=>source.id);
+  const sources=Array.from(rail.querySelectorAll('.nav-tab:not([data-panel])')).filter(source=>source.id);
   const mirrors=Array.from(sidebar.querySelectorAll('[data-nav-action-mirror]'));
   const sourceIds=new Set(sources.map(source=>source.id));
   mirrors.forEach(mirror=>{
     if(!sourceIds.has(mirror.getAttribute('data-nav-action-mirror')))mirror.remove();
   });
-  let next=anchor||null;
+  let next=null;
   sources.slice().reverse().forEach(source=>{
     const sourceVisible=(()=>{
       if(source.hidden||source.getAttribute('aria-hidden')==='true')return false;
@@ -2015,122 +1914,6 @@ function _initNavActionMirrors(){
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_initNavActionMirrors,{once:true});
 else _initNavActionMirrors();
-function _applyDashboardStatus(status){
-  const running=!!(status&&status.running);
-  const url=running?_dashboardBrowserUrl(status):'';
-  const warning=running&&!_dashboardIsBrowserLoopback()&&_dashboardUrlIsLoopback(url)?t('dashboard_loopback_warning'):'';
-  document.querySelectorAll('[data-dashboard-link]').forEach(btn=>{
-    btn.classList.toggle('dashboard-link-visible',running);
-    btn.classList.toggle('nav-action-visible',running);
-    btn.style.display=running?'':'none';
-    btn.dataset.dashboardUrl=url;
-    const tipText=warning||t('tab_dashboard');
-    if(btn.hasAttribute('data-tooltip')){
-      // Sync the custom CSS tooltip and explicitly clear the native title so
-      // the slow ~1.5s native browser tooltip does not co-fire alongside the
-      // fast custom tooltip (#1775).
-      btn.setAttribute('data-tooltip',tipText);
-      if(btn.hasAttribute('title')) btn.removeAttribute('title');
-    } else {
-      btn.title=tipText;
-    }
-    btn.setAttribute('aria-label',tipText);
-  });
-}
-async function refreshDashboardStatus(force=false){
-  const now=Date.now();
-  // Skip the interval-driven poll while the tab is hidden: the 60s interval
-  // equals the cache TTL, so every background tick was a real /api/dashboard/status
-  // fetch that never hit the cache — a needless wakeup on a tab nobody is
-  // looking at (battery/CPU, #2476). Forced calls (settings save, init, the
-  // visibilitychange catch-up) still run. A visible tab keeps its live status.
-  if(!force&&typeof document!=='undefined'&&document.hidden){
-    return _dashboardStatusCache;
-  }
-  if(!force&&_dashboardStatusCache&&(now-_dashboardStatusFetchedAt)<DASHBOARD_STATUS_TTL_MS){
-    _applyDashboardStatus(_dashboardStatusCache);
-    return _dashboardStatusCache;
-  }
-  if(typeof gfitMay==='function'&&!gfitMay('dashboard')){
-    _dashboardStatusCache={running:false};
-    _applyDashboardStatus(_dashboardStatusCache);
-    return _dashboardStatusCache;
-  }
-  try{
-    const status=await api('/api/dashboard/status',{timeoutToast:false});
-    _dashboardStatusCache=status||{running:false};
-  }catch(_){
-    _dashboardStatusCache={running:false};
-  }
-  _dashboardStatusFetchedAt=Date.now();
-  _applyDashboardStatus(_dashboardStatusCache);
-  return _dashboardStatusCache;
-}
-async function loadDashboardSettings(){
-  const modeEl=$('settingsDashboardMode');
-  const urlEl=$('settingsDashboardUrl');
-  if(!modeEl&&!urlEl) return;
-  const loadSeq=++_dashboardSettingsLoadSeq;
-  const writeSeq=_dashboardSettingsWriteSeq;
-  try{
-    const cfg=await api('/api/dashboard/config');
-    if(loadSeq!==_dashboardSettingsLoadSeq||writeSeq!==_dashboardSettingsWriteSeq) return;
-    const mode=_normalizeDashboardEnabledMode(cfg&&cfg.enabled);
-    if(modeEl) modeEl.value=mode;
-    _setDashboardModeForChip(mode);
-    if(urlEl) urlEl.value=cfg.url||'';
-    if(typeof _renderTabVisibilityChips==='function') _renderTabVisibilityChips();
-  }catch(_){/* leave defaults visible */}
-}
-async function saveDashboardSettings(opts){
-  opts=opts||{};
-  const modeEl=$('settingsDashboardMode');
-  const urlEl=$('settingsDashboardUrl');
-  const statusEl=$('settingsDashboardStatus');
-  const payload={enabled:(modeEl&&modeEl.value)||'auto',url:(urlEl&&urlEl.value||'').trim()};
-  _dashboardSettingsWriteSeq+=1;
-  try{
-    const saved=await api('/api/dashboard/config',{method:'POST',body:JSON.stringify(payload)});
-    const mode=_normalizeDashboardEnabledMode(saved&&saved.enabled);
-    if(modeEl) modeEl.value=mode;
-    _setDashboardModeForChip(mode);
-    if(urlEl) urlEl.value=saved.url||'';
-    if(statusEl) statusEl.textContent='Dashboard link settings saved.';
-    await refreshDashboardStatus(true);
-    if(typeof _renderTabVisibilityChips==='function') _renderTabVisibilityChips();
-  }catch(err){
-    if(statusEl) statusEl.textContent='Dashboard link settings failed to save.';
-    else if(typeof showToast==='function') showToast('Dashboard link settings failed to save.');
-    try{await loadDashboardSettings();}catch(_){}
-    if(opts.raiseOnError) throw err;
-  }
-}
-function openHermesDashboard(event){
-  if(event){event.preventDefault();event.stopPropagation();}
-  const btn=event&&event.currentTarget?event.currentTarget:document.querySelector('[data-dashboard-link]');
-  const url=(btn&&btn.dataset&&btn.dataset.dashboardUrl)||_dashboardBrowserUrl(_dashboardStatusCache);
-  if(!url) return false;
-  window.open(url,'_blank','noopener,noreferrer');
-  return false;
-}
-function _initDashboardLinkProbe(){
-  if(typeof gfitMay==='function'&&!gfitMay('dashboard')) return;
-  loadDashboardSettings();
-  refreshDashboardStatus(true);
-  setInterval(refreshDashboardStatus,DASHBOARD_STATUS_TTL_MS);
-  // Catch up once when the tab becomes visible again, since the interval poll
-  // was skipped while hidden and its cache is now stale.
-  if(typeof document!=='undefined'&&typeof document.addEventListener==='function'){
-    document.addEventListener('visibilitychange',()=>{
-      if(!document.hidden) refreshDashboardStatus(true);
-    });
-  }
-}
-if(document.readyState==='complete'){
-  _initDashboardLinkProbe();
-}else{
-  document.addEventListener('DOMContentLoaded',_initDashboardLinkProbe,{once:true});
-}
 
 /* ── Image lightbox — click any .msg-media-img to enlarge ─────────────────── */
 function _openImgLightbox(imgEl) {
@@ -3012,102 +2795,6 @@ function _initMediaPlaybackObserver(){
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',_initMediaPlaybackObserver);
 else _initMediaPlaybackObserver();
 setTimeout(_initMediaPlaybackObserver,0);
-
-// ── Ambient provider quota indicator (#1766) ────────────────────────────────
-let _providerQuotaRefreshInFlight=false;
-
-function _formatQuotaMoneyShort(value){
-  const n=Number(value);
-  if(!Number.isFinite(n)) return '';
-  if(Math.abs(n)>=100) return '$'+n.toFixed(0);
-  if(Math.abs(n)>=10) return '$'+n.toFixed(1);
-  return '$'+n.toFixed(2);
-}
-function _formatQuotaPercentShort(value){
-  const n=Number(value);
-  if(!Number.isFinite(n)) return '';
-  return Math.max(0,Math.min(100,n)).toFixed(0)+'%';
-}
-function _providerQuotaIndicatorText(status){
-  if(!status||status.status!=='available') return null;
-  const provider=status.display_name||status.provider||'Provider';
-  const accountLimits=status.account_limits||null;
-  if(accountLimits&&Array.isArray(accountLimits.windows)&&accountLimits.windows.length){
-    const w=accountLimits.windows.find(x=>x&&Number.isFinite(Number(x.remaining_percent)))||accountLimits.windows[0];
-    const remaining=_formatQuotaPercentShort(w&&w.remaining_percent);
-    if(remaining) return {label:remaining, title:provider+' — '+(status.message||'Provider usage loaded')+' — '+remaining+' remaining'};
-  }
-  const quota=status.quota||null;
-  if(quota){
-    const remaining=_formatQuotaMoneyShort(quota.limit_remaining);
-    const used=_formatQuotaMoneyShort(quota.usage);
-    const limit=_formatQuotaMoneyShort(quota.limit);
-    if(remaining){
-      const parts=[];
-      if(used) parts.push('used '+used);
-      if(limit) parts.push('limit '+limit);
-      return {label:remaining, title:provider+' — '+(status.message||'Provider quota loaded')+(parts.length?' — '+parts.join(' · '):'')};
-    }
-  }
-  return null;
-}
-function renderProviderQuotaIndicator(status){
-  const chip=$('providerQuotaChip');
-  const label=$('providerQuotaChipLabel');
-  const mobileAction=$('composerMobileQuotaAction');
-  const mobileLabel=$('composerMobileQuotaLabel');
-  if(!chip||!label) return;
-  // Hide entirely when the user has disabled the ambient quota chip in Settings.
-  // Boot defaults this on; an explicit false preference suppresses it.
-  if(window._showQuotaChip!==true){
-    chip.hidden=true;
-    label.textContent='';
-    chip.removeAttribute('title');
-    if(mobileAction){mobileAction.style.display='none';mobileAction.removeAttribute('title');}
-    if(mobileLabel) mobileLabel.textContent='';
-    return;
-  }
-  const text=_providerQuotaIndicatorText(status);
-  if(!text||status.status!=='available'||(!status.quota&&!status.account_limits)){
-    chip.hidden=true;
-    label.textContent='';
-    chip.removeAttribute('title');
-    if(mobileAction){mobileAction.style.display='none';mobileAction.removeAttribute('title');}
-    if(mobileLabel) mobileLabel.textContent='';
-    return;
-  }
-  label.textContent=text.label;
-  chip.title=text.title;
-  chip.hidden=false;
-  if(mobileAction){mobileAction.style.display='';mobileAction.title=text.title;}
-  if(mobileLabel) mobileLabel.textContent=text.label;
-}
-async function refreshProviderQuotaIndicator(){
-  // Short-circuit before the fetch when the chip is disabled — no point asking
-  // the server for quota data the UI will throw away, or that the caller may not read.
-  if(window._showQuotaChip!==true||(typeof gfitMay==='function'&&!gfitMay('provider_quota'))){
-    const chip=$('providerQuotaChip');
-    if(chip){chip.hidden=true;chip.removeAttribute('title');}
-    const mobileAction=$('composerMobileQuotaAction');
-    if(mobileAction){mobileAction.style.display='none';mobileAction.removeAttribute('title');}
-    const mobileLabel=$('composerMobileQuotaLabel');
-    if(mobileLabel) mobileLabel.textContent='';
-    return;
-  }
-  if(_providerQuotaRefreshInFlight) return;
-  _providerQuotaRefreshInFlight=true;
-  try{
-    const status=await api('/api/provider/quota');
-    renderProviderQuotaIndicator(status);
-  }catch(_e){
-    renderProviderQuotaIndicator(null);
-  }finally{
-    _providerQuotaRefreshInFlight=false;
-  }
-}
-window.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&typeof refreshProviderQuotaIndicator==='function') refreshProviderQuotaIndicator();
-});
 
 // Dynamic model labels -- populated by populateModelDropdown(), fallback to static map
 let _dynamicModelLabels={};
@@ -5586,19 +5273,6 @@ function fetchReasoningChip(keyOverride){
   });
 }
 
-function refreshProfileTransitionReasoningChip(model, provider){
-  _profileTransitionReasoningContext={profile:(S&&S.activeProfile)||'default',model,provider};
-  _currentReasoningEffort=null;
-  _currentReasoningEffortsSupported=null;
-  _currentReasoningToggleSupported=undefined;
-  _lastReasoningFetchKey=null;
-  ++_reasoningFetchSeq;
-  _applyReasoningChip('', {supported_efforts:[], supports_thinking_toggle:false});
-  const params=new URLSearchParams();
-  if(model) params.set('model',model);
-  if(provider) params.set('provider',provider);
-  fetchReasoningChip(params.size?'?'+params.toString():undefined);
-}
 
 function clearProfileTransitionReasoningContext(){
   _profileTransitionReasoningContext=null;
@@ -5710,7 +5384,6 @@ document.addEventListener('click',function(e){
 
 // ── Session toolsets chip (#493) ───────────────────────────────────────────
 let _currentSessionToolsets = null; // null = active profile defaults, array = custom list
-let _toolsetsCatalog = null;
 
 function _applyToolsetsChip(toolsets) {
   _currentSessionToolsets = toolsets;
@@ -5759,38 +5432,6 @@ function syncToolsetsChip() {
   _syncToolsetsChip();
 }
 
-function _normalizeToolsetsCatalog(payload) {
-  const servers = payload && Array.isArray(payload.servers) ? payload.servers : [];
-  const seen = new Set();
-  const names = [];
-  servers.forEach(function(server) {
-    const name = String((server && server.name) || '').trim();
-    if (!name || seen.has(name)) return;
-    seen.add(name);
-    names.push(name);
-  });
-  return names;
-}
-
-function _loadToolsetsCatalog() {
-  if (Array.isArray(_toolsetsCatalog)) return Promise.resolve(_toolsetsCatalog);
-  if (typeof gfitMay==='function'&&!gfitMay('mcp_servers')) return Promise.resolve([]);
-  return api('/api/mcp/servers')
-    .then(function(payload) {
-      _toolsetsCatalog = _normalizeToolsetsCatalog(payload);
-      return _toolsetsCatalog;
-    })
-    .catch(function() {
-      _toolsetsCatalog = false;
-      return [];
-    });
-}
-
-function invalidateToolsetsCatalog(payload) {
-  _toolsetsCatalog = payload && Array.isArray(payload.servers) ? _normalizeToolsetsCatalog(payload) : null;
-}
-if (typeof window !== 'undefined') window.invalidateToolsetsCatalog = invalidateToolsetsCatalog;
-
 function _toolsetsInputList(input) {
   if (!input) return [];
   return input.value.split(',').map(s => s.trim()).filter(Boolean);
@@ -5810,12 +5451,6 @@ function _ensureToolsetsPresetSection() {
   return section;
 }
 
-function _appendToolsetsLabel(section, text) {
-  const label = document.createElement('div');
-  label.className = 'toolsets-dropdown-desc';
-  label.textContent = text;
-  section.appendChild(label);
-}
 
 function _renderToolsetsPresetSections(opts) {
   const state = opts && opts.state;
@@ -5823,7 +5458,6 @@ function _renderToolsetsPresetSections(opts) {
   const section = _ensureToolsetsPresetSection();
   if (!section || !state || !input) return;
   const selected = _toolsetsInputList(input);
-  const selectedSet = new Set(selected);
   const hasCustom = selected.length > 0;
   state.textContent = hasCustom
     ? '🔧 ' + selected.join(', ')
@@ -5836,37 +5470,6 @@ function _renderToolsetsPresetSections(opts) {
   defaultsBtn.className = 'toolsets-action-btn toolsets-clear-btn';
   defaultsBtn.textContent = t('session_toolsets_use_profile_defaults');
   section.appendChild(defaultsBtn);
-
-  _appendToolsetsLabel(section, t('session_toolsets_configured_servers'));
-  if (_toolsetsCatalog === null) {
-    _appendToolsetsLabel(section, t('session_toolsets_loading_servers'));
-    return;
-  }
-  if (_toolsetsCatalog === false) {
-    _appendToolsetsLabel(section, t('mcp_load_failed'));
-    return;
-  }
-  if (!Array.isArray(_toolsetsCatalog) || !_toolsetsCatalog.length) {
-    _appendToolsetsLabel(section, t('session_toolsets_no_configured_servers'));
-    return;
-  }
-  _toolsetsCatalog.forEach(function(name) {
-    const row = document.createElement('label');
-    row.className = 'toolsets-server-option';
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.gap = '6px';
-    row.style.margin = '4px 0';
-    row.style.fontSize = '12px';
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'toolsets-server-checkbox';
-    checkbox.value = name;
-    checkbox.checked = selectedSet.has(name);
-    row.appendChild(checkbox);
-    row.appendChild(document.createTextNode(name));
-    section.appendChild(row);
-  });
 }
 
 function _populateToolsetsDropdown() {
@@ -5924,14 +5527,6 @@ function toggleToolsetsDropdown() {
   if (typeof closeReasoningDropdown === 'function') closeReasoningDropdown();
   _syncToolsetsChip();
   _populateToolsetsDropdown();
-  _loadToolsetsCatalog().then(function() {
-    const stillOpen = dd && dd.classList.contains('open');
-    if (stillOpen) {
-      const state = $('toolsetsDropdownState');
-      const input = $('toolsetsInput');
-      _renderToolsetsPresetSections({ state, input });
-    }
-  });
   dd.classList.add('open');
   _positionToolsetsDropdown();
   chip.classList.add('active');
@@ -6017,20 +5612,6 @@ document.addEventListener('click', function(e) {
   }
 });
 
-document.addEventListener('change', function(e) {
-  if (!e.target.closest('#toolsetsPresetSections')) return;
-  if (!e.target.classList.contains('toolsets-server-checkbox')) return;
-  const input = $('toolsetsInput');
-  const state = $('toolsetsDropdownState');
-  if (!input) return;
-  const checked = Array.from(document.querySelectorAll('#toolsetsPresetSections .toolsets-server-checkbox:checked'))
-    .map(el => String(el.value || '').trim())
-    .filter(Boolean);
-  const catalogSet = new Set(Array.isArray(_toolsetsCatalog) ? _toolsetsCatalog : []);
-  const manual = _toolsetsInputList(input).filter(name => !catalogSet.has(name));
-  input.value = checked.concat(manual).join(', ');
-  _renderToolsetsPresetSections({ state, input });
-});
 
 // Position toolsets dropdown on resize, OR close it if the chip is no longer
 // visible (e.g. resize crossed the 1100px container threshold while dropdown
@@ -7084,7 +6665,7 @@ function _clearActivityElapsedTimer(){
   _activityElapsedTimerGroup=null;
 }
 
-const _MOBILE_CONFIG_BASE_LABEL='Workspace, model, quota, reasoning, and context settings';
+const _MOBILE_CONFIG_BASE_LABEL='Workspace, model, reasoning, and context settings';
 
 function _setCtxCompressButton(btn,text){
   if(!btn)return;
@@ -8776,6 +8357,30 @@ async function handleComposerPrimaryAction(){
   await send();
 }
 
+// One Stop request for both Stop paths (composer and sidebar), through api() so an
+// expired login redirects to the login page and a hung request times out with a
+// message. A Stop is sent once: no retries. Resolves to {ok, body, error}; ok is
+// false when the request failed or is redirecting to login.
+async function requestStreamCancel(streamId){
+  try{
+    const body=await api(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,{retries:0,timeoutMs:15000});
+    if(body===undefined) return {ok:false, body:null, error:null};  // 401: api() is redirecting to login
+    return {ok:true, body, error:null};
+  }catch(e){
+    return {ok:false, body:null, error:e};
+  }
+}
+
+// One speech request for every read-aloud caller. The answer is audio, which
+// api() does not read, so this keeps a raw fetch; callers handle the Response.
+function requestSpeech(payload){
+  return fetch(new URL('api/tts', document.baseURI || location.href).href, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  });
+}
+
 function setBusy(v){
   S.busy=v;
   updateSendBtn();
@@ -9484,11 +9089,7 @@ function _playEdgeTtsChunked(text, btn){
     let rate='', pitch='';
     if(!isNaN(savedRate)){const pct=Math.round((savedRate-1)*100);const sign=pct>=0?'+':'';rate=sign+pct+'%';}
     if(!isNaN(savedPitch)){const hz=Math.round((savedPitch-1)*50);const sign=hz>=0?'+':'';pitch=sign+hz+'Hz';}
-    fetch(new URL('api/tts', document.baseURI || location.href).href, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text:chunk, voice:voice, rate:rate, pitch:pitch, engine:'edge'})
-    })
+    requestSpeech({text:chunk, voice:voice, rate:rate, pitch:pitch, engine:'edge'})
     .then(function(r){
       if(!r.ok){
         return r.json().catch(function(){return {};}).then(function(j){
@@ -9557,26 +9158,6 @@ function speakMessage(btn){
     _playEdgeTtsChunked(clean, btn);
     return;
   }
-  // Extension-registered TTS engine (window.registerHermesTtsEngine). Synthesize
-  // via the extension, then play through the shared audio-buffer path.
-  if(typeof window._hermesTtsIsRegistered==='function' && window._hermesTtsIsRegistered(engine)){
-    if(btn) btn.dataset.speaking='1';
-    _ttsSpeaking=true;
-    const _failReg=function(msg){
-      _ttsSpeaking=false;_playingEdgeAudio=null;
-      if(btn)btn.dataset.speaking='0';
-      if(msg&&typeof showToast==='function') showToast(msg,4000,'error');
-    };
-    const _opts={
-      voice: localStorage.getItem('hermes-tts-voice')||'',
-      rate: parseFloat(localStorage.getItem('hermes-tts-rate')),
-      pitch: parseFloat(localStorage.getItem('hermes-tts-pitch')),
-    };
-    Promise.resolve(window._hermesTtsSynth(engine, clean, _opts))
-      .then(function(buf){ return _playAudioBuf(buf, btn, 'TTS'); })
-      .catch(function(e){ _failReg((e&&e.message)||'TTS engine failed'); });
-    return;
-  }
 
   if(!('speechSynthesis' in window)){
     showToast(t('tts_not_supported')||'Speech synthesis not supported in this browser.');
@@ -9602,11 +9183,7 @@ function _playElevenLabsTts(text, btn){
     if(btn)btn.dataset.speaking='0';
     if(msg&&typeof showToast==='function') showToast(msg,4000,'error');
   };
-  fetch(new URL('api/tts', document.baseURI || location.href).href, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:text, engine:'elevenlabs'})
-  })
+  requestSpeech({text:text, engine:'elevenlabs'})
   .then(function(r){
     if(!r.ok){
       return r.json().catch(function(){return {};}).then(function(j){
@@ -9629,11 +9206,7 @@ function _playOpenaiTts(text, btn){
     if(btn)btn.dataset.speaking='0';
     if(msg&&typeof showToast==='function') showToast(msg,4000,'error');
   };
-  fetch(new URL('api/tts', document.baseURI || location.href).href, {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:text, engine:'openai'})
-  })
+  requestSpeech({text:text, engine:'openai'})
   .then(function(r){
     if(!r.ok){
       return r.json().catch(function(){return {};}).then(function(j){
@@ -9739,23 +9312,7 @@ function autoReadLastAssistant(){
     _playEdgeTtsChunked(clean, null);
     return;
   }
-  // Extension-registered TTS engine (window.registerHermesTtsEngine): synth via
-  // the extension, then play through the shared audio-buffer path. Mirrors the
-  // registered-engine branch in speakMessage() so auto-read honors the selection.
-  if(typeof window._hermesTtsIsRegistered==='function' && window._hermesTtsIsRegistered(engine)){
-    _ttsSpeaking=true;
-    const _opts={
-      voice: localStorage.getItem('hermes-tts-voice')||'',
-      rate: parseFloat(localStorage.getItem('hermes-tts-rate')),
-      pitch: parseFloat(localStorage.getItem('hermes-tts-pitch')),
-    };
-    Promise.resolve(window._hermesTtsSynth(engine, clean, _opts))
-      .then(function(buf){ return _playAudioBuf(buf, null, 'TTS'); })
-      .catch(function(){ _ttsSpeaking=false; _playingEdgeAudio=null; });
-    return;
-  }
-  // Unknown/unregistered engine (e.g. an extension engine that's no longer
-  // registered) — fall back to browser TTS only if it's available.
+  // Unknown engine — fall back to browser TTS only if it's available.
   if(!('speechSynthesis' in window)) return;
   // Use chunked playback for browser TTS
   _ttsChunkQueue=_splitForTTS(clean);
@@ -10453,7 +10010,6 @@ const AGENT_HEALTH_INTERVAL_MS=30000;
 const AGENT_HEALTH_DISMISSED_KEY='agent-health-dismissed';
 let _agentHealthTimer=null;
 let _agentHealthLastState='unknown';
-let _lastGatewayRestartTime=0;
 function _agentHealthDismissed(){
   try{return localStorage.getItem(AGENT_HEALTH_DISMISSED_KEY)==='1';}
   catch(_){return false;}
@@ -10484,35 +10040,8 @@ function dismissAgentHealthAlert(){
   _setAgentHealthDismissed(true);
   _hideAgentHealthAlert();
 }
-async function restartGatewayService(){
-  const btn = $('btnRestartGateway');
-  const dismissBtn = $('agentHealthDismiss');
-  if(!btn) return;
-  btn.disabled = true;
-  if(dismissBtn) dismissBtn.disabled = true;
-  const originalText = btn.textContent;
-  btn.textContent = 'Restarting...';
-  try {
-    const res = await api('/api/health/restart', {method: 'POST'});
-    if(res && res.ok){
-      showToast('Gateway service restarted successfully');
-      _hideAgentHealthAlert();
-      _lastGatewayRestartTime = Date.now();
-      setTimeout(pollAgentHealth, 15000);
-    } else {
-      showToast(res && res.error || 'Failed to restart gateway service');
-    }
-  } catch(e) {
-    showToast('Failed to restart gateway service: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    if(dismissBtn) dismissBtn.disabled = false;
-    btn.textContent = originalText;
-  }
-}
 async function pollAgentHealth(){
   if(document.visibilityState !== 'visible') return;
-  if(Date.now() - _lastGatewayRestartTime < 15000) return;
   try{
     const payload=await api('/api/health/agent',{timeoutToast:false});
     if(payload.alive === true){
@@ -10771,39 +10300,12 @@ function _topbarMessageMetaText(){
   // branch above surfaces the raw server total, and only as "loaded of total".
   return t('n_messages',loadedCount);
 }
-// GFIT-CoWork: the Admin reads another Profile's session in place, read-only.
-// The detail load says so (read_only_reason "other_profile"); the banner names
-// the owner and the composer is disabled until another session is opened.
-function syncReadOnlySessionView(){
-  const banner=$('sessionReadOnlyBanner');
-  const msg=$('msg');
-  const wrap=$('composerWrap');
-  const session=S.session;
-  const otherProfile=!!(session&&session.read_only_reason==='other_profile');
-  // Pending approvals and clarify questions stay visible, without their answers.
-  if(wrap) wrap.classList.toggle('other-profile-read-only',otherProfile);
-  if(banner){
-    banner.hidden=!otherProfile;
-    banner.textContent=otherProfile?t('session_other_profile_read_only',session.owner_label||session.owner_profile||''):'';
-  }
-  if(!msg) return;
-  if(otherProfile){
-    msg.disabled=true;
-    msg.dataset.otherProfileReadOnly='1';
-  }else if(msg.dataset.otherProfileReadOnly){
-    msg.disabled=false;
-    delete msg.dataset.otherProfileReadOnly;
-  }
-}
-
 function syncTopbar(){
-  if(typeof syncReadOnlySessionView==='function') syncReadOnlySessionView();
   if(!S.session){
     document.title=APP_NAME;
     if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
     if(typeof _syncWorkspaceHeadingState==='function') _syncWorkspaceHeadingState();
     if(typeof syncModelChip==='function') syncModelChip();
-    if(typeof syncTerminalButton==='function') syncTerminalButton();
     if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
     else {
       const sidebarName=$('sidebarWsName');
@@ -10842,78 +10344,67 @@ function syncTopbar(){
   }
   if(typeof syncAppTitlebar==='function') syncAppTitlebar();
   if(typeof _syncWorkspaceHeadingState==='function') _syncWorkspaceHeadingState();
-  // If a profile switch just happened, apply its model rather than the session's stale value.
-  // S._pendingProfileModel is set by switchToProfile() and cleared here after one application.
-  const modelOverride=S._pendingProfileModel;
   let currentModel=S.session.model||'';
-  if(modelOverride){
-    S._pendingProfileModel=null;
-    const providerOverride=S._pendingProfileModelProvider||null;
-    S._pendingProfileModelProvider=null;
-    _applyModelToDropdown(modelOverride,$('modelSelect'),providerOverride);
-    currentModel=modelOverride;
-  } else {
-    const modelSel=$('modelSelect');
-    const rawCurrentModel=String(currentModel||'').trim();
-    const hasSessionModel=rawCurrentModel&&rawCurrentModel.toLowerCase()!=='unknown';
-    if(!hasSessionModel){
-      // Missing/unknown session metadata must not leave the picker on the
-      // previously viewed chat's model (#1771). Apply the configured default
-      // first, then the first available option only as an HTML fallback.
-      const fallback=_applySessionModelFallback(modelSel);
-      if(fallback){
-        // Defer state mutation + network write while the live model resolution
-        // is in flight — sessions.js sets _modelResolutionDeferred=true between
-        // the fast-path session render and the resolve_model=1 round-trip.
-        // Persisting here would race that resolution and would also issue
-        // silent /api/session/update POSTs against imported/read-only CLI
-        // sessions whose model field reads "unknown" (#1779 stage-310 review).
-        // The visible sel.value change still happens above for UX; only the
-        // state mutation + persist defers.
-        const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
-        if(!deferModelCorrection){
-          S.session.model=fallback.model;
-          S.session.model_provider=fallback.model_provider||null;
-          currentModel=fallback.model;
-          _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
-        }
+  const modelSel=$('modelSelect');
+  const rawCurrentModel=String(currentModel||'').trim();
+  const hasSessionModel=rawCurrentModel&&rawCurrentModel.toLowerCase()!=='unknown';
+  if(!hasSessionModel){
+    // Missing/unknown session metadata must not leave the picker on the
+    // previously viewed chat's model (#1771). Apply the configured default
+    // first, then the first available option only as an HTML fallback.
+    const fallback=_applySessionModelFallback(modelSel);
+    if(fallback){
+      // Defer state mutation + network write while the live model resolution
+      // is in flight — sessions.js sets _modelResolutionDeferred=true between
+      // the fast-path session render and the resolve_model=1 round-trip.
+      // Persisting here would race that resolution and would also issue
+      // silent /api/session/update POSTs against imported/read-only CLI
+      // sessions whose model field reads "unknown" (#1779 stage-310 review).
+      // The visible sel.value change still happens above for UX; only the
+      // state mutation + persist defers.
+      const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
+      if(!deferModelCorrection){
+        S.session.model=fallback.model;
+        S.session.model_provider=fallback.model_provider||null;
+        currentModel=fallback.model;
+        _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
       }
-    } else {
-      const applied=_applyModelToDropdown(currentModel,modelSel,S.session.model_provider||null);
-      // If the session model is missing from the current provider list, inject
-      // a session-scoped option instead of displaying the previous/static
-      // selection. Only fall back if that repair path is unavailable.
-      if(!applied){
-        const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
-        const missingModelIsRoutable=_providerDefersMissingModelFallback(S.session.model_provider||window._activeProvider||null);
-        // Also defer if a live model fetch is still in flight — the model may be
-        // in the list once the fetch completes. Persisting now would corrupt the
-        // session with the wrong model before live models arrive (#1169).
-        const liveStillPending=window._activeProvider&&_liveModelFetchPending.has(window._activeProvider);
-        if(liveStillPending||missingModelIsRoutable){
-          // Live fetch in flight — don't touch sel.value or S.session.model yet.
-          // _addLiveModelsToSelect() will re-apply S.session.model once done (#1169).
-          // Named custom providers/OpenRouter can also route vendor-prefixed IDs
-          // outside the static catalog, so preserve the user's explicit choice.
-          if(typeof _ensureModelOptionInDropdown==='function'){
-            const sessionOption=_ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null);
-            if(sessionOption) currentModel=sessionOption;
-          }
+    }
+  } else {
+    const applied=_applyModelToDropdown(currentModel,modelSel,S.session.model_provider||null);
+    // If the session model is missing from the current provider list, inject
+    // a session-scoped option instead of displaying the previous/static
+    // selection. Only fall back if that repair path is unavailable.
+    if(!applied){
+      const deferModelCorrection=Boolean(S.session._modelResolutionDeferred);
+      const missingModelIsRoutable=_providerDefersMissingModelFallback(S.session.model_provider||window._activeProvider||null);
+      // Also defer if a live model fetch is still in flight — the model may be
+      // in the list once the fetch completes. Persisting now would corrupt the
+      // session with the wrong model before live models arrive (#1169).
+      const liveStillPending=window._activeProvider&&_liveModelFetchPending.has(window._activeProvider);
+      if(liveStillPending||missingModelIsRoutable){
+        // Live fetch in flight — don't touch sel.value or S.session.model yet.
+        // _addLiveModelsToSelect() will re-apply S.session.model once done (#1169).
+        // Named custom providers/OpenRouter can also route vendor-prefixed IDs
+        // outside the static catalog, so preserve the user's explicit choice.
+        if(typeof _ensureModelOptionInDropdown==='function'){
+          const sessionOption=_ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null);
+          if(sessionOption) currentModel=sessionOption;
+        }
+      } else {
+        const sessionOption=(typeof _ensureModelOptionInDropdown==='function')
+          ? _ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null)
+          : null;
+        if(sessionOption){
+          currentModel=sessionOption;
         } else {
-          const sessionOption=(typeof _ensureModelOptionInDropdown==='function')
-            ? _ensureModelOptionInDropdown(currentModel,modelSel,S.session.model_provider||null)
-            : null;
-          if(sessionOption){
-            currentModel=sessionOption;
-          } else {
-            const fallback=_applySessionModelFallback(modelSel);
-            if(fallback&&!deferModelCorrection){
-              S.session.model=fallback.model;
-              S.session.model_provider=fallback.model_provider||null;
-              currentModel=fallback.model;
-              // Persist the correction so the session doesn't re-inject on next load.
-              _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
-            }
+          const fallback=_applySessionModelFallback(modelSel);
+          if(fallback&&!deferModelCorrection){
+            S.session.model=fallback.model;
+            S.session.model_provider=fallback.model_provider||null;
+            currentModel=fallback.model;
+            // Persist the correction so the session doesn't re-inject on next load.
+            _persistSessionModelCorrection(fallback.model,S.session.model_provider||null);
           }
         }
       }
@@ -10927,19 +10418,9 @@ function syncTopbar(){
   if(clearBtn) clearBtn.style.display=(S.messages&&S.messages.filter(msg=>msg.role!=='tool').length>0)?'':'none';
   if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
   if(typeof syncWorkspaceDisplays==='function') syncWorkspaceDisplays();
-  if(typeof syncTerminalButton==='function') syncTerminalButton();
   // modelSelect already set above
-  // Update profile chip label.
-  // The chip is the profile-SWITCHER trigger (it fronts the profile dropdown) and
-  // governs where the next message / new chat routes — both follow the client
-  // active profile (the hermes_profile cookie, set only by /api/profile/switch).
-  // It must therefore reflect S.activeProfile, NOT the loaded session's profile.
-  // #3331 briefly keyed this on S.session.profile so the label would track the
-  // session being browsed, but loadSession() never updates S.activeProfile, so
-  // opening a cross-profile session made the chip disagree with the dropdown
-  // checkmark and lie about message routing (#3635). #3331's legitimate work —
-  // scoping project/session operations to the session's own profile — is
-  // unaffected by this line.
+  // Update the Profile chip label: the request's Profile (S.activeProfile, the
+  // User's own), never the loaded session's (#3331/#3635).
   const profileLabel=$('profileChipLabel');
   if(profileLabel) profileLabel.textContent=profileChipText();
   const titleLabel=$('titlebarProfileLabel');
@@ -20959,21 +20440,6 @@ function _showWorkspaceRootContextMenu(e){
   createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
   menu.appendChild(createSep);
 
-  const revealRoot=_workspaceContextMenuItem(t('reveal_in_finder'),async()=>{
-    menu.remove();
-    try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
-    catch(err){showToast(t('reveal_failed')+(err.message||err));}
-  });
-  revealRoot.dataset.gfitFeature='reveal_on_server';  // acts on the server machine (api/access.py SHELL_FEATURES)
-  menu.appendChild(revealRoot);
-
-  const vscodeRoot=_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
-    menu.remove();
-    try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
-    catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}
-  });
-  vscodeRoot.dataset.gfitFeature='reveal_on_server';
-  menu.appendChild(vscodeRoot);
 
   menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
     menu.remove();
@@ -21191,9 +20657,6 @@ function _renderTreeItems(container, entries, depth){
     el.setAttribute('draggable','true');
     el.dataset.wsType=item.type;
     el.oncontextmenu=(e)=>{
-      const grant=typeof _workspaceEscapeGrantForPath==='function' ? _workspaceEscapeGrantForPath(item.path) : null;
-      const isDirRow=item.type==='dir'||(item.type==='symlink'&&item.is_dir);
-      if(grant&&!isDirRow){e.preventDefault();e.stopPropagation();return;}
       e.preventDefault();e.stopPropagation();_showFileContextMenu(e,item);
     };
     el.ondragstart=(e)=>{_setWsDragData(e,item);e.dataTransfer.effectAllowed='copy';el.classList.add('dragging');};
@@ -21201,16 +20664,12 @@ function _renderTreeItems(container, entries, depth){
 
     const isLk = item.type === 'symlink';
     const isExternalLink = isLk && item.target_outside_workspace;
-    const escapeGrant = typeof _workspaceEscapeGrantForPath === 'function' ? _workspaceEscapeGrantForPath(item.path) : null;
-    const exactEscapeGrant = typeof _workspaceEscapeExactGrant === 'function' ? _workspaceEscapeExactGrant(item.path) : null;
-    const isReadOnlyEscape = !!escapeGrant;
-    const isNestedEscape = !!escapeGrant && !exactEscapeGrant;
     // External symlinks are display-only: not expandable, not openable.
     // The read gate (resolve_in_workspace) still blocks navigation through them.
     const isDirLike = !isExternalLink && (item.type === 'dir' || (isLk && item.is_dir));
     const isFileLike = !isExternalLink && !isDirLike;
     el.dataset.wsIsDir = String(isDirLike);
-    if(isExternalLink || isReadOnlyEscape){el.removeAttribute('draggable');el.ondragstart=null;}
+    if(isExternalLink){el.removeAttribute('draggable');el.ondragstart=null;}
 
     if(isDirLike){
       // Toggle arrow for directories
@@ -21246,21 +20705,8 @@ function _renderTreeItems(container, entries, depth){
     // (the "Double-click to rename" hint here would be misleading). #1710.
     if(isLk && item.target)
       nameEl.title = t('symlink_link_to').replace('{target}', () => elideMiddle(item.target));
-    else if(isExternalLink)
-      nameEl.title = (typeof isReadOnlyEscape!=='undefined'
-        ? isReadOnlyEscape
-        : (typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false))
-        ? t('external_link_read_only')
-        : t('external_link_open_confirm');
-    else if(typeof isReadOnlyEscape!=='undefined'
-      ? isReadOnlyEscape
-      : (typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false))
-      nameEl.title = t('external_link_read_only');
-    else if(!isDirLike)
+    else if(!isDirLike && !isExternalLink)
       nameEl.title = t('double_click_rename');
-    const nameIsReadOnlyEscape=typeof isReadOnlyEscape!=='undefined'
-      ? isReadOnlyEscape
-      : (typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false);
     // Single-click opens (file) or expand-toggles (dir) but is debounced 300ms so a
     // double-click can cancel it and trigger rename instead. Without the debounce, the
     // click bubbles to el.onclick before dblclick can fire — that's #1698. Without the
@@ -21280,12 +20726,6 @@ function _renderTreeItems(container, entries, depth){
       if(_nameClickTimer){clearTimeout(_nameClickTimer);_nameClickTimer=null;}
       // For directories, double-click navigates (breadcrumb view)
       if(isDirLike){loadDir(item.path);return;}
-      // Escape-root rows remain browse-only, nested escape rows stay display-only.
-      if(nameIsReadOnlyEscape){
-        if(isExternalLink){if(typeof el.onclick==='function')el.onclick(e);return;}
-        openFile(item.path);
-        return;
-      }
       const inp=document.createElement('input');
       inp.className='file-rename-input';inp.value=item.name;
       inp.onclick=(e2)=>e2.stopPropagation();
@@ -21340,13 +20780,11 @@ function _renderTreeItems(container, entries, depth){
 
     // Delete button -- for file-like rows and directory-like rows
     if(isFileLike){
-      if(!isReadOnlyEscape){
-        const del=document.createElement('button');
-        del.className='file-del-btn';del.title=t('delete_title');del.textContent='\u00d7';
-        del.onclick=async(e)=>{e.stopPropagation();await deleteWorkspaceFile(item.path,item.name);};
-        el.appendChild(del);
-      }
-    }else if(isDirLike&& !isReadOnlyEscape){
+      const del=document.createElement('button');
+      del.className='file-del-btn';del.title=t('delete_title');del.textContent='\u00d7';
+      del.onclick=async(e)=>{e.stopPropagation();await deleteWorkspaceFile(item.path,item.name);};
+      el.appendChild(del);
+    }else if(isDirLike){
       const del=document.createElement('button');
       del.className='file-del-btn';del.title=t('delete_title');del.textContent='\u00d7';
       del.onclick=async(e)=>{e.stopPropagation();await deleteWorkspaceDir(item.path,item.name);};
@@ -21354,10 +20792,8 @@ function _renderTreeItems(container, entries, depth){
     }
 
     if(isDirLike){
-      if(!isReadOnlyEscape){
-        _bindWorkspaceMoveDropTarget(el,item.path);
-        _bindWorkspaceOsUploadDropTarget(el,item.path);
-      }
+      _bindWorkspaceMoveDropTarget(el,item.path);
+      _bindWorkspaceOsUploadDropTarget(el,item.path);
       // Single-click toggles expand/collapse
       el.onclick=async(e)=>{
         e.stopPropagation();
@@ -21379,27 +20815,10 @@ function _renderTreeItems(container, entries, depth){
         }
       };
     }else if(isExternalLink){
-      // Display-only: the link points outside the workspace. We do NOT disclose
-      // the resolved outside path (#4581 hardening) and do NOT recursively
-      // authorize nested escape rows under an already-authorized external root.
-      el.onclick=async(e)=>{
-        e.stopPropagation();
-        if(isNestedEscape){
-          await showConfirmDialog({
-            title:item.name,
-            message:t('external_link_read_only'),
-            confirmLabel:t('dialog_confirm_btn'),
-            danger:false,
-            hideCancel:true,
-            focusCancel:false,
-          });
-          return;
-        }
-        const grant = await authorizeWorkspaceEscapeNavigation(item);
-        if(!grant) return;
-        if(grant.isDir) await loadDir(item.path);
-        else await openFile(item.path);
-      };
+      // Display-only: the link points outside the Workspace, which a User may
+      // not open (ADR 0006), and the resolved outside path is never disclosed
+      // (#4581 hardening).
+      el.onclick=(e)=>e.stopPropagation();
     }else{
       el.onclick=async()=>openFile(item.path);
     }
@@ -21424,10 +20843,6 @@ function _renderTreeItems(container, entries, depth){
 
 async function deleteWorkspaceDir(relPath, name){
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(relPath)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const ok=await showConfirmDialog({title:t('delete_dir_confirm',name),message:'',confirmLabel:'Delete',danger:true,focusCancel:true});
   if(!ok)return;
   try{
@@ -21451,104 +20866,82 @@ function _showFileContextMenu(e, item){
   menu.style.top=(e.clientY+100>vh?e.clientY-100:e.clientY)+'px';
   const isDirLike=item.type==='dir'||(item.type==='symlink'&&item.is_dir);
   const targetDir=isDirLike ? item.path : _workspaceParentDir(item.path);
-  const isReadOnlyEscape=typeof _workspaceEscapeGrantForPath==='function' ? !!_workspaceEscapeGrantForPath(item.path) : false;
 
-  if(!isReadOnlyEscape){
-    menu.appendChild(_workspaceContextMenuItem(t('new_file'),async()=>{
-      menu.remove();
-      await promptNewFile(targetDir);
-    }));
+  menu.appendChild(_workspaceContextMenuItem(t('new_file'),async()=>{
+    menu.remove();
+    await promptNewFile(targetDir);
+  }));
 
-    menu.appendChild(_workspaceContextMenuItem(t('new_folder'),async()=>{
-      menu.remove();
-      await promptNewFolder(targetDir);
-    }));
+  menu.appendChild(_workspaceContextMenuItem(t('new_folder'),async()=>{
+    menu.remove();
+    await promptNewFolder(targetDir);
+  }));
 
-    const createSep=document.createElement('hr');
-    createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
-    menu.appendChild(createSep);
+  const createSep=document.createElement('hr');
+  createSep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
+  menu.appendChild(createSep);
 
-    // Rename
-    const renameItem=document.createElement('div');
-    renameItem.textContent=t('rename_title');
-    renameItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    renameItem.onmouseenter=()=>renameItem.style.background='var(--hover-bg)';
-    renameItem.onmouseleave=()=>renameItem.style.background='';
-    renameItem.onclick=()=>{menu.remove();_inlineRenameFileItem(item);};
-    menu.appendChild(renameItem);
+  // Rename
+  const renameItem=document.createElement('div');
+  renameItem.textContent=t('rename_title');
+  renameItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+  renameItem.onmouseenter=()=>renameItem.style.background='var(--hover-bg)';
+  renameItem.onmouseleave=()=>renameItem.style.background='';
+  renameItem.onclick=()=>{menu.remove();_inlineRenameFileItem(item);};
+  menu.appendChild(renameItem);
 
-    // Reveal in File Manager
-    const revealItem=document.createElement('div');
-    revealItem.textContent=t('reveal_in_finder');
-    revealItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    revealItem.onmouseenter=()=>revealItem.style.background='var(--hover-bg)';
-    revealItem.onmouseleave=()=>revealItem.style.background='';
-    revealItem.onclick=async()=>{menu.remove();try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('reveal_failed')+(err.message||err));}};
-    revealItem.dataset.gfitFeature='reveal_on_server';  // acts on the server machine (api/access.py SHELL_FEATURES)
-    menu.appendChild(revealItem);
 
-    // Open in VS Code (#2735)
-    const vscodeItem=document.createElement('div');
-    vscodeItem.textContent=t('open_in_vscode');
-    vscodeItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    vscodeItem.onmouseenter=()=>vscodeItem.style.background='var(--hover-bg)';
-    vscodeItem.onmouseleave=()=>vscodeItem.style.background='';
-    vscodeItem.onclick=async()=>{menu.remove();try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}};
-    vscodeItem.dataset.gfitFeature='reveal_on_server';
-    menu.appendChild(vscodeItem);
-
-    // Copy file path — resolves the absolute on-disk path on the server (so the
-    // user gets the full /home/.../workspace/foo.py rather than the relative
-    // path the file tree shows) and writes it to the OS clipboard. Useful for
-    // pasting into terminals, editors, or other apps without taking the slower
-    // Reveal-in-Finder round trip.
-    const copyPathItem=document.createElement('div');
-    copyPathItem.textContent=t('copy_file_path');
-    copyPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    copyPathItem.onmouseenter=()=>copyPathItem.style.background='var(--hover-bg)';
-    copyPathItem.onmouseleave=()=>copyPathItem.style.background='';
-    copyPathItem.onclick=async()=>{
-      menu.remove();
+  // Copy file path — resolves the absolute on-disk path on the server (so the
+  // user gets the full /home/.../workspace/foo.py rather than the relative
+  // path the file tree shows) and writes it to the OS clipboard. Useful for
+  // pasting into terminals, editors, or other apps without taking the slower
+  // Reveal-in-Finder round trip.
+  const copyPathItem=document.createElement('div');
+  copyPathItem.textContent=t('copy_file_path');
+  copyPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+  copyPathItem.onmouseenter=()=>copyPathItem.style.background='var(--hover-bg)';
+  copyPathItem.onmouseleave=()=>copyPathItem.style.background='';
+  copyPathItem.onclick=async()=>{
+    menu.remove();
+    try{
+      const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});
+      const abs=(r&&r.path)||item.path;
       try{
-        const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});
-        const abs=(r&&r.path)||item.path;
-        try{
-          await navigator.clipboard.writeText(abs);
-          showToast(t('path_copied'));
-        }catch(clipErr){
-          const ta=document.createElement('textarea');
-          ta.value=abs;
-          ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
-          document.body.appendChild(ta);
-          ta.select();
-          let copied=false;
-          try{copied=document.execCommand('copy');}catch(_){}
-          ta.remove();
-          if(copied) showToast(t('path_copied'));
-          else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
-        }
-      }catch(err){
-        showToast(t('path_copy_failed')+(err.message||err));
+        await navigator.clipboard.writeText(abs);
+        showToast(t('path_copied'));
+      }catch(clipErr){
+        const ta=document.createElement('textarea');
+        ta.value=abs;
+        ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
+        document.body.appendChild(ta);
+        ta.select();
+        let copied=false;
+        try{copied=document.execCommand('copy');}catch(_){}
+        ta.remove();
+        if(copied) showToast(t('path_copied'));
+        else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
       }
-    };
-    menu.appendChild(copyPathItem);
+    }catch(err){
+      showToast(t('path_copy_failed')+(err.message||err));
+    }
+  };
+  menu.appendChild(copyPathItem);
 
-    const copyRelPathItem=document.createElement('div');
-    copyRelPathItem.textContent=t('copy_relative_path');
-    copyRelPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-    copyRelPathItem.onmouseenter=()=>copyRelPathItem.style.background='var(--hover-bg)';
-    copyRelPathItem.onmouseleave=()=>copyRelPathItem.style.background='';
-    copyRelPathItem.onclick=async()=>{
-      menu.remove();
-      try{
-        const rel=_normalizeWorkspaceRelPath(item.path)||item.path;
-        await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
-      }catch(err){
-        showToast(t('path_copy_failed')+(err.message||err));
-      }
-    };
-    menu.appendChild(copyRelPathItem);
-  }
+  const copyRelPathItem=document.createElement('div');
+  copyRelPathItem.textContent=t('copy_relative_path');
+  copyRelPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+  copyRelPathItem.onmouseenter=()=>copyRelPathItem.style.background='var(--hover-bg)';
+  copyRelPathItem.onmouseleave=()=>copyRelPathItem.style.background='';
+  copyRelPathItem.onclick=async()=>{
+    menu.remove();
+    try{
+      const rel=_normalizeWorkspaceRelPath(item.path)||item.path;
+      await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
+    }catch(err){
+      showToast(t('path_copy_failed')+(err.message||err));
+    }
+  };
+  menu.appendChild(copyRelPathItem);
 
   if(isDirLike){
     const dlItem=document.createElement('div');
@@ -21565,18 +20958,16 @@ function _showFileContextMenu(e, item){
     menu.appendChild(dlItem);
   }
 
-  if(!isReadOnlyEscape){
-    const sep=document.createElement('hr');
-    sep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
-    menu.appendChild(sep);
-    const delItem=document.createElement('div');
-    delItem.textContent=t('delete_title');
-    delItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--error,#e94560);';
-    delItem.onmouseenter=()=>delItem.style.background='var(--hover-bg)';
-    delItem.onmouseleave=()=>delItem.style.background='';
-    delItem.onclick=()=>{menu.remove();if(isDirLike)deleteWorkspaceDir(item.path,item.name);else deleteWorkspaceFile(item.path,item.name);};
-    menu.appendChild(delItem);
-  }
+  const sep=document.createElement('hr');
+  sep.style.cssText='border:none;border-top:1px solid var(--border);margin:4px 0;';
+  menu.appendChild(sep);
+  const delItem=document.createElement('div');
+  delItem.textContent=t('delete_title');
+  delItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--error,#e94560);';
+  delItem.onmouseenter=()=>delItem.style.background='var(--hover-bg)';
+  delItem.onmouseleave=()=>delItem.style.background='';
+  delItem.onclick=()=>{menu.remove();if(isDirLike)deleteWorkspaceDir(item.path,item.name);else deleteWorkspaceFile(item.path,item.name);};
+  menu.appendChild(delItem);
 
   document.body.appendChild(menu);
   const dismiss=()=>{menu.remove();document.removeEventListener('click',dismiss);};
@@ -21585,10 +20976,6 @@ function _showFileContextMenu(e, item){
 
 async function _inlineRenameFileItem(item){
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(item.path)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const isDirLike=item.type==='dir'||(item.type==='symlink'&&item.is_dir);
   // Pre-fill the input with the current name and select just the stem
   // (everything before the last '.') so the user can immediately retype the
@@ -21622,10 +21009,6 @@ async function _inlineRenameFileItem(item){
 
 async function deleteWorkspaceFile(relPath, name){
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(relPath)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const _delFile=await showConfirmDialog({title:t('delete_confirm',name),message:'',confirmLabel:'Delete',danger:true,focusCancel:true});
   if(!_delFile) return;
   try{
@@ -21649,10 +21032,6 @@ async function promptNewFile(targetDir = S.currentDir || '.'){
     }catch(e){setStatus(t('create_failed')+e.message);return;}
   }
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(targetDir)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const targetLabel=_workspaceCreateTargetLabel(targetDir);
   const name=await showPromptDialog({
     title:t('new_file_prompt_title', targetLabel),
@@ -21682,10 +21061,6 @@ async function promptNewFolder(targetDir = S.currentDir || '.'){
     }catch(e){setStatus(t('folder_create_failed')+e.message);return;}
   }
   if(!S.session)return;
-  if(typeof _workspacePathIsReadOnly==='function'&&_workspacePathIsReadOnly(targetDir)){
-    showToast(t('external_link_read_only'), 2000);
-    return;
-  }
   const targetLabel=_workspaceCreateTargetLabel(targetDir);
   const name=await showPromptDialog({
     title:t('new_folder_prompt_title', targetLabel),

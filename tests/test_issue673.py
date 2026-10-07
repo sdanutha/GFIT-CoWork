@@ -14,7 +14,6 @@ Covers:
 
 import json
 import pathlib
-import re
 import unittest
 import urllib.error
 import urllib.request
@@ -111,11 +110,6 @@ class TestSidebarDensitySessionRendering(unittest.TestCase):
         self.assertIn("const modelMeta=_formatSessionModelWithGateway(s);", SESSIONS_JS)
         self.assertIn("if(modelMeta) metaBits.push(modelMeta);", SESSIONS_JS)
         self.assertIn("t('session_meta_messages', msgCount)", SESSIONS_JS)
-
-    def test_profile_only_when_show_all_profiles(self):
-        self.assertIn(
-            "if(_showAllProfiles&&s.profile) metaBits.push(s.profile);", SESSIONS_JS
-        )
 
     def test_session_meta_css_hook_present(self):
         self.assertIn(".session-meta", STYLE_CSS)

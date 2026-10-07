@@ -3,12 +3,12 @@ import logging
 from api.streaming import (
     _normalize_prefill_messages_before_user_turn,
     _prefill_messages_with_webui_context,
-    _webui_ephemeral_system_prompt,
 )
+from api.turn_builder import ephemeral_system_prompt
 
 
 def test_webui_ephemeral_prompt_includes_browser_surface_context():
-    prompt = _webui_ephemeral_system_prompt(
+    prompt = ephemeral_system_prompt(
         "Use a concise tone.",
         surface_context={
             "source": "webui",
@@ -41,7 +41,7 @@ def test_webui_ephemeral_prompt_includes_browser_surface_context():
 
 
 def test_webui_ephemeral_prompt_skips_empty_surface_fields():
-    prompt = _webui_ephemeral_system_prompt(
+    prompt = ephemeral_system_prompt(
         None,
         surface_context={
             "source": "webui",
@@ -60,7 +60,7 @@ def test_webui_ephemeral_prompt_skips_empty_surface_fields():
 
 def test_ephemeral_prompt_avoids_platform_info_when_no_config():
     """Without config_data, the delivery context falls back to defaults."""
-    prompt = _webui_ephemeral_system_prompt(
+    prompt = ephemeral_system_prompt(
         "Be concise.",
         surface_context={"source": "webui"},
     )
@@ -165,7 +165,7 @@ def test_delivery_context_includes_home_channels_when_configured():
             },
         },
     }
-    prompt = _webui_ephemeral_system_prompt(
+    prompt = ephemeral_system_prompt(
         None,
         surface_context={"source": "webui"},
         config_data=config,

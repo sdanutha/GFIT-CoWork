@@ -88,8 +88,8 @@ def test_routes_reads_pending_goal_continuation():
     assert "PENDING_GOAL_CONTINUATION" in routes_py, (
         "routes.py must reference PENDING_GOAL_CONTINUATION"
     )
-    assert "STREAM_GOAL_RELATED" in routes_py, (
-        "routes.py must reference STREAM_GOAL_RELATED to mark goal-related streams"
+    assert "goal_related=goal_related" in routes_py, (
+        "routes.py must open goal-related streams as goal-related (run_registry marks them)"
     )
 
 
@@ -104,7 +104,7 @@ def test_routes_marks_goal_kickoff_as_goal_related():
 
     # After kickoff stream is started, it must mark the stream
     kickoff_idx = routes_py.find("kickoff_prompt")
-    stream_goal_idx = routes_py.find("STREAM_GOAL_RELATED")
+    stream_goal_idx = routes_py.find("run_registry.open_stream(s.session_id, stream_id, goal_related=goal_related)")
     assert kickoff_idx != -1 and stream_goal_idx != -1
 
 

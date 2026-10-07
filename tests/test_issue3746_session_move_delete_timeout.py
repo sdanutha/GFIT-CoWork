@@ -51,10 +51,9 @@ class TestBoundedLockAcquire:
 # ── A) Structural: the move handler uses a bounded acquire + 503, not a bare `with` ──
 
 def _move_block():
-    idx = ROUTES_SRC.find('"/api/session/move"')
-    assert idx > 0, "session/move handler not found"
-    end = ROUTES_SRC.find('"/api/projects/create"', idx)
-    return ROUTES_SRC[idx:end]
+    from tests._route_source import route_source
+
+    return route_source("POST", "/api/session/move")
 
 
 def test_move_uses_bounded_lock_acquire():
@@ -87,10 +86,9 @@ def test_move_releases_lock_in_finally():
 # ── B) Structural: project delete skips streaming sessions + guards each save ──
 
 def _delete_block():
-    idx = ROUTES_SRC.find('"/api/projects/delete"')
-    assert idx > 0, "projects/delete handler not found"
-    end = ROUTES_SRC.find('"/api/session/import"', idx)
-    return ROUTES_SRC[idx:end]
+    from tests._route_source import route_source
+
+    return route_source("POST", "/api/projects/delete")
 
 
 def test_delete_clears_project_id_on_streaming_sessions_in_cache():

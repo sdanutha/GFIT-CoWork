@@ -352,9 +352,8 @@ def isolated_state_db(tmp_path, monkeypatch):
     import api.routes as _routes
     import api.models as _models
     monkeypatch.setattr(_models, "_active_state_db_path", lambda: db)
-    monkeypatch.setattr(_routes, "SESSION_INDEX_FILE", index_path)
-    monkeypatch.setattr(_models, "SESSION_INDEX_FILE", index_path)
-    monkeypatch.setattr(_models, "SESSION_DIR", sessions_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
     return {"db": db, "state_dir": state_dir, "sessions_dir": sessions_dir,
             "index_path": index_path}
 

@@ -1,11 +1,9 @@
 from pathlib import Path
 import re
-from tests.test_issue2147_profile_concept_help import PROFILE_CONCEPT_KEYS
 
 
 REPO = Path(__file__).resolve().parent.parent
 PROFILE_CONCEPT_FALLBACK_KEYS = {
-    *PROFILE_CONCEPT_KEYS,
     "workspace_artifact_source_session",
 }
 
@@ -203,8 +201,6 @@ def test_zh_hant_locale_includes_representative_translations():
         "settings_label_language: '語言'",
         "login_title: '登入'",
         "tab_todos: '待辦'",
-        "onboarding_title: '歡迎使用 GFIT-CoWork'",
-        "onboarding_complete: '初始設定已完成'",
     ]
     for entry in expected:
         assert entry in src

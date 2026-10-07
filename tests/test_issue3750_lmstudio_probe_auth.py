@@ -10,7 +10,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 import api.config as config
-import api.onboarding as onboarding
 import api.profiles as profiles
 
 
@@ -294,22 +293,6 @@ display:
     assert lmstudio_probe_server.requests[0] == {
         "path": "/api/v1/models",
         "authorization": None,
-    }
-
-
-def test_onboarding_probe_remains_authorized_control(
-    lmstudio_probe_server,
-):
-    result = onboarding.probe_provider_endpoint(
-        "lmstudio",
-        lmstudio_probe_server.base_v1,
-        api_key="control-token",
-    )
-
-    assert result["ok"] is True
-    assert lmstudio_probe_server.requests[0] == {
-        "path": "/v1/models",
-        "authorization": "Bearer control-token",
     }
 
 

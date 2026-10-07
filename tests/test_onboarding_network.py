@@ -14,10 +14,7 @@ Covers:
 """
 
 import json
-import os
 import pathlib
-import sys
-import unittest.mock
 import urllib.error
 import urllib.request
 
@@ -162,34 +159,3 @@ class TestOnboardingSetupEndpoint:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
-
-    def test_loopback_request_allowed(self):
-        """
-        Requests from 127.0.0.1 (which is what the test server sees) should
-        pass the IP check. We confirm no 403 is returned.
-        """
-        # The test server runs on 127.0.0.1:{TEST_PORT} so client_address[0] is 127.0.0.1.
-        # A valid setup payload with a mock provider should not be rejected for IP reasons.
-        # We patch apply_onboarding_setup to avoid actually writing any config.
-        import unittest.mock
-        with unittest.mock.patch("api.onboarding.apply_onboarding_setup", return_value={"ok": True}):
-            status, body = self._post(
-                "/api/onboarding/setup",
-                {"provider": "anthropic", "model": "claude-sonnet-4.6", "api_key": "test-key"},
-            )
-        # Should not be 403 (IP blocked). May be 200 or another error from apply logic.
-        assert status != 403, f"Got 403 — IP check incorrectly blocked loopback. Body: {body}"
-
-    def test_xff_loopback_header_respected(self):
-        """
-        Simulated reverse proxy: raw TCP is 127.0.0.1 but X-Forwarded-For is also
-        127.0.0.1. Should be allowed.
-        """
-        import unittest.mock
-        with unittest.mock.patch("api.onboarding.apply_onboarding_setup", return_value={"ok": True}):
-            status, body = self._post(
-                "/api/onboarding/setup",
-                {"provider": "anthropic", "model": "claude-sonnet-4.6", "api_key": "test-key"},
-                headers={"X-Forwarded-For": "127.0.0.1"},
-            )
-        assert status != 403, f"Got 403 with XFF=127.0.0.1. Body: {body}"

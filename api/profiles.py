@@ -51,9 +51,8 @@ _profile_lock = threading.Lock()
 _loaded_profile_env_keys: set[str] = set()
 
 # Thread-local profile context: set per-request by server.py, cleared after.
-# Enables per-client profile isolation (issue #798) — each HTTP request thread
-# reads its own profile from the hermes_profile cookie instead of the
-# process-global _active_profile.
+# Each HTTP request thread runs in its Admission's Profile
+# (api.access.settle_request) instead of the process-global _active_profile.
 _tls = threading.local()
 
 # Home of the profile this process serves as its own (set by init_profile_state).
@@ -215,8 +214,7 @@ _PROTECTED_ENV_KEYS = frozenset({
     # the operator intended. Same shape as the isolated-profile key: only
     # the operator/launcher env at startup can set it.
     'HERMES_WEBUI_MAX_SESSION_RESOLVE',
-    # GFIT-CoWork: who may log in, and who is an Admin, belong to the Deployment.
-    'HERMES_WEBUI_ADMIN_USERS',
+    # GFIT-CoWork: who may log in belongs to the Deployment.
     'HERMES_WEBUI_DIRECTORY',
     'HERMES_WEBUI_DIRECTORY_USERS',
     'HERMES_WEBUI_LDAP_URL',
@@ -504,7 +502,7 @@ def get_active_profile_name() -> str:
 
     Priority:
       1. Isolated-profile deployment name from the configured HERMES_HOME path
-      2. Thread-local (set per-request from hermes_profile cookie) — issue #798
+      2. Thread-local (set per-request from the request's Admission)
       3. Process-level default (_active_profile)
     """
     if _is_isolated_profile_mode():
@@ -523,8 +521,8 @@ def request_profile_name() -> str | None:
 def set_request_profile(name: str) -> None:
     """Set the per-request profile context for this thread.
 
-    Called by server.py at the start of each request when a hermes_profile
-    cookie is present.  Always paired with clear_request_profile() in a
+    Called once per request with the Admission's Profile
+    (:func:`api.access.settle_request`).  Always paired with clear_request_profile() in a
     finally block so the thread-local is released after the request.
     """
     _tls.profile = name
@@ -1763,20 +1761,19 @@ def switch_profile(name: str, *, process_wide: bool = True) -> dict:
             )
 
     # Import here to avoid circular import at module load
-    from api.config import STREAMS, STREAMS_LOCK, reload_config
+    from api import run_registry
+    from api.config import reload_config
 
     # Process-wide profile switches mutate HERMES_HOME, module-level path caches,
     # os.environ-backed .env keys, and the global config cache. Keep those blocked
     # while any agent stream is active. Per-client WebUI switches are cookie/TLS
     # scoped (process_wide=False) and do not mutate those globals, so users can
     # leave a running session in one profile and start work in another (#1700).
-    if process_wide:
-        with STREAMS_LOCK:
-            if len(STREAMS) > 0:
-                raise RuntimeError(
-                    'Cannot switch profiles while an agent is running. '
-                    'Cancel or wait for it to finish.'
-                )
+    if process_wide and run_registry.live_stream_ids():
+        raise RuntimeError(
+            'Cannot switch profiles while an agent is running. '
+            'Cancel or wait for it to finish.'
+        )
 
     # Resolve profile directory
     if _is_isolated_profile_mode():
@@ -2146,8 +2143,8 @@ def _build_profile_rows_fast() -> list | None:
     caller falls back to upstream's (slow but correct) ``list_profiles()``.
     When ``hermes_cli`` cannot be imported at all, the same rows are built from this
     module's own Profile paths and name rule, with the model read straight
-    from each Profile's ``config.yaml`` and no gateway probe, so the Admin still
-    sees every named Profile. Forward-compatible: if upstream fixes
+    from each Profile's ``config.yaml`` and no gateway probe, so the Operator
+    command line still sees every named Profile. Forward-compatible: if upstream fixes
     ``find_alias_for_profile`` this stays fast and correct with nothing to revert.
     """
     try:
@@ -2887,3 +2884,14 @@ def delete_profile_api(name: str) -> dict:
     _invalidate_list_profiles_cache()
     _invalidate_root_profile_cache()
     return {'ok': True, 'name': name}
+
+
+def gateway_session_metadata_path() -> Path:
+    """The Hermes Agent gateway's session metadata file (``sessions/sessions.json``)
+    in the active Profile's home, or the process's ``HERMES_HOME`` when the
+    Profile home cannot be resolved."""
+    try:
+        hermes_home = Path(get_active_hermes_home()).expanduser().resolve()
+    except Exception:
+        hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser().resolve()
+    return hermes_home / "sessions" / "sessions.json"

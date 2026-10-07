@@ -25,7 +25,9 @@ SCOPE
 USAGE
   python tests/browser_smoke.py
   (Requires: playwright + chromium. Boots server.py on an ephemeral port with an
-  isolated temp state dir and no agent.)
+  isolated temp state dir, no agent, and the in-memory Directory holding one
+  smoke User with their Profile: login is always on (ADR 0006), so every page
+  is loaded as that logged-in User, and the login page itself is checked too.)
 
 EXIT CODES
   0 — all pages loaded with zero console errors / uncaught exceptions
@@ -49,6 +51,8 @@ PAGES = [
     "/#settings",
     "/#sessions",
 ]
+SMOKE_USER = "100001"
+SMOKE_PASSWORD = "browser-smoke-password"
 
 # Known-benign console noise (extend deliberately, each with a reason). Every
 # entry here is a blind spot, so keep the list short.
@@ -104,11 +108,21 @@ def main():
         "HERMES_WEBUI_STATE_DIR": state_dir,
         "HERMES_HOME": state_dir,
         "HERMES_BASE_HOME": state_dir,
-        "HERMES_WEBUI_SKIP_ONBOARDING": "1",
+        # Never let the agent's launch preparation install into, or relaunch
+        # from, a real agent checkout found on the machine (see conftest.py).
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
+        "HERMES_WEBUI_DIRECTORY": "memory",
+        "HERMES_WEBUI_DIRECTORY_USERS": os.path.join(state_dir, "directory-users.json"),
         # Point agent discovery at a path that doesn't exist — the server is
         # designed to boot and serve the UI even when the agent is absent.
         "HERMES_WEBUI_AGENT_DIR": os.path.join(state_dir, "no-agent"),
     })
+
+    import json
+
+    with open(env["HERMES_WEBUI_DIRECTORY_USERS"], "w", encoding="utf-8") as fh:
+        json.dump({SMOKE_USER: {"password": SMOKE_PASSWORD, "display_name": "Smoke User"}}, fh)
+    os.makedirs(os.path.join(state_dir, "profiles", SMOKE_USER))
 
     log = open(os.path.join(state_dir, "server.log"), "w")
     proc = subprocess.Popen(
@@ -129,8 +143,16 @@ def main():
             browser = pw.chromium.launch(
                 headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]
             )
-            for path in PAGES:
+            for path in ["/login", *PAGES]:
                 ctx = browser.new_context(base_url=BASE)
+                if path != "/login":
+                    login = ctx.request.post(
+                        "/api/auth/login",
+                        data={"username": SMOKE_USER, "password": SMOKE_PASSWORD},
+                    )
+                    if login.status != 200:
+                        print(f"SETUP FAIL: smoke User login answered {login.status}", file=sys.stderr)
+                        return 2
                 page = ctx.new_page()
                 errors = []
                 page.on("console", lambda m: errors.append(("console", m.text))

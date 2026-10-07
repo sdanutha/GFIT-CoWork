@@ -56,7 +56,7 @@ jobs:
           DEPLOYMENT="$(mktemp -d -t gfit-smoke-config-XXXXXX)"
           cp deploy/docker-compose.yml "$DEPLOYMENT/"
           # The example values, a random API key and a non-routable (TEST-NET-1)
-          # LDAP URL, exactly as an Admin would fill in team.env.example.
+          # LDAP URL, exactly as an Operator would fill in team.env.example.
           sed \
             -e "s|^API_SERVER_KEY=.*|API_SERVER_KEY=$(openssl rand -hex 24)|" \
             -e "s|^HERMES_WEBUI_LDAP_URL=.*|HERMES_WEBUI_LDAP_URL=ldaps://192.0.2.1|" \
@@ -301,7 +301,7 @@ jobs:
         id: deployment
         run: |
           set -euo pipefail
-          # Laid out as deploy/README.md tells an Admin to: the Compose file,
+          # Laid out as deploy/README.md tells an Operator to: the Compose file,
           # a filled-in .env next to it, and a certs folder.
           DEPLOYMENT="$(mktemp -d -t gfit-smoke-deployment-XXXXXX)"
           mkdir "$DEPLOYMENT/certs"
@@ -381,6 +381,21 @@ jobs:
             exit 1
           fi
           echo "✅ GFIT-CoWork answers only on 127.0.0.1:${GFIT_PORT}; Hermes Agent publishes nothing"
+          echo "::endgroup::"
+
+          # ----- The Operator's command line, exactly as deploy/README.md runs it -----
+          echo "::group::Operator command line"
+          gfit() { compose exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin/python -m api.operator_cli "$@"; }
+          gfit list
+          gfit create 600001 --display-name "Smoke User" --clone-from default
+          if ! gfit list | grep -q "^600001[[:space:]]active"; then
+            echo "❌ the Profile created with operator_cli is not listed as active"
+            exit 1
+          fi
+          gfit disable 600001
+          gfit list | grep -q "^600001[[:space:]]disabled"
+          gfit delete 600001 --confirm 600001
+          echo "✅ operator_cli lists, creates, disables and deletes a Profile in the container"
           echo "::endgroup::"
 
           # ----- Startup log scan: must not contain any known-bad signatures -----

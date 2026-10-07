@@ -56,7 +56,9 @@ class TestApiSkillsUsageRoute:
     def test_route_handler_present(self):
         """routes.py contains a handler for GET /api/skills/usage."""
         src = _ROUTES.read_text(encoding="utf-8")
-        assert '"/api/skills/usage"' in src, (
+        from tests._route_source import route_handler
+
+        assert route_handler("GET", "/api/skills/usage"), (
             "Missing /api/skills/usage route in api/routes.py"
         )
         assert "read_skill_usage" in src, (
@@ -65,10 +67,8 @@ class TestApiSkillsUsageRoute:
 
     def test_route_returns_usage_structure(self):
         """The route response shape includes usage/skill_names/total_invocations."""
-        src = _ROUTES.read_text(encoding="utf-8")
-        # Find the /api/skills/usage handler block and check for key fields
-        block_match = re.search(r'if parsed\.path == "/api/skills/usage":.*?(?=\n    if parsed|$)', src, re.DOTALL)
-        assert block_match, "Missing /api/skills/usage handler block"
-        block = block_match.group()
+        from tests._route_source import route_source
+
+        block = route_source("GET", "/api/skills/usage")
         assert '"usage"' in block and '"skill_names"' in block, "Missing usage or skill_names in response"
         assert '"total_invocations"' in block and '"unique_skills_used"' in block, "Missing total_invocations or unique_skills_used"

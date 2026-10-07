@@ -31,8 +31,8 @@ except ImportError:  # pragma: no cover
 import api.config as _cfg
 from api.compression_anchor import is_context_compression_marker
 from api.config import (
-    SESSION_DIR, SESSION_INDEX_FILE, SESSIONS, SESSIONS_MAX,
-    LOCK, STREAMS, STREAMS_LOCK, DEFAULT_WORKSPACE, DEFAULT_MODEL, PROJECTS_FILE, HOME,
+    SESSIONS, SESSIONS_MAX,
+    LOCK, STREAMS, STREAMS_LOCK, DEFAULT_WORKSPACE, DEFAULT_MODEL, HOME,
     get_effective_default_model, _get_session_agent_lock,
 )
 from api.workspace import get_last_workspace, _resolve_path, profile_home_resolve_cache_scope
@@ -305,7 +305,7 @@ def _cleanup_stale_tmp_files() -> None:
     """
     cutoff = time.time() - _STALE_TMP_AGE_SECONDS
     try:
-        for p in SESSION_DIR.glob('*.tmp.*'):
+        for p in _cfg.SESSION_DIR.glob('*.tmp.*'):
             try:
                 if p.stat().st_mtime < cutoff:
                     p.unlink(missing_ok=True)
@@ -331,28 +331,28 @@ def _persisted_session_ids_snapshot() -> frozenset[str]:
     """
     global _PERSISTED_SESSION_IDS_CACHE
     try:
-        dir_mtime_ns = SESSION_DIR.stat().st_mtime_ns
+        dir_mtime_ns = _cfg.SESSION_DIR.stat().st_mtime_ns
     except Exception:
         dir_mtime_ns = None
     cached_dir, cached_mtime_ns, cached_ids = _PERSISTED_SESSION_IDS_CACHE
-    if cached_dir == SESSION_DIR and cached_mtime_ns == dir_mtime_ns:
+    if cached_dir == _cfg.SESSION_DIR and cached_mtime_ns == dir_mtime_ns:
         return cached_ids
     try:
         ids = frozenset(
             p.stem
-            for p in SESSION_DIR.glob('*.json')
+            for p in _cfg.SESSION_DIR.glob('*.json')
             if not p.name.startswith('_')
         )
     except Exception:
         ids = frozenset()
-    _PERSISTED_SESSION_IDS_CACHE = (SESSION_DIR, dir_mtime_ns, ids)
+    _PERSISTED_SESSION_IDS_CACHE = (_cfg.SESSION_DIR, dir_mtime_ns, ids)
     return ids
 
 
 def _session_dir_has_persisted_session_files() -> bool:
     """Return True when the current session dir has at least one session JSON file."""
     try:
-        return any(not p.name.startswith('_') for p in SESSION_DIR.glob('*.json'))
+        return any(not p.name.startswith('_') for p in _cfg.SESSION_DIR.glob('*.json'))
     except Exception:
         return False
 
@@ -362,7 +362,7 @@ def _rebuild_session_index_background(expected_session_dir: Path, expected_index
     current_thread = threading.current_thread()
     try:
         with _SESSION_INDEX_REBUILD_LOCK:
-            if SESSION_DIR != expected_session_dir or SESSION_INDEX_FILE != expected_index_file:
+            if _cfg.SESSION_DIR != expected_session_dir or _cfg.SESSION_INDEX_FILE != expected_index_file:
                 return
         _write_session_index(
             updates=None,
@@ -384,9 +384,9 @@ def _rebuild_session_index_background(expected_session_dir: Path, expected_index
 def _start_session_index_rebuild_thread() -> None:
     """Start one background full-index rebuild if the index is missing."""
     global _SESSION_INDEX_REBUILD_THREAD, _SESSION_INDEX_REBUILD_THREAD_TARGET
-    target = (SESSION_DIR, SESSION_INDEX_FILE)
+    target = (_cfg.SESSION_DIR, _cfg.SESSION_INDEX_FILE)
     with _SESSION_INDEX_REBUILD_LOCK:
-        if SESSION_INDEX_FILE.exists():
+        if _cfg.SESSION_INDEX_FILE.exists():
             return
         if (
             _SESSION_INDEX_REBUILD_THREAD is not None
@@ -419,7 +419,7 @@ def _index_entry_exists(session_id: str, in_memory_ids=None) -> bool:
             in_memory_ids = set(SESSIONS.keys())
     if session_id in in_memory_ids:
         return True
-    p = SESSION_DIR / f'{session_id}.json'
+    p = _cfg.SESSION_DIR / f'{session_id}.json'
     return p.exists()
 
 
@@ -438,8 +438,8 @@ def _write_session_index(updates=None, *, session_dir: Path | None = None, sessi
     ``_INDEX_WRITE_LOCK`` (held across this whole function), so narrowing LOCK
     cannot introduce a lost-update or index-corruption race between writers.
     """
-    session_dir = session_dir or SESSION_DIR
-    session_index_file = session_index_file or SESSION_INDEX_FILE
+    session_dir = session_dir or _cfg.SESSION_DIR
+    session_index_file = session_index_file or _cfg.SESSION_INDEX_FILE
     _tmp = session_index_file.with_suffix(f'.tmp.{os.getpid()}.{threading.current_thread().ident}')
 
     with _INDEX_WRITE_LOCK:
@@ -557,15 +557,15 @@ def _write_session_index(updates=None, *, session_dir: Path | None = None, sessi
 def prune_session_from_index(session_id: str) -> None:
     """Remove one session row from the persisted sidebar index if present."""
     sid = str(session_id or "")
-    if not sid or not SESSION_INDEX_FILE.exists():
+    if not sid or not _cfg.SESSION_INDEX_FILE.exists():
         return
-    _tmp = SESSION_INDEX_FILE.with_suffix(f'.tmp.{os.getpid()}.{threading.current_thread().ident}')
+    _tmp = _cfg.SESSION_INDEX_FILE.with_suffix(f'.tmp.{os.getpid()}.{threading.current_thread().ident}')
 
     _fallback = False
     with _INDEX_WRITE_LOCK:
         try:
             with LOCK:
-                existing = json.loads(SESSION_INDEX_FILE.read_bytes())
+                existing = json.loads(_cfg.SESSION_INDEX_FILE.read_bytes())
                 if not isinstance(existing, list):
                     raise ValueError("session index must be a list")
                 pruned = [e for e in existing if e.get('session_id') != sid]
@@ -578,7 +578,7 @@ def prune_session_from_index(session_id: str) -> None:
                     f.write(_payload)
                     f.flush()
                     os.fsync(f.fileno())
-                _safe_replace(_tmp, SESSION_INDEX_FILE)
+                _safe_replace(_tmp, _cfg.SESSION_INDEX_FILE)
             except Exception:
                 try:
                     _tmp.unlink(missing_ok=True)
@@ -636,7 +636,7 @@ def _webui_zero_message_orphan_tombstone_file() -> "Path":
     ``SESSION_INDEX_FILE`` is computed but resolved at call time so the
     real path tracks the live ``SESSION_DIR``.
     """
-    return SESSION_DIR / "_pruned_webui_orphans.json"
+    return _cfg.SESSION_DIR / "_pruned_webui_orphans.json"
 
 
 def _load_webui_zero_message_orphan_tombstone() -> frozenset[str]:
@@ -703,7 +703,7 @@ def _save_webui_zero_message_orphan_tombstone(ids) -> None:
     p = _webui_zero_message_orphan_tombstone_file()
     _tmp = None
     try:
-        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        _cfg.SESSION_DIR.mkdir(parents=True, exist_ok=True)
         _tmp = p.with_suffix(
             f'.tmp.{os.getpid()}.{threading.current_thread().ident}'
         )
@@ -789,7 +789,7 @@ def _clear_webui_zero_message_orphan_tombstone(sid: str) -> None:
 
 
 def _webui_deleted_session_tombstone_file() -> "Path":
-    return SESSION_DIR / "_deleted_webui_sessions.json"
+    return _cfg.SESSION_DIR / "_deleted_webui_sessions.json"
 
 
 def _load_webui_deleted_session_tombstone() -> frozenset[str]:
@@ -832,7 +832,7 @@ def _save_webui_deleted_session_tombstone(ids) -> None:
     p = _webui_deleted_session_tombstone_file()
     _tmp = None
     try:
-        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        _cfg.SESSION_DIR.mkdir(parents=True, exist_ok=True)
         _tmp = p.with_suffix(
             f'.tmp.{os.getpid()}.{threading.current_thread().ident}'
         )
@@ -1272,7 +1272,7 @@ def _index_message_count_map(entries=None) -> dict[str, int]:
     """
     if entries is None:
         try:
-            entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+            entries = json.loads(_cfg.SESSION_INDEX_FILE.read_bytes())
         except Exception:
             return {}
     if not isinstance(entries, list):
@@ -1328,7 +1328,6 @@ _SIDEBAR_HEAVY_METADATA_FIELDS = (
     'gateway_routing_history',
     'composer_draft',
     'process_wakeup_pause',
-    'share_token',
 )
 
 
@@ -1420,8 +1419,6 @@ class Session:
                  composer_draft=None,
                  anchor_activity_scenes=None,
                  process_wakeup_pause=None,
-                 share_token=None,
-                 share_created_at=None,
                  gateway_run=None,
                  **kwargs):
         self.session_id = session_id or uuid.uuid4().hex[:12]
@@ -1535,8 +1532,6 @@ class Session:
         self.composer_draft = composer_draft if isinstance(composer_draft, dict) else {}
         self.anchor_activity_scenes = anchor_activity_scenes if isinstance(anchor_activity_scenes, dict) else {}
         self.process_wakeup_pause = process_wakeup_pause if isinstance(process_wakeup_pause, dict) else {}
-        self.share_token = str(share_token).strip() if share_token else None
-        self.share_created_at = share_created_at
         self.gateway_run = gateway_run if isinstance(gateway_run, dict) else None
         # #5854: a compact fingerprint of anchor_activity_scenes ({scene_key:
         # updated_at}) persisted BEFORE the messages array so the sidebar-poll
@@ -1557,7 +1552,7 @@ class Session:
 
     @property
     def path(self):
-        return SESSION_DIR / f'{self.session_id}.json'
+        return _cfg.SESSION_DIR / f'{self.session_id}.json'
 
     def save(self, touch_updated_at: bool = True, skip_index: bool = False) -> None:
         if not is_safe_session_id(self.session_id):
@@ -1617,7 +1612,6 @@ class Session:
             'is_cli_session', 'source_tag', 'raw_source', 'session_source', 'source_label', 'read_only',
             'enabled_toolsets', 'composer_draft',
             'process_wakeup_pause',
-            'share_token', 'share_created_at',
             'gateway_run',
         ]
         meta = {k: getattr(self, k, None) for k in METADATA_FIELDS}
@@ -1804,7 +1798,7 @@ class Session:
         # ``reachy-voice-*``); allow those but still reject dots/slashes.
         if not is_safe_session_id(sid):
             return None
-        p = SESSION_DIR / f'{sid}.json'
+        p = _cfg.SESSION_DIR / f'{sid}.json'
         if not p.exists():
             return None
         # #5854: snapshot the stat signature BEFORE reading so a legacy-facts
@@ -1870,7 +1864,7 @@ class Session:
         # path separators and traversal dots are not.
         if not is_safe_session_id(sid):
             return None
-        p = SESSION_DIR / f'{sid}.json'
+        p = _cfg.SESSION_DIR / f'{sid}.json'
         if not p.exists():
             return None
         try:
@@ -2071,8 +2065,6 @@ class Session:
             'enabled_toolsets': self.enabled_toolsets,
             'composer_draft': self.composer_draft if isinstance(self.composer_draft, dict) else {},
             'process_wakeup_pause': self.process_wakeup_pause if isinstance(self.process_wakeup_pause, dict) else {},
-            'share_token': self.share_token,
-            'share_created_at': self.share_created_at,
             'is_streaming': _is_streaming_session(
                 self.active_stream_id, active_stream_ids
             ) if include_runtime else False,
@@ -4159,8 +4151,8 @@ def _has_compression_continuation(session) -> bool:
         pass
 
     try:
-        if SESSION_INDEX_FILE.exists():
-            entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+        if _cfg.SESSION_INDEX_FILE.exists():
+            entries = json.loads(_cfg.SESSION_INDEX_FILE.read_bytes())
             if isinstance(entries, list) and any(_row_is_continuation(e) for e in entries):
                 return True
     except Exception:
@@ -4171,7 +4163,7 @@ def _has_compression_continuation(session) -> bool:
     # the messages array, so this avoids loading multi-MB transcripts.
     try:
         needle = f'"parent_session_id": "{sid}"'
-        for path in SESSION_DIR.glob('*.json'):
+        for path in _cfg.SESSION_DIR.glob('*.json'):
             if path.name.startswith('_') or path.stem == sid:
                 continue
             try:
@@ -4789,7 +4781,7 @@ def _legacy_sidecar_facts_get(sid):
     """
     if not is_safe_session_id(sid):
         return None
-    sig = _sidecar_stat_signature(SESSION_DIR / f'{sid}.json')
+    sig = _sidecar_stat_signature(_cfg.SESSION_DIR / f'{sid}.json')
     if sig is None:
         return None
     with _LEGACY_SIDECAR_FACTS_LOCK:
@@ -4815,7 +4807,7 @@ def _legacy_sidecar_facts_put(sid, message_count, scene_index, *, expected_sig):
         return
     if expected_sig is None:
         return
-    sig = _sidecar_stat_signature(SESSION_DIR / f'{sid}.json')
+    sig = _sidecar_stat_signature(_cfg.SESSION_DIR / f'{sid}.json')
     if sig is None:
         return
     if sig != expected_sig:
@@ -5060,7 +5052,7 @@ def _persisted_message_count(sid) -> int | None:
     """
     if not is_safe_session_id(sid):
         return None
-    p = SESSION_DIR / f'{sid}.json'
+    p = _cfg.SESSION_DIR / f'{sid}.json'
     if not p.exists():
         return None
     try:
@@ -5127,7 +5119,7 @@ def _persisted_session_meta_prefix(sid) -> dict | None:
     """
     if not is_safe_session_id(sid):
         return None
-    p = SESSION_DIR / f'{sid}.json'
+    p = _cfg.SESSION_DIR / f'{sid}.json'
     if not p.exists():
         return None
     try:
@@ -5153,7 +5145,7 @@ def _session_sidecar_exists(sid) -> bool | None:
     if not is_safe_session_id(sid):
         return None
     try:
-        return (SESSION_DIR / f'{sid}.json').exists()
+        return (_cfg.SESSION_DIR / f'{sid}.json').exists()
     except OSError:
         return None
 
@@ -6112,7 +6104,7 @@ def _sidecar_mtime_after_index_timestamp(session: dict) -> bool:
     if not sid or not is_safe_session_id(sid):
         return False
     try:
-        sidecar_mtime = (SESSION_DIR / f'{sid}.json').stat().st_mtime
+        sidecar_mtime = (_cfg.SESSION_DIR / f'{sid}.json').stat().st_mtime
     except OSError:
         return False
     indexed_ts = _session_sort_timestamp(session)
@@ -6323,7 +6315,7 @@ def persist_recovered_workspace_binding(
         else expected_workspace
     )
     expected = str(expected_value or "")
-    path = SESSION_DIR / f"{sid}.json"
+    path = _cfg.SESSION_DIR / f"{sid}.json"
     lock = _get_session_agent_lock(sid)
     with lock:
         if not path.exists():
@@ -6968,13 +6960,13 @@ def all_sessions(
     active_stream_ids = _active_stream_ids()
     # Phase C: try index first for O(1) read; fall back to full scan
     _diag_stage(diag, "all_sessions.index_exists")
-    if not SESSION_INDEX_FILE.exists():
+    if not _cfg.SESSION_INDEX_FILE.exists():
         _diag_stage(diag, "all_sessions.start_index_rebuild")
         _start_session_index_rebuild_thread()
-    if SESSION_INDEX_FILE.exists():
+    if _cfg.SESSION_INDEX_FILE.exists():
         try:
             _diag_stage(diag, "all_sessions.read_index")
-            index = json.loads(SESSION_INDEX_FILE.read_bytes())
+            index = json.loads(_cfg.SESSION_INDEX_FILE.read_bytes())
             _diag_stage(diag, "all_sessions.prune_index")
             with LOCK:
                 in_memory_ids = set(SESSIONS.keys())
@@ -7134,7 +7126,7 @@ def all_sessions(
     # helper clears the tombstone and the row stays visible. A blind-drop
     # here would be strictly worse than the orphan it suppresses — silently
     # swallowing a legitimately-resurfaced row forever.
-    for p in SESSION_DIR.glob('*.json'):
+    for p in _cfg.SESSION_DIR.glob('*.json'):
         if p.name.startswith('_'): continue
         try:
             s = Session.load(p.stem)
@@ -7228,9 +7220,9 @@ def _backfill_project_profiles_if_needed(projects: list) -> bool:
 
     # Build session_id -> profile map for the untagged project_ids.
     session_profile_by_project: dict[str, str] = {}
-    if SESSION_INDEX_FILE.exists():
+    if _cfg.SESSION_INDEX_FILE.exists():
         try:
-            entries = json.loads(SESSION_INDEX_FILE.read_bytes())
+            entries = json.loads(_cfg.SESSION_INDEX_FILE.read_bytes())
             untagged_ids = {p['project_id'] for p in untagged if p.get('project_id')}
             for e in entries:
                 pid = e.get('project_id')
@@ -7256,10 +7248,10 @@ def load_projects(*, _migrate: bool = True) -> list:
     callsites that want the raw on-disk shape (test fixtures, e.g.).
     """
     global _projects_migrated
-    if not PROJECTS_FILE.exists():
+    if not _cfg.PROJECTS_FILE.exists():
         return []
     try:
-        projects = json.loads(PROJECTS_FILE.read_text(encoding='utf-8'))
+        projects = json.loads(_cfg.PROJECTS_FILE.read_text(encoding='utf-8'))
     except Exception:
         return []
     if _migrate and not _projects_migrated:
@@ -7273,7 +7265,7 @@ def load_projects(*, _migrate: bool = True) -> list:
                 # rows (which a mutation route could then write back,
                 # silently overwriting the migration).
                 try:
-                    return json.loads(PROJECTS_FILE.read_text(encoding='utf-8'))
+                    return json.loads(_cfg.PROJECTS_FILE.read_text(encoding='utf-8'))
                 except Exception:
                     return projects
             if _backfill_project_profiles_if_needed(projects):
@@ -7290,7 +7282,7 @@ def load_projects(*, _migrate: bool = True) -> list:
 
 def save_projects(projects) -> None:
     """Write project list to disk."""
-    PROJECTS_FILE.write_text(json.dumps(projects, ensure_ascii=False, indent=2), encoding='utf-8')
+    _cfg.PROJECTS_FILE.write_text(json.dumps(projects, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 CRON_PROJECT_NAME = 'Cron Jobs'
@@ -8230,7 +8222,7 @@ def _resolve_cli_sessions_context(source_filter=None, include_claude_code: bool 
         bool(include_claude_code),
         _path_cache_key(projects_dir),
         _path_stat_cache_key(projects_dir),
-        _path_stat_cache_key(SESSION_INDEX_FILE),
+        _path_stat_cache_key(_cfg.SESSION_INDEX_FILE),
     )
     return hermes_home, db_path, cli_profile, cache_key
 
@@ -8319,7 +8311,7 @@ def _state_projection_sidecar_metadata(sid: str) -> dict:
     default = {"title": None, "archived": None, "project_id": None}
     if not is_safe_session_id(sid):
         return dict(default)
-    p = SESSION_DIR / f'{sid}.json'
+    p = _cfg.SESSION_DIR / f'{sid}.json'
     try:
         st = p.stat()
         key = (str(p), st.st_mtime_ns, st.st_size, st.st_ctime_ns)
@@ -9121,7 +9113,7 @@ def _load_cli_sessions_uncached(
         if (
             _source == 'webui'
             and sid in _deleted_webui_tombstone
-            and not (SESSION_DIR / f"{sid}.json").exists()
+            and not (_cfg.SESSION_DIR / f"{sid}.json").exists()
         ):
             continue
         _source_meta = normalize_agent_session_source(_source)
@@ -9429,7 +9421,7 @@ def get_cli_sessions(
             context_cache_key,
             _path_cache_key(_default_claude_code_projects_dir()),
             _path_stat_cache_key(_default_claude_code_projects_dir()),
-            _path_stat_cache_key(SESSION_INDEX_FILE),
+            _path_stat_cache_key(_cfg.SESSION_INDEX_FILE),
         )
     else:
         resolve_kwargs = {}

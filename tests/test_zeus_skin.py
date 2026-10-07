@@ -39,7 +39,6 @@ def test_zeus_active_session_uses_gold_highlight():
 def test_zeus_modals_are_not_navy():
     # Modals/dialogs default to a hardcoded navy gradient — Zeus must override
     assert ':root.dark[data-skin="zeus"] .app-dialog' in CSS
-    assert ':root.dark[data-skin="zeus"] .kanban-modal' in CSS
     assert "rgba(24,24,24,.99)" in CSS
 
 

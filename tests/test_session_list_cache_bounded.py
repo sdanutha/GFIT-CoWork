@@ -93,7 +93,6 @@ def test_invalidation_during_projection_cannot_reinsert_stale_payload(monkeypatc
     cache._session_list_cache_clear()
     key = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -159,7 +158,6 @@ def test_sidebar_compact_omits_heavy_session_metadata():
         gateway_routing_history=[{"provider": "old"}] * 10000,
         composer_draft={"draft": "c" * 1000000},
         process_wakeup_pause={"pause": "p" * 1000000},
-        share_token="token-value",
     )
 
     normal = session.compact()
@@ -171,7 +169,7 @@ def test_sidebar_compact_omits_heavy_session_metadata():
         "compression_anchor_summary", "compression_anchor_details",
         "context_engine_state", "compression_recovery",
         "gateway_routing_history", "composer_draft",
-        "process_wakeup_pause", "share_token",
+        "process_wakeup_pause",
     ):
         assert field not in sidebar
 
@@ -185,7 +183,6 @@ def test_sidebar_metadata_only_projects_existing_index_rows(monkeypatch, tmp_pat
         "gateway_routing_history": [{"provider": "old"}] * 1000,
         "composer_draft": {"draft": "c" * 1000000},
         "process_wakeup_pause": {"pause": "p" * 1000000},
-        "share_token": "token-value",
     }
     index_path = tmp_path / "_index.json"
     index_path.write_text(json.dumps([{
@@ -199,8 +196,8 @@ def test_sidebar_metadata_only_projects_existing_index_rows(monkeypatch, tmp_pat
         "profile": "default",
         **heavy_fields,
     }]))
-    monkeypatch.setattr(models, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_path)
     monkeypatch.setattr(models, "SESSIONS", {})
     monkeypatch.setattr(models, "_persisted_session_ids_snapshot", lambda: {"indexed"})
     monkeypatch.setattr(models, "_active_stream_ids", lambda: set())

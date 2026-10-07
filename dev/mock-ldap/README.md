@@ -8,7 +8,7 @@ and holds three sample users.
 |-------------|------------------|---------------|
 | 521740      | `Somchai-Pass-1` | สมชาย ใจดี     |
 | 671278      | `Wipa-Pass-1`    | วิภา รักงาน    |
-| 600001      | `Admin-Pass-1`   | ผู้ดูแล ระบบ   |
+| 600001      | `Manee-Pass-1`   | มานี มีสุข    |
 
 ## Start it
 
@@ -30,10 +30,15 @@ export HERMES_WEBUI_LDAP_CA_CERT="$PWD/dev/mock-ldap/certs/ca.crt"
 export HERMES_WEBUI_LDAP_BIND_FORMAT='uid={username},ou=people,dc=gfit,dc=local'
 export HERMES_WEBUI_LDAP_BASE_DN='ou=people,dc=gfit,dc=local'
 export HERMES_WEBUI_LDAP_USER_FILTER='(uid={username})'
-export HERMES_WEBUI_ADMIN_USERS=600001
 ```
 
-Then create a Profile named `521740` (as the Admin) and log in as `521740`.
+Then create a Profile for a sample user and log in as them:
+
+```sh
+python3 -m api.operator_cli create 521740 --clone-from default
+```
+
+Everyone is a User; there is no Admin to configure (ADR 0006).
 
 To try StartTLS instead, use `HERMES_WEBUI_LDAP_URL=ldap://localhost:1389` and
 `HERMES_WEBUI_LDAP_STARTTLS=1`. Plain `ldap://` without StartTLS is refused.

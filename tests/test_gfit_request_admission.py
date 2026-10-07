@@ -2,52 +2,38 @@
 
 Admission runs again on every request from a Directory session and its answer
 (role and Profile) is what the rest of the request asks "who is calling?". These
-tests pin what a client sees for each caller: the page shell, the Admin gate,
-Profile binding and Workspace confinement. They also show that one request's
+tests pin what a client sees for each caller: the route gate, Profile binding
+and Workspace confinement. They also show that one request's
 caller never carries over to the next request on the same keep-alive connection
-(one handler object and thread). With login turned off there is no caller:
-nothing is pinned or confined.
+(one handler object and thread). There is no mode with login turned off
+(ADR 0006): a server with no Directory lets nobody in, whatever the request
+sends.
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
 
 import http.client
 import json
-from pathlib import Path
 
 import pytest
 
 import server
-from api.access import ADMIN_ONLY_MESSAGE, request_admission
+from api.access import request_admission
 from api.auth import COOKIE_NAME
 from tests._gfit_server import gfit_server as _gfit_server
 
 USER = "521740"
 OTHER_USER = "671278"
-ADMIN = "600001"
-
-EXTENSION_SCRIPT = "/extensions/gfit-request-admission.js"
-
 
 @pytest.fixture
-def extensions_on(monkeypatch, tmp_path):
-    root = tmp_path / "extensions"
-    root.mkdir()
-    monkeypatch.setenv("HERMES_WEBUI_EXTENSION_DIR", str(root))
-    monkeypatch.setenv("HERMES_WEBUI_EXTENSION_SCRIPT_URLS", EXTENSION_SCRIPT)
-
-
-@pytest.fixture
-def srv(monkeypatch, tmp_path, extensions_on):
-    users = {USER: "User One", OTHER_USER: "User Two", ADMIN: "Admin One"}
-    with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[USER, OTHER_USER], admins=ADMIN,
-    ) as s:
+def srv(monkeypatch, tmp_path):
+    users = {USER: "User One", OTHER_USER: "User Two"}
+    with _gfit_server(monkeypatch, tmp_path, users=users, profile_names=[USER, OTHER_USER]) as s:
         yield s
 
 
 @pytest.fixture
-def login_off(monkeypatch, tmp_path, extensions_on):
+def no_directory(monkeypatch, tmp_path):
     with _gfit_server(
         monkeypatch, tmp_path, users={}, profile_names=[USER, OTHER_USER], directory="",
     ) as s:
@@ -92,75 +78,39 @@ def _session(srv, uid) -> str:
     return srv.logged_in(uid).cookies[COOKIE_NAME]
 
 
-# ── The page shell ───────────────────────────────────────────────────────────
-
-def test_a_users_page_shell_carries_the_user_role_and_no_extensions(srv):
-    status, html, _ = srv.logged_in(USER).get("/")
-    assert status == 200
-    assert '<html data-gfit-role="user" ' in html
-    assert EXTENSION_SCRIPT not in html
-
-
-def test_the_admins_page_shell_carries_the_admin_role_and_extensions(srv):
-    status, html, _ = srv.logged_in(ADMIN).get("/")
-    assert status == 200
-    assert '<html data-gfit-role="admin" ' in html
-    assert EXTENSION_SCRIPT in html
-
-
 # ── One request's caller never reaches the next ──────────────────────────────
 
-def test_an_admin_request_after_a_user_request_on_one_connection_is_the_admins(srv, conn):
-    user, admin = _session(srv, USER), _session(srv, ADMIN)
+def test_one_users_request_after_anothers_on_one_connection_is_their_own(srv, conn):
+    user, other = _session(srv, USER), _session(srv, OTHER_USER)
 
-    status, body = conn.request("GET", "/api/logs", session=user)
-    assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
-    status, html = conn.request("GET", "/", session=user)
-    assert 'data-gfit-role="user"' in html
-
-    status, body = conn.request("GET", "/api/logs", session=admin)
-    assert status == 200, body
-    status, html = conn.request("GET", "/", session=admin)
-    assert 'data-gfit-role="admin"' in html
-    assert EXTENSION_SCRIPT in html
-    status, body = conn.request("GET", "/api/profiles", session=admin)
-    assert {USER, OTHER_USER} <= {p["name"] for p in body["profiles"]}
-    status, body = conn.request("GET", "/api/auth/status", session=admin)
-    assert (body["role"], body["bound_profile"]) == ("admin", "default")
-
-
-def test_a_user_request_after_an_admin_request_on_one_connection_is_the_users(srv, conn):
-    user, admin = _session(srv, USER), _session(srv, ADMIN)
-
-    assert conn.request("GET", "/api/logs", session=admin)[0] == 200
-
-    status, body = conn.request("GET", "/api/logs", session=user)
-    assert (status, body) == (403, {"error": ADMIN_ONLY_MESSAGE})
     status, body = conn.request("GET", "/api/profiles", session=user)
     assert [p["name"] for p in body["profiles"]] == [USER]
-    # Refused before its body is read, so the server closes the connection.
-    status, body = conn.request(
-        "POST", "/api/profile/switch", session=user, body={"name": "default"}, last=True,
-    )
-    assert status == 403
+
+    status, body = conn.request("GET", "/api/profiles", session=other)
+    assert [p["name"] for p in body["profiles"]] == [OTHER_USER]
+    status, body = conn.request("GET", "/api/auth/status", session=other)
+    assert body["bound_profile"] == OTHER_USER
+    status, body = conn.request("GET", "/api/profile/active", session=user)
+    assert body["name"] == USER
 
 
 def test_a_refused_request_and_the_next_get_no_leftover_caller(srv, conn):
-    user, admin = _session(srv, USER), _session(srv, ADMIN)
-    status, body = conn.request("POST", "/api/profile/disable", session=admin, body={"name": USER})
-    assert status == 200, body
+    from api import roster, roster_watch
 
-    # The disabled User is refused, not served as the Admin who came before.
+    user, other = _session(srv, USER), _session(srv, OTHER_USER)
+    assert conn.request("GET", "/api/profiles", session=other)[0] == 200
+    roster.disable_profile(USER)  # as the Operator's command line does
+    roster_watch.check()
+
+    # The disabled User is refused, not served as the User who came before.
     status, body = conn.request("GET", "/api/profiles", session=user)
-    assert status == 401, body
-    status, body = conn.request("GET", "/api/logs", session=user)
     assert status == 401, body
     # A request with no session after the refusal is not anyone.
     status, body = conn.request("GET", "/api/profiles")
     assert status == 401, body
     status, body = conn.request("GET", "/api/auth/status")
     assert body["logged_in"] is False
-    assert "role" not in body and "bound_profile" not in body
+    assert "bound_profile" not in body
 
 
 @pytest.mark.parametrize("method, path, body", [
@@ -195,35 +145,27 @@ def test_the_requests_admission_ends_with_the_request(srv, conn, monkeypatch, me
     assert seen == [(path, ("user", USER)), ("/api/auth/status", None)]
 
 
-# ── Login turned off ─────────────────────────────────────────────────────────
+# ── No Directory: nobody gets in ─────────────────────────────────────────────
 
-def test_with_login_off_a_request_is_not_pinned(login_off):
-    client = login_off.client()
-    client.cookies["hermes_profile"] = USER
-    status, body, _ = client.get("/api/profiles")
-    assert status == 200, body
-    assert {USER, OTHER_USER} <= {p["name"] for p in body["profiles"]}
-    status, body, _ = client.post("/api/profile/switch", {"name": OTHER_USER})
-    assert status == 200, body
-
-
-def test_with_login_off_a_request_is_not_confined(login_off, tmp_path):
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "note.txt").write_text("outside every Profile")
-    client = login_off.client()
-    client.cookies["hermes_profile"] = USER
-
-    status, body, _ = client.post("/api/workspaces/add", {"path": str(outside)})
-    assert status == 200, body
-    assert str(outside.resolve()) in {str(Path(w["path"]).resolve()) for w in body["workspaces"]}
+@pytest.mark.parametrize("method,path,body", [
+    ("GET", "/api/profiles", None),
+    ("GET", "/api/sessions", None),
+    ("POST", "/api/workspaces/add", {"path": "/tmp"}),
+    ("POST", "/api/session/new", {}),
+    ("GET", "/", None),
+])
+def test_with_no_directory_no_request_is_served(no_directory, method, path, body):
+    client = no_directory.client()
+    client.cookies["hermes_profile"] = USER  # a Profile cookie from before ADR 0006 opens nothing
+    status, _, _ = client.request(method, path, body)
+    assert status in (302, 401), (method, path, status)
 
 
-def test_with_login_off_the_page_shell_has_no_role(login_off):
-    status, html, _ = login_off.client().get("/")
-    assert status == 200
-    assert "data-gfit-role" not in html
-    assert EXTENSION_SCRIPT in html
+def test_with_no_directory_only_public_paths_answer(no_directory):
+    client = no_directory.client()
+    assert client.get("/health")[0] == 200
+    assert client.get("/login")[0] == 200
+    assert client.get("/api/auth/status")[1] == {"logged_in": False}
 
 
 # ── A Directory session with no Admission is not admitted ────────────────────
@@ -253,30 +195,19 @@ class _Handler:
         pass
 
 
-def _admin_session_record():
+def _user_session_record():
     from api.auth import DIRECTORY_AUTH_TYPE
 
-    return {
-        "auth_type": DIRECTORY_AUTH_TYPE, "username": ADMIN,
-        "role": "admin", "bound_profile": "default",
-    }
+    return {"auth_type": DIRECTORY_AUTH_TYPE, "username": USER, "role": "user", "bound_profile": USER}
 
 
-def test_the_admin_gate_refuses_a_session_with_no_admission():
+def test_the_route_gate_refuses_a_session_with_no_admission_even_a_user_route():
     from urllib.parse import urlparse
 
     from api.access import clear_request_admission
-    from api.auth import _refuse_admin_only_for_user
+    from api.auth import _refuse_unlisted_route
 
     clear_request_admission()
-    handler = _Handler(_admin_session_record())
-    assert _refuse_admin_only_for_user(handler, urlparse("/api/logs"), _admin_session_record())
+    handler = _Handler(_user_session_record())
+    assert _refuse_unlisted_route(handler, urlparse("/api/sessions"), _user_session_record())
     assert handler.status == 403
-
-
-def test_the_page_shell_gives_no_role_to_a_session_with_no_admission():
-    from api.access import clear_request_admission
-    from api.routes import _directory_session_role
-
-    clear_request_admission()
-    assert _directory_session_role(_Handler(_admin_session_record())) is None

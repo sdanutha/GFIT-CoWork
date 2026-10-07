@@ -79,8 +79,9 @@ def test_gateway_terminal_error_successful_save_is_marked_persisted(monkeypatch,
 
 
 def test_stream_status_exposes_replay_summary():
-    status_pos = ROUTES_SRC.index('parsed.path == "/api/chat/stream/status"')
-    block = ROUTES_SRC[status_pos : status_pos + 900]
+    from tests._route_source import route_source
+
+    block = route_source("GET", "/api/chat/stream/status")
 
     assert "find_run_summary(stream_id)" in block
     assert '"replay_available"' in block

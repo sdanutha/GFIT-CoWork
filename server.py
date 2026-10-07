@@ -101,12 +101,12 @@ logger = logging.getLogger(__name__)
 
 from api.request_logging import emit_request_log
 from api.auth import check_auth_or_close, reset_request_auth_state
-from api.config import HOST, PORT, STATE_DIR, SESSION_DIR, DEFAULT_WORKSPACE
+from api import config as api_config
+from api.config import HOST, PORT, DEFAULT_WORKSPACE
 from api.helpers import (
     j,
     advertise_connection_close,
     answer_not_found,
-    _build_csp_report_only_policy,
     _CLIENT_DISCONNECT_ERRORS,
 )
 from api.access import settle_request
@@ -323,17 +323,8 @@ class Handler(BaseHTTPRequestHandler):
                 pass
     _ver_suffix = WEBUI_VERSION.removeprefix('v')
     server_version = ('HermesWebUI/' + _ver_suffix) if _ver_suffix != 'unknown' else 'HermesWebUI'
-    _CSP_REPORT_TO = '{"group":"csp-endpoint","max_age":10886400,"endpoints":[{"url":"/api/csp-report"}]}'
-
-    @classmethod
-    def csp_report_only_policy(cls, extra_connect_src=None, extra_frame_src=None) -> str:
-        return _build_csp_report_only_policy(extra_connect_src, extra_frame_src)
 
     def end_headers(self) -> None:
-        extra_connect_src = getattr(self, "_csp_extra_connect_src", None)
-        extra_frame_src = getattr(self, "_csp_extra_frame_src", None)
-        self.send_header("Content-Security-Policy-Report-Only", self.csp_report_only_policy(extra_connect_src, extra_frame_src))
-        self.send_header("Report-To", self._CSP_REPORT_TO)
         advertise_connection_close(self)  # tell the client when the socket dies
         super().end_headers()
 
@@ -402,8 +393,7 @@ class Handler(BaseHTTPRequestHandler):
         self._req_t0 = time.time(); reset_request_auth_state(self)
         try:
             parsed = urlparse(self.path)
-            _is_csp_report_post = parsed.path == "/api/csp-report" and self.command == "POST"
-            if not _is_csp_report_post and not check_auth_or_close(self, parsed): return
+            if not check_auth_or_close(self, parsed): return
             settle_request(self)
             result = route_func(self, parsed)
             if result is False:
@@ -557,10 +547,10 @@ def main() -> None:
 
     print_startup_config()
 
-    # Login is the Directory: a network address with no Directory would serve
-    # with login off, so refuse before touching any state.
+    # Login is the Directory, and there is no mode with login turned off:
+    # with no Directory, refuse before touching any state.
     from api.login import startup_check
-    login_check = startup_check(HOST)
+    login_check = startup_check()
     for line in login_check.lines:
         print(line, flush=True)
     if not login_check.serve:
@@ -582,7 +572,7 @@ def main() -> None:
         from api.models import _active_state_db_path
         from api.session_recovery import recover_all_sessions_on_startup
         result = recover_all_sessions_on_startup(
-            SESSION_DIR,
+            api_config.SESSION_DIR,
             rebuild_index=True,
             state_db_path=_active_state_db_path(),
         )
@@ -618,9 +608,14 @@ def main() -> None:
         else:
             print('[ok] Agent dependencies installed successfully.', flush=True)
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    api_config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    api_config.SESSION_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_WORKSPACE.mkdir(parents=True, exist_ok=True)
+
+    # The Operator disables Profiles from the command line; the server ends
+    # their logins and running turns when it sees the roster change.
+    from api import roster_watch
+    roster_watch.start()
 
     try:
         from api.gateway_watcher import start_watcher

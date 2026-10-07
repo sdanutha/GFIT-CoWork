@@ -257,7 +257,6 @@ def test_sidebar_source_preserves_archived_counts(monkeypatch):
 def test_sidebar_source_varies_cache_key():
     key_webui = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -266,7 +265,6 @@ def test_sidebar_source_varies_cache_key():
     )
     key_cli = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -275,7 +273,6 @@ def test_sidebar_source_varies_cache_key():
     )
     key_omitted = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -310,7 +307,6 @@ def test_session_list_query_string_respects_sidebar_source_and_flags():
 global.window = {{ _showCliSessions: true }};
 global._activeProject = null;
 global._sessionSourceFilter = 'cli';
-global._showAllProfiles = true;
 global._showArchived = false;
 global.SESSION_ARCHIVED_PAGE_SIZE = 100;
 global.SESSION_ARCHIVED_MAX_LOADED_LIMIT = 2000;
@@ -335,18 +331,17 @@ global._activeProject = null;
 global._archivedRowsLoadedLimit = 2500;
 const capped = _sessionListQueryString();
 global._activeProject = '__none__';
-global._showAllProfiles = false;
 global._showArchived = false;
 const third = _sessionListQueryString();
 console.log(JSON.stringify({{ first, second, searchFiltered, projectFiltered, capped, third }}));
 """
     body = _run_node(script)
 
-    assert body["first"] == "?sidebar_source=cli&exclude_hidden=1&all_profiles=1"
-    assert body["second"] == "?sidebar_source=webui&exclude_hidden=1&all_profiles=1&include_archived=1&archived_limit=100"
-    assert body["searchFiltered"] == "?sidebar_source=webui&exclude_hidden=1&all_profiles=1&include_archived=1"
-    assert body["projectFiltered"] == "?sidebar_source=webui&all_profiles=1&include_archived=1"
-    assert body["capped"] == "?sidebar_source=webui&exclude_hidden=1&all_profiles=1&include_archived=1&archived_limit=2000"
+    assert body["first"] == "?sidebar_source=cli&exclude_hidden=1"
+    assert body["second"] == "?sidebar_source=webui&exclude_hidden=1&include_archived=1&archived_limit=100"
+    assert body["searchFiltered"] == "?sidebar_source=webui&exclude_hidden=1&include_archived=1"
+    assert body["projectFiltered"] == "?sidebar_source=webui&include_archived=1"
+    assert body["capped"] == "?sidebar_source=webui&exclude_hidden=1&include_archived=1&archived_limit=2000"
     assert body["third"] == "?sidebar_source=webui&exclude_hidden=1"
 
 
@@ -364,7 +359,6 @@ global.window = {{ _showCliSessions: false }};
 global._activeProject = null;
 global.NO_PROJECT_FILTER = '__none__';
 global._sessionSourceFilter = 'webui';
-global._showAllProfiles = false;
 global._showArchived = true;
 global.SESSION_ARCHIVED_PAGE_SIZE = 100;
 global.SESSION_ARCHIVED_MAX_LOADED_LIMIT = 2000;
@@ -476,7 +470,6 @@ global._sessionListRefreshAnimationPending = false;
 global._lastSessionListRenderSig = null;
 global._activeProject = null;
 global.NO_PROJECT_FILTER = '__none__';
-global._showAllProfiles = false;
 global._sessionSourceFilter = 'webui';
 global._renamingSid = null;
 global._sessionActionMenu = null;
@@ -669,12 +662,10 @@ def test_scope_mismatch_error_path_respects_sidebar_source():
     )
     script = f"""
 global.window = {{ _showCliSessions: true }};
-global._showAllProfiles = false;
 global._showArchived = false;
 global._sessionListHasLoadedOnce = true;
 global._SESSION_LIST_BOOT_TIMEOUT_MS = 90000;
 global._renderSessionListGen = 1;
-global._profileSwitchListEmbargo = false;
 global._pendingSessionListPayload = null;
 global._allProjects = [];
 global._contentSearchResults = ['stale'];
@@ -696,7 +687,6 @@ global.renderSessionListFromCache = () => {{
     scope: global._allSessionsScope ? {{ ...global._allSessionsScope }} : null,
     webui: global._serverWebuiSessionCount,
     cli: global._serverCliSessionCount,
-    skeleton: global._sessionListSkeletonActive,
     inflightKeys: Object.keys(global.INFLIGHT || {{}}).sort(),
   }});
 }};
@@ -714,7 +704,6 @@ async function runCase(requestedSource, cachedSource) {{
   global._allSessions = [{{ session_id: cachedSource + '-1' }}];
   global._allSessionsScope = {{
     profile: 'default',
-    allProfiles: false,
     sidebarSource: cachedSource,
     excludeHidden: true,
   }};
@@ -723,7 +712,6 @@ async function runCase(requestedSource, cachedSource) {{
   cleared.length = 0;
   global._serverWebuiSessionCount = 11;
   global._serverCliSessionCount = 5;
-  global._sessionListSkeletonActive = true;
   global._lastError = null;
   renders.length = 0;
   await _runRenderSessionListRefresh({{}}, 1);
@@ -732,7 +720,6 @@ async function runCase(requestedSource, cachedSource) {{
     scope: global._allSessionsScope ? {{ ...global._allSessionsScope }} : null,
     webui: global._serverWebuiSessionCount,
     cli: global._serverCliSessionCount,
-    skeleton: global._sessionListSkeletonActive,
     error: global._lastError,
     cleared: [...cleared],
     inflightKeys: Object.keys(global.INFLIGHT || {{}}).sort(),
@@ -753,13 +740,11 @@ async function runCase(requestedSource, cachedSource) {{
     assert body["mismatch"]["sessions"] == []
     assert body["mismatch"]["scope"] == {
         "profile": "default",
-        "allProfiles": False,
         "sidebarSource": "cli",
         "excludeHidden": True,
     }
     assert body["mismatch"]["webui"] is None
     assert body["mismatch"]["cli"] is None
-    assert body["mismatch"]["skeleton"] is False
     assert body["mismatch"]["render"]["sessions"] == []
     assert body["mismatch"]["inflightKeys"] == ["webui-live"]
     assert body["mismatch"]["cleared"] == []
@@ -767,7 +752,6 @@ async function runCase(requestedSource, cachedSource) {{
     assert body["match"]["sessions"] == ["webui-1"]
     assert body["match"]["scope"] == {
         "profile": "default",
-        "allProfiles": False,
         "sidebarSource": "webui",
         "excludeHidden": True,
     }

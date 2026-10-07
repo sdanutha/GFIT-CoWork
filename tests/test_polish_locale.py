@@ -1,12 +1,10 @@
 from collections import Counter
 from pathlib import Path
 import re
-from tests.test_issue2147_profile_concept_help import PROFILE_CONCEPT_KEYS
 
 
 REPO = Path(__file__).resolve().parent.parent
 PROFILE_CONCEPT_FALLBACK_KEYS = {
-    *PROFILE_CONCEPT_KEYS,
     "workspace_artifact_source_session",
 }
 
@@ -101,7 +99,6 @@ def test_polish_locale_includes_representative_translations():
         "tab_tasks: 'Zadania'",
         "tab_profiles: 'Profile'",
         "empty_title: 'W czym mogę pomóc?'",
-        "onboarding_title: 'Witaj w GFIT-CoWork'",
     ]
     for entry in expected:
         assert entry in pl_block
@@ -115,11 +112,8 @@ def test_polish_settings_detail_descriptions_are_translated():
         "settings_desc_notifications: 'Pokaż powiadomienie systemowe, gdy odpowiedź zostanie ukończona, podczas gdy aplikacja działa w tle.'",
         "settings_desc_token_usage: 'Wyświetla liczbę tokenów wejściowych/wyjściowych pod każdą odpowiedzią asystenta. Można też przełączyć za pomocą /usage.'",
         "settings_desc_sidebar_density: 'Kontroluje, ile metadanych wyświetla lista sesji na lewym pasku bocznym.'",
-        "settings_desc_auto_title_refresh: 'Automatycznie generuje na nowo tytuł konwersacji na podstawie najnowszej wymiany, utrzymując go adekwatnym w miarę rozwoju rozmowy. Wymaga skonfigurowanego modelu LLM do generowania tytułów.'",
         "settings_desc_external_sessions: 'Pokaż konwersacje z CLI, Telegrama, Discorda, Slacka i innych kanałów na liście sesji. Kliknij, aby zaimportować i kontynuować.'",
         "settings_desc_cron_sessions: 'Wyświetlaj wyjście zadań cron jako konwersacje na pasku bocznym. Aktywne tylko wtedy, gdy włączone są sesje spoza GFIT-CoWork. Domyślnie wyłączone; zadania o wysokiej częstotliwości mogą zalać pasek boczny.'",
-        "settings_desc_sync_insights: 'Odzwierciedla zużycie tokenów GFIT-CoWork w state.db, dzięki czemu hermes /insights uwzględnia dane sesji przeglądarki. Domyślnie wyłączone.'",
-        "settings_desc_bot_name: 'Używane tylko dla profilu domyślnego. Inne profile używają własnych nazw profilu.'",
     ]
     for entry in expected:
         assert entry in pl_block

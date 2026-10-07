@@ -154,7 +154,7 @@ def test_generated_title_persist_reloads_latest_session_before_saving(tmp_path, 
     session_dir.mkdir()
     cache = OrderedDict()
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     monkeypatch.setattr(models, "SESSIONS", cache, raising=False)
     monkeypatch.setattr(routes, "SESSIONS", cache, raising=False)
     monkeypatch.setattr(routes, "_sync_session_title_to_insights", lambda session: None)
@@ -210,10 +210,10 @@ def test_generated_title_persist_reloads_latest_session_before_saving(tmp_path, 
 
 
 def test_regenerate_endpoint_only_blocks_read_only_imported_sessions():
-    endpoint_idx = ROUTES_PY.index('"/api/session/title/regenerate"')
-    next_endpoint_idx = ROUTES_PY.index('"/api/personality/set"', endpoint_idx)
-    block = ROUTES_PY[endpoint_idx:next_endpoint_idx]
-    assert "_get_or_materialize_session(sid)" in block
+    from tests._route_source import route_source
+
+    block = route_source("POST", "/api/session/title/regenerate")
+    assert "load=_get_or_materialize_session" in block
     assert "except PermissionError:" in block
 
 

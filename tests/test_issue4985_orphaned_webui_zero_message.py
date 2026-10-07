@@ -293,7 +293,6 @@ def _payload_for_rows_webui(
 
     payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -788,8 +787,8 @@ def _real_pipeline(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
 
     hermes_home = tmp_path / "hermes_home"
     hermes_home.mkdir()
@@ -950,7 +949,6 @@ def _run_payload(pruned: list[str], *, show_cli_sessions: bool = True):
     # the monkeypatched lambda below.
     payload = builder(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=show_cli_sessions,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
@@ -1790,7 +1788,7 @@ def test_tombstone_trimmed_to_last_N_entries(monkeypatch, tmp_path):
     # constant to patch separately.
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
     models._save_webui_zero_message_orphan_tombstone(oversized)
     import json as _json
     on_disk = _json.loads(

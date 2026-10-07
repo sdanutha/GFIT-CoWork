@@ -1,11 +1,7 @@
-"""Tests for native Windows support (terminal.py POSIX guards + bootstrap.py unblock).
+"""Tests for native Windows support (bootstrap.py unblock).
 
-terminal.py guards:
-- _TERMINAL_SUPPORTED is False on Windows, True on POSIX
-- Terminal functions raise NotImplementedError on Windows
-- close_terminal returns False (no-op) on Windows
-- get_terminal returns None on Windows
-- Module imports cleanly on Windows (no fcntl/termios ImportError)
+The embedded terminal (api/terminal.py) and its POSIX guards went with the
+Admin (ADR 0006).
 
 bootstrap.py unblock:
 - ensure_supported_platform does not raise on Windows
@@ -23,67 +19,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-
-
-# ── terminal.py tests ────────────────────────────────────────────────────────
-
-
-class TestTerminalPosixGuard:
-    """Verify _TERMINAL_SUPPORTED flag and import guards."""
-
-    def test_terminal_supported_matches_platform(self):
-        from api import terminal
-        if sys.platform == "win32":
-            assert not terminal._TERMINAL_SUPPORTED
-        else:
-            assert terminal._TERMINAL_SUPPORTED
-
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only check")
-    def test_posix_modules_are_loaded(self):
-        from api import terminal
-        assert terminal.fcntl is not None
-        assert terminal.select is not None
-        assert terminal.termios is not None
-
-    @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only check")
-    def test_windows_modules_are_none(self):
-        from api import terminal
-        assert terminal.fcntl is None
-        assert terminal.select is None
-        assert terminal.termios is None
-
-
-class TestTerminalWindowsFunctions:
-    """Terminal functions should fail gracefully on Windows."""
-
-    @pytest.fixture(autouse=True)
-    def _force_unsupported(self, monkeypatch):
-        """Force _TERMINAL_SUPPORTED=False regardless of actual platform."""
-        from api import terminal
-        monkeypatch.setattr(terminal, "_TERMINAL_SUPPORTED", False)
-
-    def test_start_terminal_raises(self, tmp_path):
-        from api.terminal import start_terminal
-        with pytest.raises(NotImplementedError, match="not supported on Windows"):
-            start_terminal("test-session", tmp_path)
-
-    def test_write_terminal_raises(self):
-        from api.terminal import write_terminal
-        with pytest.raises(NotImplementedError, match="not supported on Windows"):
-            write_terminal("test-session", "hello")
-
-    def test_resize_terminal_raises(self):
-        from api.terminal import resize_terminal
-        with pytest.raises(NotImplementedError, match="not supported on Windows"):
-            resize_terminal("test-session", 24, 80)
-
-    def test_close_terminal_returns_false(self):
-        from api.terminal import close_terminal
-        assert close_terminal("test-session") is False
-
-    def test_get_terminal_returns_none(self):
-        from api.terminal import get_terminal
-        assert get_terminal("test-session") is None
 
 
 # ── bootstrap.py tests ───────────────────────────────────────────────────────

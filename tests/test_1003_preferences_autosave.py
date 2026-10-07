@@ -43,14 +43,11 @@ PREFERENCE_FIELDS_AUTOSAVE = [
     ("settingsShowCliSessions", "show_cli_sessions"),
     ("settingsShowClaudeCodeSessions", "show_claude_code_sessions"),
     ("settingsShowPreviousMessagingSessions", "show_previous_messaging_sessions"),
-    ("settingsSyncInsights", "sync_to_insights"),
     ("settingsSoundEnabled", "sound_enabled"),
     ("settingsNotificationsEnabled", "notifications_enabled"),
     ("settingsSidebarDensity", "sidebar_density"),
-    ("settingsAutoTitleRefresh", "auto_title_refresh_every"),
     ("settingsDefaultMessageMode", "default_message_mode"),
     ("settingsShowBusyPlaceholderHint", "show_busy_placeholder_hint"),
-    ("settingsBotName", "bot_name"),
 ]
 
 
@@ -65,20 +62,12 @@ def test_all_preference_fields_have_autosave_payload_entries():
 
 
 def test_preference_fields_use_schedule_autosave_not_mark_dirty():
-    """All listener attachments (excluding bot_name's debounce wrapper) must
-    use _schedulePreferencesAutosave. bot_name uses a wrapper but still
-    eventually calls _schedulePreferencesAutosave."""
+    """All listener attachments must use _schedulePreferencesAutosave."""
     panel = _load_settings_panel_block()
     # Each field should have at least one addEventListener call wired to the autosave
     # path. We check that for each non-password/non-model field, the dirty marker
     # has been replaced.
     for dom_id, _field in PREFERENCE_FIELDS_AUTOSAVE:
-        if dom_id == "settingsBotName":
-            # Bot name uses a 500ms wrapper that calls _schedulePreferencesAutosave
-            # via setTimeout. The wrapper itself is in the loadSettingsPanel block.
-            assert "_schedulePreferencesAutosave" in panel, \
-                "_schedulePreferencesAutosave must be referenced for bot_name flow"
-            continue
         # For other fields: search the field's block for the addEventListener call
         # and verify it points to _schedulePreferencesAutosave.
         # We use a context window around the dom_id to find the listener.

@@ -22,8 +22,8 @@ def test_repair_safe_session_recovery_restores_backup_and_rebuilds_index(tmp_pat
     live.unlink()
     index = tmp_path / "_index.json"
     index.write_text(json.dumps([]), encoding="utf-8")
-    monkeypatch.setattr(_m, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(_m, "SESSION_INDEX_FILE", index)
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index)
     stale = _m.Session(
         session_id="stale_cached",
         title="stale",
@@ -66,21 +66,3 @@ def test_repair_safe_session_recovery_leaves_unsafe_orphan_for_manual_review(tmp
     assert not live.exists()
     assert result["after"]["status"] == "needs_manual_review"
 
-
-def test_repair_safe_route_uses_clean_flag_for_status_code():
-    from pathlib import Path
-
-    src = Path("api/routes.py").read_text(encoding="utf-8")
-
-    assert 'status=200 if result.get("clean") else 409' in src
-
-
-def test_recovery_audit_routes_are_registered():
-    from pathlib import Path
-
-    src = Path("api/routes.py").read_text(encoding="utf-8")
-
-    assert 'parsed.path == "/api/session/recovery/audit"' in src
-    assert 'parsed.path == "/api/session/recovery/repair-safe"' in src
-    assert "audit_session_recovery" in src
-    assert "repair_safe_session_recovery" in src

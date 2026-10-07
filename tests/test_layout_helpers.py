@@ -1,6 +1,8 @@
 """Regression tests for the shared layout-assertion helpers."""
 from __future__ import annotations
 
+import os
+
 import pytest
 
 try:
@@ -85,10 +87,15 @@ def test_layout_sane_on_master_pages():
         browser = pw.chromium.launch(headless=True, args=_BROWSER_ARGS)
         try:
             for path in ["/", "/#settings", "/#sessions"]:
-                ctx = browser.new_context(viewport={"width": 1280, "height": 720})
+                # The app is behind login (ADR 0006): open it as the test User.
+                ctx = browser.new_context(
+                    viewport={"width": 1280, "height": 720},
+                    extra_http_headers={"Cookie": os.environ["HERMES_WEBUI_TEST_COOKIE"]},
+                )
                 page = ctx.new_page()
                 page.goto(BASE + path, wait_until="domcontentloaded")
                 page.wait_for_selector("#msg, .app, body", timeout=10000)
+                assert "/login" not in page.url, page.url
                 assert_layout_sane(page, scope_selector=".layout > main", checks=_LIVE_CHECKS)
                 ctx.close()
         finally:

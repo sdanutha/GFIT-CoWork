@@ -22,18 +22,18 @@ def _get(path):
 
 def _write_session_with_secret_title():
     from api.models import Session
-    from tests.conftest import TEST_WORKSPACE
+    from tests._pytest_port import TEST_USER, TEST_USER_WORKSPACE
 
     sid = "sec_summary_" + uuid.uuid4().hex[:8]
     now = time.time()
     session = Session(
         session_id=sid,
         title=f"session with {_FULL_SECRET}",
-        workspace=str(TEST_WORKSPACE),
+        workspace=str(TEST_USER_WORKSPACE),
         model="test",
         created_at=now,
         updated_at=now,
-        profile="default",
+        profile=TEST_USER,
         messages=[{"role": "user", "content": "visible row", "timestamp": now}],
         tool_calls=[],
     )

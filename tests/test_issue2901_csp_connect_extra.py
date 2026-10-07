@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from api.helpers import _build_csp_enforced_policy
+
 
 def test_csp_connect_src_default_header_unchanged(monkeypatch):
     from server import Handler
 
     monkeypatch.delenv("HERMES_WEBUI_CSP_CONNECT_EXTRA", raising=False)
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     expected = (
         "connect-src 'self' http://127.0.0.1:* http://localhost:* "
         "http://ipc.localhost "
@@ -28,7 +30,7 @@ def test_csp_connect_src_includes_valid_extra_origins(monkeypatch):
         "https://metrics.example.com wss://events.example.com:443",
     )
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
 
     assert (
         "connect-src 'self' http://127.0.0.1:* http://localhost:* "
@@ -54,7 +56,7 @@ def test_csp_connect_src_allows_https_loopback_for_sidecars(monkeypatch):
     from server import Handler
 
     monkeypatch.delenv("HERMES_WEBUI_CSP_CONNECT_EXTRA", raising=False)
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
     for origin in (
         "https://127.0.0.1:*",
         "https://localhost:*",
@@ -72,13 +74,6 @@ def test_csp_connect_src_includes_explicit_trusted_sidecar_origin(monkeypatch):
         "http://127.0.0.1:17787 ws://127.0.0.1:17787",
     )
 
-    report_only = Handler.csp_report_only_policy()
-
-    assert "http://127.0.0.1:17787" in report_only
-    assert "ws://127.0.0.1:17787" in report_only
-
-    from api.helpers import _build_csp_enforced_policy
-
     enforced = _build_csp_enforced_policy()
     assert "http://127.0.0.1:17787" in enforced
     assert "ws://127.0.0.1:17787" in enforced
@@ -92,7 +87,7 @@ def test_csp_connect_src_rejects_directive_injection(monkeypatch, caplog):
         "https://metrics.example.com; script-src *",
     )
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
 
     assert "https://metrics.example.com" not in policy
     assert "script-src *" not in policy
@@ -107,7 +102,7 @@ def test_csp_connect_src_rejects_paths(monkeypatch):
         "https://metrics.example.com/api",
     )
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
 
     assert "https://metrics.example.com/api" not in policy
 
@@ -120,6 +115,6 @@ def test_csp_connect_src_rejects_invalid_ports(monkeypatch):
         "https://metrics.example.com:99999",
     )
 
-    policy = Handler.csp_report_only_policy()
+    policy = _build_csp_enforced_policy()
 
     assert "https://metrics.example.com:99999" not in policy

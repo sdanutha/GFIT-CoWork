@@ -8,7 +8,7 @@ import urllib.parse
 
 import pytest
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, new_session_id
 
 try:
     from api.clarify import (
@@ -139,7 +139,7 @@ class TestClarifyHTTPEndpoints:
 
     def test_respond_returns_stale_when_no_pending(self):
         """When no clarify prompt is pending, respond returns 409 (issue #2639)."""
-        sid = f"http-no-pending-{uuid.uuid4().hex[:8]}"
+        sid = new_session_id()
         result, status = post("/api/clarify/respond", {
             "session_id": sid,
             "response": "Use option A",
@@ -153,29 +153,6 @@ class TestClarifyHTTPEndpoints:
         assert status == 400
 
     def test_respond_requires_response(self):
-        sid = f"http-no-response-{uuid.uuid4().hex[:8]}"
+        sid = new_session_id()
         result, status = post("/api/clarify/respond", {"session_id": sid})
         assert status == 400
-
-    def test_respond_clears_injected_pending(self):
-        sid = f"http-clear-{uuid.uuid4().hex[:8]}"
-        question = urllib.parse.quote("Pick the better option")
-        choices = urllib.parse.quote("A")
-        inject = get(
-            f"/api/clarify/inject_test?session_id={urllib.parse.quote(sid)}"
-            f"&question={question}&choices={choices}"
-        )
-        assert inject["ok"] is True
-
-        data = get(f"/api/clarify/pending?session_id={urllib.parse.quote(sid)}")
-        assert data["pending"] is not None
-
-        result, status = post("/api/clarify/respond", {
-            "session_id": sid,
-            "response": "B",
-        })
-        assert status == 200
-        assert result["ok"] is True
-
-        data2 = get(f"/api/clarify/pending?session_id={urllib.parse.quote(sid)}")
-        assert data2["pending"] is None

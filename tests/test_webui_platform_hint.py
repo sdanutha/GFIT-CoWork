@@ -35,13 +35,11 @@ def test_streaming_uses_webui_platform():
 
 
 def test_routes_uses_webui_platform_for_all_agent_calls():
-    """api/routes.py must use platform='webui' for all AIAgent instantiations."""
+    """api/routes.py makes every agent through the turn builder's webui_agent,
+    which passes platform='webui'."""
     routes_py = _load_source("api/routes.py")
-    webui_count = _count_platform_kwargs(routes_py, "webui")
-    cli_count = _count_platform_kwargs(routes_py, "cli")
-    assert cli_count == 0, (
-        f"routes.py still has {cli_count} platform='cli' AIAgent call(s); convert to 'webui'"
-    )
-    assert webui_count >= 2, (
-        f"routes.py expected ≥2 platform='webui' calls, found {webui_count}"
-    )
+    turn_builder_py = _load_source("api/turn_builder.py")
+    assert _count_platform_kwargs(routes_py, "cli") == 0
+    assert "AIAgent(" not in routes_py, "routes.py must make agents through webui_agent"
+    assert routes_py.count("webui_agent(") >= 2
+    assert _count_platform_kwargs(turn_builder_py, "webui") == 1

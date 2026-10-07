@@ -72,7 +72,6 @@ def test_each_named_sse_handler_uses_constant():
 
     expected_callers = [
         "subscriber.get(timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS)",     # main agent SSE
-        "output.get(timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS)",        # terminal SSE (per-consumer queue)
     ]
     for caller in expected_callers:
         assert caller in src, (

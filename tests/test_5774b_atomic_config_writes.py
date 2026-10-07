@@ -651,7 +651,7 @@ def test_failed_write_through_symlink_leaves_link_and_target_intact(
 
 
 @pytest.mark.parametrize(
-    "writer", ["main", "onboarding", "profile_endpoint", "profile_defaults"]
+    "writer", ["main", "profile_endpoint", "profile_defaults"]
 )
 def test_each_config_writer_preserves_old_bytes_when_replace_fails(
     tmp_path: Path, monkeypatch, writer: str
@@ -671,12 +671,6 @@ def test_each_config_writer_preserves_old_bytes_when_replace_fails(
             from api import config
 
             config._save_yaml_config_file(target, {"model": {"default": "new"}})
-        elif writer == "onboarding":
-            from api import onboarding
-
-            onboarding._save_yaml_config(
-                target, {"model": {"default": "replacement-model"}}
-            )
         else:
             from api import profiles
 

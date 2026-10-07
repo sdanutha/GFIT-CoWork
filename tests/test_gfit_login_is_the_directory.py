@@ -15,7 +15,6 @@ import api.auth as auth
 from tests._gfit_server import gfit_server as _gfit_server
 
 MEMBER = "521740"
-ADMIN = "100001"
 MISSING_ROUTE = "/api/auth/no-such-route"
 
 TRUSTED_HEADER_ENV = {
@@ -39,8 +38,8 @@ OIDC_ENV = {
 def server(monkeypatch, tmp_path):
     def start(*, directory="memory", legacy_env=None):
         return _gfit_server(
-            monkeypatch, tmp_path, users={MEMBER: "Member", ADMIN: "Admin"},
-            profile_names=[MEMBER], admins=ADMIN, directory=directory, legacy_env=legacy_env,
+            monkeypatch, tmp_path, users={MEMBER: "Member"},
+            profile_names=[MEMBER], directory=directory, legacy_env=legacy_env,
         )
     return start
 
@@ -50,10 +49,9 @@ def _session_cookies(set_cookies) -> list[str]:
 
 
 def _clients(srv):
-    """A signed-out client, and, with a Directory, a signed-in Admin and User."""
+    """A signed-out client, and, with a Directory, a signed-in User."""
     yield "signed-out", srv.client()
     if srv.directory:
-        yield "admin", srv.logged_in(ADMIN)
         yield "user", srv.logged_in(MEMBER)
 
 
@@ -72,13 +70,13 @@ def assert_answers_like_a_missing_route(srv, method, path, body=None):
 
 # ── trusted-header login (ticket 02) ────────────────────────────────────────
 
-def test_a_leftover_trusted_header_setting_does_not_turn_login_on(server):
+def test_without_a_directory_a_leftover_trusted_header_setting_lets_nobody_in(server):
     with server(directory="", legacy_env=TRUSTED_HEADER_ENV) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
+        assert body["logged_in"] is False, body
         status, _, set_cookies = client.get("/api/sessions", headers=TRUSTED_HEADERS)
-        assert status == 200
+        assert status == 401
         assert not _session_cookies(set_cookies)
 
 
@@ -118,12 +116,12 @@ def test_the_oidc_routes_are_gone(server, directory, path):
         assert_answers_like_a_missing_route(srv, "GET", path)
 
 
-def test_a_leftover_oidc_setting_does_not_turn_login_on(server):
+def test_without_a_directory_a_leftover_oidc_setting_lets_nobody_in(server):
     with server(directory="", legacy_env=OIDC_ENV) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
-        assert client.get("/api/sessions")[0] == 200
+        assert body["logged_in"] is False, body
+        assert client.get("/api/sessions")[0] == 401
 
 
 def test_the_login_status_and_page_name_no_oidc(server):
@@ -161,12 +159,12 @@ def test_the_passkey_routes_are_gone(server, directory, path):
         assert_answers_like_a_missing_route(srv, "POST", path, {})
 
 
-def test_a_leftover_passkey_setting_does_not_turn_login_on(server):
+def test_without_a_directory_a_leftover_passkey_setting_lets_nobody_in(server):
     with server(directory="", legacy_env=PASSKEY_ENV) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
-        assert client.get("/api/sessions")[0] == 200
+        assert body["logged_in"] is False, body
+        assert client.get("/api/sessions")[0] == 401
 
 
 def test_the_login_status_page_and_settings_name_no_passkey(server):
@@ -176,33 +174,16 @@ def test_the_login_status_page_and_settings_name_no_passkey(server):
         status, html, _ = srv.client().get("/login")
         assert status == 200
         assert "passkey" not in html.lower()
-        admin = srv.logged_in(ADMIN)
-        status, body, _ = admin.get("/api/auth/status")
+        user = srv.logged_in(MEMBER)
+        status, body, _ = user.get("/api/auth/status")
         assert body["logged_in"] is True
         assert not set(PASSKEY_FIELDS) & set(body), body
-        status, settings, _ = admin.get("/api/settings")
+        status, settings, _ = user.get("/api/settings")
         assert status == 200
         assert not set(PASSKEY_FIELDS) & set(settings), settings
-        status, shell, _ = admin.get("/")
+        status, shell, _ = user.get("/")
         assert status == 200
         assert "passkey" not in shell.lower()
-
-
-def test_the_terminal_refusal_names_the_directory(server, monkeypatch):
-    # With login off, a request from a non-local client (through the trusted
-    # loopback proxy) may not open the embedded terminal.
-    monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", "1")
-    monkeypatch.delenv("HERMES_WEBUI_ONBOARDING_OPEN", raising=False)
-    with server(directory="") as srv:
-        status, body, _ = srv.client().post(
-            "/api/terminal/start", {}, headers={"X-Forwarded-For": "8.8.8.8"},
-        )
-        assert status == 403, body
-        message = body["error"]
-        assert "Directory" in message
-        assert "HERMES_WEBUI_DIRECTORY" in message
-        assert "passkey" not in message.lower()
-        assert "password" not in message.lower()
 
 
 # ── the shared password (ticket 05) ─────────────────────────────────────────
@@ -224,15 +205,15 @@ def stored_password(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("leftover", ["environment", "settings"])
-def test_a_leftover_password_does_not_turn_login_on(server, leftover, request):
+def test_without_a_directory_a_leftover_password_lets_nobody_in(server, leftover, request):
     legacy_env = PASSWORD_ENV if leftover == "environment" else None
     if leftover == "settings":
         request.getfixturevalue("stored_password")
     with server(directory="", legacy_env=legacy_env) as srv:
         client = srv.client()
         status, body, _ = client.get("/api/auth/status")
-        assert body["auth_enabled"] is False, body
-        assert client.get("/api/sessions")[0] == 200
+        assert body["logged_in"] is False, body
+        assert client.get("/api/sessions")[0] == 401
 
 
 @pytest.mark.parametrize("leftover", ["environment", "settings"])
@@ -256,45 +237,41 @@ def test_with_a_directory_a_leftover_password_opens_no_way_in(server, leftover, 
 
 
 def test_setting_a_password_in_settings_does_nothing(server, stored_password):
-    # With no Directory, Settings is open: a password sent to it is ignored
-    # like any unknown setting, and neither turns login on nor logs anyone in.
+    # With no Directory nobody has a session, so Settings refuses the request
+    # outright; nobody is logged in and the stored hash is left as it was.
     with server(directory="") as srv:
         client = srv.client()
         status, saved, set_cookies = client.post(
             "/api/settings", {"_set_password": "a-new-password", "_current_password": "x"},
         )
-        assert status == 200, saved
+        assert status == 401, saved
         assert not _session_cookies(set_cookies)
-        assert not set(PASSWORD_FIELDS) & set(saved), saved
-        assert client.get("/api/auth/status")[1]["auth_enabled"] is False
+        assert client.get("/api/auth/status")[1]["logged_in"] is False
         stored = stored_password.read_text(encoding="utf-8")
         assert "a-stored-upstream-hash" in stored  # left on disk, unchanged
 
 
 def test_clearing_the_password_in_settings_does_nothing(server, stored_password):
     with server() as srv:
-        admin = srv.logged_in(ADMIN)
-        status, saved, _ = admin.post("/api/settings", {"_clear_password": True})
+        user = srv.logged_in(MEMBER)
+        status, saved, _ = user.post("/api/settings", {"_clear_password": True})
         assert status == 200, saved
-        assert admin.get("/api/sessions")[0] == 200
+        assert user.get("/api/sessions")[0] == 200
         assert "a-stored-upstream-hash" in stored_password.read_text(encoding="utf-8")
 
 
-def test_the_login_status_settings_and_onboarding_name_no_password(server):
+def test_the_login_status_and_settings_name_no_password(server):
     with server(legacy_env=PASSWORD_ENV) as srv:
         status, body, _ = srv.client().get("/api/auth/status")
         assert not set(PASSWORD_FIELDS) & set(body), body
-        admin = srv.logged_in(ADMIN)
-        status, body, _ = admin.get("/api/auth/status")
+        user = srv.logged_in(MEMBER)
+        status, body, _ = user.get("/api/auth/status")
         assert not set(PASSWORD_FIELDS) & set(body), body
-        status, settings, _ = admin.get("/api/settings")
+        status, settings, _ = user.get("/api/settings")
         assert status == 200
         assert not set(PASSWORD_FIELDS) & set(settings), settings
         assert "password_hash" not in settings
-        status, onboarding, _ = admin.get("/api/onboarding/status")
-        assert status == 200
-        assert "password_enabled" not in onboarding["settings"], onboarding
-        status, shell, _ = admin.get("/")
+        status, shell, _ = user.get("/")
         assert status == 200
         for control in ("settingsPassword", "settingsCurrentPassword", "btnDisableAuth", "settingsPasswordEnvLock"):
             assert control not in shell, control

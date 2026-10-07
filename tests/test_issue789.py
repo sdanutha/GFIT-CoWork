@@ -29,8 +29,8 @@ def _isolate(tmp_path, monkeypatch):
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
 
     models.SESSIONS.clear()
     yield

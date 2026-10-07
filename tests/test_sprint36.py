@@ -132,16 +132,10 @@ class TestCancelStreamErrorPath:
         # Widen the window: the provenance log + comments added for #5345 sit
         # before the try/catch, so 400 chars no longer reaches the catch block.
         block = src[idx:idx + 1200]
-        # The old pattern was setStatus inside catch; new pattern has it outside
-        # Look for the catch block specifically
-        catch_idx = block.find("}catch(")
-        if catch_idx == -1:
-            catch_idx = block.find("} catch (")
-        assert catch_idx != -1, "No catch block found in cancelStream"
-        # Get just the catch body
-        brace_open = block.find("{", catch_idx)
-        brace_close = block.find("}", brace_open)
-        catch_body = block[brace_open:brace_close + 1]
+        # A failed request is caught inside requestStreamCancel (ui.js); the
+        # failure path in cancelStream must not show an error status.
+        assert "requestStreamCancel(streamId)" in block
+        catch_body = block
         assert "cancel_failed" not in catch_body, (
             "catch block still calls setStatus(cancel_failed) — "
             "this means a failed cancel shows an error instead of cleaning up silently"

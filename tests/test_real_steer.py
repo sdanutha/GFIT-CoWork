@@ -302,9 +302,10 @@ class TestRouting:
     """The POST handler must dispatch /api/chat/steer to _handle_chat_steer."""
 
     def test_route_registered(self):
-        src = (Path(__file__).parent.parent / "api" / "routes.py").read_text(encoding="utf-8")
-        assert '/api/chat/steer' in src
-        assert '_handle_chat_steer' in src
+        from tests._route_source import route_source
+
+        assert Path
+        assert '_handle_chat_steer' in route_source("POST", "/api/chat/steer")
 
 
 # ── Frontend: cmdSteer + busy-mode steer use the new endpoint ────────────

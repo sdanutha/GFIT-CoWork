@@ -79,14 +79,3 @@ def test_session_discoverability_failed_write_leaves_no_debris(tmp_path, monkeyp
     assert original.read_text(encoding="utf-8") == '["keep"]'  # original intact
     assert [p.name for p in tmp_path.iterdir()] == ["_index.json"]  # temp cleaned up
 
-
-def test_oauth_writer_fsyncs_and_keeps_0600(tmp_path, monkeypatch):
-    import api.oauth as oauth
-
-    calls = _spy_fsync(monkeypatch, oauth)
-    path = tmp_path / "auth.json"
-    oauth._write_auth_json({"access_token": "x"}, auth_path=path)
-
-    assert calls, "oauth auth.json write did not fsync"
-    assert json.loads(path.read_text(encoding="utf-8")) == {"access_token": "x"}
-    assert (os.stat(path).st_mode & 0o777) == 0o600  # owner-only preserved

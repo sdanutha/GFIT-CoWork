@@ -26,9 +26,9 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _default_session_dir() -> Path:
-    from api.models import SESSION_DIR
+    from api import config as _config
 
-    return Path(SESSION_DIR)
+    return Path(_config.SESSION_DIR)
 
 
 def _journal_path(session_id: str, session_dir: Path | None = None) -> Path:

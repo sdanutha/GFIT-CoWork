@@ -136,28 +136,9 @@ def _locked_by_stream(session) -> bool:
     if not stream_id:
         return False
     try:
-        from api.config import STREAMS, STREAMS_LOCK
+        from api import run_registry
 
-        with STREAMS_LOCK:
-            return stream_id in STREAMS
-    except Exception:
-        return False
-
-
-def _locked_by_terminal(session_id: str, worktree_path: Path) -> bool:
-    try:
-        from api.terminal import get_terminal
-
-        term = get_terminal(session_id)
-    except Exception:
-        return False
-    if not term:
-        return False
-    try:
-        if not term.is_alive():
-            return False
-        terminal_workspace = _resolve_path(getattr(term, "workspace", None))
-        return terminal_workspace == worktree_path
+        return stream_id in run_registry.live_stream_ids()
     except Exception:
         return False
 
@@ -185,10 +166,6 @@ def worktree_status_for_session(session) -> dict:
             "upstream": None,
         },
         "locked_by_stream": _locked_by_stream(session),
-        "locked_by_terminal": _locked_by_terminal(
-            getattr(session, "session_id", ""),
-            worktree_path,
-        ),
         "listed": _worktree_listed(
             worktree_path,
             getattr(session, "worktree_repo_root", None),
@@ -202,114 +179,6 @@ def worktree_status_for_session(session) -> dict:
     status["untracked_count"] = untracked_count
     status["ahead_behind"] = _ahead_behind(worktree_path)
     return status
-
-
-def remove_worktree_for_session(session, *, force: bool = False) -> dict:
-    """Remove a session's git worktree from disk.
-
-    Returns status dict with keys: ok, removed_path, warnings.
-    Raises ValueError for terminal blockers (locked by stream/terminal,
-    dirty with force=False).
-    """
-    raw_path = getattr(session, "worktree_path", None)
-    if not raw_path:
-        raise ValueError("Session is not worktree-backed")
-
-    worktree_path = _resolve_path(raw_path)
-    if worktree_path is None:
-        raise ValueError("Session is not worktree-backed")
-
-    # Read current status before removal
-    status = worktree_status_for_session(session)
-
-    if not status["exists"]:
-        return {
-            "ok": True,
-            "removed_path": str(worktree_path),
-            "warnings": ["Worktree directory no longer exists on disk."],
-        }
-
-    warnings = []
-
-    # Guard: locked by stream
-    if status["locked_by_stream"]:
-        raise ValueError("Worktree is locked by an active streaming session")
-
-    # Guard: locked by terminal
-    if status["locked_by_terminal"]:
-        raise ValueError("Worktree is locked by an active terminal session")
-
-    # Guard: local changes and unpushed commits without explicit force.
-    if status["dirty"] and not force:
-        raise ValueError(
-            "Worktree has uncommitted changes. Use force=true to override."
-        )
-    if status["untracked_count"] > 0:
-        if force:
-            warnings.append(
-                f"{status['untracked_count']} untracked file(s) will be removed."
-            )
-        else:
-            raise ValueError(
-                f"Worktree has {status['untracked_count']} untracked file(s). "
-                "Use force=true to override."
-            )
-    ahead = int((status.get("ahead_behind") or {}).get("ahead") or 0)
-    if ahead > 0:
-        if force:
-            warnings.append(f"{ahead} unpushed commit(s) will be removed.")
-        else:
-            raise ValueError(
-                f"Worktree has {ahead} unpushed commit(s). "
-                "Use force=true to override."
-            )
-
-    # Remove the worktree — must run from the repo root, not the worktree dir
-    repo_root = getattr(session, "worktree_repo_root", None)
-    if not repo_root:
-        raise ValueError("Session missing worktree_repo_root")
-
-    # Unlock the creation-time bookkeeping lock before removing (fail-soft).
-    # The agent locks every worktree it creates (cli._setup_worktree), and git
-    # refuses to remove a locked worktree with a single --force, so without
-    # this every WebUI-created worktree is unremovable.  The dirty/untracked/
-    # unpushed/stream/terminal guards above are the real safety layer, not
-    # git's lock — mirrors the agent's own _cleanup_worktree ordering.
-    try:
-        _run_git(["worktree", "unlock", str(worktree_path)], str(repo_root), timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        pass  # already unlocked / never locked — non-fatal
-
-    try:
-        remove_args = ["worktree", "remove"]
-        if force:
-            remove_args.append("--force")
-        remove_args.append(str(worktree_path))
-        result = _run_git(remove_args, str(repo_root), timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ValueError(f"Failed to remove worktree: {exc}") from exc
-
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip().split("\n")[-1]
-        raise ValueError(
-            f"git worktree remove failed: {stderr or result.stdout.strip()}"
-        )
-
-    # Prune in case the worktree dir was already gone
-    try:
-        _run_git(
-            ["worktree", "prune"],
-            str(repo_root),
-            timeout=5,
-        )
-    except Exception:
-        pass
-
-    return {
-        "ok": True,
-        "removed_path": str(worktree_path),
-        "warnings": warnings or None,
-    }
 
 
 def find_git_repo_root(workspace: str | Path) -> Path:
@@ -383,7 +252,7 @@ WORKTREE_OUTSIDE_WORKSPACE_MESSAGE = "A worktree here would be outside your Work
 def _confine_worktree(path: Path) -> None:
     """Refuse *path* when the request's Workspace policy says it may not become the session's Workspace.
 
-    A User's worktree must stay inside their Workspace; not confined for the Admin.
+    A User's worktree must stay inside their Workspace.
     """
     from api.workspace_policy import request_workspace_policy
 

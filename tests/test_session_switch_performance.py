@@ -7,8 +7,8 @@ def test_compression_continuation_fallback_reads_only_file_head(monkeypatch, tmp
     index_file = tmp_path / "_index.json"
     index_file.write_text("[]", encoding="utf-8")
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     models.SESSIONS.clear()
 
     parent_sid = "parent"
@@ -81,8 +81,8 @@ def test_compression_continuation_prefix_match_stays_true(monkeypatch, tmp_path)
     index_file = tmp_path / "_index.json"
     index_file.write_text("[]", encoding="utf-8")
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     models.SESSIONS.clear()
 
     parent_sid = "parent"
@@ -105,8 +105,8 @@ def test_compression_continuation_multibyte_summary_before_marker(monkeypatch, t
     index_file = tmp_path / "_index.json"
     index_file.write_text("[]", encoding="utf-8")
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     models.SESSIONS.clear()
 
     parent_sid = "parent"

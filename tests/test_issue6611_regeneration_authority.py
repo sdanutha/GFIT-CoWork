@@ -188,8 +188,8 @@ def test_writable_imported_session_accepts_only_a_marked_final_user_turn(monkeyp
     session.active_stream_id = None
     session.pending_started_at = None
     session.messages[-2]["_active_turn_token"] = token
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     session.save(touch_updated_at=False)
     session = Session.load(session.session_id)
     revision = regeneration_authority(session)
@@ -873,8 +873,13 @@ def test_snapshot_refuses_when_wal_data_version_changes(monkeypatch, tmp_path):
     ])
     real_conn = sqlite3.connect(db)
     fake = _FakeConn(real_conn)
+    # Point the reader at this database; without it the result depended on
+    # whether the process's own state.db happened to exist (an absent one
+    # answers an empty snapshot before any data_version read).
+    monkeypatch.setattr(models, "_active_state_db_path", lambda: db)
     monkeypatch.setattr(models, "open_state_db_readonly", lambda _p: fake)
     snap = models.get_state_db_regeneration_tail_snapshot("s1", 50.0)
+    assert fake._dv_calls >= 2, "the snapshot never compared data_version"
     assert snap is None, "changed data_version must refuse the bounded snapshot"
 
 

@@ -1,4 +1,5 @@
 """Regression tests for session sidecar repair logic."""
+import api.config
 import json
 import queue
 import os
@@ -33,8 +34,8 @@ def _isolate_session_dir(tmp_path, monkeypatch):
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
 
     models.SESSIONS.clear()
     yield session_dir, index_file
@@ -930,7 +931,7 @@ class TestNonEmptyMessagesPendingCleared:
                 "done", {"session_id": sid},
             )
         journal_path = (
-            models.SESSION_DIR
+            api.config.SESSION_DIR
             / "_run_journal"
             / sid
             / f"{stream_id}.jsonl"

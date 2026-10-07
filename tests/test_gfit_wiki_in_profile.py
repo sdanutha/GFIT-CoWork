@@ -8,7 +8,7 @@
 - Login writes ``WIKI_PATH`` into a User's Profile ``.env`` when it has none,
   so the Agent's llm-wiki skill uses the same folder. An existing value is
   kept, and the process environment is not changed.
-- The Admin, and login turned off, keep today's resolution.
+- Login turned off keeps today's resolution.
 
 HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
@@ -22,15 +22,14 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
     monkeypatch.delenv("WIKI_PATH", raising=False)
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 
@@ -123,14 +122,3 @@ def test_login_keeps_a_wiki_path_the_profile_already_has(srv):
     srv.logged_in(ALICE)
 
     assert env.read_text() == "# mine\nWIKI_PATH=/somewhere/else\nOTHER=1\n"
-
-
-def test_the_admins_wiki_keeps_todays_resolution(srv, tmp_path, monkeypatch):
-    shared = tmp_path / "team-wiki"
-    _page(shared, "team-page")
-    monkeypatch.setenv("WIKI_PATH", str(shared))
-
-    status, pages = _browse(srv.logged_in(ADMIN))
-
-    assert (status, pages) == (200, ["team-page.md"])
-    assert not (srv.hermes_home / ".env").exists() or _env_value(srv.hermes_home / ".env") is None

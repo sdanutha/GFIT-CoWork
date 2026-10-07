@@ -25,7 +25,7 @@ def _stable_session_list_cache_stamp(monkeypatch):
     test_session_sidebar_cache.py does. (Patches the binding the cache's
     resolved-stamp lookup actually reads; auto-restored by monkeypatch.)
     """
-    monkeypatch.setattr(routes, "_session_list_cache_source_stamp", lambda _key: ("stable",))
+    monkeypatch.setattr("api.route_session_list_cache._session_list_cache_source_stamp", lambda _key: ("stable",))
 
 
 
@@ -40,7 +40,6 @@ def _session_cache_diag_stage_names(diag: RequestDiagnostics) -> list[str]:
 def _session_cache_key() -> tuple:
     return routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=False,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

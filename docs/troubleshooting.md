@@ -261,11 +261,11 @@ python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confir
 
 ---
 
-## 404 after login when login is on
+## 404 after login
 
-**Symptom.** With login on (a Directory configured), logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
+**Symptom.** Logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
 
-**Why.** The server-side redirect after login targets `/sessions` (plural), but that path was missing from the explicit SPA-shell allowlist in `handle_get()`. Without auth the bug is invisible because the SPA handles `/sessions` client-side and the server route is never hit — only the server-side post-login redirect exposes it.
+**Why.** The server-side redirect after login targets `/sessions` (plural), but that path was missing from the explicit SPA-shell allowlist in `handle_get()`. The SPA handles `/sessions` client-side, so only the server-side post-login redirect exposed it.
 
 **Fix.** `/sessions` is now included alongside `/` and `/index.html` in the set of paths that serve the SPA shell. No configuration change is needed.
 
@@ -309,24 +309,19 @@ Interpret the two together:
 
 ---
 
-## MCP panel shows another profile's servers, or "Live status for this profile is unavailable"
+## Notes drawer says "Live status for this profile is unavailable"
 
-**Symptom.** With several profiles, the MCP settings panel of profile A shows a server as *Active* with a tool count while the tool inventory is empty (or lists profile B's tools); `/reload-mcp` on one profile stops the other profile's servers; or the MCP panel and the external Notes drawer show the notice *"Live status for this profile is unavailable right now"* and `/reload-mcp` answers *"MCP runtime scope could not be confirmed"*.
+**Symptom.** The external Notes drawer shows *"Live status for this profile is unavailable right now"*.
 
-**Why.** Hermes Agent keeps one in-process MCP ledger per WebUI process and keys a connection by profile only when it can tell the request serves a profile other than the process's own. The WebUI binds every MCP status read and `/reload-mcp` to the request profile (`ARCHITECTURE.md` §4.10). While a chat turn is streaming, the WebUI mirrors that turn's profile into `HERMES_HOME`; Agents that predate `hermes_constants.pin_process_hermes_home` cannot distinguish that mirror from the process profile, so the WebUI withholds runtime data and refuses the reload instead of showing or resetting another profile's connection.
+**Why.** Hermes Agent keeps one in-process MCP ledger per GFIT-CoWork process. While a chat turn is streaming, GFIT-CoWork mirrors that turn's Profile into `HERMES_HOME`; Agents that predate `hermes_constants.pin_process_hermes_home` cannot tell that mirror from the process's own Profile, so GFIT-CoWork withholds live MCP status rather than show another Profile's connection (`ARCHITECTURE.md` §4.10).
 
-**Diagnostic commands.**
+**Diagnostic command.**
 
 ```bash
-# runtime_scope: "profile" (bound), "legacy_process" (Agent without profile-scoped MCP),
-# "unavailable" (scope could not be confirmed right now)
-curl -s -b "hermes_profile=<profile>" http://127.0.0.1:8787/api/mcp/servers | python3 -m json.tool | grep -E '"(name|status|tool_count|runtime_scope)"'
 python3 -c "import hermes_constants; print(hasattr(hermes_constants, 'pin_process_hermes_home'))"
 ```
 
-**Fix.** `unavailable` while a turn is running is expected: refresh once the turn finishes. If it persists with no turn running, the Agent predates the process-home pin; upgrade Hermes Agent. `legacy_process` means the Agent has no profile-scoped MCP ledger at all; its `/reload-mcp` stays process-wide by design. After changing a profile's `mcp_servers`, run `/reload-mcp` **from that profile**: it only resets that profile's own connections and retries its failed servers.
-
-**When to file a bug.** File a WebUI bug if `runtime_scope` is `"profile"` and a server is still reported *Active* with tools you cannot see in the inventory, or if `/reload-mcp` from one profile changes another profile's `tool_count`.
+**Fix.** While a turn is running this is expected: refresh once it finishes. If it persists with no turn running, the Agent predates the process-home pin; upgrade Hermes Agent.
 
 ---
 
@@ -337,4 +332,3 @@ This document grows over time. If a recurring failure mode isn't covered here ye
 Related references:
 
 - [`docs/docker.md`](docker.md) — Docker compose setup, common failure modes, bind-mount migration.
-- [`docs/EXTENSIONS.md`](EXTENSIONS.md) — WebUI extension injection, security model, examples.

@@ -29,27 +29,32 @@ def post(path, body=None, headers=None):
         return json.loads(e.read()), e.code, dict(e.headers)
 
 
-# ── Auth status (no password configured in test env) ──────────────────────
+# ── Auth status: the test User is logged in (tests/conftest.py) ──────────
 
-def test_auth_status_disabled():
-    """Auth should be disabled by default (no password set)."""
+def test_auth_status_reports_the_logged_in_user():
+    from tests._pytest_port import TEST_USER
+
     d, status, _ = get("/api/auth/status")
     assert status == 200
-    assert d["auth_enabled"] is False
+    assert d["logged_in"] is True
+    assert d["user"] == TEST_USER
 
 
-def test_login_when_auth_disabled():
-    """Login should succeed trivially when auth is not enabled."""
-    d, status, _ = post("/api/auth/login", {"password": "anything"})
-    assert status == 200
-    assert d["ok"] is True
+def test_login_with_a_password_alone_is_refused():
+    """There is no shared password: login is the Directory (ADR 0004)."""
+    d, status, _ = post("/api/auth/login", {"password": "anything"}, headers={"Cookie": ""})
+    assert status == 401
+    assert "ok" not in d
 
 
-def test_all_routes_accessible_without_auth():
-    """When auth is disabled, all routes should work without cookies."""
-    d, status, _ = get("/api/sessions")
-    assert status == 200
-    assert "sessions" in d
+def test_no_route_is_served_without_a_login():
+    """There is no mode with login turned off (ADR 0006)."""
+    req = urllib.request.Request(BASE + "/api/sessions", headers={"Cookie": ""})
+    try:
+        urllib.request.urlopen(req, timeout=10)
+        raise AssertionError("served /api/sessions without a login")
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
 
 
 def test_login_page_served():
@@ -75,8 +80,10 @@ def test_login_route_injects_webui_version_for_login_script():
     """The /login route should replace the login.js version placeholder."""
     from pathlib import Path
 
-    src = Path(__file__).resolve().parents[1].joinpath("api", "routes.py").read_text(encoding="utf-8")
-    login_block = src[src.find('if parsed.path == "/login"'):src.find('if parsed.path == "/api/auth/status"')]
+    from tests._route_source import route_source
+
+    assert Path
+    login_block = route_source("GET", "/login")
     assert "WEBUI_VERSION" in login_block
     assert "{{WEBUI_VERSION}}" in login_block
 

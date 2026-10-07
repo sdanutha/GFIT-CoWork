@@ -24,11 +24,11 @@ sn: Rakngan
 displayName:: 4Lin4Li04Lig4LiyIOC4o+C4seC4geC4h+C4suC4mQ==
 userPassword: Wipa-Pass-1
 
-# ผู้ดูแล ระบบ -- put 600001 in HERMES_WEBUI_ADMIN_USERS to make them the Admin
+# มานี มีสุข -- a third User; no one is special (there is no Admin, ADR 0006)
 dn: uid=600001,ou=people,dc=gfit,dc=local
 objectClass: inetOrgPerson
 uid: 600001
-cn: Admin Person
-sn: Person
-displayName:: 4Lic4Li54LmJ4LiU4Li54LmB4LilIOC4o+C4sOC4muC4mg==
-userPassword: Admin-Pass-1
+cn: Manee Meesuk
+sn: Meesuk
+displayName:: 4Lih4Liy4LiZ4Li1IOC4oeC4teC4quC4uOC4gg==
+userPassword: Manee-Pass-1

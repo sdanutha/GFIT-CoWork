@@ -283,31 +283,6 @@ def filter_runtime_status_to_view(statuses: Iterable[Any], view: McpRuntimeView)
     return out
 
 
-_COOLDOWN_LEDGERS = ("_server_connect_retry_after", "_server_connect_failures", "_server_connect_errors")
-
-
-def clear_profile_connect_cooldowns(core: Any, view: McpRuntimeView) -> None:
-    """Forget connect backoff/error state of the servers *view*'s profile owns.
-
-    A server that failed to spawn never reaches ``_servers``, so a scoped
-    ``shutdown_mcp_servers(scope=..., names=...)`` (which clears cooldowns for
-    the live keys it tears down) leaves its backoff in place and the following
-    ``discover_mcp_tools()`` skips it. The process-wide wildcard cleared every
-    cooldown; this keeps ``/reload-mcp`` a retry for the profile's own servers
-    without touching another owner's backoff. Owned keys only, never adopted ones.
-    """
-    lock = getattr(core, "_lock", None)
-    if lock is None:
-        return
-    with lock:
-        for ledger in _COOLDOWN_LEDGERS:
-            entries = getattr(core, ledger, None)
-            if not isinstance(entries, dict):
-                continue
-            for key in [k for k in entries if ledger_key_owner(core, k) == view.registry_scope]:
-                entries.pop(key, None)
-
-
 def registry_tool_owned_by_view(registry, tool_name: str, view: McpRuntimeView) -> bool:
     """True when *tool_name* is registered in this profile's own registry slot.
 

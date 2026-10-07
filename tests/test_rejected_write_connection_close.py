@@ -52,8 +52,8 @@ def test_bodyless_auth_rejected_write_keeps_connection(headers, monkeypatch):
 
     `check_auth_or_close()` armed unconditionally, so a body-less POST that failed
     auth answered 401 WITH `Connection: close` and dropped the client's pipelined
-    follow-up (reproduced on the wire — see the pooled-client file). Same rule as
-    the sidecar path: the framing decides, not the method or the site.
+    follow-up (reproduced on the wire — see the pooled-client file). The framing
+    decides, not the method or the site.
     """
     assert _rejected_write(monkeypatch, headers).close_connection is False
 
@@ -117,48 +117,17 @@ def test_bodyless_token_rejected_csrf_keeps_connection(headers, monkeypatch):
     assert _csrf_token_rejection(monkeypatch, headers).close_connection is False
 
 
-def test_sidecar_provenance_rejected_closes_connection(monkeypatch):
-    """Sidecar proxy provenance rejection also runs before read_body()."""
-    import api.routes as routes
-
-    handler = SimpleNamespace(
-        path="/api/extensions/ext1/sidecar/proxy",
-        command="POST",
-        headers={"Content-Length": "15"},
-        close_connection=False,
-    )
-    monkeypatch.setattr(routes, "_match_extension_sidecar_proxy_path", lambda _path: ("ext1", "/proxy"))
-    monkeypatch.setattr(routes, "_check_same_origin_browser_request", lambda _handler, **_: False)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: None)
-
-    routes._handle_extension_sidecar_proxy(
-        handler, SimpleNamespace(path=handler.path, query=""), "POST", read_request_body=True
-    )
-
-    assert handler.close_connection is True
+def test_reject_before_read_with_a_declared_body_closes_connection():
+    """A write rejected before its body is read leaves the body unread — close."""
+    assert _rejected_call("POST", {"Content-Length": "15"}).close_connection is True
 
 
-def test_sidecar_get_provenance_rejected_keeps_connection(monkeypatch):
+def test_bodyless_get_rejection_keeps_connection():
     """A body-less GET rejection has nothing unread — keep-alive must survive.
 
-    Closing here would kill a pooled client's connection for no framing
-    reason (the deep-review gate's MUST-FIX 2).
+    Closing here would kill a pooled client's connection for no framing reason.
     """
-    import api.routes as routes
-
-    handler = SimpleNamespace(
-        path="/api/extensions/ext1/sidecar/proxy",
-        command="GET",
-        headers={},
-        close_connection=False,
-    )
-    monkeypatch.setattr(routes, "_match_extension_sidecar_proxy_path", lambda _path: ("ext1", "/proxy"))
-    monkeypatch.setattr(routes, "_check_same_origin_browser_request", lambda _handler, **_: False)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: None)
-
-    routes._handle_extension_sidecar_proxy(handler, SimpleNamespace(path=handler.path, query=""), "GET")
-
-    assert handler.close_connection is False
+    assert _rejected_call("GET", {}).close_connection is False
 
 
 # ── Framing, not the method, decides whether a rejection must close ──────────
@@ -170,23 +139,13 @@ def test_sidecar_get_provenance_rejected_keeps_connection(monkeypatch):
 # against the production handler.
 
 
-def _rejected_sidecar_call(monkeypatch, method, headers, **kwargs):
-    """Drive a provenance-rejected sidecar proxy call; return the handler."""
-    import api.routes as routes
+def _rejected_call(method, headers):
+    """A reject-before-read: the shared rule every such site applies
+    (``api.helpers.arm_connection_close_if_body_pending``). Returns the handler."""
+    from api.helpers import arm_connection_close_if_body_pending
 
-    handler = SimpleNamespace(
-        path="/api/extensions/ext1/sidecar/proxy",
-        command=method,
-        headers=headers,
-        close_connection=False,
-    )
-    monkeypatch.setattr(routes, "_match_extension_sidecar_proxy_path", lambda _path: ("ext1", "/proxy"))
-    monkeypatch.setattr(routes, "_check_same_origin_browser_request", lambda _handler, **_: False)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: None)
-
-    routes._handle_extension_sidecar_proxy(
-        cast(Any, handler), SimpleNamespace(path=handler.path, query=""), method, **kwargs
-    )
+    handler = SimpleNamespace(command=method, headers=headers, close_connection=False)
+    arm_connection_close_if_body_pending(cast(Any, handler))
     return handler
 
 
@@ -199,13 +158,13 @@ def _rejected_sidecar_call(monkeypatch, method, headers, **kwargs):
     ],
     ids=["content-length", "chunked", "garbage-content-length"],
 )
-def test_sidecar_get_with_a_declared_body_closes_connection(headers, monkeypatch):
+def test_get_with_a_declared_body_closes_connection(headers):
     """A GET may still declare a body — those bytes are unread, so close.
 
     Reproduced by the gate as a 403 WITHOUT `Connection: close`, followed by
     `501 Unsupported method ('{}GET')` on the same socket.
     """
-    handler = _rejected_sidecar_call(monkeypatch, "GET", headers)
+    handler = _rejected_call("GET", headers)
 
     assert handler.close_connection is True
 
@@ -214,14 +173,13 @@ def test_sidecar_get_with_a_declared_body_closes_connection(headers, monkeypatch
 @pytest.mark.parametrize(
     "headers", [{}, {"Content-Length": "0"}], ids=["no-content-length", "zero-content-length"]
 )
-def test_bodyless_write_method_rejection_keeps_connection(method, headers, monkeypatch):
+def test_bodyless_write_method_rejection_keeps_connection(method, headers):
     """A write method with no declared body has nothing unread — keep-alive.
 
-    `read_request_body=True` is passed for every one of these (that is what the
-    real unsafe-method call site does), so this is exactly the case the old
-    per-method gate got wrong in the over-close direction.
+    This is exactly the case a per-method gate gets wrong in the over-close
+    direction.
     """
-    handler = _rejected_sidecar_call(monkeypatch, method, headers, read_request_body=True)
+    handler = _rejected_call(method, headers)
 
     assert handler.close_connection is False
 
@@ -379,28 +337,13 @@ def test_unreadable_content_length_flags_conflict_and_garbage_only():
     assert unreadable_content_length(cast(Any, _message_with("Content-Length: nope\r\n"))) is True
 
 
-def test_sidecar_get_with_duplicate_content_length_closes_connection(monkeypatch):
-    """The conflicting-framing GET reaches the production provenance rejection."""
-    import api.routes as routes
-
+def test_get_with_duplicate_content_length_closes_connection():
+    """The conflicting-framing GET, through the shared reject-before-read rule."""
     from email.parser import Parser
 
     headers = Parser().parsestr("Host: x\r\nContent-Length: 0\r\nContent-Length: 15\r\n\r\n")
-    handler = SimpleNamespace(
-        path="/api/extensions/ext1/sidecar/proxy",
-        command="GET",
-        headers=headers,
-        close_connection=False,
-    )
-    monkeypatch.setattr(routes, "_match_extension_sidecar_proxy_path", lambda _path: ("ext1", "/proxy"))
-    monkeypatch.setattr(routes, "_check_same_origin_browser_request", lambda _handler, **_: False)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: None)
 
-    routes._handle_extension_sidecar_proxy(
-        cast(Any, handler), SimpleNamespace(path=handler.path, query=""), "GET"
-    )
-
-    assert handler.close_connection is True
+    assert _rejected_call("GET", headers).close_connection is True
 
 
 # ── A BLANK framing value is unreadable, not absent ───────────────────────────
@@ -486,25 +429,11 @@ def test_blank_transfer_encoding_is_reported_as_an_undecodable_coding():
 
 
 @pytest.mark.parametrize("raw", _BLANK_FRAMING_HEADERS)
-def test_sidecar_get_with_blank_framing_value_closes_connection(raw, monkeypatch):
-    """The reported case, through the production provenance rejection."""
-    import api.routes as routes
-
+def test_get_with_blank_framing_value_closes_connection(raw):
+    """The reported case, through the shared reject-before-read rule."""
     from email.parser import Parser
 
-    handler = SimpleNamespace(
-        path="/api/extensions/ext1/sidecar/proxy",
-        command="GET",
-        headers=Parser().parsestr("Host: x\r\n" + raw + "\r\n\r\n"),
-        close_connection=False,
-    )
-    monkeypatch.setattr(routes, "_match_extension_sidecar_proxy_path", lambda _path: ("ext1", "/proxy"))
-    monkeypatch.setattr(routes, "_check_same_origin_browser_request", lambda _handler, **_: False)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: None)
-
-    routes._handle_extension_sidecar_proxy(
-        cast(Any, handler), SimpleNamespace(path=handler.path, query=""), "GET"
-    )
+    handler = _rejected_call("GET", Parser().parsestr("Host: x\r\n" + raw + "\r\n\r\n"))
 
     assert handler.close_connection is True
 
@@ -595,11 +524,9 @@ def test_malformed_zero_content_length_is_unreadable(value):
 
 
 @pytest.mark.parametrize("value", _MALFORMED_ZERO_LENGTHS)
-def test_sidecar_get_with_a_malformed_zero_length_closes_connection(value, monkeypatch):
-    """Through the production provenance rejection, not just the helper."""
-    handler = _rejected_sidecar_call(
-        monkeypatch, "GET", _message_with(f"Host: x\r\nContent-Length: {value}\r\n").headers
-    )
+def test_get_with_a_malformed_zero_length_closes_connection(value):
+    """Through the shared reject-before-read rule, not just the helper."""
+    handler = _rejected_call("GET", _message_with(f"Host: x\r\nContent-Length: {value}\r\n").headers)
 
     assert handler.close_connection is True
 
@@ -728,82 +655,6 @@ def test_transfer_encoding_beside_a_content_length_still_declares_a_body(length)
     )
 
     assert request_declares_body(cast(Any, handler)) is True
-
-
-def _rate_limited_csp_report(monkeypatch, headers):
-    import api.routes as routes
-
-    handler = SimpleNamespace(headers=headers, close_connection=False)
-    monkeypatch.setattr(routes, "_csp_report_rate_limited", lambda _handler: True)
-    monkeypatch.setattr(routes, "_send_no_content", lambda _handler: True)
-
-    assert routes._handle_csp_report(handler) is True
-    return handler
-
-
-@pytest.mark.parametrize(
-    "headers",
-    [{"Content-Length": "15"}, {"Transfer-Encoding": "chunked"}, {"Content-Length": "banana"}],
-    ids=["content-length", "chunked", "unreadable-length"],
-)
-def test_csp_report_rate_limited_closes_connection(headers, monkeypatch):
-    """A rate-limited CSP report is dropped before its body is read."""
-    assert _rate_limited_csp_report(monkeypatch, headers).close_connection is True
-
-
-@pytest.mark.parametrize(
-    "headers", [{}, {"Content-Length": "0"}], ids=["no-content-length", "zero-content-length"]
-)
-def test_bodyless_rate_limited_csp_report_keeps_connection(headers, monkeypatch):
-    """A body-less report dropped by the limiter must not cost the browser its socket."""
-    assert _rate_limited_csp_report(monkeypatch, headers).close_connection is False
-
-
-_RESTART_OUTCOMES = [
-    {"status": "completed"},
-    {"status": "in_progress"},
-    {"status": "busy"},
-    {"status": "error"},
-]
-
-
-@pytest.mark.parametrize("outcome", _RESTART_OUTCOMES, ids=lambda o: o["status"])
-@pytest.mark.parametrize(
-    "headers",
-    [{"Content-Length": "15"}, {"Transfer-Encoding": "chunked"}, {"Content-Length": "banana"}],
-    ids=["content-length", "chunked", "unreadable-length"],
-)
-def test_health_restart_closes_connection(headers, outcome, monkeypatch):
-    """health/restart never consumes its body on any outcome — so a declared one closes."""
-    import api.routes as routes
-
-    handler = SimpleNamespace(headers=headers, close_connection=False)
-    monkeypatch.setattr(routes, "restart_active_profile_gateway", lambda: outcome)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: True)
-
-    routes._handle_health_restart(handler)
-    assert handler.close_connection is True
-
-
-@pytest.mark.parametrize("outcome", _RESTART_OUTCOMES, ids=lambda o: o["status"])
-@pytest.mark.parametrize(
-    "headers", [{}, {"Content-Length": "0"}], ids=["no-content-length", "zero-content-length"]
-)
-def test_bodyless_health_restart_keeps_connection(headers, outcome, monkeypatch):
-    """Including the SUCCESS path, which closed a healthy socket on every call.
-
-    The WebUI's restart button sends no body, so the old unconditional arming made
-    a 200 "restarted successfully" hang up the connection every single time. The
-    framing decides for all four outcomes, not the result.
-    """
-    import api.routes as routes
-
-    handler = SimpleNamespace(headers=headers, close_connection=False)
-    monkeypatch.setattr(routes, "restart_active_profile_gateway", lambda: outcome)
-    monkeypatch.setattr(routes, "j", lambda _handler, _payload, status=200: True)
-
-    routes._handle_health_restart(handler)
-    assert handler.close_connection is False
 
 
 def _deprecated_ack_post(monkeypatch, headers):
@@ -1192,7 +1043,6 @@ def test_end_headers_on_handler_stub_without_close_connection(monkeypatch):
     assert not hasattr(handler, "close_connection")
     Handler.end_headers(handler)  # must not raise
 
-    assert "Content-Security-Policy-Report-Only" in dict(sent)
     assert "Connection" not in dict(sent), "nothing was armed, so nothing to advertise"
 
 

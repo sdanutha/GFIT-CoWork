@@ -225,24 +225,3 @@ def test_raw_pending_entry_stale_id_fails_closed():
     finally:
         _cleanup(sid)
 
-
-def test_raw_pending_entry_yolo_skip_all_drains():
-    """Skip-all (yolo release) must drain the raw entry instead of leaving the
-    phantom card, and report the yolo state truthfully."""
-    sid = f"raw-yolo-{uuid.uuid4().hex[:8]}"
-    _seed_raw_pending(sid)
-    _register_session(sid)
-    try:
-        approval_id = _poll_pending(sid)["pending"]["approval_id"]
-        assert approval_id
-
-        h = _respond(sid, {"session_id": sid, "choice": "once",
-                           "approval_id": approval_id, "yolo": True})
-        body = h.json()
-        assert h.status == 200, f"yolo respond failed: {h.status} {body!r}"
-        assert body.get("ok") is True, body
-        assert body.get("yolo_enabled") is True
-        assert _poll_pending(sid)["pending"] is None
-    finally:
-        # Restore: the yolo release enables session YOLO as a side effect.
-        _cleanup(sid)

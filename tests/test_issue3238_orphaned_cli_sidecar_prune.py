@@ -229,7 +229,6 @@ def _payload_for_rows(monkeypatch, rows, existing_ids):
 
     payload = routes._build_session_list_cache_payload(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,

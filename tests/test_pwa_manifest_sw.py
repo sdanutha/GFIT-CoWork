@@ -20,7 +20,6 @@ PWA_STARTUP = ROOT / "static" / "pwa-startup.js"
 BOOT = ROOT / "static" / "boot.js"
 INDEX = ROOT / "static" / "index.html"
 ROUTES = ROOT / "api" / "routes.py"
-AUTH = ROOT / "api" / "auth.py"
 
 
 class TestManifest:
@@ -138,11 +137,11 @@ class TestServiceWorker:
 
 class TestPWARoutes:
     def test_manifest_route_serves_correct_content_type(self):
+        from tests._route_source import route_source
+
         src = ROUTES.read_text(encoding="utf-8")
-        # The handler block for /manifest.json
-        idx = src.find('"/manifest.json"')
-        assert idx != -1, "routes.py must handle /manifest.json"
-        block = src[idx:idx + 800]
+        # The handler for /manifest.json
+        block = route_source("GET", "/manifest.json")
         # After the #2226 refactor, the root route delegates to _serve_manifest().
         # Verify the helper exists and sets the correct Content-Type.
         assert "_serve_manifest" in block, (
@@ -159,10 +158,9 @@ class TestPWARoutes:
         )
 
     def test_sw_route_injects_cache_version(self):
-        src = ROUTES.read_text(encoding="utf-8")
-        idx = src.find('"/sw.js"')
-        assert idx != -1, "routes.py must handle /sw.js"
-        block = src[idx:idx + 1000]
+        from tests._route_source import route_source
+
+        block = route_source("GET", "/sw.js")
         assert "__WEBUI_VERSION__" in block, (
             "sw.js route must replace __WEBUI_VERSION__ with the current WEBUI_VERSION"
         )
@@ -171,30 +169,27 @@ class TestPWARoutes:
         )
 
     def test_sw_route_url_encodes_cache_version(self):
-        src = ROUTES.read_text(encoding="utf-8")
-        idx = src.find('"/sw.js"')
-        assert idx != -1, "routes.py must handle /sw.js"
-        block = src[idx:idx + 1200]
+        from tests._route_source import route_source
+
+        block = route_source("GET", "/sw.js")
         assert "quote(WEBUI_VERSION, safe=\"\")" in block, (
             "sw.js route must URL-encode the injected cache version so unusual git tags "
             "cannot break the JavaScript string literal"
         )
 
     def test_sw_route_sets_service_worker_allowed(self):
-        src = ROUTES.read_text(encoding="utf-8")
-        idx = src.find('"/sw.js"')
-        block = src[idx:idx + 1000]
+        from tests._route_source import route_source
+
+        block = route_source("GET", "/sw.js")
         assert "Service-Worker-Allowed" in block, (
             "sw.js route must set Service-Worker-Allowed header so the SW can control "
             "the expected scope"
         )
 
     def test_sw_is_public_auth_path(self):
-        src = AUTH.read_text(encoding="utf-8")
-        public_idx = src.find("PUBLIC_PATHS")
-        assert public_idx != -1, "auth.py must define PUBLIC_PATHS"
-        block = src[public_idx:public_idx + 400]
-        assert "'/sw.js'" in block, (
+        from api.route_table import is_public
+
+        assert is_public("/sw.js"), (
             "/sw.js must be public so service-worker updates never return login HTML"
         )
 
@@ -260,8 +255,6 @@ class TestIndexHtmlIntegration:
             "icons.js",
             "i18n.js",
             "workspace.js",
-            "terminal.js",
-            "onboarding.js",
         ):
             # Either inline `?v=__WEBUI_VERSION__` or via the VQ constant
             # produces a URL string the cache lookup can match.

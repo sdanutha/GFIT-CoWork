@@ -16,8 +16,9 @@ import threading
 import time
 from pathlib import Path
 
+from api import config as _config
 from api import directory
-from api.config import STATE_DIR, load_settings
+from api.config import load_settings
 from api.helpers import request_declares_body
 
 logger = logging.getLogger(__name__)
@@ -47,15 +48,6 @@ def _resolve_session_ttl() -> int:
         return v
     return SESSION_TTL
 
-
-# ── Public paths (no auth required) ─────────────────────────────────────────
-PUBLIC_PATHS = frozenset({
-    '/login', '/health', '/favicon.ico', '/sw.js',
-    '/api/auth/login', '/api/auth/status',
-    '/share',
-    '/manifest.json', '/manifest.webmanifest',
-    '/session/manifest.json', '/session/manifest.webmanifest',
-})
 
 COOKIE_NAME = 'hermes_session'
 CSRF_HEADER_NAME = 'X-Hermes-CSRF-Token'
@@ -92,14 +84,14 @@ def _warn_auth_persistence_failure(prefix: str, artifact: Path, exc: Exception, 
         '%s at %s (STATE_DIR=%s): %s: %s; %s',
         prefix,
         artifact,
-        STATE_DIR,
+        _config.STATE_DIR,
         exc.__class__.__name__,
         exc,
         consequence,
     )
 
 
-_SESSIONS_FILE = STATE_DIR / '.sessions.json'
+_SESSIONS_FILE = _config.STATE_DIR / '.sessions.json'
 def _session_expiry(record) -> float | None:
     if isinstance(record, dict):
         expiry = record.get('expiry', record.get('expires_at'))
@@ -182,8 +174,8 @@ def _save_sessions(sessions: dict[str, float | dict]) -> None:
     truncated file.  Mirrors the same pattern as .signing_key persistence.
     """
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=STATE_DIR, suffix='.sessions.tmp')
+        _SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=_SESSIONS_FILE.parent, suffix='.sessions.tmp')
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(sessions, f)
@@ -210,7 +202,7 @@ _SESSIONS_LOCK = threading.Lock()
 
 def _load_key(filename: str) -> bytes:
     """Load a 32-byte key from STATE_DIR, generating and persisting one if missing."""
-    key_file = STATE_DIR / filename
+    key_file = _config.STATE_DIR / filename
     try:
         if key_file.exists():
             raw = key_file.read_bytes()
@@ -232,7 +224,7 @@ def _load_key(filename: str) -> bytes:
         )
     key = secrets.token_bytes(32)
     try:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        _config.STATE_DIR.mkdir(parents=True, exist_ok=True)
         key_file.write_bytes(key)
         key_file.chmod(0o600)
     except OSError as e:
@@ -272,7 +264,6 @@ def create_session(
     username: str | None = None,
     bound_profile: str | None = None,
     role: str | None = None,
-    display_name: str | None = None,
 ) -> str:
     """Create a new auth session. Returns signed cookie value."""
     token = secrets.token_hex(32)
@@ -287,8 +278,6 @@ def create_session(
         }
         if role is not None:
             record['role'] = role
-        if display_name is not None:
-            record['display_name'] = display_name
     else:
         record = expiry
     with _SESSIONS_LOCK:
@@ -333,16 +322,6 @@ def verify_session(cookie_value: str) -> bool:
     return True
 
 
-def _queue_pending_cookie(handler, cookie_header: str) -> None:
-    if not cookie_header:
-        return
-    pending = getattr(handler, '_pending_set_cookies', None)
-    if pending is None:
-        pending = []
-        handler._pending_set_cookies = pending
-    pending.append(cookie_header)
-
-
 def _auth_cookie_header(cookie_value, handler=None) -> str:
     cookie = http.cookies.SimpleCookie()
     name = _resolve_cookie_name()
@@ -365,12 +344,6 @@ def _clear_auth_cookie_header() -> str:
     cookie[name]['samesite'] = 'Lax'
     cookie[name]['max-age'] = '0'
     return cookie[name].OutputString()
-
-
-def _build_profile_cookie_header(name: str, session_cookie_value: str | None) -> str:
-    from api.helpers import build_profile_cookie
-
-    return build_profile_cookie(name, session_cookie_value=session_cookie_value)
 
 
 def get_session_info(cookie_value: str) -> dict | None:
@@ -413,28 +386,11 @@ def reset_request_auth_state(handler) -> None:
     for name in (
         '_request_session',
         '_request_session_rejected',
-        # Clear any auth cookie queued by a prior request but not yet flushed.
-        # The handler is reused across HTTP/1.1 keep-alive requests, so a stale
-        # queued Set-Cookie would otherwise cross the request boundary and be
-        # emitted by a later response. Reset it at the per-request boundary
-        # (server.py do_GET/do_POST).
-        '_pending_set_cookies',
     ):
         try:
             delattr(handler, name)
         except AttributeError:
             pass
-
-
-def _sync_profile_cookie(handler, bound_profile: str | None, cookie_value: str) -> None:
-    """Keep the browser's profile cookie on the Admission's Profile (the request's
-    Profile itself is set by :func:`api.access.settle_request`)."""
-    if bound_profile is None:
-        return
-    from api.helpers import get_profile_cookie
-
-    if get_profile_cookie(handler) != bound_profile:
-        _queue_pending_cookie(handler, _build_profile_cookie_header(bound_profile, cookie_value))
 
 
 def ensure_request_session(handler) -> dict | None:
@@ -459,13 +415,12 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
 
     A User's request runs in, and is bound to, the Profile its Admission names
     (:func:`api.access.caller_bound_profile`), so no Profile the client names
-    (cookie, query or body) can reach another Profile's data. An Admin's request
-    runs in ``default``.
+    (cookie, query or body) can reach another Profile's data.
 
     Fails closed: the session is ended when Directory login is no longer
     configured, or when Admission (:func:`api.access.admit`) for the session's
     employee ID no longer gives the session's role and Profile -- the Profile
-    was deleted or disabled, the Admin list changed, or the role is unknown.
+    was deleted or disabled, or the role is not ``user``.
     Otherwise the confirmed Admission is recorded as the request's Admission.
     """
     from api.access import admit_request
@@ -475,26 +430,22 @@ def _reconcile_directory_session(handler, info: dict, cookie_value: str) -> dict
         invalidate_session(cookie_value)
         handler._request_session_rejected = True
         return _remember_request_session(handler, None)
-    _sync_profile_cookie(handler, admission.profile, cookie_value)
     return _remember_request_session(handler, info)
 
 
-def _refuse_admin_only_for_user(handler, parsed, session_info: dict) -> bool:
-    """The Admin-only gate: True (after sending 403) when a User calls a non-User endpoint.
+def _refuse_unlisted_route(handler, parsed, session_info: dict) -> bool:
+    """The route gate: True (after sending 403) when a User calls a route not open to Users.
 
-    The role is the request's Admission. A Directory session with none was not
-    admitted for this request, so it may call nothing.
+    The caller is the request's Admission. A Directory session with none was
+    not admitted for this request, so it may call nothing.
     """
     if session_info.get('auth_type') != DIRECTORY_AUTH_TYPE:
         return False
-    from api.access import ADMIN_ONLY_MESSAGE, ROLE_ADMIN, request_admission, user_may_call
+    from api.access import NOT_AVAILABLE_MESSAGE, request_admission, user_may_call
 
-    admission = request_admission()
-    if admission is not None and admission.role == ROLE_ADMIN:
+    if request_admission() is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
         return False
-    if admission is not None and user_may_call(getattr(handler, 'command', 'GET'), parsed.path):
-        return False
-    _send_forbidden(handler, parsed, ADMIN_ONLY_MESSAGE)
+    _send_forbidden(handler, parsed, NOT_AVAILABLE_MESSAGE)
     return True
 
 
@@ -518,53 +469,6 @@ def _session_token_from_cookie_value(cookie_value: str) -> str | None:
         return None
     token, _sig = cookie_value.rsplit('.', 1)
     return token or None
-
-
-def sign_profile_cookie_value(profile_name: str, session_cookie_value: str | None) -> str:
-    """Return a profile cookie value authenticated for one WebUI session.
-
-    The active-profile cookie is client-controlled, so when auth is enabled it
-    must not be trusted as a bare profile name. Binding the selected profile to
-    the HttpOnly session token prevents a client from forging
-    ``hermes_profile=<other-profile>`` and bypassing profile visibility guards.
-    """
-    if not session_cookie_value or not verify_session(session_cookie_value):
-        raise ValueError("active auth session is required to sign profile cookie")
-    token = _session_token_from_cookie_value(session_cookie_value)
-    if not token:
-        raise ValueError("active auth session is required to sign profile cookie")
-    sig = hmac.new(
-        _signing_key(),
-        f"profile:{token}:{profile_name}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return f"{profile_name}.{sig}"
-
-
-def verify_profile_cookie_value(cookie_value: str, session_cookie_value: str | None) -> str | None:
-    """Verify a session-bound profile cookie and return its profile name."""
-    if not cookie_value or '.' not in cookie_value:
-        return None
-    if not session_cookie_value or not verify_session(session_cookie_value):
-        return None
-    profile_name, sig = cookie_value.rsplit('.', 1)
-    token = _session_token_from_cookie_value(session_cookie_value)
-    if not profile_name or not token or not sig:
-        return None
-    # Defense-in-depth: validate the profile-name pattern here too, not only in
-    # get_profile_cookie(), so any future caller of this verifier can't return an
-    # unvalidated name. (#4023 Opus hardening.)
-    from api.profiles import _PROFILE_ID_RE
-    if profile_name != 'default' and not _PROFILE_ID_RE.fullmatch(profile_name):
-        return None
-    expected = hmac.new(
-        _signing_key(),
-        f"profile:{token}:{profile_name}".encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    if hmac.compare_digest(str(sig), expected):
-        return profile_name
-    return None
 
 
 def csrf_token_for_session(cookie_value: str) -> str | None:
@@ -671,20 +575,13 @@ def _safe_login_inner_next(query: str | None) -> str:
 
 def check_auth(handler, parsed) -> bool:
     """Check if request is authorized. Returns True if OK.
-    If not authorized, sends 401 (API) or 302 redirect (page) and returns False."""
-    if not directory.is_directory_enabled():
-        return True
-    # Public paths don't require auth
-    if (
-        parsed.path in PUBLIC_PATHS
-        or parsed.path.startswith('/share/')
-        or (
-            parsed.path.startswith('/api/share/')
-            and parsed.path not in {'/api/share/create', '/api/share/revoke'}
-        )
-        or parsed.path.startswith('/static/')
-        or parsed.path.startswith('/session/static/')
-    ):
+    If not authorized, sends 401 (API) or 302 redirect (page) and returns False.
+    There is no mode with login turned off (ADR 0006): with no Directory
+    configured nobody has a session, so only public paths are served."""
+    # Paths served before login: the route table's PUBLIC rows.
+    from api.route_table import is_public
+
+    if is_public(parsed.path):
         return True
     cookie_val = parse_cookie(handler)
     has_session = bool(cookie_val and verify_session(cookie_val))
@@ -700,7 +597,7 @@ def check_auth(handler, parsed) -> bool:
         return False
     session_info = ensure_request_session(handler)
     if session_info:
-        if _refuse_admin_only_for_user(handler, parsed, session_info):
+        if _refuse_unlisted_route(handler, parsed, session_info):
             return False
         return True
     # Not authorized
@@ -741,7 +638,7 @@ def check_auth(handler, parsed) -> bool:
         # route handling), the actual source of the server-side loop.
         #
         # The login page is served ONLY at the public `/login` route (see
-        # PUBLIC_PATHS + the routes.py `/login` handler); the app's client route
+        # its PUBLIC route-table row + the routes.py `/login` handler); the app's client route
         # `/session/login` is NOT public, so a bare relative `login` from
         # `/session/login` resolves to `/session/login` again and re-triggers
         # check_auth() — an infinite redirect. Resolve to the real login route

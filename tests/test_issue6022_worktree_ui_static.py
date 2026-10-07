@@ -35,21 +35,6 @@ def test_boot_auto_bind_sends_explicit_worktree_false():
     assert "worktree: false" in bind
 
 
-def test_onboarding_session_sends_explicit_worktree_false():
-    src = read("static/onboarding.js")
-    finish = src[src.index("async function _finishOnboarding") :]
-    finish = finish[: finish.index("\n}\n")]
-    assert "worktree: false" in finish
-
-
-def test_profile_switch_session_sends_explicit_worktree_false():
-    src = read("static/panels.js")
-    assert (
-        "await newSession(false, {awaitWorkspaceLoad: workspaceVisible, worktree: false});"
-        in src
-    )
-
-
 def test_workspace_bind_prompts_send_explicit_worktree_false():
     # promptWorkspacePath + switchToWorkspace both auto-mint a session from a
     # blank page; each must opt out of the config default explicitly.
@@ -71,11 +56,6 @@ def test_file_and_folder_creation_send_explicit_worktree_false():
         block = block[: block.index("\n}\n")]
         assert "worktree:false" in block, f"{fn} must opt out of the config default"
     assert "body:JSON.stringify({workspace:ws})" not in src
-
-
-def test_terminal_auto_session_sends_explicit_worktree_false():
-    src = read("static/commands.js")
-    assert "await newSession(false, {worktree: false});" in src
 
 
 def test_no_bare_session_new_posts_remain_in_static_js():

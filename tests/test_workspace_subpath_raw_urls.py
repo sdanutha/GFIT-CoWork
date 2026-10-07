@@ -40,10 +40,10 @@ def _workspace_js() -> str:
 def _route_helper_block() -> str:
     """Slice the workspace-route builders out of workspace.js for a Node harness."""
     src = _workspace_js()
-    start = src.find("function _escapeGrantStore(){")
+    start = src.find("function _normalizeWorkspaceRelPath(")
     assert start >= 0, "route helper block start not found in static/workspace.js"
-    end = src.find("async function authorizeWorkspaceEscapeNavigation(", start)
-    assert end >= 0, "route helper block end not found in static/workspace.js"
+    end = src.find("\n}\n", src.find("function _workspaceRouteForPathRel(", start)) + 3
+    assert end >= 3, "route helper block end not found in static/workspace.js"
     return src[start:end]
 
 
@@ -73,7 +73,7 @@ class TestWorkspaceSubpathRawUrls:
             + ";\n"
             + r"""
 global.document = { baseURI: 'https://host.example/pod-123/hermes/' };
-const S = { session: { session_id: 'sess-1' }, currentDir: '.', _escapeGrants: Object.create(null) };
+const S = { session: { session_id: 'sess-1' }, currentDir: '.' };
 const runner = new Function(
   'S', 'URLSearchParams', 'document',
   helperBlock + '; return { _workspaceRouteForPath };'
@@ -110,7 +110,7 @@ console.log(JSON.stringify({
             + ";\n"
             + r"""
 global.document = { baseURI: 'about:blank' };
-const S = { session: { session_id: 'sess-1' }, currentDir: '.', _escapeGrants: Object.create(null) };
+const S = { session: { session_id: 'sess-1' }, currentDir: '.' };
 const runner = new Function(
   'S', 'URLSearchParams', 'document',
   helperBlock + '; return { _workspaceRouteForPath };'

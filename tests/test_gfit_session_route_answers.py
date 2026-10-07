@@ -20,12 +20,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from api.access import USER_ENDPOINTS
+from api.route_table import ROUTES as _ROUTES
 from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @dataclass(frozen=True)
@@ -70,7 +69,6 @@ SESSION_ROUTES: dict[tuple[str, str], object] = {
     ("GET", "/api/session/stream"): Query(),
     ("GET", "/api/session/usage"): Query(),
     ("GET", "/api/session/worktree/status"): Query(),
-    ("GET", "/api/session/yolo"): Query(),
     ("POST", "/api/session/anchor-scene"): Body(),
     ("POST", "/api/session/archive"): Body({"archived": True}),
     ("POST", "/api/session/branch"): Body(),
@@ -144,6 +142,7 @@ NAMES_NO_SESSION: dict[tuple[str, str], str] = {
         "/manifest.webmanifest", "/session/manifest.json", "/session/manifest.webmanifest",
         "/sw.js", "/favicon.ico", "/health", "/plugins/*", "/dashboard-plugins/*",
     )},
+    ("GET", "/login"): "sign in and out",
     ("GET", "/api/auth/status"): "sign in and out",
     ("POST", "/api/auth/login"): "sign in and out",
     ("POST", "/api/auth/logout"): "sign in and out",
@@ -180,7 +179,8 @@ NAMES_NO_SESSION: dict[tuple[str, str], str] = {
         ("GET", "/api/workspaces"), ("GET", "/api/workspaces/suggest"),
         ("POST", "/api/workspaces/add"), ("POST", "/api/workspaces/remove"),
         ("POST", "/api/workspaces/rename"), ("POST", "/api/workspaces/reorder"),
-        ("GET", "/api/settings"), ("GET", "/api/insights"), ("GET", "/api/project-os/dashboard"),
+        ("GET", "/api/settings"), ("POST", "/api/settings"),
+        ("POST", "/api/default-model"), ("POST", "/api/model/set"), ("POST", "/api/reasoning"), ("GET", "/api/insights"), ("GET", "/api/project-os/dashboard"),
         ("GET", "/api/wiki/status"), ("GET", "/api/wiki/browse"), ("GET", "/api/wiki/page"),
         ("GET", "/api/notes/sources"), ("GET", "/api/notes/search"), ("GET", "/api/notes/item"),
         ("GET", "/api/plugins"), ("GET", "/api/gateway/status"),
@@ -190,7 +190,8 @@ NAMES_NO_SESSION: dict[tuple[str, str], str] = {
 
 
 def _user_entries() -> set[tuple[str, str]]:
-    return {(method, path) for methods, path in USER_ENDPOINTS for method in methods}
+    # Every row: a User may call each one (public rows too). There is no Admin row.
+    return {(r.method, r.pattern) for r in _ROUTES}
 
 
 def test_every_user_route_is_placed_as_naming_a_session_or_not():
@@ -209,9 +210,9 @@ def test_every_user_route_is_placed_as_naming_a_session_or_not():
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 

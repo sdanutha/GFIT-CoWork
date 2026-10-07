@@ -786,9 +786,10 @@ def _durable_tombstone_marks_deleted_webui_session(session_dir: Path, sid: str) 
     if not sid or (session_dir / f"{sid}.json").exists():
         return False
     try:
+        from api import config as _config
         from api import models as _models
 
-        if Path(_models.SESSION_DIR).resolve() == session_dir.resolve():
+        if Path(_config.SESSION_DIR).resolve() == session_dir.resolve():
             return sid in _models._load_webui_deleted_session_tombstone()
     except Exception:
         pass

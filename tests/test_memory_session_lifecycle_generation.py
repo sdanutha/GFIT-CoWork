@@ -349,9 +349,10 @@ def test_clear_session_evicts_outside_session_lock():
     import api.routes as routes_mod
     src = Path(routes_mod.__file__).read_text(encoding="utf-8")
 
-    route_start = src.index('if parsed.path == "/api/session/clear"')
-    route_end = src.index('if parsed.path == "/api/session/truncate"', route_start)
-    route_block = src[route_start:route_end]
+    from tests._route_source import route_source
+
+    assert src
+    route_block = route_source("POST", "/api/session/clear")
 
     lock_start = route_block.index("with _get_session_agent_lock(sid):")
     lock_end = route_block.index("# Evict cached agent outside the per-session lock", lock_start)

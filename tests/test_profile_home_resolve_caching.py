@@ -275,7 +275,7 @@ def test_load_cli_sessions_uncached_dedupes_profile_home_resolve_on_sidecar_cach
         mock.patch("api.models.get_claude_code_sessions", return_value=[]),
         mock.patch("api.models.get_last_workspace", return_value=str(tmp_path)),
         mock.patch("api.models.ensure_cron_project", return_value="cron-pid"),
-        mock.patch("api.models.SESSION_DIR", tmp_path / "sessions"),
+        mock.patch("api.config.SESSION_DIR", tmp_path / "sessions"),
         # Isolate the measurement: `_remote_terminal_cwd()` also calls
         # `get_config_for_profile_home()` right after `_resolve_profile_home_param()`,
         # and THAT helper does its own two direct, uncached `_safe_resolve()` calls
@@ -325,7 +325,7 @@ def test_load_cli_sessions_uncached_profile_home_resolve_scales_with_fix_disable
         mock.patch("api.models.get_claude_code_sessions", return_value=[]),
         mock.patch("api.models.get_last_workspace", return_value=str(tmp_path)),
         mock.patch("api.models.ensure_cron_project", return_value="cron-pid"),
-        mock.patch("api.models.SESSION_DIR", tmp_path / "sessions"),
+        mock.patch("api.config.SESSION_DIR", tmp_path / "sessions"),
         # Same isolation as the test above -- see its comment.
         mock.patch("api.config.get_config_for_profile_home", return_value={}),
         mock.patch.object(ws, "_cached_safe_resolve_profile_home", wraps=ws._cached_safe_resolve_profile_home) as memo_spy,

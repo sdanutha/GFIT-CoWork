@@ -130,9 +130,8 @@ def isolated_state_db(tmp_path, monkeypatch):
     import api.routes as _routes
     import api.models as _models
     monkeypatch.setattr(_models, "_active_state_db_path", lambda: db)
-    monkeypatch.setattr(_routes, "SESSION_INDEX_FILE", index_path)
-    monkeypatch.setattr(_models, "SESSION_INDEX_FILE", index_path)
-    monkeypatch.setattr(_models, "SESSION_DIR", sessions_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_path)
+    monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
     return {"db": db, "state_dir": state_dir, "sessions_dir": sessions_dir,
             "index_path": index_path}
 
@@ -364,9 +363,9 @@ def test_mutation_routes_guard_subagent_source_in_source():
     # each mutation route body must call the guard
     for route in ("/api/session/delete", "/api/session/clear",
                   "/api/session/truncate", "/api/session/pin"):
-        idx = src.index(f'parsed.path == "{route}"')
-        nxt = src.index('parsed.path == "/api/session', idx + 10)
-        block = src[idx:nxt]
+        from tests._route_source import route_source
+
+        block = route_source("POST", route)
         assert "_session_is_subagent_view_only(" in block, (
             f"{route} must guard against subagent children before mutating"
         )

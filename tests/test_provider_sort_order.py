@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest import mock
 
 import pytest
 
 import api.config as config
-import api.providers as providers_mod
 
 
 # ---------------------------------------------------------------------------
@@ -113,79 +111,6 @@ def _teardown_config():
 
 class TestProviderSortOrder:
     """providers returned by get_providers() should respect tier ordering."""
-
-    def test_active_provider_comes_first(self, tmp_path, monkeypatch):
-        """The active provider (from config model.provider) is tier-0."""
-        _setup_config(tmp_path, monkeypatch,
-            "model:\n  provider: openrouter\n  default: test-model\n"
-            "providers:\n"
-            "  anthropic:\n    api_key: sk-test-123\n"
-            "  openai: {}\n"
-            "  openrouter:\n    api_key: sk-or-123\n"
-        )
-
-        result = providers_mod.get_providers()
-        prov_ids = [p["id"] for p in result["providers"]]
-
-        assert prov_ids[0] == "openrouter", (
-            f"Expected openrouter first (active), got order: {prov_ids}"
-        )
-        _teardown_config()
-
-    def test_custom_provider_before_plain(self, tmp_path, monkeypatch):
-        """custom:* providers (tier-1) sort before providers with keys (tier-2)."""
-        _setup_config(tmp_path, monkeypatch,
-            "model:\n  provider: openai\n  default: gpt-4\n"
-            "providers:\n"
-            "  openai: {}\n"
-            "  anthropic:\n    api_key: sk-ant-123\n"
-            "custom_providers:\n"
-            "  - name: MyLocal\n"
-            "    base_url: http://localhost:8080/v1\n"
-            "    api_key: local-key\n"
-            "    models:\n"
-            "      - local-model-a\n"
-        )
-
-        result = providers_mod.get_providers()
-        prov_ids = [p["id"] for p in result["providers"]]
-
-        openai_idx = prov_ids.index("openai")
-        custom_idx = prov_ids.index("custom:mylocal")
-        anthropic_idx = prov_ids.index("anthropic")
-
-        assert openai_idx < custom_idx < anthropic_idx, (
-            f"Expected openai < custom:mylocal < anthropic, got {prov_ids}"
-        )
-        _teardown_config()
-
-    def test_has_key_provider_before_no_key(self, tmp_path, monkeypatch):
-        """Providers with keys (tier-2) come before those without (tier-3)."""
-        _setup_config(tmp_path, monkeypatch,
-            "model:\n  provider: openai\n  default: gpt-4\n"
-            "providers:\n"
-            "  openai: {}\n"
-            "  deepseek:\n    api_key: sk-ds-123\n"
-            "  google: {}\n"
-            "  groq: {}\n"
-        )
-
-        result = providers_mod.get_providers()
-        prov_ids = [p["id"] for p in result["providers"]]
-
-        # deepseek has api_key in config → should be tier-2 (before tier-3)
-        deepseek_idx = prov_ids.index("deepseek")
-        google_idx = prov_ids.index("google")
-        groq_idx = prov_ids.index("groq")
-
-        assert deepseek_idx < google_idx, (
-            f"deepseek(has_key) at {deepseek_idx} should be before google at {google_idx}"
-        )
-        assert deepseek_idx < groq_idx, (
-            f"deepseek(has_key) at {deepseek_idx} should be before groq at {groq_idx}"
-        )
-        _teardown_config()
-
 
 # ===================================================================
 # get_available_models() sort order  (api/config.py)

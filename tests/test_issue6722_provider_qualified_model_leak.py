@@ -220,8 +220,8 @@ def _run_legacy_gateway_chat(tmp_path, monkeypatch, model):
     """Drive the legacy chat-completions path and return the request body."""
     session_dir = tmp_path / "sessions"
     session_dir.mkdir(exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", session_dir / "_index.json")
     monkeypatch.setattr(models, "SESSIONS", OrderedDict())
 
     captured = {}

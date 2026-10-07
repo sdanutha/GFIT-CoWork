@@ -84,28 +84,8 @@ def test_enforcing_csp_allows_trusted_loopback_sidecars_by_default(monkeypatch):
     assert "http://127.0.0.1:17787" not in policy
 
 
-def test_enforcing_and_report_only_csp_share_validated_connect_extra(monkeypatch):
-    monkeypatch.setenv("HERMES_WEBUI_CSP_CONNECT_EXTRA", "https://metrics.example.com")
-
-    enforced = _headers_from_security_helper()["Content-Security-Policy"]
-    report_only = Handler.csp_report_only_policy()
-
-    assert "https://metrics.example.com" in enforced
-    assert "https://metrics.example.com" in report_only
-
-
-def test_report_only_policy_tracks_enforced_directives(monkeypatch):
-    monkeypatch.delenv("HERMES_WEBUI_CSP_CONNECT_EXTRA", raising=False)
-
-    enforced = _directives(_headers_from_security_helper()["Content-Security-Policy"])
-    report_only = _directives(Handler.csp_report_only_policy())
-
-    assert report_only.pop("report-uri") == "/api/csp-report"
-    assert report_only.pop("report-to") == "csp-endpoint"
-    assert report_only == enforced
-
-
-def test_report_only_csp_headers_still_point_to_collector(monkeypatch):
+def test_no_csp_report_only_headers_without_a_collector(monkeypatch):
+    # GFIT-CoWork removed the CSP report collector (ADR 0006): nothing may point at it.
     sent_headers = []
     handler = Handler.__new__(Handler)
     handler.send_header = lambda key, value: sent_headers.append((key, value))
@@ -114,13 +94,8 @@ def test_report_only_csp_headers_still_point_to_collector(monkeypatch):
     Handler.end_headers(handler)
 
     headers = dict(sent_headers)
-    assert "Content-Security-Policy-Report-Only" in headers
-    assert headers["Report-To"] == (
-        '{"group":"csp-endpoint","max_age":10886400,'
-        '"endpoints":[{"url":"/api/csp-report"}]}'
-    )
-    assert "report-uri /api/csp-report" in headers["Content-Security-Policy-Report-Only"]
-    assert "report-to csp-endpoint" in headers["Content-Security-Policy-Report-Only"]
+    assert "Content-Security-Policy-Report-Only" not in headers
+    assert "Report-To" not in headers
 
 
 def test_end_headers_reuses_cached_extra_connect_validation(monkeypatch, caplog):

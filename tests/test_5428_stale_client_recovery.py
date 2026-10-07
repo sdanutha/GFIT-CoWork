@@ -63,9 +63,9 @@ def test_panels_js_load_settings_calls_check_webui_version_skew():
 # ---------------------------------------------------------------------------
 
 def _extract_skew_helpers(panels_src: str) -> str:
-    """Return the version-skew helper block (from _normalizeWebUIVersion to Kanban helpers)."""
+    """Return the version-skew helper block (from _normalizeWebUIVersion to the skew monitor)."""
     start = panels_src.index("function _normalizeWebUIVersion(")
-    end = panels_src.index("function _kanbanLooksLikeStaleClientError(")
+    end = panels_src.index("_startWebUIVersionSkewMonitor();\n") + len("_startWebUIVersionSkewMonitor();\n")
     return panels_src[start:end]
 
 

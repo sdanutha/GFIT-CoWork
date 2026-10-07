@@ -15,8 +15,9 @@ def test_toggle_endpoint_signature_in_routes():
 
 def test_toggle_path_registered():
     """Verify /api/skills/toggle path is registered in POST routing."""
-    routes_source = (Path(__file__).resolve().parent.parent / "api" / "routes.py").read_text("utf-8")
-    assert '/api/skills/toggle' in routes_source
+    from tests._route_source import route_handler
+
+    assert route_handler("POST", "/api/skills/toggle")
 
 
 def test_skills_list_includes_disabled_flag():

@@ -27,7 +27,7 @@ import pathlib
 # Allow importing server modules directly for unit tests
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, new_session_id
 
 
 # ──────────────────────────────────────────────
@@ -210,10 +210,10 @@ def test_session_delete_removes_attachment_inbox(cleanup_test_sessions):
 
 
 def test_session_delete_nonexistent():
-    """Deleting a nonexistent session should return ok:True (idempotent)."""
+    """Deleting a session the User does not have is "not found", like another
+    User's session: an unknown id is not allowed (ADR 0002)."""
     result, status = post("/api/session/delete", {"session_id": "doesnotexist"})
-    assert status == 200
-    assert result.get("ok") is True
+    assert status == 404
 
 
 def test_sessions_list_sorted():
@@ -422,57 +422,8 @@ def test_upload_bad_session():
 
 def test_approval_pending_none():
     """GET /api/approval/pending for a session with no pending entry returns null."""
-    data = get("/api/approval/pending?session_id=no_such_session")
+    data = get(f"/api/approval/pending?session_id={new_session_id()}")
     assert data["pending"] is None
-
-
-def test_approval_submit_and_respond():
-    """Inject a pending approval via server endpoint, retrieve it, respond with deny."""
-    test_sid = f"test-approval-{uuid.uuid4().hex[:6]}"
-    cmd = "rm -rf /tmp/testdir"
-    key = "recursive_delete"
-
-    # Inject into server process via test endpoint (shared module state)
-    inject = get(f"/api/approval/inject_test?session_id={urllib.parse.quote(test_sid)}&pattern_key={key}&command={urllib.parse.quote(cmd)}")
-    assert inject["ok"] is True
-
-    # Poll should now show the pending entry
-    data = get(f"/api/approval/pending?session_id={urllib.parse.quote(test_sid)}")
-    assert data["pending"] is not None, "Pending entry not visible after inject"
-    assert data["pending"]["command"] == cmd
-
-    # Respond with deny
-    result, status = post("/api/approval/respond", {
-        "session_id": test_sid,
-        "choice": "deny"
-    })
-    assert status == 200
-    assert result["ok"] is True
-    assert result["choice"] == "deny"
-
-    # Pending should be gone
-    data2 = get(f"/api/approval/pending?session_id={urllib.parse.quote(test_sid)}")
-    assert data2["pending"] is None, "Pending entry should be cleared after respond"
-
-
-def test_approval_respond_allow_session():
-    """Inject pending entry, respond with session choice, verify cleared (approved)."""
-    test_sid = f"test-approval-sess-{uuid.uuid4().hex[:6]}"
-
-    inject = get(f"/api/approval/inject_test?session_id={urllib.parse.quote(test_sid)}&pattern_key=force_kill&command=pkill+-9+someproc")
-    assert inject["ok"] is True
-
-    result, status = post("/api/approval/respond", {
-        "session_id": test_sid,
-        "choice": "session"
-    })
-    assert status == 200
-    assert result["ok"] is True
-    assert result["choice"] == "session"
-
-    # After session approval, pending should be cleared
-    data = get(f"/api/approval/pending?session_id={urllib.parse.quote(test_sid)}")
-    assert data["pending"] is None, "Pending entry should be cleared after session approval"
 
 
 # ──────────────────────────────────────────────
@@ -480,9 +431,12 @@ def test_approval_respond_allow_session():
 # ──────────────────────────────────────────────
 
 def test_stream_status_unknown_id():
-    """GET /api/chat/stream/status for unknown stream_id returns active:false."""
-    data = get("/api/chat/stream/status?stream_id=doesnotexist")
-    assert data["active"] is False
+    """GET /api/chat/stream/status for a stream the User cannot place is "not found" (ADR 0002)."""
+    try:
+        get("/api/chat/stream/status?stream_id=doesnotexist")
+        raise AssertionError("an unknown stream was answered")
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 
 # ──────────────────────────────────────────────

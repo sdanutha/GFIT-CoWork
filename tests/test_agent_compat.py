@@ -13,13 +13,9 @@ shapes: ``pre_split`` (the name still lives on its original module) and
 original module no longer resolves it).
 """
 
-import contextlib
-import sqlite3
 import sys
-import threading
 import types
 import warnings
-from types import SimpleNamespace
 
 import pytest
 
@@ -168,51 +164,6 @@ def test_mcp_runtime_status_reads_agent_registry(monkeypatch, shape):
 
 
 @pytest.mark.parametrize("shape", SHAPES)
-def test_reload_mcp_command_shuts_down_and_rediscovers(monkeypatch, shape):
-    import api.commands as commands
-
-    servers = {"old": object()}
-    calls = []
-
-    def shutdown_mcp_servers():
-        calls.append("shutdown")
-        servers.clear()
-
-    def discover_mcp_tools():
-        calls.append("discover")
-        servers.update(old=object(), new=object())
-        return ["t1", "t2", "t3"]
-
-    _install_agent(
-        monkeypatch, shape, "tools.mcp_tool",
-        {
-            "tools.mcp_tool_lifecycle": {"shutdown_mcp_servers": shutdown_mcp_servers},
-            "tools.mcp_tool_discovery": {"discover_mcp_tools": discover_mcp_tools},
-        },
-        native={"_servers": servers, "_lock": threading.Lock()},
-    )
-
-    out = commands._run_reload_mcp_command()
-    assert calls == ["shutdown", "discover"]
-    assert "Reconnected: old" in out
-    assert "Added: new" in out
-    assert "3 tool(s) available across 2 server(s)" in out
-
-
-@pytest.mark.parametrize("shape", SHAPES)
-def test_claude_code_credentials_read_through_agent(monkeypatch, shape):
-    import api.oauth as oauth
-
-    creds = {"accessToken": "cc-access", "refreshToken": "cc-refresh"}
-    _install_agent(monkeypatch, shape, "agent.anthropic_adapter", {"agent.anthropic_credentials": {
-        "read_claude_code_credentials": lambda: creds,
-        "is_claude_code_token_valid": lambda value: value is creds,
-    }})
-
-    assert oauth._read_claude_code_credentials() is creds
-
-
-@pytest.mark.parametrize("shape", SHAPES)
 def test_lmstudio_reasoning_options_use_agent_probe(monkeypatch, shape):
     import api.config as config
 
@@ -230,70 +181,3 @@ def test_lmstudio_reasoning_options_use_agent_probe(monkeypatch, shape):
     assert config._lmstudio_model_reasoning_options("qwen", "http://127.0.0.1:1234", timeout=2.0) == ["low", "high"]
     assert seen == [("qwen", "http://127.0.0.1:1234", 2.0)]
 
-
-_KANBAN_SQL = """
-CREATE TABLE tasks (id INTEGER PRIMARY KEY, status TEXT);
-INSERT INTO tasks (status) VALUES ('todo'), ('todo'), ('done'), ('archived');
-CREATE TABLE task_events (
-    id INTEGER PRIMARY KEY, task_id TEXT, run_id TEXT, kind TEXT, payload TEXT, created_at INTEGER
-);
-INSERT INTO task_events VALUES (1, 't1', NULL, 'created', '{"a": 1}', 100), (2, 't2', 'r1', 'moved', NULL, 101);
-"""
-
-
-def _install_kanban_agent(monkeypatch, shape):
-    import api.kanban_bridge as bridge
-
-    def connect(*, board=None):
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        conn.executescript(_KANBAN_SQL)
-        return conn
-
-    def connect_closing(*, board=None):
-        return contextlib.closing(connect(board=board))
-
-    def dispatch_once(conn, dry_run=False, max_spawn=8):
-        tasks = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-        return {"dry_run": dry_run, "max_spawn": max_spawn, "tasks_seen": tasks}
-
-    kb = _install_agent(
-        monkeypatch, shape, "hermes_cli.kanban_db",
-        {
-            "hermes_cli.kanban_db_connect": {"connect": connect, "connect_closing": connect_closing},
-            "hermes_cli.kanban_db_dispatch": {"dispatch_once": dispatch_once},
-        },
-        native={"init_db": lambda *, board=None: None, "board_exists": lambda slug: True, "DEFAULT_BOARD": "default"},
-    )
-    pkg = types.ModuleType("hermes_cli")
-    pkg.kanban_db = kb
-    monkeypatch.setitem(sys.modules, "hermes_cli", pkg)
-    return bridge
-
-
-@pytest.mark.parametrize("shape", SHAPES)
-def test_kanban_connection_is_closed_after_use(monkeypatch, shape):
-    bridge = _install_kanban_agent(monkeypatch, shape)
-
-    with bridge._conn(board=None) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 4
-    with pytest.raises(sqlite3.ProgrammingError):
-        conn.execute("SELECT 1")  # connect_closing, not a leaked raw connection
-
-
-@pytest.mark.parametrize("shape", SHAPES)
-def test_kanban_counts_and_event_feed_read_agent_db(monkeypatch, shape):
-    bridge = _install_kanban_agent(monkeypatch, shape)
-
-    assert bridge._board_counts_for_slug("default") == {"todo": 2, "done": 1}
-    cursor, events = bridge._kanban_sse_fetch_new(None, 0)
-    assert cursor == 2
-    assert [(e["id"], e["kind"], e["payload"]) for e in events] == [(1, "created", {"a": 1}), (2, "moved", None)]
-
-
-@pytest.mark.parametrize("shape", SHAPES)
-def test_kanban_dispatch_runs_agent_dispatcher(monkeypatch, shape):
-    bridge = _install_kanban_agent(monkeypatch, shape)
-
-    parsed = SimpleNamespace(path="/api/kanban/dispatch", query="dry_run=true&max=3")
-    assert bridge._dispatch_payload(parsed) == {"dry_run": True, "max_spawn": 3, "tasks_seen": 4}

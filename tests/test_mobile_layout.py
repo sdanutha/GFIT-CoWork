@@ -387,7 +387,6 @@ def test_composer_controls_switch_to_fit_stage_classes():
         ".composer-footer.cf-burger .composer-workspace-files-btn",
         ".composer-footer.cf-burger .composer-workspace-chip",
         ".composer-footer.cf-burger .composer-left > .composer-model-wrap",
-        ".composer-footer.cf-burger .provider-quota-chip",
         ".composer-footer.cf-burger .composer-left > .composer-reasoning-wrap",
         ".composer-footer.cf-burger .composer-left > .composer-toolsets-wrap",
         ".composer-footer.cf-burger .composer-mobile-config-btn",
@@ -398,8 +397,8 @@ def test_composer_controls_switch_to_fit_stage_classes():
         assert selector in CSS, f"{selector} should be present in the .cf-burger rules"
     assert ".composer-footer.cf-burger .composer-workspace-chip{display:none!important".replace(" ", "") in CSS.replace(" ", ""), \
         ".cf-burger must remove the blank workspace switch slot"
-    assert ".composer-footer.cf-burger .provider-quota-chip" in CSS and ".composer-footer.cf-burger .composer-left > .composer-toolsets-wrap{display:none!important" in CSS, \
-        ".cf-burger must fold the inline quota chip into the shared config menu"
+    assert ".composer-footer.cf-burger .composer-left > .composer-toolsets-wrap {display:none!important" in CSS, \
+        ".cf-burger must fold the inline toolsets chip into the shared config menu"
     assert ".composer-footer.cf-burger .composer-mobile-config-btn{box-sizing:border-box;position:relative;display:inline-flex!important" in CSS, \
         ".cf-burger must expose the config button even on wider viewports"
 
@@ -663,12 +662,9 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
         "panelSkills",
         "panelMemory",
         "panelTasks",
-        "panelKanban",
         "panelWorkspaces",
-        "panelProfiles",
         "panelTodos",
         "panelInsights",
-        "panelLogs",
     ]:
         assert f'id="{panel_id}"' in HTML, f"{panel_id} should exist for mobile sidebar sync"
     assert 'id="panelPlugin"' not in HTML, (
@@ -685,18 +681,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
     assert "_currentPanel=panel" in sync_body
     assert "document.querySelectorAll('[data-panel]')" in sync_body
     assert "document.querySelectorAll('.panel-view')" in sync_body
-    assert "showing-x-" in sync_body, (
-        "Mobile sidebar sync must recognize an active extension panel instead of treating it as Chat"
-    )
-    assert "data-panel-token" in sync_body, (
-        "Mobile sidebar sync must restore the extension's matching sidebar view"
-    )
-    assert "const extensionPanel=`x-${extensionToken}`" in sync_body, (
-        "Extension nav buttons use x- tokens and must regain their active state on mobile"
-    )
-    assert "_currentPanel=extensionPanel" not in sync_body, (
-        "Extension tokens are not host panels and must not corrupt switchPanel's native state"
-    )
     boot_js = (REPO / "static" / "boot.js").read_text(encoding="utf-8")
     toggle_body = _js_function_body(boot_js, "toggleMobileSidebar")
     assert "_syncMobileSidebarPanelFromMainView()" in toggle_body, (
@@ -721,10 +705,8 @@ def test_mobile_sidebar_detail_selections_share_close_helper():
     panels_js = (REPO / "static" / "panels.js").read_text(encoding="utf-8")
     for name in [
         "openCronDetail",
-        "loadKanbanTask",
         "openMemorySection",
         "openWorkspaceDetail",
-        "openProfileDetail",
     ]:
         body = _js_function_body(panels_js, name)
         assert "_closeMobileSidebarAfterPanelSelection()" in body, (
@@ -736,7 +718,7 @@ def test_mobile_sidebar_detail_selections_share_close_helper():
     assert "mobile-panel-drawer', 'mobile-open'" in panels_js, (
         "Opening Settings from the rail should keep the mobile drawer available"
     )
-    for section in ["conversation", "appearance", "preferences", "providers", "plugins", "extensions", "system", "help"]:
+    for section in ["conversation", "appearance", "preferences", "plugins", "system", "help"]:
         assert f"switchSettingsSection('{section}',{{fromSidebarItem:true}})" in HTML, (
             f"Settings sidebar item {section} should close after selecting its detail"
         )
@@ -1237,8 +1219,6 @@ def test_model_and_reasoning_controls_live_in_mobile_overflow_panel():
     panel_html = HTML[panel_start:panel_end]
     assert 'id="composerMobileModelAction"' in panel_html, \
         "mobile model action must be inside the overflow panel"
-    assert 'id="composerMobileQuotaAction"' in panel_html, \
-        "mobile quota action must be inside the overflow panel"
     assert 'id="composerMobileReasoningAction"' in panel_html, \
         "mobile reasoning action must be inside the overflow panel"
     assert 'onclick="toggleModelDropdown()"' in panel_html, \
@@ -1247,15 +1227,11 @@ def test_model_and_reasoning_controls_live_in_mobile_overflow_panel():
         "mobile reasoning action must reuse the existing reasoning dropdown"
     assert 'id="composerMobileModelLabel"' in panel_html, \
         "mobile model action must expose the selected model label"
-    assert 'id="composerMobileQuotaLabel"' in panel_html, \
-        "mobile quota action must expose the selected quota label"
     assert 'id="composerMobileReasoningLabel"' in panel_html, \
         "mobile reasoning action must expose the selected reasoning label"
     ui_js = (REPO / "static" / "ui.js").read_text(encoding="utf-8")
     assert "composerMobileModelAction" in ui_js, \
         "model dropdown positioning/click handling must know the mobile model action"
-    assert "composerMobileQuotaAction" in ui_js, \
-        "quota sync must know the mobile quota action"
     assert "composerMobileReasoningAction" in ui_js, \
         "reasoning dropdown positioning/click handling must know the mobile reasoning action"
 
@@ -1268,17 +1244,16 @@ def test_model_and_reasoning_controls_live_in_mobile_overflow_panel():
         "mobile overflow panel must size the model/reasoning actions"
 
 
-def test_mobile_overflow_panel_quota_order_matches_desktop_sequence():
+def test_mobile_overflow_panel_order_matches_desktop_sequence():
     """The mobile overflow panel should keep the same shared control order as desktop."""
     panel_start = HTML.index('id="composerMobileConfigPanel"')
     panel_end = HTML.index('<div class="profile-dropdown"', panel_start)
     panel_html = HTML[panel_start:panel_end]
     workspace_idx = panel_html.index('id="composerMobileWorkspaceAction"')
     model_idx = panel_html.index('id="composerMobileModelAction"')
-    quota_idx = panel_html.index('id="composerMobileQuotaAction"')
     reasoning_idx = panel_html.index('id="composerMobileReasoningAction"')
     context_idx = panel_html.index('id="composerMobileContextAction"')
-    assert workspace_idx < model_idx < quota_idx < reasoning_idx < context_idx, \
+    assert workspace_idx < model_idx < reasoning_idx < context_idx, \
         "mobile control order should mirror the desktop/shared control sequence"
 
 
@@ -1481,7 +1456,6 @@ def test_mobile_config_kickers_have_i18n_fallbacks():
     for key, label in (
         ("composer_mobile_workspace", "Workspace"),
         ("composer_mobile_model", "Model"),
-        ("composer_mobile_quota", "Quota"),
         ("composer_mobile_reasoning", "Reasoning"),
         ("composer_mobile_context", "Context"),
     ):
@@ -1652,14 +1626,9 @@ def test_touch_keyboard_inset_applies_to_composer_padding():
 
 # ── Sidebar tabs on mobile ───────────────────────────────────────────────────
 
-def test_profiles_sidebar_tab_present():
-    """Sidebar tab strip must include Profiles."""
-    # Tolerate additional utility classes (e.g. `has-tooltip` from #1775).
-    # We just need a nav-tab classed button targeting the profiles panel.
-    import re
-    pattern = r'class="[^"]*\bnav-tab\b[^"]*"[^>]*data-panel="profiles"'
-    assert re.search(pattern, HTML), \
-        "Sidebar nav must have a nav-tab button with data-panel=\"profiles\""
+def test_no_profiles_sidebar_tab():
+    """There is no Profile management in the web app (ADR 0006), so no Profiles tab."""
+    assert 'data-panel="profiles"' not in HTML
 
 
 def test_mobile_bottom_nav_removed():

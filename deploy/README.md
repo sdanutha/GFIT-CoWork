@@ -1,9 +1,14 @@
 # The GFIT-CoWork Deployment kit
 
 A **Deployment** is one Team's GFIT-CoWork: one Hermes Agent, one GFIT-CoWork,
-and one config file with the Team's AD settings, Admins and API keys. Several
+and one config file with the Team's AD settings and API keys. Several
 Deployments run on the same server. Each one has its own URL, such as
 `https://sales.cowork.gfit.co.th`, and its own data.
+
+Everyone who logs in is a **User** with their own Profile. There is no Admin in
+the web app (ADR 0006): the **Operator** — whoever runs the server — sets up the
+provider key and manages Profiles from the server's shell, with the commands
+below.
 
 | File | What it is |
 |------|------------|
@@ -85,7 +90,6 @@ use another name, another port and another hostname (e.g. `account`, `8802`,
    | `TEAM` | `sales` | Names the containers and volumes (`gfit-sales-...`) |
    | `GFIT_PORT` | `8801` | Not used by any other Deployment |
    | `GFIT_HOSTNAME` | `sales.cowork.gfit.co.th` | The same hostname as in the Caddyfile |
-   | `HERMES_WEBUI_ADMIN_USERS` | `521740,671278` | This Team's Admins. Name two so there is a backup |
    | the provider key, e.g. `OPENROUTER_API_KEY` | | This Team's own key |
    | `API_SERVER_KEY` | `openssl rand -hex 24` | A new random value for every Deployment |
 
@@ -116,38 +120,54 @@ use another name, another port and another hostname (e.g. `account`, `8802`,
    docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
    ```
 
-5. **Log in as the Admin.** Open `https://sales.cowork.gfit.co.th` and log in
-   with an Admin's employee ID and AD password. Admins land in the `default`
-   Profile. In **Settings → Providers**, save the Team's provider key, then
-   choose the model the Team will use. This saves both in the `default`
-   Profile, and new Profiles copy them from there. A User's Profile never
-   uses a key from `.env` directly, because each Profile keeps its own
-   credentials.
+5. **Set the provider and model in the `default` Profile.** On the server:
 
-6. **Check the Admin gate.** Log in with a User's account (after adding one,
-   below). They must not see Settings, the terminal or the Profiles panel.
+   ```sh
+   docker compose exec hermes-agent hermes model
+   ```
+
+   Choose the Team's provider, enter its key and choose the model. This saves
+   both in the `default` Profile, and new Profiles copy them from there. A
+   User's Profile never uses a key from `.env` directly, because each Profile
+   keeps its own credentials.
+
+6. **Check it.** Add yourself as a User (below), open
+   `https://sales.cowork.gfit.co.th` and log in. You land in your own Profile,
+   with your name in the Profile chip, and the agent answers.
 
 ## Add a User
 
-The Admin does this in the web UI. There is no sign-up and no automatic
-Profile: a person can log in only after an Admin has created their Profile.
+The Operator does this on the server. There is no sign-up and no automatic
+Profile: a person can log in only after their Profile exists. In the Team's
+folder, define a shortcut for the GFIT-CoWork command line (it runs inside the
+container, as the user the server runs as):
 
-1. Log in as an Admin and open the **Profiles** panel.
-2. Create a Profile. The **name must be the person's employee ID** (e.g.
-   `600001`). The display name is optional: it shows until they log in for
-   the first time, and after that GFIT-CoWork takes their name from AD on every
-   login. Tick **Clone config from active profile**. This copies the provider
-   key and model the Admin set in `default`; without it, the Profile has no
-   key and the agent cannot answer.
-3. Tell them the URL. They log in with their employee ID (`600001`,
+```sh
+gfit() { docker compose exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin/python -m api.operator_cli "$@"; }
+```
+
+1. Create the Profile. The **name must be the person's employee ID**:
+
+   ```sh
+   gfit create 600001 --display-name "Somsri Jaidee" --clone-from default
+   ```
+
+   The display name is optional: it shows until they log in for the first
+   time, and after that GFIT-CoWork takes their name from AD on every login.
+   `--clone-from default` copies the provider key and model set in `default`;
+   without it, the Profile has no key and the agent cannot answer.
+2. Tell them the URL. They log in with their employee ID (`600001`,
    `GFIT\600001` or `600001@gfit.co.th` all work) and their AD password.
 
-To shut someone out, **Disable** their Profile. This ends their sessions at
-once, stops any turn still running and pauses their scheduled jobs, so nothing
-of theirs runs on the Team's API key; their data stays. **Enable** lets them
-back in and resumes the jobs the disable paused (a job they had paused
-themselves stays paused). **Delete** removes the
-Profile and its data for good, after you type its name to confirm.
+`gfit list` shows every Profile with its status and last login.
+
+To shut someone out, **disable** their Profile: `gfit disable 600001`. Their
+scheduled jobs pause at once, and within a few seconds the server ends their
+sessions and stops any turn still running, so nothing of theirs runs on the
+Team's API key; their data stays. `gfit enable 600001` lets them back in and
+resumes the jobs the disable paused (a job they had paused themselves stays
+paused). `gfit delete 600001 --confirm 600001` removes a disabled Profile and
+its data for good.
 
 A person who has a Profile in one Team's Deployment cannot log in to another
 Team's Deployment. They get "You don't have access to this system yet". Give
@@ -158,7 +178,7 @@ them a Profile in each Deployment they need.
 Run one Team with 5–10 people for two to four weeks before adding more people
 or more Teams.
 
-1. **Pick the pilot group:** one Team, its two Admins, and 5–10 Users who
+1. **Pick the pilot group:** one Team, an Operator and a backup, and 5–10 Users who
    will use it every day and say what goes wrong.
 2. **Set up** that Team as above, and create Profiles for the pilot Users only.
 3. **Check on day one** that every pilot User can log in, sees their name
@@ -169,7 +189,7 @@ or more Teams.
    - `docker compose logs gfit-cowork` for AD errors ("directory is
      unavailable") and refused logins.
    - The model provider's usage and cost for the Team's key.
-   - What Users ask the Admins for.
+   - What Users ask the Operator for.
 5. **Roll out further** when the pilot has run without AD or capacity problems.
    Add the rest of the Team's Users, then add the next Team as a new
    Deployment.
@@ -177,9 +197,14 @@ or more Teams.
 ## Look after a Deployment
 
 - **Logs:** `docker compose logs --tail 200 gfit-cowork` (or `hermes-agent`).
+- **Session store:** `gfit sessions-audit` reports problems (read-only).
+  `gfit sessions-repair` and `gfit sessions-cleanup [--empty]` change session
+  files the server also writes: run them when nobody is using the Team, then
+  `docker compose restart gfit-cowork` so it rereads them.
 - **Back up** the volumes `gfit-<TEAM>_hermes-home` (Profiles, sessions,
   memory, User Workspaces, the Profile roster) and
-  `gfit-<TEAM>_admin-workspace`, e.g. with
+  `gfit-<TEAM>_admin-workspace` (the server's default Workspace; no User works
+  in it), e.g. with
   `docker run --rm -v gfit-sales_hermes-home:/data -v "$PWD":/backup alpine tar czf /backup/sales-home.tgz -C /data .`
 - **Upgrade GFIT-CoWork:** pull the source, rebuild the image (see "Once per
   server"), then `docker compose up -d` in each Team's folder.

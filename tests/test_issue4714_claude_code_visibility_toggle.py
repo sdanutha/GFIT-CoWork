@@ -196,7 +196,6 @@ def test_session_list_cache_key_changes_with_claude_code_toggle():
     """Cache keys must encode the Claude Code toggle."""
     key_false = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_claude_code_sessions=False,
         show_previous_messaging_sessions=False,
@@ -204,7 +203,6 @@ def test_session_list_cache_key_changes_with_claude_code_toggle():
     )
     key_true = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_claude_code_sessions=True,
         show_previous_messaging_sessions=False,
@@ -217,14 +215,12 @@ def test_session_list_cache_key_default_keeps_claude_code_enabled():
     """Helper callers that omit the flag should match the config default."""
     key_default = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_previous_messaging_sessions=False,
         show_cron_sessions=False,
     )
     key_true = routes._session_list_cache_key(
         active_profile="default",
-        all_profiles=False,
         show_cli_sessions=True,
         show_claude_code_sessions=True,
         show_previous_messaging_sessions=False,
@@ -315,7 +311,7 @@ def test_preferences_autosave_preserves_claude_code_opt_out_default():
     autosave_block = _extract_between(
         PANELS_JS.read_text(encoding="utf-8"),
         "  const showCliCb=$('settingsShowCliSessions');",
-        "  const syncCb=$('settingsSyncInsights');",
+        "  const soundCb=$('settingsSoundEnabled');",
     )
     script = f"""
 const block = {json.dumps(autosave_block)};
@@ -484,5 +480,5 @@ def test_locale_keys_exist_in_every_locale_block():
     """Every locale block should carry the Claude Code label and description keys."""
     i18n = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
 
-    assert i18n.count("settings_label_claude_code_sessions:") == i18n.count("settings_label_api_redact:")
+    assert i18n.count("settings_label_claude_code_sessions:") == i18n.count("settings_label_sidebar_density:")
     assert i18n.count("settings_desc_claude_code_sessions:") == i18n.count("settings_desc_previous_messaging_sessions:")

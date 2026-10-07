@@ -1,6 +1,7 @@
 """Tests for the gateway runs-API approval bridge (#4203)."""
 from __future__ import annotations
 
+import api.config
 import io
 import json
 import socket
@@ -1829,8 +1830,8 @@ def test_runs_api_marks_run_pending_before_request_preparation():
 
 def test_gateway_worker_marks_run_pending_before_runs_api_prelude():
     from api import gateway_chat
+    from api.config import STREAMS
     from api.gateway_chat import (
-        STREAMS,
         _mark_gateway_run_starting,
         _run_gateway_chat_streaming,
         gateway_run_id_pending,
@@ -1876,7 +1877,7 @@ def test_gateway_worker_marks_run_pending_before_runs_api_prelude():
              patch("api.streaming._prefill_messages_with_webui_context", return_value=[]), \
              patch("api.streaming._normalize_prefill_messages_before_user_turn", side_effect=lambda messages: messages), \
              patch("api.streaming._public_prefill_context_status", return_value={}), \
-             patch("api.streaming._webui_ephemeral_system_prompt", return_value="sys"):
+             patch("api.turn_builder.ephemeral_system_prompt", return_value="sys"):
             _run_gateway_chat_streaming(
                 session_id="sess-worker-run-starting",
                 msg_text="hi",
@@ -1935,8 +1936,8 @@ def test_start_chat_stream_marks_gateway_run_pending_before_thread_start(monkeyp
     monkeypatch.setattr(routes, "_get_session_agent_lock", lambda *_args, **_kwargs: _NoopLock())
     monkeypatch.setattr(routes, "_is_hidden_empty_session", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(routes, "_prepare_chat_start_session_for_stream", fake_prepare)
-    monkeypatch.setattr(routes, "create_stream_channel", lambda: SimpleNamespace())
-    monkeypatch.setattr(routes, "register_stream_owner", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("api.config.create_stream_channel", lambda: SimpleNamespace())
+    monkeypatch.setattr("api.config.register_stream_owner", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(routes, "set_last_workspace", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(routes, "threading", SimpleNamespace(Thread=_FakeThread))
 
@@ -1995,8 +1996,8 @@ def test_start_chat_stream_clears_gateway_run_state_when_thread_start_fails(monk
     monkeypatch.setattr(routes, "_get_session_agent_lock", lambda *_args, **_kwargs: _NoopLock())
     monkeypatch.setattr(routes, "_is_hidden_empty_session", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(routes, "_prepare_chat_start_session_for_stream", fake_prepare)
-    monkeypatch.setattr(routes, "create_stream_channel", lambda: SimpleNamespace())
-    monkeypatch.setattr(routes, "register_stream_owner", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("api.config.create_stream_channel", lambda: SimpleNamespace())
+    monkeypatch.setattr("api.config.register_stream_owner", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(routes, "set_last_workspace", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(routes, "threading", SimpleNamespace(Thread=_BoomThread))
 
@@ -2131,7 +2132,7 @@ def test_chat_cancel_waits_for_worker_published_run_id_before_settlement(
              patch("api.streaming._prefill_messages_with_webui_context", return_value=[]), \
              patch("api.streaming._normalize_prefill_messages_before_user_turn", side_effect=lambda messages: messages), \
              patch("api.streaming._public_prefill_context_status", return_value={}), \
-             patch("api.streaming._webui_ephemeral_system_prompt", return_value="sys"):
+             patch("api.turn_builder.ephemeral_system_prompt", return_value="sys"):
             worker_thread.start()
             assert support_gate.wait(timeout=5)
             request_thread.start()
@@ -2217,7 +2218,7 @@ def test_gateway_worker_prelude_exception_retires_failed_start_after_waiter_cons
     )
 
     try:
-        gateway_chat.STREAMS[stream_id] = SimpleNamespace(put_nowait=lambda *_args, **_kwargs: None)
+        api.config.STREAMS[stream_id] = SimpleNamespace(put_nowait=lambda *_args, **_kwargs: None)
         mark_starting(stream_id)
         waiter_thread = threading.Thread(target=waiter, daemon=True)
         waiter_thread.start()
@@ -2242,7 +2243,7 @@ def test_gateway_worker_prelude_exception_retires_failed_start_after_waiter_cons
         if waiter_thread is not None:
             waiter_thread.join(timeout=5)
         worker_thread.join(timeout=5)
-        gateway_chat.STREAMS.pop(stream_id, None)
+        api.config.STREAMS.pop(stream_id, None)
         _reset_gateway_run_start_state(stream_id)
 
 

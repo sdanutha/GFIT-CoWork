@@ -27,17 +27,18 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+from api import run_registry
+from api import config as _config
 from api.config import (
     get_config,
     STREAMS, STREAMS_LOCK, CANCEL_FLAGS, AGENT_INSTANCES, STREAM_PARTIAL_TEXT,
     STREAM_REASONING_TEXT, STREAM_LIVE_TOOL_CALLS,
     STREAM_GOAL_RELATED, PENDING_GOAL_CONTINUATION,
     STREAM_LAST_EVENT_ID,
-    LOCK, SESSIONS, SESSIONS_MAX, SESSION_DIR,
+    LOCK, SESSIONS,
     _get_session_agent_lock, _alias_session_agent_lock,
     _set_thread_env, _clear_thread_env,
     register_active_run, update_active_run, unregister_active_run,
-    unregister_stream_owner,
     peek_stream,
     stream_owner_session_id,
     session_writeback_owner,
@@ -60,6 +61,7 @@ from api.config import (
     _main_model_request_overrides,
     PROCESS_SESSION_INDEX, PROCESS_SESSION_INDEX_LOCK,
 )
+from api.turn_builder import turn_prompts
 from api.helpers import (
     redact_session_data,
     scrub_internal_replay_fields,
@@ -1124,76 +1126,6 @@ def _await_clarify_response(entry, timeout, cancel_evt) -> tuple[str, bool]:
 _CANCEL_MARKER_PATTERNS = ('task cancelled', 'task canceled', 'response interrupted')
 
 
-_WEBUI_PROGRESS_PROMPT = """
-WebUI progress guidance:
-- Match the normal Hermes messaging style, but do not let long tool-running WebUI turns appear silent.
-- For long multi-step work that uses tools, emit brief user-visible progress updates as normal assistant content, not only as hidden reasoning.
-- Before the first tool batch in a long task, say what you are about to inspect.
-- After each meaningful batch of tool calls, say what you just confirmed and what you will check next before continuing with more tools.
-- Do not run many independent tool batches back-to-back without visible assistant text between them when the task is still ongoing.
-- Do not keep progress only in reasoning, thinking, or tool-result channels; those are not a substitute for visible interim updates.
-- Each update should say what you are about to check, what you just confirmed, or why the next tool call is needed.
-- Keep updates concise, factual, and in the user's language. One or two short sentences are enough.
-- Do not reveal hidden reasoning, chain-of-thought, private scratchpads, secrets, raw logs, or long tool output.
-- Password, API-key, token, and secret fields are automatically redacted by the system. Treat masked values as intentional redaction, not placeholder text or user input errors, and do not tell the user a stored credential is wrong based on a masked value alone.
-- Final visible assistant replies must be clear, user-facing, and in the user's language, not private planning notes.
-- Do not include terse planning fragments or scratchpad shorthand in visible assistant text. Avoid fragments like "Need script", "Need check logs", "Need inspect email", or "maybe invite"; either omit them or rewrite them as clear user-facing progress.
-- For direct answers or very short tasks, skip progress updates and answer normally.
-""".strip()
-
-
-def _webui_surface_context_prompt(surface_context: Optional[dict]) -> str:
-    """Return safe WebUI session metadata for the agent's ephemeral context.
-
-    Messaging gateways inject platform/channel context before each run. Browser
-    sessions do not have a chat platform wrapper, so provide an explicit, small
-    surface description here instead of relying on the model to infer where it
-    is running from the transcript alone.
-    """
-    if not isinstance(surface_context, dict):
-        return ""
-
-    lines = [
-        "WebUI session context:",
-        "- This browser session is not the same live transcript as Telegram, Discord, Slack, or other messaging surfaces.",
-        "- Use durable memory, saved sessions, and available tools for cross-surface recall instead of assuming those transcripts are in this browser chat.",
-        "- Do not copy or dump this browser transcript into external notes or durable memory by default.",
-        "- Write to external notes or durable memory only for explicit captures, durable user preferences, decisions, blockers/open issues, runbook-worthy workflows, or other clearly reusable signals; otherwise leave notes unchanged.",
-        "- When you do write or update a durable note, briefly tell the user what note/section changed so the write is reviewable.",
-    ]
-    fields = (
-        ("source", "Source"),
-        ("session_id", "Session ID"),
-        ("profile", "Profile"),
-        ("workspace", "Workspace"),
-    )
-    for key, label in fields:
-        raw = surface_context.get(key)
-        value = str(raw).strip() if raw is not None else ""
-        if value:
-            lines.append(f"- {label}: {value}")
-    return "\n".join(lines)
-
-
-def _webui_ephemeral_system_prompt(
-    personality_prompt: Optional[str],
-    surface_context: Optional[dict] = None,
-    config_data: Optional[dict] = None,
-) -> str:
-    """Build WebUI-only runtime instructions that are not persisted to history."""
-    parts = []
-    if personality_prompt:
-        parts.append(str(personality_prompt).strip())
-    surface_prompt = _webui_surface_context_prompt(surface_context)
-    if surface_prompt:
-        parts.append(surface_prompt)
-    parts.append(_WEBUI_PROGRESS_PROMPT)
-    delivery_prompt = _webui_delivery_context_prompt(config_data)
-    if delivery_prompt:
-        parts.append(delivery_prompt)
-    return "\n\n".join(part for part in parts if part)
-
-
 _SECRET_SHAPED_RE = re.compile(
     r"(?i)(api[_-]?key|token|password|secret)\s*[:=]\s*[^\s]+|"
     r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b|"
@@ -1435,89 +1367,11 @@ def _public_prefill_context_status(prefill_context: dict) -> dict:
     }
 
 
-def _webui_delivery_context_prompt(config_data: Optional[dict] = None) -> str:
-    """Return platform/delivery context for the ephemeral system prompt.
-
-    Connected platforms, home channels, and scheduled-task delivery hints
-    are injected into the system prompt (safe for role alternation) rather
-    than as a prefill ``user`` message, which strict chat templates (Mistral,
-    Gemma) reject.
-
-    NOTE: This function only covers platform/delivery info.  The session
-    framing (\"Source: WebUI\", \"Session ID\", \"Profile\", \"Workspace\") is
-    emitted by ``_webui_surface_context_prompt()``, which is called from
-    ``_webui_ephemeral_system_prompt()`` before this helper.  If you
-    refactor this area, keep that surface call in place — the two helpers
-    together produce the full session context block.
-    """
-    cfg = config_data if isinstance(config_data, dict) else get_config()
-    lines: list[str] = []
-
-    display_hermes_home = None
-    try:
-        from hermes_constants import get_hermes_home, display_hermes_home as _dh
-        display_hermes_home = _dh
-    except Exception:
-        get_hermes_home = None  # type: ignore[assignment]
-
-    connected = ["local (files on this machine)"]
-    try:
-        if get_hermes_home is not None:
-            state_path = get_hermes_home() / "gateway_state.json"
-            if state_path.exists():
-                raw_state = json.loads(state_path.read_text(encoding="utf-8"))
-                platforms = raw_state.get("platforms") if isinstance(raw_state, dict) else {}
-                if isinstance(platforms, dict):
-                    for name in sorted(platforms):
-                        pdata = platforms.get(name) or {}
-                        if isinstance(pdata, dict) and pdata.get("state") == "connected" and name != "local":
-                            connected.append(f"{name}: Connected ✓")
-    except Exception:
-        pass
-    lines.append(f"**Connected Platforms:** {', '.join(connected)}")
-
-    home_channels = {}
-    try:
-        platforms_cfg = cfg.get("platforms", {}) if isinstance(cfg, dict) else {}
-        if isinstance(platforms_cfg, dict):
-            for name, pdata in platforms_cfg.items():
-                if not isinstance(pdata, dict):
-                    continue
-                if pdata.get("enabled") is False:
-                    continue
-                home = pdata.get("home_channel")
-                if isinstance(home, dict):
-                    home_channels[str(name)] = str(home.get("name") or name)
-    except Exception:
-        home_channels = {}
-
-    if home_channels:
-        lines.append("")
-        lines.append("**Home Channels (default destinations):**")
-        for platform, label in sorted(home_channels.items()):
-            lines.append(f"  - {platform}: {label}")
-
-    lines.append("")
-    lines.append("**Delivery options for scheduled tasks:**")
-    lines.append("- `\"origin\"` → Back to this WebUI/browser session when the WebUI runtime supports origin delivery; otherwise prefer an explicit platform target.")
-    try:
-        home_display = display_hermes_home() if display_hermes_home else "~/.hermes"
-    except Exception:
-        home_display = "~/.hermes"
-    lines.append(f"- `\"local\"` → Save to local files only ({home_display}/cron/output/)")
-    for platform, label in sorted(home_channels.items()):
-        lines.append(f"- `\"{platform}\"` → Home channel ({label})")
-    lines.append("")
-    lines.append("*For explicit targeting, use `\"platform:chat_id\"` format if the user provides a specific chat ID. Do not invent private IDs.*")
-
-    return "\n".join(lines)
-
-
 def _prefill_messages_with_webui_context(prefill_context: dict, config_data: Optional[dict] = None) -> list[dict]:
     """Combine recall prefill with WebUI session context.
 
     The session context (connected platforms, delivery hints) is injected
-    via ``_webui_ephemeral_system_prompt`` / ``ephemeral_system_prompt``
+    via ``api.turn_builder.ephemeral_system_prompt`` / the agent's ``ephemeral_system_prompt``
     instead of as a prefill ``user`` message.  Adding it as a user message
     creates two consecutive user turns (prefill + actual) which strict chat
     templates (Mistral, Gemma) reject with a Jinja 500.
@@ -4347,14 +4201,6 @@ _WORKSPACE_PREFIX_ANY_RE = re.compile(r'\[Workspace::v1:\s*(?:\\.|[^\]\\])+\]\s*
 _LEGACY_WORKSPACE_PREFIX_ANY_RE = re.compile(r'\[Workspace:[^\]]+\]\s*')
 
 
-def _escape_workspace_prefix_path(path: str) -> str:
-    return str(path or '').replace('\\', '\\\\').replace(']', '\\]')
-
-
-def _workspace_context_prefix(path: str) -> str:
-    return f"[Workspace::v1: {_escape_workspace_prefix_path(path)}]\n"
-
-
 def _strip_workspace_prefix(text: str, *, include_legacy: bool = False) -> str:
     """Remove WebUI-injected workspace tags without eating user-typed text."""
     value = str(text or '')
@@ -5594,7 +5440,7 @@ def _preserve_pre_compression_snapshot(s, old_sid: str) -> None:
     agent's new continuation id. The old JSON must remain on disk for lineage
     traversal, but it should not continue to appear as an active sidebar row.
     """
-    old_path = SESSION_DIR / f'{old_sid}.json'
+    old_path = _config.SESSION_DIR / f'{old_sid}.json'
     if not old_path.exists():
         return
     try:
@@ -9752,7 +9598,7 @@ def _run_agent_streaming(
         # The stream was cancelled before the worker started; the route layer
         # already registered the stream owner, so release it here to avoid
         # leaking a STREAM_SESSION_OWNERS entry that the teardown finally never sees.
-        unregister_stream_owner(stream_id)
+        run_registry.forget_owner(stream_id)
         try:
             clear_session_writeback_owner_if_owned(session_id, stream_id)
         except Exception:
@@ -11361,8 +11207,8 @@ def _run_agent_streaming(
             # Per-session toolset override (#493): if the session has
             # enabled_toolsets set, use that instead of the global config.
             try:
-                from api.models import Session, SESSION_DIR
-                _session_path = SESSION_DIR / f"{session_id}.json"
+                from api.models import Session
+                _session_path = _config.SESSION_DIR / f"{session_id}.json"
                 if _session_path.exists():
                     _session_meta = Session.load_metadata_only(session_id)
                     # load_metadata_only returns a Session INSTANCE, not a dict.
@@ -11726,61 +11572,17 @@ def _run_agent_streaming(
 
             # Prepend workspace context so the agent always knows which directory
             # to use for file operations, regardless of session age or AGENTS.md defaults.
-            workspace_ctx = _workspace_context_prefix(str(s.workspace))
-            # #6672: interpolate the session-CREATION workspace (immutable), never
-            # the live s.workspace, into the system prompt. s.workspace changes on
-            # every mid-session workspace switch in the WebUI header; mutating the
-            # system prompt would rewrite msg[0] and invalidate the LLM prefix
-            # cache (APC/Radix Tree) for the whole 50k+ token transcript. Active
-            # switches still reach the model via the [Workspace::v1: ...] tag on
-            # the current user turn (workspace_ctx above), which lives in msg[-1].
-            _session_workspace_frozen = getattr(s, 'created_workspace', None) or str(s.workspace)
-            workspace_system_msg = (
-                f"Active workspace at session start: {_session_workspace_frozen}\n"
-                "Every user message is prefixed with [Workspace::v1: /absolute/path] indicating the "
-                "workspace the user has selected in the web UI at the time they sent that message. "
-                "This tag is the single authoritative source of the active workspace and updates "
-                "with every message. It overrides any prior workspace mentioned in this system "
-                "prompt, memory, or conversation history. Always use the value from the most recent "
-                "[Workspace::v1: ...] tag as your default working directory for ALL file operations: "
-                "write_file, read_file, search_files, terminal workdir, and patch. "
-                "Never fall back to a hardcoded path when this tag is present."
-            )
-            # Resolve personality prompt from config.yaml agent.personalities
-            # (matches hermes-agent CLI behavior — passes via ephemeral_system_prompt)
-            _personality_prompt = None
-            _pname = getattr(s, 'personality', None)
-            if _pname:
-                _agent_cfg = _cfg.get('agent', {})
-                _personalities = _agent_cfg.get('personalities', {})
-                if isinstance(_personalities, dict) and _pname in _personalities:
-                    _pval = _personalities[_pname]
-                    if isinstance(_pval, dict):
-                        _parts = [_pval.get('system_prompt', '') or _pval.get('prompt', '')]
-                        if _pval.get('tone'):
-                            _parts.append(f'Tone: {_pval["tone"]}')
-                        if _pval.get('style'):
-                            _parts.append(f'Style: {_pval["style"]}')
-                        _personality_prompt = '\n'.join(p for p in _parts if p)
-                    else:
-                        _personality_prompt = str(_pval)
-            # Pass WebUI-only runtime guidance via ephemeral_system_prompt
-            # (agent's own mechanism). This preserves any selected personality
-            # while making long tool runs emit real user-visible interim text
-            # through interim_assistant_callback instead of frontend guesses.
-            agent.ephemeral_system_prompt = _webui_ephemeral_system_prompt(
-                _personality_prompt,
-                surface_context={
-                    'source': 'webui',
-                    'session_id': session_id,
-                    'profile': getattr(s, 'profile', None),
-                    # #6672: frozen session-creation workspace — see
-                    # workspace_system_msg above. Live workspace switches stay out
-                    # of msg[0] so LLM prefix caches are not invalidated.
-                    'workspace': _session_workspace_frozen,
-                },
-                config_data=_cfg,
-            )
+            # The turn builder says what this turn is told: the system message
+            # names the session-CREATION Workspace (#6672: a mid-session switch
+            # must not rewrite msg[0] and invalidate the LLM prefix cache), the
+            # [Workspace::v1: ...] prefix on the user message names the live one,
+            # and the ephemeral prompt carries personality, surface context,
+            # progress guidance and delivery context (agent's own mechanism, so a
+            # selected personality is preserved).
+            _turn_prompts = turn_prompts(s, session_id=session_id, config_data=_cfg)
+            workspace_ctx = _turn_prompts.user_prefix
+            workspace_system_msg = _turn_prompts.system_message
+            agent.ephemeral_system_prompt = _turn_prompts.ephemeral_system_prompt
             _pending_started_at = getattr(s, 'pending_started_at', None)
             meter().set_pending_started_at(stream_id, _pending_started_at)
             # Normal chat-start sets pending_started_at before spawning this thread;
@@ -14227,7 +14029,7 @@ def _run_agent_streaming(
         # restore above.
         _reset_turn_session_identity(_turn_session_identity_tokens)
         with STREAMS_LOCK:
-            STREAMS.pop(stream_id, None)
+            run_registry.detach_stream_locked(stream_id)
             CANCEL_FLAGS.pop(stream_id, None)
             AGENT_INSTANCES.pop(stream_id, None)  # Clean up agent instance reference
             STREAM_PARTIAL_TEXT.pop(stream_id, None)  # Clean up partial text buffer (#893)
@@ -14235,10 +14037,8 @@ def _run_agent_streaming(
             STREAM_LIVE_TOOL_CALLS.pop(stream_id, None)  # Clean up tool calls (#1361 §B)
             STREAM_GOAL_RELATED.pop(stream_id, None)  # Clean up goal-related flag (#1932)
             STREAM_LAST_EVENT_ID.pop(stream_id, None)  # Clean up event_id pointer (stage-364)
+            # Unregistering the active run also forgets the stream owner (#6351).
             unregister_active_run(stream_id)
-            # Clean up the stream-owner registry so stale stream_id→session_id
-            # mappings do not accumulate over thousands of completed streams (#6351).
-            unregister_stream_owner(stream_id)
             # Release the session's writeback-ownership entry only while this
             # stream still owns it (#6623 re-gate): a successor admitted after
             # cancel must keep its registry claim.
@@ -14613,7 +14413,7 @@ def cancel_stream(stream_id: str) -> bool:
         # Publish cancellation and detach ownership before releasing the edge;
         # later Steer cannot enqueue into a turn already claimed by Stop.
         if stream_present:
-            streams.pop(stream_id, None)
+            run_registry.detach_stream_locked(stream_id)
             cancel_flags.pop(stream_id, None)
             agent_instances.pop(stream_id, None)
 

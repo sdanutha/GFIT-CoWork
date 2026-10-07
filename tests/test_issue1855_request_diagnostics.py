@@ -50,8 +50,8 @@ def test_all_sessions_reports_internal_index_stages(tmp_path, monkeypatch):
     session_dir = tmp_path / "sessions"
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, "_enrich_sidebar_lineage_metadata", lambda sessions: None)
     models.SESSIONS.clear()
 
@@ -98,7 +98,7 @@ def test_issue1855_target_routes_are_wired_to_diagnostics():
     assert 'kwargs = {"diag": diag, "include_lineage_metadata": False}' in src
     assert 'kwargs["sidebar_metadata_only"] = True' in src
     assert "return all_sessions(**kwargs)" in src
-    assert 'RequestDiagnostics.maybe_start("POST", parsed.path' in src
+    assert 'RequestDiagnostics.maybe_start(method, parsed.path' in src
     assert "_handle_chat_start(handler, body, diag=diag)" in src
     for stage in (
         "read_body",

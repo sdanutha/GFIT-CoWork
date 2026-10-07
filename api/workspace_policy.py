@@ -5,8 +5,8 @@ Each request has one Workspace policy, chosen from the request's Admission
 
 - a **User's policy** (:class:`UserWorkspacePolicy`): everything is inside that
   User's Workspace folder, ``<Profile>/workspace`` (ADR 0002);
-- the **unconfined policy** (:data:`UNCONFINED`): the Admin, and requests with
-  no Admission (login turned off, worker threads). Today's rules, including
+- the **unconfined policy** (:data:`UNCONFINED`): code with no caller
+  (worker threads, public routes). Upstream's rules, including
   remote-terminal Workspaces and the saved-list rules;
 - the **refusing answer** (:data:`REFUSING`): a Directory session with no
   recorded Admission, or an Admission this module does not understand.
@@ -26,7 +26,7 @@ Refusals raise ``ValueError`` with the Workspace message.
 Attachments are not a Workspace: they belong to a session, and session
 ownership guards them (``api.helpers.resolve_inside``, the unconfined primitive).
 
-An explicit *profile* argument is the Admin's: the unconfined policy uses it as
+An explicit *profile* argument is the unconfined policy's: it uses it as
 today. A User's policy is bound to that User's Profile, which wins; it
 accepts *profile* only so every policy is asked the same way, and ignores it.
 """
@@ -115,7 +115,7 @@ class UserWorkspacePolicy:
     def register_target(self, path: str, *, profile=None) -> Path:
         """The folder that may be created to register *path*; refused before anything is created.
 
-        A blocked system folder is refused with its own message first, as for the Admin.
+        A blocked system folder is refused with its own message first, as for every caller.
         """
         candidate = _requested_path(path)
         _refuse_system_folder(_safe_resolve(candidate))
@@ -144,7 +144,7 @@ class UserWorkspacePolicy:
 
 
 class _UnconfinedWorkspacePolicy:
-    """The Admin's, and no caller's: today's rules, not confined."""
+    """No caller's: today's rules, not confined."""
 
     def default_workspace(self, *, profile: str | Path | None = None) -> str:
         return _configured_default_workspace(profile)
@@ -210,17 +210,15 @@ REFUSING = _RefusingWorkspacePolicy()
 def policy_for(admission, *, directory_session: bool):
     """The Workspace policy for *admission*: the one mapping from Admission to policy.
 
-    A User's Admission gives that User's policy, the Admin's gives the
-    unconfined one. No Admission is unconfined only when there is no Directory
-    session (login turned off, a worker thread); a Directory session with none
+    A User's Admission gives that User's policy. No Admission is unconfined only
+    when there is no Directory session (a public route, a worker thread); a
+    Directory session with none
     is refused, as is a role or Profile this module does not understand.
     """
-    from api.access import ROLE_ADMIN, ROLE_USER
+    from api.access import ROLE_USER
 
     if admission is None:
         return REFUSING if directory_session else UNCONFINED
-    if admission.role == ROLE_ADMIN:
-        return UNCONFINED
     if admission.role == ROLE_USER and admission.profile:
         try:
             return UserWorkspacePolicy.for_profile(admission.profile)

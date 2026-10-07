@@ -203,6 +203,44 @@ To widen the guard, fix the pre-existing intentional hits first (as of 2026-05-3
 
 ---
 
+## How the automated tests log in
+
+There is no mode with login turned off (ADR 0006): a server with no Directory
+refuses to start, and every request that is not public needs an admitted
+User's session. The test suite follows the production contract:
+
+- **The shared test server** (`tests/conftest.py`, `test_server`) starts with
+  the in-memory Directory (`HERMES_WEBUI_DIRECTORY=memory`) holding one test
+  User, `TEST_USER`, who owns one Profile, `TEST_PROFILE_HOME` (Workspace:
+  `TEST_USER_WORKSPACE`). Conftest logs that User in once, reads the CSRF token
+  from the app shell, and installs a `urllib` opener that sends the session
+  cookie (and, on unsafe methods, the CSRF token) with every request to the
+  test server. A request that sets its own `Cookie` header — a test of another
+  caller, or of no caller (`{"Cookie": ""}`) — is left alone.
+- **State a test seeds for the server** belongs to the test User's Profile:
+  `TEST_PROFILE_HOME` (state.db, config.yaml, cron, gateway sessions),
+  `TEST_USER_SETTINGS_FILE` for their web settings, `TEST_USER_WORKSPACE` for
+  files and Workspaces. Deployment settings (the assistant's name, the login
+  page language) are the Operator's: use `deployment_settings(...)`. Session
+  ids the User does not own, made-up ones included, are "not found" before any
+  route runs, so use `new_session_id()` for a session of their own. All of
+  these live in `tests/_pytest_port.py`.
+- **Raw sockets** (`http.client`, `socket`) to the shared server read the
+  cookie from `HERMES_WEBUI_TEST_COOKIE` (and `HERMES_WEBUI_TEST_CSRF`).
+- **Route handlers called directly** with a stand-in handler use the
+  `request_has_user_session` fixture: every stand-in request carries a real
+  Directory session made in the test process.
+- **Several Users, other Profiles, Admission and login** are tested against an
+  in-process server with its own in-memory Directory: `tests/_gfit_server.py`
+  (`gfit_server(..., users=..., profile_names=...)`, `srv.logged_in(uid)`).
+- **A test that starts its own `server.py`** passes `directory_env(state_dir)`
+  so the server has a Directory and starts.
+
+Local development uses the same in-memory Directory: set
+`HERMES_WEBUI_DIRECTORY=memory` and `HERMES_WEBUI_DIRECTORY_USERS` to a JSON
+file of `{"<employee id>": {"password": "...", "display_name": "..."}}`, and
+create each User's Profile with `python3 -m api.operator_cli create <id>`.
+
 ## How to Use This Document
 
 Each test has:
@@ -1960,13 +1998,13 @@ Each has automated API-level tests in `tests/test_sprint{N}.py`.
 - If a turn has 2+ tool cards, use "Expand all / Collapse all" and verify the same smooth animation applies to every card in the group.
 
 ### Sprint 19: Auth + Security
-- No Directory configured (loopback): everything works as normal. No login page.
+- No Directory configured: the server refuses to start, on any address (there is no mode with login turned off, ADR 0006).
 - Set `HERMES_WEBUI_DIRECTORY=memory` and `HERMES_WEBUI_DIRECTORY_USERS` (or `ldap`). Restart. All pages redirect to `/login`.
 - Login page: minimal card, employee ID and password fields, "Sign in" button.
 - Enter a correct employee ID and password → redirected to `/`. Cookie set.
 - Enter a wrong password → error message, stay on login page.
 - Settings panel: no password controls.
-- "Sign Out" button visible when auth active. Click → redirected to /login.
+- "Sign Out" button always visible in Settings. Click → redirected to /login.
 - API calls without auth cookie → 401 JSON response.
 - Check response headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.
 

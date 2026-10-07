@@ -5,4 +5,4 @@ Deployments talk to each other over A2A using the A2A plugin that ships with Her
 ## Consequences
 
 - This is done in phase two, after multi-User login works.
-- The Admin sets up peers and tokens in the Hermes config file themselves; there is no management page in GFIT-CoWork yet.
+- The Operator sets up peers and tokens in the Hermes config file themselves; there is no management page in GFIT-CoWork yet.

@@ -14,15 +14,14 @@ import pytest
 
 from tests._gfit_server import gfit_server as _gfit_server
 
-ADMIN = "521740"
 MEMBER = "600001"
 NEWCOMER = "700001"
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ADMIN: "Admin One", MEMBER: "สมชาย ใจดี", NEWCOMER: ""}
-    with _gfit_server(monkeypatch, tmp_path, users=users, profile_names=[MEMBER], admins=ADMIN) as s:
+    users = {MEMBER: "สมชาย ใจดี", NEWCOMER: ""}
+    with _gfit_server(monkeypatch, tmp_path, users=users, profile_names=[MEMBER]) as s:
         yield s
 
 
@@ -38,10 +37,16 @@ def _status(client):
     return body
 
 
-def _row(client, name):
-    status, body, _ = client.get("/api/profiles")
-    assert status == 200, body
-    return {p["name"]: p for p in body["profiles"]}.get(name)
+def _row(name):
+    from api import roster
+
+    return roster.view(name)
+
+
+def _create(*argv):
+    from api import operator_cli
+
+    assert operator_cli.run(["create", *argv]) == 0
 
 
 # ── display name ────────────────────────────────────────────────────────────
@@ -56,7 +61,7 @@ def test_auth_status_sends_the_members_name_and_employee_id(srv):
 
 def test_login_writes_the_directory_name_into_the_roster(srv):
     srv.logged_in(MEMBER)
-    row = _row(srv.logged_in(ADMIN), MEMBER)
+    row = _row(MEMBER)
     assert row["display_name"] == "สมชาย ใจดี"
     assert row["label"] == f"สมชาย ใจดี ({MEMBER})"
 
@@ -67,13 +72,11 @@ def test_the_display_name_updates_from_the_directory_on_every_login(srv):
 
     body = _status(srv.logged_in(MEMBER))
     assert body["display_name"] == "สมชาย ใจดีมาก"
-    assert _row(srv.logged_in(ADMIN), MEMBER)["display_name"] == "สมชาย ใจดีมาก"
+    assert _row(MEMBER)["display_name"] == "สมชาย ใจดีมาก"
 
 
-def test_without_a_directory_name_the_admins_typed_name_is_kept(srv):
-    admin = srv.logged_in(ADMIN)
-    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER, "display_name": "Somsri J."})
-    assert status == 200, body
+def test_without_a_directory_name_the_operators_name_is_kept(srv):
+    _create(NEWCOMER, "--display-name", "Somsri J.")
 
     body = _status(srv.logged_in(NEWCOMER))
     assert body["display_name"] == "Somsri J."
@@ -81,21 +84,11 @@ def test_without_a_directory_name_the_admins_typed_name_is_kept(srv):
 
 
 def test_without_any_name_the_label_is_the_employee_id(srv):
-    admin = srv.logged_in(ADMIN)
-    status, body, _ = admin.post("/api/profile/create", {"name": NEWCOMER})
-    assert status == 200, body
+    _create(NEWCOMER)
 
     body = _status(srv.logged_in(NEWCOMER))
     assert body["display_name"] == ""
     assert body["label"] == NEWCOMER
-
-
-def test_auth_status_sends_the_admins_name(srv):
-    body = _status(srv.logged_in(ADMIN))
-    assert body["user"] == ADMIN
-    assert body["role"] == "admin"
-    assert body["display_name"] == "Admin One"
-    assert body["label"] == f"Admin One ({ADMIN})"
 
 
 def test_logged_out_auth_status_carries_no_identity(srv):

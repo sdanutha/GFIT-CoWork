@@ -51,11 +51,9 @@ def test_profile_cookie_naming_another_profile_is_ignored(alice):
     assert status == 200
 
 
-def test_profile_cookie_signed_for_another_profile_is_ignored(alice):
-    from api.auth import _resolve_cookie_name, sign_profile_cookie_value
-
-    session = alice.cookies[_resolve_cookie_name()]
-    alice.cookies["hermes_profile"] = sign_profile_cookie_value(BOB, session)
+def test_a_profile_cookie_from_before_naming_another_profile_is_ignored(alice):
+    # The Profile cookie went with Profile switching (ADR 0006); an old one is ignored.
+    alice.cookies["hermes_profile"] = BOB
     assert _active_profile(alice) == ALICE
 
 
@@ -92,11 +90,10 @@ def test_profile_switch_is_403(alice):
     assert _active_profile(alice) == ALICE
 
 
-def test_profile_list_shows_only_own_profile_in_single_profile_mode(alice):
+def test_profile_list_shows_only_own_profile(alice):
     status, body, _ = alice.get("/api/profiles")
     assert status == 200, body
     assert [p["name"] for p in body["profiles"]] == [ALICE]
-    assert body["single_profile_mode"] is True
 
 
 def _new_session_with_a_message(client) -> str:
@@ -189,7 +186,7 @@ def test_member_sees_only_own_cron_jobs(srv, alice, fake_cron):
         status, body, _ = alice.get(path)
         assert status == 200, body
         assert [j["id"] for j in body["jobs"]] == [f"job-{ALICE}"]
-        assert body["other_profile_count"] == 0
+        assert "other_profile_count" not in body  # no all-Profiles view (ADR 0006)
 
 
 def test_member_b_cannot_clean_up_member_a_empty_sessions(alice, bob):

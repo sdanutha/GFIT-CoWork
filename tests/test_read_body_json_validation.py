@@ -98,13 +98,6 @@ def test_post_non_object_json_gets_clean_400_not_500(base_url):
     assert b"JSON body must be an object" in payload
 
 
-@pytest.mark.parametrize("method", ["PATCH", "PUT"])
-def test_patch_put_malformed_json_gets_clean_400_not_500(base_url, method):
-    status, payload = _raw_request(base_url, method, "/api/mcp/servers/x", b"{bad json")
-    assert status == 400
-    assert b"Invalid JSON body" in payload
-
-
 def test_delete_malformed_json_gets_clean_400_not_500(base_url):
     status, payload = _raw_request(base_url, "DELETE", "/api/prompts", b"{bad json")
     assert status == 400

@@ -7,6 +7,7 @@ Validates:
     (as it would be by on_tool() during real agent execution)
   - Messages stored via pending_user_message survive a simulated server restart
 """
+import api.config
 import json
 import threading
 import time
@@ -25,8 +26,8 @@ def _isolate_session_dir(tmp_path, monkeypatch):
     session_dir.mkdir()
     index_file = session_dir / "_index.json"
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
 
     models.SESSIONS.clear()
     yield session_dir, index_file
@@ -66,14 +67,14 @@ class TestSaveSkipIndex:
         """save(skip_index=True) does NOT create or update the session index."""
         s = _make_session("s3")
         s.save(skip_index=True)
-        index = models.SESSION_INDEX_FILE
+        index = api.config.SESSION_INDEX_FILE
         assert not index.exists(), "Index file should not be created with skip_index=True"
 
     def test_save_without_skip_index_creates_index(self):
         """save() (default) DOES create the session index."""
         s = _make_session("s4")
         s.save()
-        index = models.SESSION_INDEX_FILE
+        index = api.config.SESSION_INDEX_FILE
         assert index.exists(), "Index file should be created by default save()"
         data = json.loads(index.read_text())
         sids = [e["session_id"] for e in data]
@@ -84,11 +85,11 @@ class TestSaveSkipIndex:
         s = _make_session("s5")
         s.messages.append({"role": "assistant", "content": "hi there"})
         s.save(skip_index=True)
-        assert not models.SESSION_INDEX_FILE.exists()
+        assert not api.config.SESSION_INDEX_FILE.exists()
 
         s.messages.append({"role": "user", "content": "thanks"})
         s.save()
-        assert models.SESSION_INDEX_FILE.exists()
+        assert api.config.SESSION_INDEX_FILE.exists()
         data = json.loads(s.path.read_text())
         assert len(data["messages"]) == 3
 
@@ -100,7 +101,7 @@ class TestSaveSkipIndex:
         s.save(skip_index=True, touch_updated_at=False)
         data = json.loads(s.path.read_text())
         assert data["updated_at"] == original_updated_at
-        assert not models.SESSION_INDEX_FILE.exists()
+        assert not api.config.SESSION_INDEX_FILE.exists()
 
 
 class TestPeriodicCheckpoint:
@@ -531,8 +532,8 @@ class TestIssue765FollowupHardening:
         session_dir = tmp_path / "sessions_undo_race"
         session_dir.mkdir()
         index_file = session_dir / "_index.json"
-        monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-        monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+        monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+        monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
         models.SESSIONS.clear()
         try:
             s = Session(
@@ -673,8 +674,8 @@ class TestIssue765FollowupHardening:
         session_dir = tmp_path / "sessions_cancel_race"
         session_dir.mkdir()
         index_file = session_dir / "_index.json"
-        monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-        monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+        monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+        monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
         models.SESSIONS.clear()
         try:
             s = Session(

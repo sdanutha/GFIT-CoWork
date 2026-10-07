@@ -134,8 +134,7 @@ Environment variables controlling behavior:
     HERMES_WEBUI_STATE_DIR         Where sessions/ folder lives
     HERMES_CONFIG_PATH             Path to ~/.hermes/config.yaml
     HERMES_WEBUI_DEFAULT_MODEL     Optional model override; unset means provider default
-    HERMES_WEBUI_DIRECTORY         Login: the Directory (ldap or memory); unset = login off (loopback only)
-    HERMES_WEBUI_SKIP_ONBOARDING   Optional: bypass the first-run onboarding wizard
+    HERMES_WEBUI_DIRECTORY         Login: the Directory (ldap or memory). Required: unset, the server does not start
     HERMES_PREFILL_MESSAGES_FILE   Optional JSON message list for browser-turn prefill context
     HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT Optional command that prints JSON messages or plain-text user prefill context
     HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT_TIMEOUT Optional script timeout in seconds (default 5, max 30)
@@ -271,10 +270,10 @@ passes so a high-volume worker source cannot consume that interactive window:
 - Kanban: up to `KANBAN_PROJECT_CHIP_LIMIT` rows.
 
 Source-specific views still use their dedicated bounds, and the later sidebar
-visibility stage decides whether recovered background rows are shown. In
-`all_profiles=True` mode the per-profile source bounds are disabled before rows
-are merged; cross-profile scoping, visibility, deduplication, and final route
-limits remain downstream responsibilities.
+visibility stage decides whether recovered background rows are shown. The
+loader's internal `all_profiles=True` mode (no request reaches it since ADR
+0006; a follow-up removes it) disables the per-profile
+source bounds before rows are merged.
 
 #### Compression lineage and session-list invalidation
 
@@ -312,6 +311,14 @@ Queue registry:
     STREAMS = {}               dict: stream_id -> queue.Queue
     STREAMS_LOCK = threading.Lock()
 
+`api/run_registry.py` is the only module that writes the stream map and the stream-owner
+record (both defined in `api/config.py`). `open_stream()` records the owning session and
+publishes the channel in one critical section, so whoever sees a stream also sees its
+owner (session ownership decides who may watch or stop it by that owner). A worker's
+teardown and Stop's eager detach remove the stream with `detach_stream_locked()` and keep
+the owner until the active run is unregistered; a failed launch uses `close_stream()`.
+`tests/test_gfit_run_registry.py` guards the single writer.
+
 SSE event types and their data shapes:
 
     token       {"text": "..."}                         LLM token delta
@@ -329,8 +336,8 @@ The SSE handler loop:
     - On 'done' or 'error' event: breaks the loop and returns
     - Catches BrokenPipeError and ConnectionResetError silently (browser disconnected)
 
-Stream cleanup: _run_agent_streaming() pops its stream_id from STREAMS in a finally
-block. If the browser disconnects mid-stream, the daemon thread runs to completion and
+Stream cleanup: _run_agent_streaming() detaches its stream_id from STREAMS in a finally
+block (run_registry.detach_stream_locked). If the browser disconnects mid-stream, the daemon thread runs to completion and
 then cleans up. The queue fills and the put_nowait() calls fail silently (queue.Full
 is caught).
 
@@ -481,9 +488,8 @@ order:
 
 It raises like the import it replaces (or returns `default`), so each call site keeps its
 existing fallback. Current users: approval session identity and MCP discovery
-(`streaming.py`), `/reload-mcp` (`commands.py`), MCP runtime status (`routes.py`), Claude
-Code credential linking (`oauth.py`), LM Studio reasoning options (`config.py`), and
-kanban connections and dispatch (`kanban_bridge.py`).
+(`streaming.py`), MCP runtime status for the Notes drawer (`routes.py`), and LM Studio
+reasoning options (`config.py`).
 
 Import names that are still native to their module directly. Never
 `from <old module> import <moved name>`, and never feature-detect a moved name with
@@ -785,10 +791,18 @@ The api/ modules in turn import Hermes internals:
     Standard library across all modules: json, os, re, sys, threading, time, traceback,
       uuid, http.server, pathlib, urllib.parse, email.parser, queue, collections
 
+`api/turn_builder.py` says what a WebUI agent turn is told and how a WebUI agent is
+made: `turn_prompts()` (the system message naming the session-creation Workspace, the
+ephemeral prompt with personality, surface context, progress and delivery guidance, and
+the `[Workspace::v1: ...]` prefix for the live Workspace) for the streaming turn and the
+non-streaming chat route, and `webui_agent()` for the agents the route module makes
+(non-streaming chat, compression, handoff summary, commit messages). The streaming turn
+still builds its own agent arguments (its self-heal and provider-retry paths reuse them).
+
 AIAgent constructor parameters used:
 
     model=               OpenRouter model ID string
-    platform='cli'       Sets the platform context for tool selection
+    platform='webui'     Sets the platform context (no CLI terminal guidance)
     quiet_mode=True      Suppresses agent's own stdout output
     enabled_toolsets=    List of toolset names from config.yaml
     session_id=          Used for tool state keying (memory, todos, etc.)
@@ -840,29 +854,42 @@ Profile loads its own. Code in `api/config.py` reads config through
 
 ## 9. How To Add a New API Endpoint
 
-Follow this exact pattern. Review existing handlers in do_GET/do_POST for reference.
+Every route is one row in the route table (`api/route_table.py`) plus one function in
+`api/routes.py`. The server dispatches every request by looking up its row; there is no
+other place to register a route.
 
-### Backend (server.py -> future: api/handlers.py)
+### Backend (api/route_table.py + api/routes.py)
 
-GET endpoint:
+1. Add the row. It must say who may call it (`USER`, or `PUBLIC` only for what the login
+   page needs before login). A route with no row is refused to everyone:
 
-    # Inside do_GET, before the 404 fallback line:
-    if parsed.path == '/api/your/endpoint':
-        qs = parse_qs(parsed.query)
-        param = qs.get('param', [''])[0]
-        if not param:
-            return j(self, {'error': 'param is required'}, status=400)
-        # do work
-        return j(self, {'result': value})
+        _get("/api/your/endpoint", USER, handler="_get_api_your_endpoint"),
+        _post("/api/your/endpoint", USER, handler="_post_api_your_endpoint"),
 
-POST endpoint (AFTER /api/upload check, body already parsed):
+   If the route names a session, add it to `SESSION_ROUTES` in
+   `tests/test_gfit_session_route_answers.py`, which checks another User's session is
+   "not found" there.
 
-    if parsed.path == '/api/your/endpoint':
-        value = body.get('field', '')
-        if not value:
-            return j(self, {'error': 'field is required'}, status=400)
-        # do work
-        return j(self, {'ok': True, 'data': result})
+2. Add the handler in `api/routes.py`. A GET handler takes `(handler, parsed)`; a POST,
+   PUT, PATCH or DELETE handler takes `(handler, parsed, body, diag)`, with the JSON body
+   already read, CSRF already checked and the session guard already run:
+
+        def _get_api_your_endpoint(handler, parsed):
+            qs = parse_qs(parsed.query)
+            param = qs.get('param', [''])[0]
+            if not param:
+                return j(handler, {'error': 'param is required'}, status=400)
+            # do work
+            return j(handler, {'result': value})
+
+        def _post_api_your_endpoint(handler, parsed, body, diag):
+            value = body.get('field', '')
+            if not value:
+                return j(handler, {'error': 'field is required'}, status=400)
+            # do work
+            return j(handler, {'ok': True, 'data': result})
+
+   A handler that must read its own body (multipart upload) sets `body="own"` on its row.
 
 Endpoint requiring a valid session:
 
@@ -1100,18 +1127,13 @@ Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
     /api/sessions              List of all session compact() dicts, sorted by updated_at
     /api/list                  ?session_id=X&path=. -> directory listing for session workspace
     /api/file                  ?session_id=X&path=rel -> file content (text, 200KB limit)
-    /share/<token>             Public read-only HTML shell for a sanitized shared transcript snapshot
-    /api/share/<token>         Public JSON payload for a sanitized shared transcript snapshot
     /api/chat/stream           ?stream_id=X -> SSE stream. Long-lived. Emits token/tool/
                                approval/done/error events.
     /api/chat/stream/status    ?stream_id=X -> {"active": true/false, "stream_id": X}
-    /api/approval/pending      ?session_id=X -> {"pending": entry_or_null}. The approval/clarify
-                               fallback pollers stop on a 409 session_profile_mismatch.
+    /api/approval/pending      ?session_id=X -> {"pending": entry_or_null}.
     /api/git-info              ?session_id=X -> {"git": status_or_null}. State.db-only sessions
                                (CLI, subagents) use their stored workspace if it resolves via
                                resolve_trusted_workspace; missing/untrusted -> {"git": null}.
-    /api/approval/inject_test  ?session_id=X&pattern_key=K&command=C -> test-only endpoint.
-                               Injects a pending approval entry into the server process.
     /api/file/raw              ?session_id=X&path=P -> raw file bytes with correct MIME type.
                                Used for image preview. Path traversal protected via resolve_in_workspace.
                                Returns 404 JSON if file not found.
@@ -1126,14 +1148,12 @@ Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
                                -> {"stream_id", "session_id"}. Starts agent daemon thread.
     /api/chat                  (fallback, sync) {"session_id", "message", "model"?, "workspace"?}
                                -> blocks until agent finishes. Returns full result.
-    /api/share/create          {"session_id"} -> creates or refreshes a public read-only snapshot link
-    /api/share/revoke          {"session_id"} -> revokes the current public snapshot link
     /api/approval/respond      {"session_id", "choice": once|session|always|deny}
                                -> {"ok": true, "choice": choice}
 
 ### GET Endpoints Added in Sprint 3
 
-    /api/crons                 All cron jobs. Returns {jobs: [...]}.
+    /api/crons                 The active Profile's cron jobs. Returns {jobs: [...]}.
     /api/crons/output          ?job_id=X&limit=N -> {outputs: [{filename, content}]}
     /api/skills                All skills. Returns {skills: [{name, description, category}]}
     /api/skills/content        ?name=X -> full skill data including SKILL.md content
@@ -1168,7 +1188,8 @@ the path must resolve (after `..` and symlinks) inside `<Profile>/workspace`.
 `workspace.resolve_in_workspace` applies it again to every file operation (the unconfined
 primitive followed by the policy's `confine`), so a Workspace root that is somehow outside
 still grants nothing. `helpers.resolve_inside` is the unconfined primitive, for roots that are
-not Workspaces (the session attachment inbox). The Admin is not confined.
+not Workspaces (the session attachment inbox). Every caller is a User, so every request is
+confined (ADR 0006).
 
 ## GFIT-CoWork access control
 
@@ -1177,18 +1198,17 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
 - `api/login.py` — the login flow (rate limit → Directory → Admission → session) and the
   rate limit itself (per person behind a trusted proxy, via `api/trusted_proxy.py`, kept
   in `STATE_DIR/.login_attempts.json` across restarts), and the
-  startup check: login is on exactly when a Directory is configured, and with none the
-  server serves only on the loopback address. Leftover Upstream login settings are ignored
-  and reported.
+  startup check: with no Directory the server does not start, on any address (there is no
+  mode with login off, ADR 0006). Leftover Upstream login settings and a leftover
+  `HERMES_WEBUI_ADMIN_USERS` are ignored and reported.
 - `api/auth.py` — only Directory sessions are honoured; every request re-asks Admission
   (`access.admit_request`) and ends the session when it no longer gives the session's role
   and Profile; otherwise it runs the request in the Admission's Profile.
-- `api/access.py` — Admission (`admit`: from a confirmed employee ID, Admin at `default`, User
-  at their own active Profile, or refused with a reason). The answer confirmed for a request is
+- `api/access.py` — Admission (`admit`: from a confirmed employee ID, a User at their own
+  active Profile, or refused with a reason; there is no other role). The answer confirmed for a request is
   kept as **the request's Admission** (`request_admission`, with `caller_is_user` and
   `caller_bound_profile`): the one answer to "who is calling?" for the rest of that request.
-  The Admin gate, the page shell's role, the login status role, the profile-name guard, the
-  session-ownership answer, the file viewer and Workspace confinement all ask it; none reads
+  The route gate, the profile-name guard, the session-ownership answer, the file viewer and Workspace confinement all ask it; none reads
   the role from the session record. A User's request is bound to their Profile exactly
   because its Admission is a User's; there is no separate pin. Upstream's isolated profile
   mode (`profiles._is_isolated_profile_mode`) is a process posture only and knows nothing of
@@ -1197,21 +1217,30 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   (`profiles.clear_request_profile`) on every exit, before the next keep-alive request.
   `tests/test_gfit_request_admission_guard.py` fails when code outside
   `api/access.py` reads the session role or a pin, or when anything stores a pin again. The
-  module also holds the one list of endpoints a User may call; everything else is Admin-only
-  (fail closed), enforced in `check_auth`. The list names each route and method exactly, with a prefix only for a variable path part (the
-  module docstring has the rule). `tests/test_gfit_admin_gate_list.py` reads the dispatchers
-  in `api/routes.py` and fails when the list and the handled routes disagree.
+  route gate (`user_may_call`, enforced in `check_auth`) answers from the route table: a User
+  may call a route whose row says `USER` or `PUBLIC`; a path with no row is refused (fail
+  closed). A request runs in its Admission's Profile (`access.settle_request`, the only
+  setter of the request's Profile); there is no Profile cookie.
+- `api/route_table.py` — the route table: one row per HTTP route, the one place that says
+  which handler serves it, who may call it (`USER`, or `PUBLIC` for the login page and what
+  it needs before login; there is no Admin row), whether it needs a CSRF token, how its body
+  is read and whether the session guard runs. One matcher (exact path, then `<id>` segments,
+  then the longest prefix) chooses the row; the dispatchers in `api/routes.py`, the login
+  check (`route_table.is_public`), the route gate and the CSRF check all read it. A prefix
+  row needs its reason in `VARIABLE_PATH_PREFIXES`. `tests/test_gfit_route_table.py` checks
+  every row and that there is no Admin row; `tests/test_gfit_no_login_off_guard.py` that no
+  login-off branch or test-only route comes back.
 - `api/workspace_policy.py` — the Workspace policy: the one answer to "what may this request
   touch?", as the request's Admission is the one answer to "who is calling?". It is chosen once
   per request from the request's Admission (`request_workspace_policy`, the only mapping): a
-  User's policy (everything inside `<Profile>/workspace`), the unconfined policy (the Admin,
-  login turned off, worker threads), or the refusing answer (a Directory session with no
+  User's policy (everything inside `<Profile>/workspace`), the unconfined policy (no caller:
+  worker threads and public routes), or the refusing answer (a Directory session with no
   Admission: `access.request_has_directory_session`). Choosing and listing Workspaces, file
   roots and confinement, and the git, media, rollback (through the saved list) and worktree
   checks all ask it; no other code asks "is the caller a User?" to decide confinement, and
   `tests/test_gfit_workspace_policy_guard.py` fails when it does (its allowlist is empty).
-  A *profile* argument to a Workspace function is the Admin's; for a User the policy's own
-  Profile wins. Login is the one place that makes a User's Workspace from an explicit
+  A *profile* argument to a Workspace function is for no-caller code; for a User the
+  policy's own Profile wins. Login is the one place that makes a User's Workspace from an explicit
   Profile (`workspace.ensure_user_workspace`), because it runs before the request has an
   Admission.
   A User's wiki lives in their Workspace: `<Profile>/workspace/wiki` by default, or their own
@@ -1222,26 +1251,17 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   writes where the WebUI reads.
 - `api/session_ownership.py` — session ownership: the one answer to "whose session is
   this?". Like the Workspace policy, one adapter is chosen per request from the request's
-  Admission (`request_session_ownership`): a User's adapter, the Admin's adapter, the
-  unconfined adapter (login turned off, worker threads: Upstream's rules, including the 409
-  that names the owning Profile) or the refusing answer (a Directory session with no
-  Admission). The Admin's adapter is the unconfined rules for a Directory Admin who stays in
-  `default` (ADR 0004): it never switches Profile, names only `default` as a request's
-  `profile` (Profile management names Profiles under `name`), keeps none of Upstream's route
-  exemptions, and another Profile's session is read-only in place. `SESSION_ROUTE_KINDS` classifies every session-naming route as a read or a write
-  (`tests/test_gfit_session_route_kinds.py` keeps it complete); a read is answered, a write
-  gets 403 `session_read_only` naming the owner, and the detail load marks the session
-  `read_only` with `read_only_reason: "other_profile"` and `owner_profile`. The request's
-  route comes from `access.request_route()`, recorded with the request's Profile by
-  `access.settle_request` (the only setter of the request's Profile;
-  `tests/test_gfit_request_profile_guard.py`). It answers whether
+  Admission (`request_session_ownership`): a User's adapter, the unconfined adapter (no
+  caller: worker threads and public routes; Upstream's rules) or the refusing answer (a
+  Directory session with no Admission, or an Admission it does not understand, such as an
+  Admin session from before ADR 0006). It answers whether
   a session id or stream id is the caller's (a `Refusal` writes its own 404 or 409); whether a
   session the route has already found (a record or a listed CLI row) is; whether a
   session-list event or a listed row may go to the caller; and whether the request may see
   Profile-less sessions. The dispatch guard (top-level and `/api/sessions/<id>/events` ids),
   the upload routes, the file-manager lookup, the session list and search, the detail load
   and export, the session-list events stream, approvals and clarify, stream ids, chat start,
-  CLI import, compression recovery, anchor scenes and share links all ask it.
+  CLI import, compression recovery and anchor scenes all ask it.
   - A User's adapter owns exactly their Profile's sessions: the WebUI record, then the
     Profile's own `state.db`. Another Profile's session, and an id or stream it cannot place,
     get 404 "Session not found", the same as a session that does not exist. For a User no route
@@ -1249,21 +1269,20 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
     events stream carries a User only their own Profile's events and the nudges that name no
     Profile and no session. Claude Code and Codex rows (scanned from the server account's home,
     no Profile) are left out.
-  - **Bound**: the same module says a User's request may name no other Profile and may not
-    switch Profile (`may_name_profile`, `may_switch_profile`); `routes._guard_bound_profile_request`
-    asks it.
+  - **Bound**: the same module says a User's request may name no other Profile
+    (`may_name_profile`); `routes._guard_bound_profile_request` asks it. There is no
+    Profile switch.
   - **Profile reach**: the same module says which Profiles a request may read, as a
-    `ProfileReach`. `request_profile_reach(active, all_profiles=...)` answers for a view and
-    follows Upstream's isolated profile mode: the session list and search, projects, the cron
-    list, the Profile list and CLI import ask it, with the "N from other Profiles" count and
-    `single_profile_mode`. `request_caller_reach()` answers what the caller may read at all,
+    `ProfileReach`. `request_profile_reach(active)` answers for a view, which is always one
+    Profile's (there is no all-Profiles view): the session list and search, projects and CLI
+    import ask it. `request_caller_reach()` answers what the caller may read at all,
     whatever the view: insights, cron status, the cron Profile picker, the per-Profile cron
     scan and every Profile-home lookup ask it. A User reaches only their own Profile; a
     Profile-home lookup outside the reach raises `profiles.ProfileNotReadable`, which
     `server.py` answers with 404 (no quiet retarget to the User's own home).
   - The session list cache is keyed by the view, not the caller: it is built inside
     `access.without_request_admission()` (the unconfined rule, wherever it is built) and each
-    caller's rows and count are applied after the cache.
+    caller's rows are applied after the cache.
   - `tests/test_gfit_profile_reach_guard.py` fails when code outside the policy modules asks
     whether the caller is a User, reads isolated profile mode, or filters rows by comparing a
     row's Profile with the active Profile (each remaining match is listed with its reason;
@@ -1278,29 +1297,23 @@ not Workspaces (the session attachment inbox). The Admin is not confined.
   module-level name that says "member" or "pinned", apart from upstream's pinned names it
   keeps on purpose. The User role is stored as `user`; a login stored with the old value
   `member` is read as `user` (`api/auth.py`).
-- What the web app shows: `api/access.py` `SHELL_FEATURES` names each Admin-gated feature of
-  the web app by its route, and `shell_features(role)` answers which ones the caller may use
-  from the same gate. The app shell carries them on `<html data-gfit-may="...">` (none with
-  login off, meaning all); `static/style.css` hides each feature's controls by feature, and
-  `gfitMay(feature)` in `static/ui.js` keeps polls and pickers off routes the caller may not
-  call. `tests/test_gfit_shell_features.py` checks the list against the gate and that the
-  browser names features, not the role.
 - `api/roster.py` — the Profile roster (display name, active/disabled, last login) in the
-  state directory, and the owner of the Profile lifecycle: each Admin action on a Profile
-  (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one function
-  that checks it is allowed, keeps the Hermes Profile and its record in step and returns
-  the roster view, or raises `ProfileRefused` (a message and a kind, which the handler maps
-  to 400/403/404/409/500). Names (and the clone-from name) are checked with the Hermes
-  Profile layer's rule (`profiles._validate_profile_name`), and create refuses an Admin's ID
-  (an Admin logs in to `default`). The steps are ordered so a failure part way leaves the Profile
-  shut: create writes the record disabled first and makes it active only once the Hermes
-  Profile exists; delete disables the Profile (ending its sessions) before deleting it, and a
-  deletion that cannot finish leaves it disabled. A disabled Profile's sessions are also
+  state directory, and the owner of the Profile lifecycle: each Operator action on a
+  Profile (`create_profile`, `disable_profile`, `enable_profile`, `delete_profile`) is one
+  function that checks it is allowed, keeps the Hermes Profile and its record in step and
+  returns the roster view, or raises `ProfileRefused` (a message and a kind). The Operator's
+  command line (`api/operator_cli.py`) calls them; there is no web route for them. Names
+  (and the clone-from name) are checked with the Hermes Profile layer's rule
+  (`profiles._validate_profile_name`). The steps are ordered so a failure part way leaves the
+  Profile shut: create writes the record disabled first and makes it active only once the
+  Hermes Profile exists; delete refuses a Profile that is not already disabled, and a
+  deletion that cannot finish leaves it disabled. Disable pauses the Profile's scheduled
+  jobs; the running server notices the roster change (`api/roster_watch.py`, polling) and
+  ends the Profile's logins and running turns. A disabled Profile's sessions are also
   refused on every request (`auth._reconcile_directory_session`).
-- `api/login.py` also writes the Directory display name into the roster on every
-  User login (an Admin's rides on the session record, since an Admin has no Profile);
+- `api/login.py` also writes the Directory display name into the roster on every login;
   `session_identity` gives `/api/auth/status` the `display_name` and "name (ID)" `label`
   the Profile chip shows. The chip opens an identity menu (`openIdentityMenu`) with Sign
-  Out instead of the Profile switcher.
+  Out.
 - `deploy/` — the Deployment kit: `docker-compose.yml` (one Team), `team.env.example`,
   and `caddy/` (the HTTPS reverse proxy shared by every Deployment on a server).

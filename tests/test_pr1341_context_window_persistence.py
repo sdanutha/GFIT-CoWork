@@ -136,7 +136,7 @@ def test_session_round_trip_persists_context_fields(tmp_path, monkeypatch):
     # Use tmp_path as the session dir for this test only
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(models, "SESSION_DIR", sessions_dir)
+    monkeypatch.setattr("api.config.SESSION_DIR", sessions_dir)
 
     s = models.Session(session_id="ctxtest1", title="Context test")
     s.context_length = 200000

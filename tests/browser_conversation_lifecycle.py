@@ -116,8 +116,47 @@ def _wait_for_health(
     return False
 
 
+# Login is always on (ADR 0006): the gate logs in one User through the
+# in-memory Directory, and reads the API with that User's session cookie.
+GATE_USER = "100001"
+GATE_PASSWORD = "lifecycle-gate-password"
+_SESSION_COOKIE = ""
+
+
+def gate_user_env(state_dir, hermes_home) -> dict:
+    """The environment giving a gate's server the in-memory Directory and one User.
+
+    Writes the Directory's users file and the User's Profile (with its
+    Workspace) under *hermes_home*; returns the variables to add to the env.
+    """
+    state_dir, hermes_home = Path(state_dir), Path(hermes_home)
+    users_file = state_dir / "directory-users.json"
+    users_file.write_text(
+        json.dumps({GATE_USER: {"password": GATE_PASSWORD, "display_name": "Gate User"}}), encoding="utf-8",
+    )
+    (hermes_home / "profiles" / GATE_USER / "workspace").mkdir(parents=True, exist_ok=True)
+    return {
+        "HERMES_WEBUI_DIRECTORY": "memory",
+        "HERMES_WEBUI_DIRECTORY_USERS": str(users_file),
+        "HERMES_DISABLE_LAZY_INSTALLS": "1",
+    }
+
+
+def log_in_gate_user(context, base_url: str = "") -> str:
+    """Log the gate User in on a Playwright *context*; return its Cookie header."""
+    global _SESSION_COOKIE
+    login = context.request.post(
+        f"{base_url}/api/auth/login", data={"username": GATE_USER, "password": GATE_PASSWORD},
+    )
+    if login.status != 200:
+        raise RuntimeError(f"gate User login answered {login.status}")
+    _SESSION_COOKIE = "; ".join(f"{c['name']}={c['value']}" for c in context.cookies())
+    return _SESSION_COOKIE
+
+
 def _get_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=3) as response:
+    request = urllib.request.Request(url, headers={"Cookie": _SESSION_COOKIE} if _SESSION_COOKIE else {})
+    with urllib.request.urlopen(request, timeout=3) as response:
         return json.loads(response.read(1024 * 1024))
 
 
@@ -815,12 +854,7 @@ def main() -> int:
     for key in list(env):
         if key.endswith("_API_KEY"):
             env.pop(key, None)
-    for key in (
-        "API_SERVER_KEY",
-        "HERMES_WEBUI_DIRECTORY",
-        "HERMES_WEBUI_EXTENSION_DIR",
-        "HERMES_WEBUI_EXTENSION_MANIFEST",
-    ):
+    for key in ("API_SERVER_KEY",):
         env.pop(key, None)
     env.update({
         "HERMES_WEBUI_HOST": "127.0.0.1",
@@ -828,7 +862,7 @@ def main() -> int:
         "HERMES_HOME": str(state_dir / "hermes-home"),
         "HERMES_BASE_HOME": str(state_dir / "hermes-home"),
         "HERMES_CONFIG_PATH": str(state_dir / "hermes-home" / "config.yaml"),
-        "HERMES_WEBUI_SKIP_ONBOARDING": "1",
+        **gate_user_env(state_dir, state_dir / "hermes-home"),
         "HERMES_WEBUI_AGENT_DIR": str(agent_dir),
         "HERMES_WEBUI_DEFAULT_WORKSPACE": str(workspace_dir),
         "HERMES_WEBUI_CHAT_BACKEND": "gateway",
@@ -860,6 +894,7 @@ def main() -> int:
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         context = browser.new_context(base_url=base_url)
+        log_in_gate_user(context)
         page = context.new_page()
         anchor_scene_requests = _capture_anchor_scene_requests(page)
         if TEST_BITE:

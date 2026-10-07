@@ -152,12 +152,12 @@ def _install_streaming_session(monkeypatch, tmp_path, *, sid, stream_id, message
     session_dir.mkdir(exist_ok=True)
     index_file = session_dir / "_index.json"
 
-    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(models, "SESSION_INDEX_FILE", index_file)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", index_file)
     monkeypatch.setattr(models, "SESSIONS", OrderedDict(), raising=False)
     monkeypatch.setattr(config, "SESSION_DIR", session_dir, raising=False)
     monkeypatch.setattr(config, "SESSION_INDEX_FILE", index_file, raising=False)
-    monkeypatch.setattr(streaming, "SESSION_DIR", session_dir, raising=False)
+    monkeypatch.setattr("api.config.SESSION_DIR", session_dir, raising=False)
     monkeypatch.setattr(streaming, "SESSIONS", OrderedDict(), raising=False)
     monkeypatch.setattr(models, "_active_state_db_path", lambda: tmp_path / "state.db")
 

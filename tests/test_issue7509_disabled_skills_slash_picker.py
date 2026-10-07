@@ -303,30 +303,6 @@ def _top_level_function_body(source: str, name: str) -> str:
     return source[match.start():end + 3]
 
 
-def test_both_profile_switch_paths_drop_the_slash_skill_caches():
-    """The switch handlers must call the invalidation once the POST has succeeded.
-
-    The handlers cannot be executed in isolation here (they touch most of the app
-    shell), so this is a structural check: the invalidation call has to live inside
-    the switch function, after the /api/profile/switch request -- dropping the
-    caches before the request would let a reply from the outgoing profile commit
-    once the switch is done.
-    """
-    for label, source, function_name in (
-        ("panels.switchToProfile", PANELS_JS, "switchToProfile"),
-        ("sessions._switchProfileForSessionLoad", SESSIONS_JS, "_switchProfileForSessionLoad"),
-    ):
-        body = _top_level_function_body(source, function_name)
-        switch_call = body.find("/api/profile/switch")
-        invalidate_call = body.find("invalidateSlashSkillCaches()")
-        assert switch_call != -1, f"{label}: no /api/profile/switch call in {function_name}"
-        assert invalidate_call != -1, (
-            f"{label}: {function_name} does not drop the slash-skill caches, so the "
-            "previous profile's /api/skills payload keeps hiding the new profile's skills"
-        )
-        assert invalidate_call > switch_call, f"{label}: caches dropped before the switch request"
-
-
 def test_transient_skills_failure_does_not_wedge_the_picker():
     """A failed /api/skills must not latch an empty cache as authoritative.
 

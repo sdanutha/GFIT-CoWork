@@ -29,16 +29,9 @@ async function cancelStream(reason){
   if(typeof console !== 'undefined' && console.info){
     console.info('[stream] cancel requested', {reason:_reason, streamId, sessionId:sid});
   }
-  let respBody=null;
-  let respOk=false;
-  try{
-    const r=await fetch(new URL(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,document.baseURI||location.href).href,{credentials:'include'});
-    respOk=!!(r&&r.ok);
-    try{respBody=await r.json();}catch(_){}
-  }catch(e){
-    if(typeof console !== 'undefined' && console.warn){
-      console.warn('cancelStream: /api/chat/cancel request failed', e);
-    }
+  const {ok:respOk, body:respBody, error:respError}=await requestStreamCancel(streamId);
+  if(respError && typeof console !== 'undefined' && console.warn){
+    console.warn('cancelStream: /api/chat/cancel request failed', respError);
   }
   // Active-session cancel should not tear down the current SSE transport before
   // the backend emits its terminal event; do that only for stale owner paths
@@ -74,11 +67,7 @@ async function cancelSessionStream(session){
   if(typeof console !== 'undefined' && console.info){
     console.info('[stream] cancel requested', {reason:'sidebar-stop', streamId, sessionId:sid});
   }
-  let respOk=false;
-  try{
-    const r=await fetch(new URL(`api/chat/cancel?stream_id=${encodeURIComponent(streamId)}`,document.baseURI||location.href).href,{credentials:'include'});
-    respOk=!!(r&&r.ok);
-  }catch(e){/* close local stream; keep UI state honest below */}
+  const {ok:respOk}=await requestStreamCancel(streamId);
   if(!respOk) return false;
   if(typeof closeLiveStream==='function') closeLiveStream(sid, streamId);
   session.active_stream_id=null;
@@ -132,9 +121,6 @@ function _prefillHasDraftText(prefillIntent){
 }
 function _rootPrefillNeedsFreshComposer(urlSession, savedLocal, prefillIntent){
   return !urlSession&&!!savedLocal&&_prefillHasDraftText(prefillIntent);
-}
-function _profileQueryBlocksSavedLocalRestore(profileIntent, urlSession){
-  return !!(profileIntent&&profileIntent.hasParam&&profileIntent.valid&&!urlSession);
 }
 function _shouldStartFreshPwaChat(action,urlSession){
   return action==='new-chat'&&!urlSession;
@@ -1411,130 +1397,6 @@ window._readPersistedDefaultMessageMode=_readPersistedDefaultMessageMode;
 // the boot window honor the persisted preference instead of the raw default.
 window._defaultMessageMode=_readPersistedDefaultMessageMode();
 
-// ── Extension TTS-engine registry (registerHermesTtsEngine) ──────────────────
-// Defined at MODULE scope (not inside the voice-mode IIFE below) so the public
-// API exists even on browsers without SpeechRecognition / speechSynthesis — an
-// extension can register a TTS engine regardless of STT/browser-TTS support.
-// Lets a trusted local extension contribute a TTS engine that appears in the
-// Settings -> TTS Engine dropdown and is used by BOTH playback paths (voice-mode
-// auto-read and the per-message Listen button). The extension provides an async
-// synthesize(text, opts) that returns audio bytes (ArrayBuffer or Blob); core
-// handles selection, the dropdown option, and playback. Mirrors registerHermesSkin.
-//
-//   window.registerHermesTtsEngine({
-//     id: 'voicevox',            // [a-z0-9_-], not a built-in (browser/edge/elevenlabs/openai)
-//     label: 'VOICEVOX (local)',
-//     synthesize(text, opts) { return Promise<ArrayBuffer|Blob>; }
-//   }) -> true on success, false if rejected
-var _HERMES_TTS_ENGINES = Object.create(null);
-var _HERMES_TTS_RESERVED = { browser:1, edge:1, elevenlabs:1, openai:1 };
-function _hermesTtsValidId(id){ return typeof id==='string' && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(id); }
-function _hermesAddTtsOption(id, label){
-  var sel=document.getElementById('settingsTtsEngine');
-  if(!sel) return;
-  if(sel.querySelector('option[value="'+id+'"]')) return;
-  var opt=document.createElement('option');
-  opt.value=id;
-  opt.textContent=label;   // textContent — never innerHTML (no injection)
-  sel.appendChild(opt);
-}
-window.registerHermesTtsEngine=function(desc){
-  try{
-    if(!desc||typeof desc!=='object') return false;
-    var id=String(desc.id||'').toLowerCase();
-    if(!_hermesTtsValidId(id)) return false;
-    if(_HERMES_TTS_RESERVED[id]) return false;          // can't shadow a built-in
-    if(typeof desc.synthesize!=='function') return false;
-    var label=(typeof desc.label==='string' && desc.label.trim()) ? desc.label.trim().slice(0,48) : id;
-    _HERMES_TTS_ENGINES[id]={ id:id, label:label, synthesize:desc.synthesize };
-    _hermesAddTtsOption(id, label);
-    return true;
-  }catch(_){ return false; }
-};
-window._hermesTtsIsRegistered=function(id){ return !!_HERMES_TTS_ENGINES[id]; };
-// List registered engines (for the settings panel to re-add options on render).
-window._hermesTtsEngineOptions=function(){
-  return Object.keys(_HERMES_TTS_ENGINES).map(function(k){
-    return { id:_HERMES_TTS_ENGINES[k].id, label:_HERMES_TTS_ENGINES[k].label };
-  });
-};
-// Returns a Promise<ArrayBuffer> or null if the engine isn't registered.
-window._hermesTtsSynth=function(id, text, opts){
-  var eng=_HERMES_TTS_ENGINES[id];
-  if(!eng) return null;
-  return Promise.resolve()
-    .then(function(){ return eng.synthesize(text, opts||{}); })
-    .then(function(out){
-      if(!out) throw new Error('empty TTS result');
-      if(out instanceof ArrayBuffer) return out;
-      if(typeof Blob!=='undefined' && out instanceof Blob) return out.arrayBuffer();
-      if(out.buffer instanceof ArrayBuffer) return out.buffer;   // typed array
-      throw new Error('TTS engine returned an unsupported type');
-    });
-};
-
-// ── Session-open hook (for extensions) ────────────────────────────────────
-var _HERMES_SESSION_OPEN_HANDLERS=[];
-window.registerHermesSessionOpenHandler=function(fn){
-  if(typeof fn!=='function') return false;
-  if(_HERMES_SESSION_OPEN_HANDLERS.indexOf(fn)>=0) return false;
-  _HERMES_SESSION_OPEN_HANDLERS.push(fn);
-  return true;
-};
-window._hermesNotifySessionOpen=function(sid, data, opts){
-  opts=opts||{};
-  for(var i=0;i<_HERMES_SESSION_OPEN_HANDLERS.length;i++){
-    try{
-      var result=_HERMES_SESSION_OPEN_HANDLERS[i](sid, data, opts);
-      if(opts.preload===true && result&&result.cancel===true) return {cancel:true};
-    }catch(_){}
-  }
-  return {};
-};
-
-// ── Transcript renderer (for extensions) ───────────────────────────────────
-window.renderTranscript=function(container, messages, opts){
-  if(!container||!Array.isArray(messages)) return container;
-  opts=opts||{};
-  container.innerHTML='';
-  var md=window.renderMd||null;
-  for(var i=0;i<messages.length;i++){
-    var msg=messages[i];
-    if(!msg||!msg.role||msg.role==='tool') continue;
-    var content;
-    if(typeof msg.content==='string'){
-      content=msg.content;
-    }else if(msg.content==null){
-      content='';
-    }else if(Array.isArray(msg.content)){
-      // Multi-part content (OpenAI/Anthropic API style) — concatenate text parts.
-      content=msg.content.map(function(p){return (p&&typeof p.text==='string')?p.text:''}).join('');
-    }else{
-      content=String(msg.content);
-    }
-    if(!content&&opts.skipEmpty) continue;
-    var row=document.createElement('div');
-    row.className='msg-row';
-    row.setAttribute('data-role',msg.role);
-    var body=document.createElement('div');
-    body.className='msg-body';
-    try{
-      if(md){
-        var html=md(content);
-        if(html!=null){body.innerHTML=html}else{body.textContent=content}
-      }else{
-        body.textContent=content;
-      }
-    }catch(_){body.textContent=content}
-    row.appendChild(body);
-    container.appendChild(row);
-  }
-  if(typeof _rehydrateTransparentStreamDom==='function'){
-    try{_rehydrateTransparentStreamDom(container);}catch(_){}
-  }
-  return container;
-};
-
 // ── Turn-based voice mode (#1333) ────────────────────────────────────────
 // Chained flow: listen → send → (agent processes) → TTS response → listen again
 (function(){
@@ -1774,53 +1636,9 @@ window.renderTranscript=function(container, messages, opts){
     }
     if(!clean){ _startListening(); return; }
     const engine=localStorage.getItem("hermes-tts-engine")||"browser";
-    // Extension-registered TTS engine (window.registerHermesTtsEngine): synth
-    // via the extension, then play through the same Audio lifecycle as edge.
-    if(typeof window._hermesTtsIsRegistered==='function' && window._hermesTtsIsRegistered(engine)){
-      _ttsSpeaking=true;
-      const _opts={
-        voice: localStorage.getItem("hermes-tts-voice")||'',
-        rate: parseFloat(localStorage.getItem("hermes-tts-rate")),
-        pitch: parseFloat(localStorage.getItem("hermes-tts-pitch")),
-      };
-      Promise.resolve(window._hermesTtsSynth(engine, clean, _opts))
-        .then(function(buf){
-          const blob=new Blob([buf]);
-          const url=URL.createObjectURL(blob);
-          const audio=new Audio(url);
-          _playingEdgeAudio=audio;
-          audio.onended=function(){
-            _ttsSpeaking=false;
-            if(_playingEdgeAudio===audio) _playingEdgeAudio=null;
-            URL.revokeObjectURL(url);
-            if(_voiceModeActive) setTimeout(function(){_startListening();},500);
-          };
-          audio.onerror=function(){
-            _ttsSpeaking=false;
-            if(_playingEdgeAudio===audio) _playingEdgeAudio=null;
-            URL.revokeObjectURL(url);
-            if(_voiceModeActive) setTimeout(function(){_startListening();},1000);
-          };
-          audio.play().catch(function(){
-            _ttsSpeaking=false;
-            if(_playingEdgeAudio===audio) _playingEdgeAudio=null;
-            URL.revokeObjectURL(url);
-            if(_voiceModeActive) setTimeout(function(){_startListening();},1000);
-          });
-        })
-        .catch(function(){
-          _ttsSpeaking=false;
-          if(_voiceModeActive) setTimeout(function(){_startListening();},1000);
-        });
-      return;
-    }
     if(engine==="elevenlabs"){
       _ttsSpeaking=true;
-      fetch(new URL('api/tts', document.baseURI || location.href).href, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: clean, engine: 'elevenlabs'})
-      })
+      requestSpeech({text: clean, engine: 'elevenlabs'})
       .then(r => {
         if(!r.ok) throw new Error('TTS request failed: ' + r.status);
         return r.blob();
@@ -1856,11 +1674,7 @@ window.renderTranscript=function(container, messages, opts){
     }
     if(engine==="openai"){
       _ttsSpeaking=true;
-      fetch(new URL('api/tts', document.baseURI || location.href).href, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: clean, engine: 'openai'})
-      })
+      requestSpeech({text: clean, engine: 'openai'})
       .then(r => {
         if(!r.ok) throw new Error('TTS request failed: ' + r.status);
         return r.blob();
@@ -1902,11 +1716,7 @@ window.renderTranscript=function(container, messages, opts){
       if(!isNaN(savedRate)){const pct=Math.round((savedRate-1)*100);const sign=pct>=0?'+':'';rate=sign+pct+'%';}
       if(!isNaN(savedPitch)){const hz=Math.round((savedPitch-1)*50);const sign=hz>=0?'+':'';pitch=sign+hz+'Hz';}
       _ttsSpeaking=true;
-      fetch(new URL('api/tts', document.baseURI || location.href).href, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: clean, voice, rate, pitch, engine: 'edge'})
-      })
+      requestSpeech({text: clean, voice, rate, pitch, engine: 'edge'})
       .then(r => {
         if(!r.ok) throw new Error('TTS request failed: ' + r.status);
         return r.blob();
@@ -2121,53 +1931,6 @@ $('btnExportJSON').onclick=()=>{
   const url=_buildSessionExportUrl(S.session.session_id);
   const a=document.createElement('a');a.href=url;
   a.download=`hermes-${S.session.session_id}.json`;a.click();
-};
-$('btnShareSession').onclick=async()=>{
-  if(!S.session) return;
-  try{
-    const existing=(S.session&&S.session.share_token)?new URL(`/share/${encodeURIComponent(S.session.share_token)}`,location.origin).href:null;
-    if(existing){
-      const reuse=await showConfirmDialog({
-        title:t('share_session'),
-        message:t('share_session_existing_confirm'),
-        confirmLabel:t('share_session_copy_existing'),
-        cancelLabel:t('share_session_refresh_snapshot'),
-      });
-      if(reuse){
-        await _copyText(existing);
-        showToast(t('share_session_link_copied'));
-        window.open(existing,'_blank','noopener');
-        return;
-      }
-    }
-    const res=await api('/api/share/create',{method:'POST',body:JSON.stringify({session_id:S.session.session_id})});
-    if(res&&res.session) S.session=res.session;
-    const href=new URL(String(res&&res.share&&res.share.url||''),location.origin).href;
-    await _copyText(href);
-    showToast(t('share_session_created'));
-    if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
-    window.open(href,'_blank','noopener');
-  }catch(err){
-    showToast(t('share_session_failed')+(err&&err.message?err.message:String(err||'')),4000,'error');
-  }
-};
-$('btnStopSharingSession').onclick=async()=>{
-  if(!S.session||!S.session.share_token) return;
-  const ok=await showConfirmDialog({
-    title:t('stop_sharing_session'),
-    message:t('stop_sharing_session_confirm'),
-    confirmLabel:t('stop_sharing_session'),
-    danger:true,
-  });
-  if(!ok) return;
-  try{
-    const res=await api('/api/share/revoke',{method:'POST',body:JSON.stringify({session_id:S.session.session_id})});
-    if(res&&res.session) S.session=res.session;
-    showToast(t('share_session_revoked'));
-    if(typeof _syncHermesPanelSessionActions==='function') _syncHermesPanelSessionActions();
-  }catch(err){
-    showToast(t('share_session_revoke_failed')+(err&&err.message?err.message:String(err||'')),4000,'error');
-  }
 };
 function exportSessionHTML(session){
   const target=session||S.session;
@@ -2524,12 +2287,6 @@ document.addEventListener('keydown',async e=>{
     return;
   }
   if(e.key==='Escape'){
-    // Close onboarding overlay if open (skip/dismiss the wizard)
-    const onboardingOverlay=$('onboardingOverlay');
-    if(onboardingOverlay&&onboardingOverlay.style.display!=='none'){
-      if(typeof skipOnboarding==='function') skipOnboarding();
-      return;
-    }
     // Close settings panel if active
     if(_currentPanel==='settings'){_closeSettingsPanel();return;}
     // Close workspace dropdown
@@ -2785,32 +2542,9 @@ function _syncThemeColorMeta(){
   }catch(e){}
 }
 
-function _skinKey(skin){
-  return (skin&&String(skin.value||skin.name||'').toLowerCase())||'';
-}
-
-function _findSkinEntry(key){
-  const normalized=String(key||'default').toLowerCase();
-  return (_SKINS||[]).find(s=>_skinKey(s)===normalized)||null;
-}
-
-function _activeSkinScheme(){
-  const key=(document.documentElement.dataset.skin||'default').toLowerCase();
-  const skin=_findSkinEntry(key);
-  const scheme=skin&&skin._extScheme;
-  return scheme==='light'||scheme==='dark'?scheme:'';
-}
-
-function _effectiveThemeDark(baseIsDark){
-  const skinScheme=_activeSkinScheme();
-  if(skinScheme==='dark') return true;
-  if(skinScheme==='light') return false;
-  return !!baseIsDark;
-}
-
 function _setResolvedTheme(isDark){
   _resolvedThemeBaseDark=!!isDark;
-  const effectiveDark=_effectiveThemeDark(_resolvedThemeBaseDark);
+  const effectiveDark=!!_resolvedThemeBaseDark;
   document.documentElement.classList.toggle('dark',effectiveDark);
   const link=document.getElementById('prism-theme');
   if(!link){ _syncThemeColorMeta(); return; }
@@ -2932,10 +2666,8 @@ function _buildSkinPicker(activeSkin){
     btn.dataset.skinVal=key;
     btn.style.cssText='border:1px solid var(--border2);border-radius:8px;padding:8px 4px;text-align:center;cursor:pointer;background:none;transition:all .15s';
     btn.onclick=()=>_pickSkin(key);
-    // Build with DOM nodes + textContent so an extension-registered skin's
-    // label/name (registerHermesSkin descriptor) can never inject markup into
-    // the picker. Swatch colors are already value-sanitized upstream, but set
-    // them via element.style.background (not interpolated HTML) as defense in depth.
+    // Build with DOM nodes + textContent and set swatch colors via
+    // element.style.background (not interpolated HTML).
     const dotRow=document.createElement('div');
     dotRow.style.cssText='display:flex;gap:3px;justify-content:center;margin-bottom:4px';
     for(const c of (skin.colors||[])){
@@ -2953,116 +2685,6 @@ function _buildSkinPicker(activeSkin){
   }
   _syncSkinPicker((activeSkin||'default').toLowerCase());
 }
-
-// ── Extension-registered skins (theme-registration capability) ───────────────
-// Lets a trusted local extension contribute a custom skin that appears in the
-// NATIVE skin picker (rather than bolting on a parallel theme switcher). An
-// extension calls window.registerHermesSkin(descriptor); core validates +
-// sanitizes it, injects a managed <style> rule for its CSS-variable tokens,
-// appends it to _SKINS so the picker renders it, and re-applies the persisted
-// selection if it was waiting on this (late-registered) skin.
-//
-// Security: token values are written into CSS, so every value is sanitized
-// against a strict allowlist HERE, once, so all theme extensions inherit the
-// guard safe-by-construction. Reserved core skin keys cannot be overwritten.
-const _EXT_SKIN_STYLE_ID='hermesExtensionSkinStyles';
-const _EXT_SKIN_KEYS=new Set();                 // keys we registered (for idempotent re-register)
-const _RESERVED_SKIN_KEYS=new Set((_SKINS||[]).map(s=>(s.value||s.name).toLowerCase()));
-// CSS custom-property names a skin is allowed to set. Mirrors the documented
-// design-token contract; anything outside this set is dropped.
-const _ALLOWED_SKIN_TOKENS=new Set([
-  '--bg','--surface','--surface2','--surface-subtle','--text','--text2','--muted',
-  '--accent','--accent2','--accent3','--accent-contrast','--accent-hover',
-  '--accent-text','--accent-bg','--accent-bg-strong','--accent-rgb',
-  '--border','--border2','--hover-bg','--code-bg','--code-text',
-  '--sidebar','--sidebar-text','--user-bubble','--assistant-bubble',
-  '--success','--warning','--danger','--info','--link'
-]);
-// Accept only safe color / simple numeric-with-unit values, OR a bare RGB triple
-// (e.g. "0, 0, 0" for --accent-rgb, consumed inside rgba(...)). Rejects anything
-// with url(), expression(), semicolons, braces, or other CSS-injection vectors.
-const _SAFE_SKIN_VALUE_RE=/^(#(?:[0-9a-fA-F]{3,8})|rg(?:b|ba)\(\s*[0-9.,%\s/]+\)|hsl(?:a)?\(\s*[0-9.,%\s/deg]+\)|[0-9]{1,3}\s*,\s*[0-9]{1,3}\s*,\s*[0-9]{1,3}|[a-zA-Z]{3,20}|[0-9.]+(?:px|em|rem|%)?)$/;
-
-function _sanitizeSkinScheme(scheme){
-  const value=String(scheme||'').trim().toLowerCase();
-  return value==='light'||value==='dark'?value:'';
-}
-
-function _sanitizeSkinTokens(tokens){
-  const out={};
-  if(!tokens||typeof tokens!=='object') return out;
-  for(const rawKey of Object.keys(tokens)){
-    const key=String(rawKey).trim();
-    if(!_ALLOWED_SKIN_TOKENS.has(key)) continue;          // unknown token → drop
-    const val=String(tokens[rawKey]).trim();
-    if(val.length>64) continue;                            // absurd length → drop
-    if(!_SAFE_SKIN_VALUE_RE.test(val)) continue;          // unsafe value → drop
-    out[key]=val;
-  }
-  return out;
-}
-
-function _renderExtensionSkinStyles(){
-  let styleEl=document.getElementById(_EXT_SKIN_STYLE_ID);
-  if(!styleEl){
-    styleEl=document.createElement('style');
-    styleEl.id=_EXT_SKIN_STYLE_ID;
-    document.head.appendChild(styleEl);
-  }
-  const blocks=[];
-  for(const skin of _SKINS){
-    if(!skin||!skin._extToken) continue;                  // only ext-registered skins
-    const key=(skin.value||skin.name).toLowerCase();
-    const decls=Object.keys(skin._extToken).map(k=>`${k}:${skin._extToken[k]}`).join(';');
-    if(decls) blocks.push(`:root[data-skin="${key}"]{${decls}}`);
-  }
-  styleEl.textContent=blocks.join('\n');
-}
-
-// Public API for extensions. Returns true on success, false if rejected.
-function registerHermesSkin(descriptor){
-  try{
-    if(!descriptor||typeof descriptor!=='object') return false;
-    const name=String(descriptor.name||'').trim();
-    if(!name) return false;
-    const rawVal=String(descriptor.value||name).trim().toLowerCase();
-    // key must be a simple slug (safe as a data-skin attr + CSS attr selector)
-    const key=rawVal.replace(/[^a-z0-9_-]/g,'');
-    if(!key) return false;
-    if(_RESERVED_SKIN_KEYS.has(key)) return false;        // never shadow a core skin
-    const tokens=_sanitizeSkinTokens(descriptor.tokens);
-    if(Object.keys(tokens).length===0) return false;      // nothing valid to apply
-    const scheme=_sanitizeSkinScheme(descriptor.scheme);
-    // 3 swatch colors for the picker (sanitized); fall back to accent/bg/text.
-    let colors=Array.isArray(descriptor.colors)?descriptor.colors.slice(0,3):[];
-    colors=colors.map(c=>String(c).trim()).filter(c=>_SAFE_SKIN_VALUE_RE.test(c));
-    while(colors.length<3) colors.push(tokens['--accent']||tokens['--bg']||tokens['--text']||'#888');
-    const label=String(descriptor.label||name).slice(0,40);
-    const entry={name:name.slice(0,40),value:key,label,colors,_extToken:tokens,_extScheme:scheme,_extension:true};
-
-    const existingIdx=_SKINS.findIndex(s=>(s.value||s.name).toLowerCase()===key);
-    if(existingIdx>=0&&_EXT_SKIN_KEYS.has(key)){
-      _SKINS[existingIdx]=entry;                           // idempotent update
-    }else if(existingIdx>=0){
-      return false;                                        // collides w/ a non-ext skin
-    }else{
-      _SKINS.push(entry);
-    }
-    _EXT_SKIN_KEYS.add(key);
-    _VALID_SKINS.add(key);
-    _renderExtensionSkinStyles();
-    // Refresh the picker if it's already built.
-    if(document.getElementById('skinPickerGrid')){
-      _buildSkinPicker((localStorage.getItem('hermes-skin')||'default').toLowerCase());
-    }
-    // If the user had previously selected this (now-available) skin, apply it.
-    if((localStorage.getItem('hermes-skin')||'').toLowerCase()===key){
-      _applySkin(key);
-    }
-    return true;
-  }catch(_){ return false; }
-}
-if(typeof window!=='undefined') window.registerHermesSkin=registerHermesSkin;
 
 function applyBotName(){
   // The saved assistant name applies to the default profile only.
@@ -3094,10 +2716,8 @@ window._COMPOSER_CONTROL_TOGGLE_DEFS=_COMPOSER_CONTROL_TOGGLE_DEFS;
 
 const _COMPOSER_SITUATIONAL_CONTROL_TOGGLE_DEFS=[
   {key:'hide_composer_voice_mode',label:'Voice mode',labelKey:'composer_control_voice_mode',selectors:['#btnVoiceMode'],orderSelector:'#btnVoiceMode',orderGroup:'left'},
-  {key:'hide_composer_yolo',label:'YOLO',labelKey:'composer_control_yolo',selectors:['#yoloPill'],orderSelector:'#yoloPill',orderGroup:'left'},
   {key:'hide_composer_bg_badge',label:'Background badge',labelKey:'composer_control_bg_badge',selectors:['#bgBadge'],orderSelector:'#bgBadge',orderGroup:'right'},
   {key:'hide_composer_mobile_config',label:'Mobile config',labelKey:'composer_control_mobile_config',selectors:['#composerMobileConfigBtn'],orderSelector:'#composerMobileConfigBtn',orderGroup:'left'},
-  {key:'hide_composer_quota_chip',label:'Quota chip',labelKey:'composer_control_quota_chip',selectors:['#providerQuotaChip','#composerMobileQuotaAction'],orderSelector:'#providerQuotaChip',orderGroup:'left'},
   {key:'hide_composer_toolsets',label:'Toolsets',labelKey:'composer_control_toolsets',selectors:['#composerToolsetsWrap'],orderSelector:'#composerToolsetsWrap',orderGroup:'left'},
   {key:'hide_composer_status',label:'Status',labelKey:'composer_control_status',selectors:['#composerStatus'],orderSelector:'#composerStatus',orderGroup:'right'},
 ];
@@ -3311,7 +2931,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     // and workspace actions (New file/folder) work before the first session (#804).
     if(s.default_workspace) S._profileDefaultWorkspace=s.default_workspace;
     window._showTokenUsage=!!s.show_token_usage;
-    window._showQuotaChip=s.show_quota_chip===true;
     window._showConversationOutline=s.show_conversation_outline===true;
     document.documentElement.dataset.conversationOutline=window._showConversationOutline?'enabled':'disabled';
     if(typeof applyConversationOutlinePreference==='function') applyConversationOutlinePreference();
@@ -3338,7 +2957,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
       : 'compact_worklog';
     window._transparentStream=window._chatActivityDisplayMode==='transparent_stream';
     window._transparentEventTimestamps=s.transparent_stream_event_timestamps!==false;
-    window._terminalAutoExpandOnOutput=!!s.terminal_auto_expand_on_output;
     window._worklogDetailsExpandedByDefault=!!(
       Object.prototype.hasOwnProperty.call(s,'worklog_details_expanded_default')
         ? s.worklog_details_expanded_default
@@ -3425,26 +3043,17 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     const lsTheme=(localStorage.getItem('hermes-theme')||'').trim().toLowerCase();
     const lsSkin=(localStorage.getItem('hermes-skin')||'').trim().toLowerCase();
     const lsAppearance=_normalizeAppearance(lsTheme||null,lsSkin||null);
-    // An unknown non-default persisted skin is most likely an extension-provided
-    // skin (registerHermesSkin) whose extension script hasn't registered it yet
-    // at this point in boot. Preserve it verbatim instead of normalizing it away
-    // to 'default' — the extension's registerHermesSkin() will inject the CSS and
-    // re-apply it once it loads. Without this, the boot sync would clobber the
-    // saved choice before the extension runs.
-    const lsSkinIsPendingExt=!!lsSkin&&lsSkin!=='default'&&!_VALID_SKINS.has(lsSkin)&&!_LEGACY_THEME_MAP[lsSkin];
     const lsHasExplicitSkin=lsSkin&&lsSkin!=='default';
     const lsHasExplicitTheme=lsTheme&&['system','light','dark'].includes(lsTheme);
     const theme=lsHasExplicitTheme?lsAppearance.theme:srvAppearance.theme;
-    const skin=lsHasExplicitSkin?(lsSkinIsPendingExt?lsSkin:lsAppearance.skin):srvAppearance.skin;
+    const skin=lsHasExplicitSkin?lsAppearance.skin:srvAppearance.skin;
     localStorage.setItem('hermes-theme',theme);
     _applyTheme(theme);
     localStorage.setItem('hermes-skin',skin);
     _applySkin(skin);
     // Reconcile: if localStorage and server disagree, push localStorage
-    // values to the server so the next refresh won't revert. Skip the push for a
-    // still-pending extension skin (don't persist it server-side until it's a
-    // confirmed-registered skin — avoids writing a skin the server can't validate).
-    if((lsHasExplicitTheme||lsHasExplicitSkin)&&!lsSkinIsPendingExt&&(theme!==srvAppearance.theme||skin!==srvAppearance.skin)){
+    // values to the server so the next refresh won't revert.
+    if((lsHasExplicitTheme||lsHasExplicitSkin)&&(theme!==srvAppearance.theme||skin!==srvAppearance.skin)){
       try{
         api('/api/settings',{method:'POST',body:JSON.stringify({theme,skin})});
       }catch(_){}
@@ -3482,7 +3091,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
   }catch(e){
     window._sendKey='enter';
     window._showTokenUsage=false;
-    window._showQuotaChip=false;
     window._showConversationOutline=false;
     document.documentElement.dataset.conversationOutline='disabled';
     if(typeof applyConversationOutlinePreference==='function') applyConversationOutlinePreference();
@@ -3501,7 +3109,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     window._chatActivityDisplayMode='compact_worklog';
     window._transparentStream=false;
     window._transparentEventTimestamps=true;
-    window._terminalAutoExpandOnOutput=false;
     window._workspaceTodosTab=false;
     if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
     window._sessionJumpButtonsEnabled=false;
@@ -3644,31 +3251,7 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
   if(profileLabel) profileLabel.textContent=profileChipText();
   const titleLabel=$('titlebarProfileLabel');
   if(titleLabel) titleLabel.textContent=profileChipText();
-  const profileIntent=(typeof _profileQueryIntentFromLocation==='function')?_profileQueryIntentFromLocation():null;
-  const _savedLocalBeforeProfileSwitch=localStorage.getItem('hermes-webui-session');
-  const _profileSwitchProfileBefore=S.activeProfile||'default';
-  const _profileSwitchIsDefaultBefore=!!S.activeProfileIsDefault;
-  let _profileSwitchCompleted=false;
-  let _profileSwitchChangedProfile=false;
-  if(profileIntent&&profileIntent.hasParam){
-    try{
-      if(profileIntent.valid){
-        if(typeof switchToProfile==='function'){
-          _profileSwitchCompleted=await switchToProfile(profileIntent.name)===true;
-          if(_profileSwitchCompleted){
-            _profileSwitchChangedProfile=(S.activeProfile||'default')!==_profileSwitchProfileBefore||!!S.activeProfileIsDefault!==_profileSwitchIsDefaultBefore;
-            if(typeof _consumeProfileQueryParamFromLocation==='function') _consumeProfileQueryParamFromLocation();
-          }
-        }
-      }else{
-        console.warn('[boot] ignored invalid profile query', profileIntent.name);
-        if(typeof _consumeProfileQueryParamFromLocation==='function') _consumeProfileQueryParamFromLocation();
-      }
-    }catch(e){
-      console.warn('[boot] profile query switch failed', e);
-    }
-  }
-  if(typeof fetchReasoningChip==='function'&&(!_profileSwitchCompleted||!_profileSwitchChangedProfile)) fetchReasoningChip();
+  if(typeof fetchReasoningChip==='function') fetchReasoningChip();
   // Fetch available models without blocking session restore. The static HTML
   // options enough for first paint; the dynamic provider list can settle
   // after the saved session is visible.
@@ -3744,15 +3327,13 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     try{Promise.resolve(_startBootModelDropdown()).catch(()=>{});}catch(_){}
   },0);
   // Start independent boot fetches without holding the conversation list behind
-  // them. The sidebar can render from /api/sessions while workspace/onboarding
-  // metadata settles in parallel.
+  // them. The sidebar can render from /api/sessions while workspace metadata
+  // settles in parallel.
   const _workspaceListReady=loadWorkspaceList();
-  const _onboardingReady=_bootSettings.onboarding_completed?Promise.resolve(false):loadOnboardingWizard();
   // Render the session list before restoring the saved conversation so a stale
   // saved-session/client-side boot error cannot leave the sidebar empty forever.
   await renderSessionList();
   await _workspaceListReady;
-  await _onboardingReady;
   _initResizePanels();
   // Workspace panel restore happens AFTER loadSession so we know if
   // the session has a workspace — prevents the snap-open-then-closed flash (#576).
@@ -3762,7 +3343,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
   // re-run when the browser restores the page from bfcache.
   const _srch = document.getElementById('sessionSearch'); if (_srch) _srch.value = '';
   if (typeof syncSessionSearchClear === 'function') syncSessionSearchClear();
-  if(typeof refreshProviderQuotaIndicator==='function') refreshProviderQuotaIndicator();
   const urlSession=(typeof _sessionIdFromLocation==='function')?_sessionIdFromLocation():null;
   const pwaLaunchAction=(window.HermesPWA&&typeof window.HermesPWA.launchAction==='function')
     ? window.HermesPWA.launchAction()
@@ -3781,12 +3361,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
       S._bootReady=true;
       syncTopbar();syncWorkspacePanelState();await renderSessionList();await _finalizeComposerPrefillOnBoot(prefillIntent);if(typeof startGatewaySSE==='function')startGatewaySSE();return;
     }catch(e){console.warn('[pwa] new-chat launch action failed', e);}
-  }
-  const _profileQueryBlocksSavedLocal=_profileQueryBlocksSavedLocalRestore(profileIntent, urlSession);
-  if(_profileQueryBlocksSavedLocal&&_profileSwitchCompleted&&_profileSwitchChangedProfile){
-    try{
-      if(localStorage.getItem('hermes-webui-session')===_savedLocalBeforeProfileSwitch) localStorage.removeItem('hermes-webui-session');
-    }catch(_){}
   }
   const savedLocal=localStorage.getItem('hermes-webui-session');
   const saved=urlSession||savedLocal;
@@ -3943,19 +3517,6 @@ window.addEventListener('pageshow', async (event) => {
   }
 });
 
-async function shutdownServer() {
-  const ok = await showConfirmDialog({
-    title: (typeof t === 'function' ? t('settings_shutdown_confirm_title') : 'Stop GFIT-CoWork'),
-    message: (typeof t === 'function' ? t('settings_shutdown_confirm_message') : 'Stop the GFIT-CoWork server?'),
-    confirmLabel: (typeof t === 'function' ? t('settings_shutdown_confirm_btn') : 'Stop'),
-    danger: true,
-  });
-  if (!ok) return;
-  localStorage.setItem('hermes-webui-server-stopped', '1');
-  try { var bc = new BroadcastChannel('hermes-webui-shutdown'); bc.postMessage('stop'); bc.close(); } catch(_) {}
-  _showServerStopped();
-  try { await api('/api/shutdown', { method: 'POST' }); } catch (_) {}
-}
 
 function _showServerStopped() {
   var stoppedMsg = (typeof t === 'function' ? t('settings_shutdown_stopped_message') : 'Server stopped. You can close this tab.');

@@ -63,7 +63,7 @@ def fake_hermes_home(tmp_path, monkeypatch):
 
     projects_file = tmp_path / "projects.json"
     monkeypatch.setattr(cfg, "PROJECTS_FILE", projects_file)
-    monkeypatch.setattr(models, "PROJECTS_FILE", projects_file)
+    monkeypatch.setattr("api.config.PROJECTS_FILE", projects_file)
     monkeypatch.setattr(models, "_projects_migrated", True)
     # Seed a legacy untagged Cron Jobs project in the actual file the
     # production ensure_cron_project() path reads.

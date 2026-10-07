@@ -32,13 +32,12 @@ def client(gfit_server):
     return Client(gfit_server["port"])
 
 
-def test_directory_login_turns_the_auth_gate_on(client):
+def test_a_request_without_a_login_is_refused(client):
     status, body, _ = client.request("GET", "/api/sessions")
     assert status == 401
     status, body, _ = client.request("GET", "/api/auth/status")
     assert status == 200
-    assert body["auth_enabled"] is True
-    assert body["logged_in"] is False
+    assert body == {"logged_in": False}
 
 
 def test_login_page_has_username_and_password_fields(client):
@@ -68,20 +67,17 @@ def test_correct_password_and_existing_profile_lands_in_own_profile(client, user
     assert body["bound_profile"] == MEMBER
 
 
-def test_login_sets_session_and_profile_cookies(client):
+def test_login_sets_the_session_cookie_only(client):
+    # The Profile comes from the Admission; there is no Profile cookie (ADR 0006).
     status, _, set_cookies = client.login(MEMBER, PASSWORD)
     assert status == 200
-    names = {http.cookies.SimpleCookie(h).keys().__iter__().__next__() for h in set_cookies}
-    assert auth._resolve_cookie_name() in names
-    assert any(n != auth._resolve_cookie_name() for n in names), "profile cookie must be set"
+    names = {next(iter(http.cookies.SimpleCookie(h).keys())) for h in set_cookies}
+    assert names == {auth._resolve_cookie_name()}
     assert all("HttpOnly" in h for h in set_cookies)
 
 
-def test_bound_profile_wins_over_a_session_without_profile_cookie(client):
+def test_the_bound_profile_needs_only_the_session_cookie(client):
     client.login(MEMBER, PASSWORD)
-    # Drop the profile cookie: the request must still run in the bound Profile.
-    session_cookie = auth._resolve_cookie_name()
-    client.cookies = {session_cookie: client.cookies[session_cookie]}
     status, body, _ = client.request("GET", "/api/profile/active")
     assert status == 200
     assert body["name"] == MEMBER
@@ -110,7 +106,7 @@ def test_wrong_password_or_unknown_user_is_401_with_one_message(client, username
 def test_correct_password_but_no_profile_is_refused_with_contact_admin(client):
     status, body, _ = client.login(NO_PROFILE_USER, PASSWORD)
     assert status == 403
-    assert "contact your team's Admin" in body["error"]
+    assert "contact your team's Operator" in body["error"]
     assert body["error"] != INCORRECT
     status, _, _ = client.request("GET", "/api/sessions")
     assert status == 401

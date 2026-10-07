@@ -41,7 +41,9 @@ class TestSSEStaticAnalysis:
 
     def test_sse_route_registered(self):
         """The /api/approval/stream route must be registered."""
-        assert '"/api/approval/stream"' in ROUTES_SRC, \
+        from tests._route_source import route_handler
+
+        assert route_handler("GET", "/api/approval/stream"), \
             "Route /api/approval/stream must be registered in the URL dispatch"
 
     def test_sse_handler_function_exists(self):
@@ -223,19 +225,19 @@ class TestSSESubscribeUnsubscribe:
 
     def setup_method(self):
         """Clean SSE subscriber state before each test."""
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
 
     def teardown_method(self):
         """Clean up after each test."""
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
 
     def test_subscribe_returns_queue(self):
         """_approval_sse_subscribe must return a Queue."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-test-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         assert isinstance(q, queue.Queue), "subscribe must return a queue.Queue"
@@ -244,7 +246,7 @@ class TestSSESubscribeUnsubscribe:
 
     def test_subscribe_registers_subscriber(self):
         """After subscribe, the queue must appear in _approval_sse_subscribers."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-reg-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         try:
@@ -256,7 +258,7 @@ class TestSSESubscribeUnsubscribe:
 
     def test_unsubscribe_removes_queue(self):
         """After unsubscribe, the queue must not be in the subscribers list."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-unsub-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         r._approval_sse_unsubscribe(sid, q)
@@ -266,7 +268,7 @@ class TestSSESubscribeUnsubscribe:
 
     def test_unsubscribe_removes_empty_session_key(self):
         """When the last subscriber is removed, the session key must be cleaned up."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-empty-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         r._approval_sse_unsubscribe(sid, q)
@@ -276,7 +278,7 @@ class TestSSESubscribeUnsubscribe:
 
     def test_unsubscribe_idempotent(self):
         """Unsubscribing twice must not raise."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-idem-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         r._approval_sse_unsubscribe(sid, q)
@@ -284,7 +286,7 @@ class TestSSESubscribeUnsubscribe:
 
     def test_unsubscribe_unknown_queue_noop(self):
         """Unsubscribing a queue that was never subscribed must not crash."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-noop-{uuid.uuid4().hex[:8]}"
         q = queue.Queue()
         r._approval_sse_unsubscribe(sid, q)  # should not raise
@@ -294,18 +296,18 @@ class TestSSENotify:
     """Test the notification mechanism."""
 
     def setup_method(self):
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
 
     def teardown_method(self):
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
 
     def test_notify_delivers_payload(self):
         """_approval_sse_notify must put the payload on subscriber queues."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-notify-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         try:
@@ -319,7 +321,7 @@ class TestSSENotify:
 
     def test_notify_multiple_subscribers(self):
         """All subscribers for a session must receive the notification."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-multi-{uuid.uuid4().hex[:8]}"
         q1 = r._approval_sse_subscribe(sid)
         q2 = r._approval_sse_subscribe(sid)
@@ -337,7 +339,7 @@ class TestSSENotify:
 
     def test_notify_cross_session_isolation(self):
         """Notify for session A must NOT deliver to session B subscribers."""
-        from api import routes as r
+        from api import route_approvals as r
         sid_a = f"sse-iso-a-{uuid.uuid4().hex[:8]}"
         sid_b = f"sse-iso-b-{uuid.uuid4().hex[:8]}"
         qa = r._approval_sse_subscribe(sid_a)
@@ -356,13 +358,13 @@ class TestSSENotify:
 
     def test_notify_no_subscribers_is_noop(self):
         """Notifying a session with no subscribers must not raise."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-nosub-{uuid.uuid4().hex[:8]}"
         r._approval_sse_notify(sid, {"command": "test"}, 1)  # should not raise
 
     def test_notify_drops_on_full_queue(self):
         """When subscriber queue is full, events must be silently dropped."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-full-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         try:
@@ -380,20 +382,20 @@ class TestSSENotifyFromSubmitPending:
     """Test that submit_pending triggers SSE notifications."""
 
     def setup_method(self):
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
             r._pending.clear()
 
     def teardown_method(self):
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
             r._pending.clear()
 
     def test_submit_pending_notifies_sse_subscriber(self):
         """submit_pending must push an SSE event to subscribers."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-submit-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         try:
@@ -411,7 +413,7 @@ class TestSSENotifyFromSubmitPending:
 
     def test_submit_pending_delivers_count(self):
         """Multiple submit_pending calls must report correct pending_count."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-count-{uuid.uuid4().hex[:8]}"
         q = r._approval_sse_subscribe(sid)
         try:
@@ -431,7 +433,7 @@ class TestSSENotifyFromSubmitPending:
 
     def test_gateway_mirror_reconcile_tags_live_head_and_purges_stale_copy(self):
         """Gateway mirrors must track the live head and disappear when the queue does."""
-        from api import routes as r
+        from api import route_approvals as r
 
         sid = f"sse-gateway-mirror-{uuid.uuid4().hex[:8]}"
         approval = {
@@ -480,20 +482,20 @@ class TestSSEConcurrency:
     """Test thread safety of SSE subscribe/unsubscribe/notify."""
 
     def setup_method(self):
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
             r._pending.clear()
 
     def teardown_method(self):
-        from api import routes as r
+        from api import route_approvals as r
         with r._lock:
             r._approval_sse_subscribers.clear()
             r._pending.clear()
 
     def test_concurrent_subscribe_unsubscribe(self):
         """Concurrent subscribe/unsubscribe must not corrupt state."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-conc-{uuid.uuid4().hex[:8]}"
         errors = []
         queues = []
@@ -521,7 +523,7 @@ class TestSSEConcurrency:
 
     def test_concurrent_notify_while_subscribing(self):
         """Notify while new subscribers are joining must not deadlock or crash."""
-        from api import routes as r
+        from api import route_approvals as r
         sid = f"sse-notsub-{uuid.uuid4().hex[:8]}"
         errors = []
 

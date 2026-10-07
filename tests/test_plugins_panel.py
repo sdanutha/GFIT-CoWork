@@ -409,8 +409,9 @@ class TestPluginAssetIsolationHardening:
         # Plugin-controlled assets are served same-origin; the response MUST carry
         # the sandbox CSP (null origin) + nosniff so a plugin .html/.svg can't run
         # privileged same-origin script on direct navigation.
-        routes = read("api/routes.py")
-        seg = routes[routes.find('"/dashboard-plugins/"'):routes.find("# ── Plugin pages")]
+        from tests._route_source import route_source
+
+        seg = route_source("GET", "/dashboard-plugins/example/app.js")
         assert "Content-Security-Policy" in seg
         assert "sandbox allow-scripts" in seg
         assert "X-Content-Type-Options" in seg and "nosniff" in seg
@@ -418,9 +419,13 @@ class TestPluginAssetIsolationHardening:
     def test_both_plugin_routes_enforce_enable_gate_server_side(self):
         # Both the asset route and the page route must 404 a disabled plugin —
         # "disabled" cannot be UI-only.
-        routes = read("api/routes.py")
-        asset_seg = routes[routes.find('"/dashboard-plugins/"'):routes.find("# ── Plugin pages")]
-        page_seg = routes[routes.find("# ── Plugin pages"):routes.find("# ── Plugin pages") + 2000]
+        import inspect
+
+        import api.routes as routes
+        from tests._route_source import route_source
+
+        asset_seg = route_source("GET", "/dashboard-plugins/example/app.js")
+        page_seg = inspect.getsource(routes._get_dashboard_plugin_page)
         assert "_dashboard_plugin_enabled" in asset_seg
         assert "_dashboard_plugin_enabled" in page_seg
 

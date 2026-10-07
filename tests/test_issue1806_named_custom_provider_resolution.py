@@ -1713,41 +1713,6 @@ def _drive_manual_compression_route(monkeypatch, cfg_dict=None, runtime_dict=Non
     return captured["init_kwargs"]
 
 
-def _decline_auxiliary_client(monkeypatch, recorded_main_runtime=None):
-    """Force the auxiliary-model shortcut to decline.
-
-    The consumers that have one would otherwise return before constructing the
-    main-model agent -- and that constructor is the bundle under test.
-    """
-    import types as _types
-
-    fake_aux = _types.ModuleType("agent.auxiliary_client")
-
-    def _get_text_auxiliary_client(_task, main_runtime=None):
-        if recorded_main_runtime is not None:
-            recorded_main_runtime.update(main_runtime or {})
-        return (None, None)
-
-    fake_aux.get_text_auxiliary_client = _get_text_auxiliary_client
-    monkeypatch.setitem(sys.modules, "agent.auxiliary_client", fake_aux)
-
-
-def _drive_commit_message_route(
-    monkeypatch, cfg_dict=None, runtime_dict=None, recorded_main_runtime=None
-):
-    """Consumer 3/4: LLM git commit-message generation."""
-    import api.routes as routes
-
-    captured, fake_session = _setup_route_consumer_runtime(
-        monkeypatch, cfg_dict=cfg_dict, runtime_dict=runtime_dict
-    )
-    _decline_auxiliary_client(monkeypatch, recorded_main_runtime)
-
-    with pytest.raises(_RouteAgentCaptured):
-        routes._llm_git_commit_message("sys", "user", session=fake_session)
-    return captured["init_kwargs"]
-
-
 def _drive_handoff_summary_route(monkeypatch, cfg_dict=None, runtime_dict=None):
     """Consumer 4/4: on-demand handoff summary."""
     import api.models as models
@@ -1778,7 +1743,6 @@ def _drive_handoff_summary_route(monkeypatch, cfg_dict=None, runtime_dict=None):
 _ROUTE_CONSUMER_DRIVERS = [
     (_drive_sync_chat_route, "sync chat (/api/chat)"),
     (_drive_manual_compression_route, "manual compression (/compress)"),
-    (_drive_commit_message_route, "git commit message"),
     (_drive_handoff_summary_route, "handoff summary"),
 ]
 
@@ -1789,35 +1753,6 @@ _ROUTE_CONSUMER_DRIVERS = [
 def test_route_consumers_apply_exact_list_row_atomically(monkeypatch, driver, label):
     """Every non-streaming consumer applies the exact row's URL *and* its key."""
     _assert_list_row_not_keyed(driver(monkeypatch), label)
-
-
-# The consumer whose auxiliary-client shortcut can answer the request
-# outright -- for them ``main_runtime`` is the only carrier of the resolved
-# authority, because AIAgent is never built.
-_AUXILIARY_ROUTE_DRIVERS = [
-    (_drive_commit_message_route, "git commit message"),
-]
-
-
-@pytest.mark.parametrize(
-    "driver,label",
-    _AUXILIARY_ROUTE_DRIVERS,
-    ids=[d[1] for d in _AUXILIARY_ROUTE_DRIVERS],
-)
-def test_auxiliary_routes_hand_the_row_connection_to_the_auxiliary_client(
-    monkeypatch, driver, label
-):
-    """The aux-client shortcut must see the row's connection, not the keyed one.
-
-    It runs BEFORE the main-model constructor, so a consumer that resolved the
-    bundle only on the fallback path would still send this request to the keyed
-    endpoint.
-    """
-    recorded_main_runtime = {}
-    driver(monkeypatch, recorded_main_runtime=recorded_main_runtime)
-
-    assert recorded_main_runtime.get("base_url") == _LIST_ROW_URL, label
-    assert recorded_main_runtime.get("api_key") == _LIST_ROW_KEY, label
 
 
 # ── The complete bundle, not just its three connection fields ────────────────
@@ -1901,91 +1836,6 @@ def test_route_consumers_clear_foreign_ambient_side_fields(monkeypatch, driver, 
     _assert_side_fields(init_kwargs, _FOREIGN_AMBIENT_SIDE_FIELDS, f"{label}: foreign ambient")
 
 
-@pytest.mark.parametrize(
-    "driver,label",
-    _AUXILIARY_ROUTE_DRIVERS,
-    ids=[d[1] for d in _AUXILIARY_ROUTE_DRIVERS],
-)
-def test_auxiliary_routes_hand_the_complete_bundle_to_the_auxiliary_client(
-    monkeypatch, driver, label
-):
-    """``main_runtime`` carries the WHOLE bundle, not its three connection fields.
-
-    When the auxiliary client answers, AIAgent is bypassed entirely, so the
-    side fields that never entered ``main_runtime`` were simply lost: the exact
-    row's ``api_mode: anthropic_messages`` silently degraded to the aux client's
-    default wire protocol, and the credential pool/ACP transport the row owns
-    never reached the send. The aux dict must therefore agree with the fallback
-    constructor field for field -- same authority, whichever path answers.
-    """
-    import api.routes as routes
-
-    recorded_main_runtime = {}
-    init_kwargs = driver(
-        monkeypatch,
-        cfg_dict=copy.deepcopy(_ROUTE_OWNED_SIDE_FIELD_CFG),
-        runtime_dict=copy.deepcopy(_ROUTE_AMBIENT_RUNTIME),
-        recorded_main_runtime=recorded_main_runtime,
-    )
-
-    _assert_list_row_not_keyed(recorded_main_runtime, f"{label}: aux main_runtime")
-    _assert_side_fields(
-        recorded_main_runtime,
-        {
-            "api_mode": "anthropic_messages",
-            "credential_pool": _ROUTE_ROW_POOL_SENTINEL,
-            # The row declares no ACP transport and owns a different endpoint
-            # than the runtime, so the ambient subprocess is provably foreign.
-            "acp_command": None,
-            "acp_args": None,
-        },
-        f"{label}: aux main_runtime side fields",
-    )
-    assert recorded_main_runtime["api_mode"] != _ROUTE_AMBIENT_RUNTIME["api_mode"], (
-        f"{label}: the ambient wire protocol reached the auxiliary client"
-    )
-    assert (
-        recorded_main_runtime["credential_pool"]
-        != _ROUTE_AMBIENT_RUNTIME["credential_pool"]
-    ), f"{label}: the ambient credential pool reached the auxiliary client"
-
-    for field in ("provider", "model", "base_url", "api_key") + tuple(
-        routes._AGENT_BUNDLE_SIDE_FIELDS
-    ):
-        assert recorded_main_runtime.get(field) == init_kwargs[field], (
-            f"{label}: aux {field} disagrees with the fallback constructor, so "
-            "which path answers decides the authority"
-        )
-    assert recorded_main_runtime["model"], f"{label}: aux main_runtime lost the model"
-
-
-@pytest.mark.parametrize(
-    "driver,label",
-    _AUXILIARY_ROUTE_DRIVERS,
-    ids=[d[1] for d in _AUXILIARY_ROUTE_DRIVERS],
-)
-def test_auxiliary_routes_clear_foreign_ambient_side_fields(monkeypatch, driver, label):
-    """A row owning no side fields strips the ambient provider's from the aux dict too.
-
-    Complement of the test above: "carry the complete bundle into
-    ``main_runtime``" must not degrade into "pass the runtime's side fields
-    through" on the path where nothing downstream re-resolves them.
-    """
-    recorded_main_runtime = {}
-    driver(
-        monkeypatch,
-        runtime_dict=copy.deepcopy(_ROUTE_AMBIENT_RUNTIME),
-        recorded_main_runtime=recorded_main_runtime,
-    )
-
-    _assert_list_row_not_keyed(recorded_main_runtime, f"{label}: aux main_runtime")
-    _assert_side_fields(
-        recorded_main_runtime,
-        _FOREIGN_AMBIENT_SIDE_FIELDS,
-        f"{label}: aux foreign ambient",
-    )
-
-
 def test_capturing_route_agent_exposes_every_runtime_constructor_field(monkeypatch):
     """Guard the guard, route edition.
 
@@ -2003,7 +1853,9 @@ def test_capturing_route_agent_exposes_every_runtime_constructor_field(monkeypat
     agent_cls = routes.require_ai_agent_class()
     params = set(inspect.signature(agent_cls.__init__).parameters)
 
-    for field in routes._AGENT_BUNDLE_SIDE_FIELDS:
+    from api.turn_builder import AGENT_BUNDLE_SIDE_FIELDS
+
+    for field in AGENT_BUNDLE_SIDE_FIELDS:
         assert field in params, (
             f"the route double hides {field} behind **kwargs, so the "
             "signature gate would filter it out and the assertions would be vacuous"
@@ -5095,63 +4947,6 @@ def test_credential_only_record_refuses_the_production_composed_retry(
     for leaked in _ACTIVE_OTHER_SENTINELS:
         assert leaked not in blob, f"{label}: {leaked!r} leaked into the retry path"
     assert config.KEYLESS_CUSTOM_API_KEY not in blob
-
-
-# The consumer whose auxiliary client can answer outright. There AIAgent is
-# never built, so ``main_runtime`` is the ONLY carrier of the resolved authority
-# — and the only place a borrowed pair could still reach the wire after every
-# constructor assertion above passes.
-_CREDENTIAL_ONLY_AUX_DRIVERS = [
-    (
-        "git commit message",
-        lambda routes, session: routes._llm_git_commit_message("sys", "user", session=session),
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    "label,invoke",
-    _CREDENTIAL_ONLY_AUX_DRIVERS,
-    ids=[d[0] for d in _CREDENTIAL_ONLY_AUX_DRIVERS],
-)
-def test_credential_only_record_reaches_no_auxiliary_client(monkeypatch, label, invoke):
-    """The refusal is terminal BEFORE ``main_runtime`` is built, so the aux client
-    is never handed the active provider's connection.
-
-    ``_resolve_agent_connection_bundle`` raises at the chokepoint, which is
-    upstream of ``_auxiliary_main_runtime``. Returning the holed bundle instead
-    would let the aux path send with the borrowed pair while bypassing every
-    AIAgent-side guard entirely.
-    """
-    import api.routes as routes
-
-    _clear_credential_env(monkeypatch)
-    cfg_dict = _credential_only_cfg()
-    cfg_dict["model"] = {"default": _CREDENTIAL_ONLY_MODEL, "provider": "custom:omni"}
-
-    captured, fake_session = _setup_route_consumer_runtime(
-        monkeypatch,
-        cfg_dict=cfg_dict,
-        runtime_dict=copy.deepcopy(_ACTIVE_OTHER_RUNTIME),
-    )
-    recorded_main_runtime = {}
-    _decline_auxiliary_client(monkeypatch, recorded_main_runtime)
-
-    with pytest.raises(config.CustomProviderRouteError) as excinfo:
-        invoke(routes, fake_session)
-
-    assert excinfo.value.reason == config.CUSTOM_ROUTE_NO_ENDPOINT, label
-    assert excinfo.value.provider == "custom:omni", label
-    assert excinfo.value.hint, f"{label}: the refusal named no setting to fix"
-
-    assert not recorded_main_runtime, (
-        f"{label}: the auxiliary client was handed {recorded_main_runtime!r} for a "
-        "route with no endpoint of its own"
-    )
-    assert "init_kwargs" not in captured, f"{label}: an agent was constructed anyway"
-    _assert_no_borrowed_pair(
-        str(excinfo.value) + str(recorded_main_runtime) + str(captured), label
-    )
 
 
 # ── controls: the refusal is about MISSING provenance, not about raw records ──

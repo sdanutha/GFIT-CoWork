@@ -188,9 +188,9 @@ def test_locked_postacceptance_workspace_exception_does_not_restore_turn(monkeyp
     plan = plan_regeneration(session)
     monkeypatch.setattr(routes, "register_session_writeback_owner", lambda *_args: None)
     monkeypatch.setattr(routes, "clear_session_writeback_owner_if_owned", lambda *_args: None)
-    monkeypatch.setattr(routes, "register_stream_owner", lambda *_args: None)
-    monkeypatch.setattr(routes, "unregister_stream_owner", lambda *_args: None)
-    monkeypatch.setattr(routes, "create_stream_channel", lambda: queue.Queue())
+    monkeypatch.setattr("api.config.register_stream_owner", lambda *_args: None)
+    monkeypatch.setattr("api.config.unregister_stream_owner", lambda *_args: None)
+    monkeypatch.setattr("api.config.create_stream_channel", lambda: queue.Queue())
     monkeypatch.setattr(turn_journal, "append_turn_journal_event", lambda *_args, **_kwargs: {"turn_id": "turn-6611"})
     monkeypatch.setattr(Session, "save", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(routes, "set_last_workspace", lambda *_args, **_kw: (_ for _ in ()).throw(RuntimeError("workspace failed")))
@@ -235,8 +235,8 @@ def test_chat_start_losing_regeneration_preserves_locked_send_winner(monkeypatch
     session.session_id = "route-race-6611"
     session.model_explicit_pick_signature = "before-regeneration"
     revision = plan_regeneration(session).revision
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     monkeypatch.setattr(runtime_adapter, "runtime_adapter_runner_enabled", lambda: False)
     monkeypatch.setattr(routes, "_get_or_materialize_session", lambda *_args, **_kwargs: session)
     monkeypatch.setattr(routes, "_agent_runtime_barrier_response", lambda **_kwargs: None)
@@ -484,8 +484,8 @@ def test_issue_artifact_rows_follow_production_regeneration_and_error_settlement
     session.messages.append(copy.deepcopy(rows[1]))
     assert [row["role"] for row in session.messages] == ["user", "assistant"]
     assert [row["content"] for row in session.messages if row["role"] == "user"] == [rows[0]["content"]]
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     session.save(touch_updated_at=False)
     reloaded = Session.load(session.session_id)
     assert reloaded is not None
@@ -526,8 +526,8 @@ def test_concurrent_normal_winner_survives_regeneration_409_in_memory_and_after_
     session.pending_user_message = "stale prompt"
     session.pending_started_at = 111.0
     session.pending_user_source = "webui"
-    monkeypatch.setattr(models_api, "SESSION_DIR", tmp_path)
-    monkeypatch.setattr(models_api, "SESSION_INDEX_FILE", tmp_path / "_index.json")
+    monkeypatch.setattr("api.config.SESSION_DIR", tmp_path)
+    monkeypatch.setattr("api.config.SESSION_INDEX_FILE", tmp_path / "_index.json")
     session.save(touch_updated_at=False)
 
     winner_started = threading.Event()

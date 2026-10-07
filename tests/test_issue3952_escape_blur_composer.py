@@ -49,7 +49,6 @@ def test_escape_blurs_focused_composer_after_higher_priority_escape_actions():
         "Escape blur must be guarded against IME composition"
     )
 
-    assert block.index("skipOnboarding") < blur_idx, "onboarding dismissal stays higher priority"
     assert block.index("_closeSettingsPanel") < blur_idx, "settings dismissal stays higher priority"
     assert block.index("clearSessionSearch") < blur_idx, "session-search clearing stays higher priority"
     assert block.index("msg-edit-cancel") < blur_idx, "message-edit cancel stays higher priority"

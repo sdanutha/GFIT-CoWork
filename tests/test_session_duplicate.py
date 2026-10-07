@@ -70,7 +70,9 @@ def test_duplicate_session_endpoint_exists():
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
-    assert '/api/session/duplicate' in content, \
+    from tests._route_source import route_handler
+
+    assert route_handler("POST", "/api/session/duplicate"), \
         "Duplicate endpoint should be registered in routes.py"
 
     # Verify the endpoint calls Session.load
@@ -93,8 +95,10 @@ def test_duplicate_creates_independent_session():
 
     # Verify that parent_session_id is NOT set (this would make it a fork)
     # Find the duplicate endpoint
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
 
     # Extract the duplicate endpoint code (next few lines)
     lines = content[duplicate_start:].split('\n')
@@ -123,8 +127,10 @@ def test_duplicate_session_copies_title_logic():
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
 
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
@@ -146,8 +152,10 @@ def test_duplicate_session_copies_messages_logic():
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
 
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
@@ -167,8 +175,10 @@ def test_duplicate_session_copies_model_logic():
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
 
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
@@ -185,8 +195,10 @@ def test_duplicate_session_copies_workspace_logic():
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
 
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
@@ -203,8 +215,10 @@ def test_duplicate_session_copies_all_session_properties():
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
 
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
 
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
@@ -254,8 +268,10 @@ def test_duplicate_uses_deepcopy_for_messages():
     """
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
     assert 'copy.deepcopy(session.messages)' in endpoint_code, \
@@ -274,8 +290,10 @@ def test_duplicate_explicitly_persists_to_disk():
     """
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
     assert 'copied_session.save()' in endpoint_code, \
@@ -291,8 +309,10 @@ def test_duplicate_resets_pinned_and_archived():
     """
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
     # Both must be hard-coded to False, NOT inherited from `session.pinned`/`session.archived`
@@ -315,8 +335,10 @@ def test_duplicate_returns_404_when_session_not_found():
     """
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
     lines = content[duplicate_start:].split('\n')
     endpoint_code = '\n'.join(lines[:100])
     assert 'bad(handler, "Session not found", status=404)' in endpoint_code, \
@@ -328,8 +350,10 @@ def test_duplicate_local_imports_removed():
     the handler — both are already at the top of routes.py."""
     with open('api/routes.py', 'r', encoding='utf-8') as f:
         content = f.read()
-    duplicate_start = content.find('if parsed.path == "/api/session/duplicate":')
-    assert duplicate_start != -1, "Duplicate endpoint not found"
+    from tests._route_source import route_source
+
+    content = route_source("POST", "/api/session/duplicate")
+    duplicate_start = 0
     # Only check the next ~10 lines — the local imports were right at the top of the handler
     lines = content[duplicate_start:].split('\n')
     handler_top = '\n'.join(lines[:10])

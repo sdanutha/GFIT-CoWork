@@ -7,8 +7,7 @@
 - A User is not shown, and cannot open, the server account's Claude Code
   sessions, which belong to no Profile (ticket 03).
 
-HTTP tests against an in-process server (see ``tests/_gfit_server.py``). The
-Admin keeps today's behaviour in each case.
+HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 """
 from __future__ import annotations
 
@@ -27,14 +26,13 @@ from tests._gfit_server import gfit_server as _gfit_server
 
 ALICE = "521740"
 BOB = "671278"
-ADMIN = "600001"
 
 
 @pytest.fixture
 def srv(monkeypatch, tmp_path):
-    users = {ALICE: "Alice", BOB: "Bob", ADMIN: "Admin"}
+    users = {ALICE: "Alice", BOB: "Bob"}
     with _gfit_server(
-        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB], admins=ADMIN,
+        monkeypatch, tmp_path, users=users, profile_names=[ALICE, BOB],
     ) as s:
         yield s
 
@@ -96,7 +94,7 @@ class EventStream:
 
 @pytest.fixture
 def streams(srv):
-    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB, ADMIN)}
+    clients = {uid: srv.logged_in(uid) for uid in (ALICE, BOB)}
     opened = {uid: EventStream(client) for uid, client in clients.items()}
     try:
         yield clients, opened
@@ -113,28 +111,22 @@ def test_a_users_events_stream_carries_only_their_own_profile(streams):
     clients, stream = streams
     alice_sid = _new_session(clients[ALICE])
     bob_sid = _new_session(clients[BOB])
-    admin_sid = _new_session(clients[ADMIN])
 
-    # Each change reaches its owner and the Admin before the next one starts,
-    # so nothing is coalesced into an unscoped nudge on the way to Alice.
+    # Each change reaches its owner before the next one starts, so nothing is
+    # coalesced into an unscoped nudge on the way to Alice.
     _rename(clients[BOB], bob_sid, "Bob's plan")
     stream[BOB].wait_for(lambda e: e.get("session_id") == bob_sid)
-    stream[ADMIN].wait_for(lambda e: e.get("session_id") == bob_sid and e.get("profile") == BOB)
-
-    _rename(clients[ADMIN], admin_sid, "Admin's plan")
-    stream[ADMIN].wait_for(lambda e: e.get("session_id") == admin_sid)
 
     _rename(clients[ALICE], alice_sid, "Alice's plan")
     stream[ALICE].wait_for(lambda e: e.get("session_id") == alice_sid)
-    stream[ADMIN].wait_for(lambda e: e.get("session_id") == alice_sid)
 
     # A nudge that names no Profile and no session still reaches everyone.
     publish_session_list_changed("attention_pending")
-    for uid in (ALICE, BOB, ADMIN):
+    for uid in (ALICE, BOB):
         stream[uid].wait_for(lambda e: e.get("reason") == "attention_pending")
 
     leaked = [e for e in stream[ALICE].events
-              if _names(e, BOB) or _names(e, bob_sid) or _names(e, admin_sid)]
+              if _names(e, BOB) or _names(e, bob_sid)]
     assert leaked == []
     assert not [e for e in stream[BOB].events if _names(e, ALICE) or _names(e, alice_sid)]
 
@@ -146,10 +138,10 @@ def test_a_users_events_stream_drops_an_event_about_a_session_they_do_not_own(st
     stream[BOB].wait_for(lambda e: e.get("session_id") == bob_sid)
 
     # Named with Alice's Profile, but the session is Bob's; and an id nobody owns.
+    # Events reach each stream in the order published: once Alice has the
+    # nudge published after them, she would have had these too.
     publish_session_list_changed("session_rename", profile=ALICE, session_id=bob_sid)
-    stream[ADMIN].wait_for(lambda e: e.get("session_id") == bob_sid and e.get("profile") == ALICE)
     publish_session_list_changed("session_rename", session_id="no-such-session")
-    stream[ADMIN].wait_for(lambda e: e.get("session_id") == "no-such-session")
     publish_session_list_changed("attention_pending")
     stream[ALICE].wait_for(lambda e: e.get("reason") == "attention_pending")
 
@@ -304,37 +296,6 @@ def test_a_user_reads_and_answers_their_own_approvals_and_questions(pending, kin
     assert _clarify_ids(sid) == []
 
 
-@pytest.mark.parametrize("kind", ["alice-gateway", "bob-gateway", "bob-cli"])
-def test_the_admin_reads_and_answers_any_profiles_state_session_as_today(srv, pending, kind):
-    # A session with no WebUI record is not placed for the Admin: today's pass-through.
-    _alice, _bob, sids, items = pending
-    admin = srv.logged_in(ADMIN)
-    sid = sids[kind]
-    approval_id, clarify_id = items[kind]
-    status, body, _ = admin.get(f"/api/approval/pending?session_id={sid}")
-    assert status == 200 and body["pending"]["approval_id"] == approval_id, body
-    status, body, _ = admin.post("/api/approval/respond", {"session_id": sid, "approval_id": approval_id,
-                                                           "choice": "deny"})
-    assert status == 200, body
-    assert _approval_ids(sid) == []
-    status, body, _ = admin.get(f"/api/clarify/pending?session_id={sid}")
-    assert status == 200 and body["pending"]["clarify_id"] == clarify_id, body
-    status, body, _ = admin.post("/api/clarify/respond", {"session_id": sid, "clarify_id": clarify_id,
-                                                          "response": "a"})
-    assert status == 200, body
-    assert _clarify_ids(sid) == []
-
-
-def test_the_admin_reads_another_profiles_pending_approvals_in_place(srv, pending):
-    """The Admin stays in default and reads another Profile's session read-only
-    (request-profile ticket 04): no 409 asking to switch."""
-    _alice, _bob, sids, items = pending
-    admin = srv.logged_in(ADMIN)
-    status, body, _ = admin.get(f"/api/approval/pending?session_id={sids['bob-webui']}")
-    assert status == 200, body
-    assert body.get("code") != "session_profile_mismatch"
-
-
 # ── Ticket 03: sessions that belong to no Profile ────────────────────────────
 
 CLAUDE_CODE_TEXT = "the server account's private Claude Code history"
@@ -352,13 +313,13 @@ def claude_code(srv, tmp_path, monkeypatch):
         {"timestamp": "2026-09-01T12:00:02Z", "message": {"role": "assistant", "content": "ok"}},
     ]) + "\n")
     monkeypatch.setenv("HERMES_WEBUI_CLAUDE_PROJECTS_DIR", str(projects))
-    admin = srv.logged_in(ADMIN)
-    status, body, _ = admin.post("/api/settings", {"show_cli_sessions": True,
+    alice = srv.logged_in(ALICE)
+    status, body, _ = alice.post("/api/settings", {"show_cli_sessions": True,
                                                    "show_claude_code_sessions": True})
     assert status == 200, body
     from api.models import _claude_code_session_id, clear_cli_sessions_cache
     clear_cli_sessions_cache()
-    return admin, _claude_code_session_id(transcript)
+    return alice, _claude_code_session_id(transcript)
 
 
 def _listed_ids(client) -> set[str]:
@@ -368,8 +329,7 @@ def _listed_ids(client) -> set[str]:
 
 
 def test_a_user_is_not_shown_or_given_claude_code_sessions(srv, claude_code):
-    _admin, cc_sid = claude_code
-    alice = srv.logged_in(ALICE)
+    alice, cc_sid = claude_code
     status, body, _ = alice.get("/api/sessions")
     assert status == 200, body
     assert not [row for row in body["sessions"] if row.get("source_tag") == "claude_code"]
@@ -385,14 +345,6 @@ def test_a_user_is_not_shown_or_given_claude_code_sessions(srv, claude_code):
     assert status == 404, body
     assert CLAUDE_CODE_TEXT not in json.dumps(body)
     assert cc_sid not in _listed_ids(alice)
-
-
-def test_the_admin_still_sees_and_opens_claude_code_sessions(srv, claude_code):
-    admin, cc_sid = claude_code
-    assert cc_sid in _listed_ids(admin)
-    status, body, _ = admin.get(f"/api/session?session_id={cc_sid}")
-    assert status == 200, body
-    assert CLAUDE_CODE_TEXT in json.dumps(body)
 
 
 def test_a_users_own_cli_sessions_still_show(srv, claude_code):

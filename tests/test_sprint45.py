@@ -12,18 +12,16 @@ import pathlib
 import urllib.error
 import urllib.request
 
-import os
 
-from tests._pytest_port import BASE, TEST_STATE_DIR
+from tests._pytest_port import BASE
 REPO = pathlib.Path(__file__).parent.parent
 # Use HERMES_WEBUI_TEST_STATE_DIR if available (set by conftest for the test process),
 # falling back to the shared isolated TEST_STATE_DIR (temp-rooted, never ~/.hermes).
 def _get_settings_file() -> pathlib.Path:
-    """Resolve SETTINGS_FILE at call time (env var set by conftest after module import)."""
-    state_dir = pathlib.Path(
-        os.environ.get("HERMES_WEBUI_TEST_STATE_DIR", str(TEST_STATE_DIR))
-    )
-    return state_dir / "settings.json"
+    """The test User's own settings file: the server's requests are theirs (ADR 0006)."""
+    from tests._pytest_port import TEST_USER_SETTINGS_FILE
+
+    return TEST_USER_SETTINGS_FILE
 
 
 def get(path, headers=None):
@@ -74,7 +72,6 @@ def test_legacy_assistant_language_is_hidden_and_removed_on_next_save():
                 {
                     "assistant_language": "zh",
                     "send_key": "enter",
-                    "onboarding_completed": False,
                 },
                 ensure_ascii=False,
                 indent=2,

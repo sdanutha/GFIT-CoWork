@@ -242,11 +242,10 @@ def test_passive_background_polls_suppress_timeout_toasts():
     assert "const sessionRequestOpts={" in sessions
     assert "timeoutToast:false" in sessions
     assert "api('/api/sessions' + sessionListQS,sessionRequestOpts)" in sessions
-    assert "api('/api/projects' + projectQS,{timeoutToast:false})" in sessions
+    assert "api('/api/projects',{timeoutToast:false})" in sessions
     assert "api(`/api/session?session_id=${encodeURIComponent(sid)}&messages=0&resolve_model=0`,{timeoutToast:false})" in sessions
     assert 'api("/api/approval/pending?session_id=" + encodeURIComponent(sid),{timeoutToast:false})' in messages
     assert 'api("/api/clarify/pending?session_id=" + encodeURIComponent(sid),{timeoutToast:false})' in messages
-    assert "api('/api/dashboard/status',{timeoutToast:false})" in ui
     assert "api('/api/system/health',{timeoutToast:false})" in ui
     assert "api('/api/health/agent',{timeoutToast:false})" in ui
     assert "api(`/api/crons/status?job_id=${encodeURIComponent(jobId)}`,{timeoutToast:false})" in panels

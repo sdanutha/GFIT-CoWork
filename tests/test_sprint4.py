@@ -1,7 +1,7 @@
 """Sprint 4 tests: relocation, session rename, search, file ops, validation."""
 import json, pathlib, uuid, urllib.request, urllib.error
 
-from tests._pytest_port import BASE
+from tests._pytest_port import BASE, new_session_id
 
 def get(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:
@@ -63,7 +63,7 @@ def test_session_rename_truncates(cleanup_test_sessions):
     assert status == 200 and len(result["session"]["title"]) <= 80
 
 def test_session_rename_requires_fields():
-    result, status = post("/api/session/rename", {"session_id": "x"})
+    result, status = post("/api/session/rename", {"session_id": new_session_id()})
     assert status == 400
     result2, status2 = post("/api/session/rename", {"title": "hi"})
     assert status2 == 400
