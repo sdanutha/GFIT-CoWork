@@ -186,36 +186,53 @@ class TestSeedFailureIsBestEffort:
         assert 'path' in result
 
 
+_ABSENT = object()
+
+
 class TestHermesCliUnavailableFallbackDoesNotCrash:
     def test_fallback_create_still_produces_profile_dict(self, fake_hermes_home):
-        # Simulate hermes_cli being present but create_profile raising ImportError
-        # (e.g. in a Docker/standalone environment where the profiles sub-module
-        # fails to load). This exercises the _create_profile_fallback path and
-        # confirms the new seed block does not interfere with it.
-        #
-        # We cannot permanently delete hermes_cli.profiles from sys.modules (it
-        # may be needed by other tests in this process), so we raise ImportError
-        # at the call site by temporarily replacing create_profile on the real
-        # module with a function that raises ImportError.
-
-        real_mod = sys.modules.get('hermes_cli.profiles')
-        if real_mod is None:
-            # hermes_cli.profiles was already cleaned up by a prior test in this
-            # process — skip rather than failing with a confusing assertion.
-            pytest.skip('hermes_cli.profiles not in sys.modules (cleaned up by prior test)')
-
-        orig_create = real_mod.create_profile
-        real_mod.create_profile = MagicMock(side_effect=ImportError('hermes_cli profiles unavailable'))
+        # hermes_cli.profiles cannot be imported (a WebUI without Hermes Agent's
+        # create): the _create_profile_fallback path runs, and the seed block
+        # does not interfere with it. Ticket 14: the fallback is for a missing
+        # capability only; an ImportError raised inside Hermes's create fails the
+        # create instead (see test_an_import_error_inside_hermes_create_fails below).
+        saved = sys.modules.get('hermes_cli.profiles', _ABSENT)
+        sys.modules['hermes_cli.profiles'] = None  # `from hermes_cli.profiles import …` raises ImportError
         try:
             with patch.object(profiles_mod, 'list_profiles_api', return_value=[]):
                 result = profiles_mod.create_profile_api('isolatedprofile')
         finally:
-            real_mod.create_profile = orig_create
+            if saved is _ABSENT:
+                sys.modules.pop('hermes_cli.profiles', None)
+            else:
+                sys.modules['hermes_cli.profiles'] = saved
 
         # Fallback path must have created the profile and returned a dict.
         assert result['name'] == 'isolatedprofile'
         expected_path = _isolated_profiles_root(fake_hermes_home) / 'isolatedprofile'
         assert Path(result['path']) == expected_path
+
+    def test_an_import_error_inside_hermes_create_fails(self, fake_hermes_home):
+        # Hermes's create is importable but raises ImportError from inside: that is
+        # a Hermes failure, not a missing capability (ticket 14). No fallback.
+        import types
+
+        fake = types.ModuleType('hermes_cli.profiles')
+        fake.create_profile = MagicMock(side_effect=ImportError('hermes_cli profiles unavailable'))
+        saved = sys.modules.get('hermes_cli.profiles', _ABSENT)
+        sys.modules['hermes_cli.profiles'] = fake
+        try:
+            with patch.object(profiles_mod, '_create_profile_fallback') as fallback, \
+                 patch.object(profiles_mod, 'list_profiles_api', return_value=[]):
+                with pytest.raises(RuntimeError, match='Hermes Agent could not create'):
+                    profiles_mod.create_profile_api('isolatedprofile')
+            fallback.assert_not_called()
+        finally:
+            if saved is _ABSENT:
+                sys.modules.pop('hermes_cli.profiles', None)
+            else:
+                sys.modules['hermes_cli.profiles'] = saved
+        assert not (_isolated_profiles_root(fake_hermes_home) / 'isolatedprofile').exists()
 
     def test_seed_unavailable_logs_debug_without_crashing(self, fake_hermes_home, caplog):
         import logging as std_logging
