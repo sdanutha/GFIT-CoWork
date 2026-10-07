@@ -11,6 +11,7 @@ import contextlib
 import http.client
 import http.cookies
 import json
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,7 +150,11 @@ def gfit_server(monkeypatch, tmp_path, *, users: dict, profile_names=(), directo
     login._login_attempts.clear()
     roster_watch.reset()
 
-    # Profiles live under an isolated Hermes home.
+    # Profiles live under an isolated Hermes home, created and deleted by the
+    # WebUI's own fallback: the same path on every machine, whether or not a
+    # Hermes Agent is installed beside the checkout (CI has none). A test of
+    # Hermes's own delete path stands in a module for it (ticket 13).
+    monkeypatch.setitem(sys.modules, "hermes_cli.profiles", None)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes_home)
     profiles._invalidate_root_profile_cache()

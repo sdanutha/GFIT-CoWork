@@ -2727,11 +2727,26 @@ def delete_profile_api(name: str) -> dict:
         raise ValueError("Cannot delete the default profile.")
     _validate_profile_name(name)
 
+    # The fallback is for a missing capability only (ticket 13): the try covers
+    # the import alone. Once Hermes's delete runs, any error from it, an
+    # ImportError raised inside it included, fails the delete; nothing here
+    # removes the directory instead. Hermes's delete is not atomic: it may
+    # have stopped the Profile's gateway or written its tombstone before it
+    # raised, and the Operator runs the delete again once the cause is fixed.
     try:
         from hermes_cli.profiles import delete_profile
-        delete_profile(name, yes=True)
     except ImportError:
-        # Manual fallback: just remove the directory
+        delete_profile = None
+    if delete_profile is not None:
+        try:
+            delete_profile(name, yes=True)
+        except ImportError as exc:
+            raise RuntimeError(
+                f"Hermes Agent could not delete Profile '{name}': {exc}. GFIT-CoWork did not remove "
+                "its files; fix the Hermes Agent installation and run the delete again."
+            ) from exc
+    else:
+        # Manual fallback (Hermes Agent's delete is not installed): remove the directory.
         import shutil
         profile_dir = _resolve_named_profile_home(name)
         if profile_dir.is_dir():
