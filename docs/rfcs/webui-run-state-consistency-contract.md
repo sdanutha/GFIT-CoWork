@@ -93,6 +93,25 @@ parent's workspace binding. Clients without this handling must reload the
 session before retrying. Server wakeups, regeneration semantics and Gateway
 routing are not silently retargeted by this recovery path.
 
+A send requires a trustworthy determination that the session is not a sealed
+parent. A missing capability keeps legacy sidecar behavior: a profile with no
+`state.db`, or an older Agent without the read-only lineage read API. When
+that read is present but fails (an older `state.db` the Agent's read-only open
+cannot use before a writer migrates it, a broken install, a SQLite or OS
+error, a malformed row), the WebUI may use a minimal read-only
+seal-state compatibility probe of that same `state.db`: it reads only whether
+the session's row records Hermes's compression seal, and it never creates,
+migrates or writes the database. A sealed row refuses the send with no
+continuation; an unsealed row, or no row, lets it through as the Agent's read
+would. If neither read can establish a safe state, `POST /api/chat/start`
+returns the same 409 `session_rotated` with `continuation_session_id: null`,
+before any workspace, model, pending-turn or worker mutation. The probe is not
+an authorization check: session ownership and not-found handling run before
+it, unchanged. Responses carry no exception, path or database detail; the
+server logs each failed read as a warning. The browser shows the error and
+restores the draft. The read-only `GET /api/session` hint is unchanged and
+keeps its sidecar fallback.
+
 ## Goals
 
 - Define the state layers involved in active and recovered WebUI turns.

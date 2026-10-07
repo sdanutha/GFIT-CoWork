@@ -9823,9 +9823,14 @@ def _pre_compression_continuation_session_id(session) -> str | None:
     exists either in memory or on disk. Follow bounded snapshot-to-snapshot hops
     so repeated compression still lands on the latest visible continuation.
     """
-    from api.compression_continuation import durable_compression_continuation
+    from api.compression_continuation import LineageUnreadable, durable_compression_continuation
 
-    sealed, tip = durable_compression_continuation(session)
+    # A read-only hint: a failed lineage read keeps the sidecar recovery below,
+    # as before. The send path refuses instead (_handle_chat_start).
+    try:
+        sealed, tip = durable_compression_continuation(session)
+    except LineageUnreadable:
+        sealed, tip = False, None
     if sealed:
         return tip
     if not getattr(session, "pre_compression_snapshot", False):
@@ -22068,6 +22073,15 @@ def _is_silent_control_message(message) -> bool:
     return str(message or "").strip() == "[SILENT]"
 
 
+def _session_rotated(handler, error, continuation):
+    """409 session_rotated: the send is refused before any mutation of the session."""
+    return j(handler, {
+        "error": error,
+        "code": "session_rotated",
+        "continuation_session_id": continuation,
+    }, status=409)
+
+
 def _handle_chat_start(handler, body, diag=None):
     try:
         diag.stage("validate_session_id") if diag else None
@@ -22181,14 +22195,18 @@ def _handle_chat_start(handler, body, diag=None):
             return _refusal.answer(handler, body.get("session_id", ""))
         # Resolve durable rotations before any workspace/model/pending mutation.
         # GET navigation adopts the tip; POST never silently replays a user turn.
-        from api.compression_continuation import durable_compression_continuation
-        sealed, continuation = durable_compression_continuation(s)
+        # A send needs a trustworthy "not sealed": when no lineage read can
+        # establish it, the send is refused as for a sealed parent with no
+        # continuation.
+        from api.compression_continuation import LineageUnreadable, compression_state_for_send
+        try:
+            sealed, continuation = compression_state_for_send(s)
+        except LineageUnreadable:
+            return _session_rotated(
+                handler, "This session's compression state could not be checked. Reload it and send again.", None)
         if sealed:
-            return j(handler, {
-                "error": "This session was compressed. Open its continuation before sending.",
-                "code": "session_rotated",
-                "continuation_session_id": continuation,
-            }, status=409)
+            return _session_rotated(
+                handler, "This session was compressed. Open its continuation before sending.", continuation)
         regeneration = None
         if body.get("regenerate") is True:
             if any(key in body for key in ("message", "attachments", "keep_count", "prompt", "prompt_index")):
