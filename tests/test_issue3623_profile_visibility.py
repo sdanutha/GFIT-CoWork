@@ -56,6 +56,7 @@ def test_profile_yaml_visible_false_is_exposed_as_hidden(monkeypatch, tmp_path):
     (string_false / "profile.yaml").write_text('visible: "false"\n', encoding="utf-8")
 
     rows = [
+        _profile_row("default", tmp_path, is_default=True),
         _profile_row("worker-coder", hidden),
         _profile_row("human", visible),
         _profile_row("missing-meta", missing),
@@ -63,12 +64,15 @@ def test_profile_yaml_visible_false_is_exposed_as_hidden(monkeypatch, tmp_path):
         _profile_row("string-false", string_false),
     ]
     _install_fake_hermes_profiles(monkeypatch, rows)
+    # Hermes lists the same Profile directories the WebUI reads (its inventory).
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", tmp_path)
     monkeypatch.setattr(profiles, "_get_profile_skills_stats", lambda _path: (0, 0))
     monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "human")
 
     result = {row["name"]: row["visible"] for row in profiles.list_profiles_api()}
 
     assert result == {
+        "default": True,
         "worker-coder": False,
         "human": True,
         "missing-meta": True,

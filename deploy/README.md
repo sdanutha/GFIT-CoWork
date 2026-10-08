@@ -159,7 +159,11 @@ gfit() { docker compose exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin
 2. Tell them the URL. They log in with their employee ID (`600001`,
    `GFIT\600001` or `600001@gfit.co.th` all work) and their AD password.
 
-`gfit list` shows every Profile with its status and last login.
+`gfit list` shows every Profile with its status and last login. It lists
+the Profile directories, so a broken Hermes Agent install does not hide
+anyone: it prints a `warning:` line naming the problem and lists them
+anyway. If the Profile directories themselves cannot be read, it says so and
+exits with status 1 instead of showing an empty list.
 
 To shut someone out, **disable** their Profile: `gfit disable 600001`. Their
 scheduled jobs pause at once, and within a few seconds the server ends their

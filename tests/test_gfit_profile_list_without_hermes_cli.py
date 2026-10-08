@@ -27,5 +27,5 @@ def test_named_profiles_are_listed_when_hermes_cli_cannot_be_imported(monkeypatc
     assert [r["name"] for r in rows] == ["default", "600001", "600002"]
     first = rows[1]
     assert (first["model"], first["provider"]) == ("some-model", "some-provider")
-    assert first["gateway_running"] is False
+    assert first["gateway_running"] is None  # not probed: unknown, not "not running"
     assert rows[2]["model"] is None
