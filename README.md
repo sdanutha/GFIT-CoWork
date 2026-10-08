@@ -91,8 +91,10 @@ python3 -m api.operator_cli sessions-cleanup [--empty]             # quiet time;
 ```
 
 A Profile is named after the person's employee ID. `--clone-from default`
-copies the `default` Profile's config, `.env` (the provider key) and skills, so
-the new Profile can use the Team's model right away. **Disable** keeps the
+copies the `default` Profile's config, skills and, from its `.env`, only the
+provider keys, so the new Profile can use the Team's model right away. The
+`default` Profile's `.env` is readable by every User's agent: keep secrets
+Users must not see out of it (see [docs/onboarding.md](docs/onboarding.md)). **Disable** keeps the
 data: the command line pauses the Profile's scheduled jobs, and the running
 server notices within seconds, signs the person out and stops their running
 turns; later logins are told their access is suspended. **Enable** lets them

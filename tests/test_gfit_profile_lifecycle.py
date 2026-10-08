@@ -86,6 +86,37 @@ def test_the_built_in_default_profile_cannot_be_created(srv, capsys):
     assert "display_name" not in _records(srv).get("default", {})
 
 
+def test_a_clone_from_default_copies_only_the_provider_credentials_of_its_env(srv):
+    # Ticket 12: the Deployment's .env is shared configuration every User's agent
+    # can read through the process env; a clone must not also hand each User a
+    # private copy of its other secrets. It keeps the credential names a User's
+    # scope masks (provider keys, the Agent's registry, the clone's custom
+    # providers), which the User's agent can reach only through their own .env.
+    (srv.hermes_home / "config.yaml").write_text(
+        "custom_providers:\n- name: team\n  base_url: https://llm.example\n  key_env: TEAM_LLM_KEY\n",
+        encoding="utf-8",
+    )
+    (srv.hermes_home / ".env").write_text(
+        "# Deployment settings\n"
+        "OPENROUTER_API_KEY=sk-or-deployment\n"
+        "export ANTHROPIC_API_KEY='sk-ant-deployment'\n"
+        "TEAM_LLM_KEY=team-key\n"
+        "TAVILY_API_KEY=tvly-deployment-secret\n"
+        "DATABASE_URL=postgres://ops:hunter2@db/app\n",
+        encoding="utf-8",
+    )
+
+    assert cli("create", NEWCOMER, "--clone-from", "default") == 0
+
+    cloned = (srv.profile_home(NEWCOMER) / ".env").read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY=sk-or-deployment" in cloned
+    assert "export ANTHROPIC_API_KEY='sk-ant-deployment'" in cloned
+    assert "TEAM_LLM_KEY=team-key" in cloned
+    assert "tvly-deployment-secret" not in cloned
+    assert "hunter2" not in cloned
+    assert roster.view(NEWCOMER)["status"] == "active"
+
+
 @pytest.mark.parametrize("clone_from", ["Bad Name!", "../etc", "-leading-dash", "x" * 65])
 def test_a_clone_from_name_that_breaks_the_profile_name_rule_is_refused(srv, capsys, clone_from):
     assert cli("create", NEWCOMER, "--display-name", "Somsri J.", f"--clone-from={clone_from}") == 1

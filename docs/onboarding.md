@@ -79,10 +79,20 @@ provider or model. They write the provider key to the Profile's `.env` and the
 default model to its `config.yaml`.
 
 Set them up in the `default` Profile first. `operator_cli create … --clone-from
-default` then copies the `default` Profile's `config.yaml`, `.env` and skills
-into the new User's Profile, so it works from the first login. A Profile
-created without `--clone-from` has no provider key until the Operator gives it
-one (`hermes -p <employee ID> model`).
+default` then copies the `default` Profile's `config.yaml` and skills into the
+new User's Profile, and from its `.env` only the provider credentials (the
+provider keys and the keys of `custom_providers`), so it works from the first
+login. A Profile created without `--clone-from` has no provider key until the
+Operator gives it one (`hermes -p <employee ID> model`).
+
+The `default` Profile's `.env` is the Deployment's: the server loads it at
+startup, so **every User's agent can read it** (ADR 0002: Users in one
+Deployment trust one another, and every agent runs as the same OS user). The
+provider keys in it are used on the Users' behalf; any other value there (tool
+and integration tokens, database URLs) is visible to every User. Put no secret
+there that a User must not see. A secret for one User goes in that User's own
+Profile: `hermes -p <employee ID> …`. A User may also use the Deployment's
+provider logins (the `default` Profile's credential pool and OAuth logins).
 
 Use `-p <employee ID>` for one command rather than `hermes profile use <employee
 ID>`. The server ignores Hermes's sticky active profile and always runs as the

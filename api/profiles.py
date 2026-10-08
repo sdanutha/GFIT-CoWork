@@ -2406,8 +2406,8 @@ def _create_profile_fallback(name: str, clone_from: str = None,
     for subdir in _PROFILE_DIRS:
         (profile_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Clone config files from source profile if requested
-    if clone_config and clone_from:
+    # Clone config files from the source profile, as Hermes's create does for clone_from alone.
+    if clone_from:
         if _is_root_profile(clone_from):
             source_dir = _DEFAULT_HERMES_HOME
         else:
@@ -2419,6 +2419,31 @@ def _create_profile_fallback(name: str, clone_from: str = None,
                     shutil.copy2(src, profile_dir / filename)
 
     return profile_dir
+
+
+_ENV_LINE_NAME = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _keep_only_credentials_in_cloned_env(profile_path: Path) -> None:
+    """Drop every line of a cloned ``.env`` except the credentials a User's scope masks (ticket 12).
+
+    The source's ``.env`` is usually the Deployment's, which every User's agent
+    already reads through the process env; a clone must not also give each User
+    a private copy of its other secrets. The names kept are the ones
+    ``_profile_secret_env_names`` removes from a User's scope (provider keys,
+    the Agent's registry, the clone's own custom providers), which the User's
+    agent can reach only through their own ``.env``. A failed rewrite raises,
+    so the Operator's create leaves the Profile disabled.
+    """
+    env_path = profile_path / '.env'
+    if not env_path.is_file():
+        return
+    keep = _profile_secret_env_names(profile_path)
+    lines = env_path.read_text(encoding='utf-8').splitlines(keepends=True)
+    kept = [line for line in lines
+            if (match := _ENV_LINE_NAME.match(line)) and match.group(1) in keep]
+    if kept != lines:
+        _atomic_write_text(env_path, ''.join(kept), encoding='utf-8')
 
 
 # Provider → .env variable name mapping.
@@ -2778,6 +2803,8 @@ def create_profile_api(name: str, clone_from: str = None,
             break
 
     profile_path.mkdir(parents=True, exist_ok=True)
+    if clone_from is not None:
+        _keep_only_credentials_in_cloned_env(profile_path)
 
     # Seed bundled skills for non-cloned profiles (#2305).
     # Cloned profiles should preserve the clone-source behaviour and must not
