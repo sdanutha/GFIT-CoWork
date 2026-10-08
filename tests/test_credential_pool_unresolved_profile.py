@@ -141,12 +141,13 @@ def test_an_unresolved_profile_does_not_fall_back_to_the_process_default(profile
     assert profile["loads"] == []
 
 
-def test_an_unresolved_read_only_scope_does_not_read_the_process_default(profile):
+def test_a_read_only_scope_calls_no_agent_reader_resolved_or_not(profile):
+    # A resolved read-only scope reads the Profile's own auth.json (ticket 16; here none exists).
     config._thread_ctx.block_process_env_fallback = True
-    assert _labels() == ["a"]  # a resolved read-only scope reads its Profile
+    assert _labels() == []
     profile["path"] = None
     assert _labels() == []
-    assert profile["raw_reads"] == [A]
+    assert profile["raw_reads"] == [] and profile["loads"] == []
 
 
 def test_a_profile_switch_through_an_unresolved_scope_reuses_nothing(profile):
@@ -156,7 +157,6 @@ def test_a_profile_switch_through_an_unresolved_scope_reuses_nothing(profile):
     assert config._custom_provider_pool_credentials(PROVIDER) == ("", "")
     profile["path"] = B
     assert _labels() == ["b"]
-    assert config._custom_provider_pool_credentials(PROVIDER) == (f"{SECRET}-b", "https://b.example/v1")
     assert ("", PROVIDER) not in config._CREDENTIAL_POOL_CACHE
 
 
@@ -246,13 +246,18 @@ def deployment(tmp_path, monkeypatch):
     profiles._invalidate_root_profile_cache()
 
 
-def test_a_users_own_profile_is_read_and_cached_under_it(deployment, monkeypatch):
+def test_a_users_own_profile_is_read_from_its_own_auth_json(deployment, monkeypatch):
+    """A User's Profile is named: its own auth.json is read as it is, never load_pool (ticket 16)."""
+    import json
+
     from api.access import ROLE_USER, Admitted
 
     hermes, loads = deployment
+    (hermes / "profiles" / "521740" / "auth.json").write_text(json.dumps(
+        {"credential_pool": {PROVIDER: [{"source": "manual", "label": "own", "access_token": "k"}]}}))
     _served(monkeypatch, Admitted(ROLE_USER, "521740"), "521740")
-    assert _labels() == ["default"]  # the stub's pool; the point is the key
-    assert set(config._CREDENTIAL_POOL_CACHE) == {(str(hermes / "profiles" / "521740" / "auth.json"), PROVIDER)}
+    assert _labels() == ["own"]
+    assert loads == [] and config._CREDENTIAL_POOL_CACHE == {}
 
 
 @pytest.mark.parametrize("admission,profile_name", [

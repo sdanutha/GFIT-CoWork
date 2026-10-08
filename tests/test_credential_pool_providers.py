@@ -113,6 +113,12 @@ def _call_get_available_models(
         config.invalidate_models_cache()
 
 
+def _pool_in_auth_json(monkeypatch, tmp_path, pool_data):
+    """The Profile's auth.json holds *pool_data*: discovery reads it there (ticket 16), not via load_pool."""
+    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data=pool_data)
+    (tmp_path / "auth.json").write_text(json.dumps({"version": 1, "credential_pool": pool_data}), encoding="utf-8")
+
+
 def _group_by_provider(result):
     return {g["provider"]: g["models"] for g in result.get("groups", [])}
 
@@ -694,7 +700,7 @@ def test_ambient_key_source_not_detectable_by_provider_has_key(monkeypatch, tmp_
 
 def test_custom_provider_explicit_credential_detected_by_provider_has_key(monkeypatch, tmp_path):
     """Positive: custom:bothub with explicit manual entry must show _provider_has_key=True."""
-    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data={
+    _pool_in_auth_json(monkeypatch, tmp_path, {
         "custom:bothub": [
             {
                 "id": "bothub-1",
@@ -832,7 +838,7 @@ def test_get_provider_api_key_falls_back_to_access_token(monkeypatch, tmp_path):
 
 def test_has_explicit_pool_credentials_ambient_only_is_false(monkeypatch, tmp_path):
     """_has_explicit_pool_credentials must return False when only ambient entries exist."""
-    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data={
+    _pool_in_auth_json(monkeypatch, tmp_path, {
         "copilot": [
             {"id": "u-amb-1", "label": "gh auth token", "source": "gh_cli", "auth_type": "api_key"},
         ],
@@ -847,7 +853,7 @@ def test_has_explicit_pool_credentials_ambient_only_is_false(monkeypatch, tmp_pa
 
 def test_has_explicit_pool_credentials_explicit_is_true(monkeypatch, tmp_path):
     """_has_explicit_pool_credentials must return True when at least one explicit entry exists."""
-    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data={
+    _pool_in_auth_json(monkeypatch, tmp_path, {
         "custom:bothub": [
             {
                 "id": "u-exp-1", "label": "bothub-key", "source": "manual",
@@ -866,7 +872,7 @@ def test_has_explicit_pool_credentials_explicit_is_true(monkeypatch, tmp_path):
 
 def test_has_explicit_pool_credentials_mixed_is_true(monkeypatch, tmp_path):
     """_has_explicit_pool_credentials must return True when both ambient and explicit entries exist."""
-    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data={
+    _pool_in_auth_json(monkeypatch, tmp_path, {
         "copilot": [
             {"id": "u-mix-amb", "label": "gh auth token", "source": "gh_cli", "auth_type": "api_key"},
             {
@@ -886,7 +892,7 @@ def test_has_explicit_pool_credentials_mixed_is_true(monkeypatch, tmp_path):
 
 def test_has_explicit_pool_credentials_resolves_alias(monkeypatch, tmp_path):
     """_has_explicit_pool_credentials must resolve provider aliases (google -> gemini)."""
-    _install_fake_hermes_cli(monkeypatch, with_load_pool=True, pool_data={
+    _pool_in_auth_json(monkeypatch, tmp_path, {
         # Pool data is stored under canonical ID 'gemini' after alias resolution
         "gemini": [
             {
@@ -911,7 +917,7 @@ def test_has_explicit_pool_credentials_resolves_alias(monkeypatch, tmp_path):
 
 
 def test_has_explicit_pool_credentials_import_error_is_false(monkeypatch, tmp_path):
-    """_has_explicit_pool_credentials must return False when load_pool not available."""
+    """No pool in the Profile's auth.json: False, with or without the Agent's load_pool."""
     _install_fake_hermes_cli(monkeypatch)  # no with_load_pool — agent.credential_pool is removed
     monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
     config._CREDENTIAL_POOL_CACHE.clear()
