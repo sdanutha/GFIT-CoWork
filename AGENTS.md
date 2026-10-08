@@ -99,6 +99,11 @@ Follow that checklist's safety rules:
   the WebUI sidecar has no snapshot flag. Never reopen a sealed parent. Reject
   stale chat POSTs before workspace/model/pending-state mutation; the browser
   loads the continuation and preserves the draft without automatic replay.
+  A send requires a trustworthy determination that the session is not
+  sealed: when the Agent's lineage read fails, only the minimal read-only
+  seal-state probe may establish it; if neither can, the POST is refused
+  (409 `session_rotated`, null continuation). A missing read capability keeps
+  legacy behavior.
   Explicit closures and unknown terminal reasons do not authorize a redirect.
 - For Docker build changes in `docker_init.bash`, mirror directory exclusions
   in both the `rsync` and `cp -a` paths — `/opt/hermes` may contain subdirectories
