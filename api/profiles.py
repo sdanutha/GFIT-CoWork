@@ -2810,15 +2810,26 @@ def create_profile_api(name: str, clone_from: str = None,
     # Cloned profiles should preserve the clone-source behaviour and must not
     # receive a second bundled-skill overlay.
     if clone_from is None:
+        # The import alone degrades quietly; a broken Agent is warned (ticket 15).
         try:
             from hermes_cli.profiles import seed_profile_skills
-            seed_profile_skills(profile_path, quiet=True)
-        except ImportError:
-            logger.debug(
-                'seed_profile_skills unavailable — bundled skills not seeded '
-                'for profile %s (hermes_cli not in path)',
-                name,
-            )
+        except ImportError as exc:
+            seed_profile_skills = None
+            if exc.name in ('hermes_cli', 'hermes_cli.profiles'):
+                logger.debug(
+                    'seed_profile_skills unavailable — bundled skills not seeded '
+                    'for profile %s (hermes_cli not in path)',
+                    name,
+                )
+            else:
+                logger.warning(
+                    'Bundled skills were not seeded for profile %s: the Agent could not be '
+                    'imported (%s: %s); profile created successfully anyway',
+                    name, type(exc).__name__, exc.name,
+                )
+        try:
+            if seed_profile_skills is not None:
+                seed_profile_skills(profile_path, quiet=True)
         except Exception:
             logger.warning(
                 'Bundled skills could not be seeded for profile %s; '
