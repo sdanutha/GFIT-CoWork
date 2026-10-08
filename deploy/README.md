@@ -154,8 +154,10 @@ gfit() { docker compose exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin
 
    The display name is optional: it shows until they log in for the first
    time, and after that GFIT-CoWork takes their name from AD on every login.
-   `--clone-from default` copies the provider key and model set in `default`;
-   without it, the Profile has no key and the agent cannot answer.
+   `--clone-from default` copies the provider key and model set in `default`
+   (from its `.env`, only the provider keys); without it, the Profile has no
+   key and the agent cannot answer. Every User's agent can read the `default`
+   Profile's `.env`, so keep secrets Users must not see out of it.
 2. Tell them the URL. They log in with their employee ID (`600001`,
    `GFIT\600001` or `600001@gfit.co.th` all work) and their AD password.
 
