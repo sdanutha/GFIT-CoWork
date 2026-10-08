@@ -7640,23 +7640,40 @@ def _profile_pool_entries(provider_id: str) -> list[dict[str, Any]]:
     nothing is read; an unreadable file is no entries, warned without its text.
     """
     _pid = _resolve_provider_alias(provider_id)
-    _tag = _credential_pool_profile_tag()
-    if not _tag:
-        logger.debug("No credential pool for provider %s: the request's Profile is unresolved", _pid)
-        return []
-    try:
-        store = json.loads(Path(_tag).read_text(encoding="utf-8-sig"))
-    except FileNotFoundError:
-        return []
-    except Exception as exc:
-        _warn_credential_read_failed("auth.json", _pid, exc)
-        return []
+    store = _profile_auth_store(_pid)
     pool = store.get("credential_pool") if isinstance(store, dict) else None
     return _explicit_pool_entries(pool.get(_pid) if isinstance(pool, dict) else None)
 
 
+def _profile_auth_store(provider_id: str) -> dict[str, Any] | None:
+    """The request Profile's own auth.json as it is on disk; None when absent, unreadable or unresolved.
+
+    The file the Profile tag names: never the Agent's ``HERMES_HOME``, never
+    the root Profile's store. Unreadable is warned (for *provider_id*) without
+    the file's text.
+    """
+    _tag = _credential_pool_profile_tag()
+    if not _tag:
+        logger.debug("No credentials for provider %s: the request's Profile is unresolved", provider_id)
+        return None
+    try:
+        store = json.loads(Path(_tag).read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        _warn_credential_read_failed("auth.json", provider_id, exc)
+        return None
+    return store if isinstance(store, dict) else None
+
+
 def _request_profile_is_root() -> bool:
-    """True when the request's Profile is the root (Deployment) Profile, whose store the Agent's own home is."""
+    """True when the request's Profile is the root (Deployment) Profile, whose store the Agent's own home is.
+
+    False when the request's Profile cannot be resolved (refused): a request
+    with no Admission is not the process's root Profile.
+    """
+    if not _credential_pool_profile_tag():
+        return False
     try:
         from api.profiles import _is_root_profile, get_active_profile_name
 
@@ -8669,6 +8686,85 @@ def _get_label_for_model(model_id: str, existing_groups: list) -> str:
     )
 
 
+# Catalogs whose Agent fetcher resolves credentials with side effects (ticket 17):
+# Nous refreshes and persists the OAuth grant (also through the root fallback and
+# the Deployment-wide shared store); Copilot takes the host's gh / ~/.copilot
+# logins and the root Profile's pool. Discovery lists them read-only, Profile-scoped.
+_PROFILE_SCOPED_CATALOGS = frozenset({"nous", "copilot", "copilot-acp"})
+_COPILOT_TOKEN_ENV_VARS = ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+
+
+def _provider_catalog_ids(provider_id: str) -> list[str]:
+    """A provider's model ids from the Agent's catalog, read-only and Profile-scoped.
+
+    ``hermes_cli.models.provider_model_ids()``, except Nous and Copilot when no
+    relay is configured: those list with the request Profile's own credentials
+    only (``_nous_catalog_ids`` / ``_copilot_catalog_ids``), so a GET never
+    refreshes, persists or borrows another Profile's or the host's credentials.
+    The root Profile keeps the Agent's Copilot catalog: the host's logins are
+    its own. ``[]`` when the Agent's catalog is not installed or fails.
+    """
+    pid = str(provider_id or "").strip().lower()
+    try:
+        import hermes_cli.models as agent_models
+    except Exception:
+        return []
+    try:
+        if pid in _PROFILE_SCOPED_CATALOGS and not agent_models._configured_relay_base_url(pid):
+            if pid == "nous":
+                return list(_nous_catalog_ids(agent_models))
+            if not _request_profile_is_root():
+                return list(_copilot_catalog_ids(agent_models))
+        return list(agent_models.provider_model_ids(pid) or [])
+    except Exception as exc:
+        logger.debug("Model catalog for %s failed (%s)", pid, type(exc).__name__)
+        return []
+
+
+def _nous_catalog_ids(agent_models) -> list[str]:
+    """Nous: the live catalog with the Profile's own unexpired invoke key, else the curated manifest.
+
+    Never ``resolve_nous_runtime_credentials()``: no refresh, quarantine,
+    shared-store merge or root fallback; the Agent refreshes at execution.
+    """
+    state = (_profile_auth_store("nous") or {}).get("providers", {})
+    state = state.get("nous") if isinstance(state, dict) else None
+    if isinstance(state, dict):
+        try:
+            from hermes_cli.auth import fetch_nous_models
+            from hermes_cli.auth_constants import NOUS_INVOKE_JWT_MIN_TTL_SECONDS as _min_ttl
+            from hermes_cli.auth_nous import _agent_key_is_usable
+
+            base_url = str(state.get("inference_base_url") or "").strip()
+            if base_url.startswith("https://") and _agent_key_is_usable(state, _min_ttl):
+                live = fetch_nous_models(api_key=state["agent_key"], inference_base_url=base_url)
+                if live:
+                    return agent_models._chat_catalog_rows(live)
+        except Exception as exc:
+            logger.debug("Live Nous catalog failed (%s); serving the curated list", type(exc).__name__)
+    return agent_models._chat_catalog_rows(agent_models.get_curated_nous_model_ids())
+
+
+def _copilot_catalog_ids(agent_models) -> list[str]:
+    """Copilot: the live catalog with the Profile's own GitHub token, else the curated list.
+
+    The token is the Profile's own pool entry (ambient gh-cli rows left out) or,
+    in the read-only Profile scope, its own environment: never the host's ``gh``
+    CLI or ``~/.copilot`` login, the process environment or the root pool.
+    """
+    tokens = [str(entry.get("access_token") or "") for entry in _profile_pool_entries("copilot")]
+    if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
+        tokens += [_thread_local_env_value(name) for name in _COPILOT_TOKEN_ENV_VARS]
+    try:
+        token = agent_models._first_exchangeable_copilot_token(t for t in tokens if t.strip())
+        live = agent_models._fetch_github_models(api_key=token) if token else None
+        if live:
+            return agent_models._chat_catalog_rows(live)
+    except Exception as exc:
+        logger.debug("Live Copilot catalog failed (%s); serving the curated list", type(exc).__name__)
+    return agent_models._chat_catalog_rows(list(agent_models._PROVIDER_MODELS.get("copilot", [])))
+
+
 def _read_live_provider_model_ids(provider_id: str) -> list[str]:
     """Return live model IDs from Hermes CLI for a provider, or [] on failure.
 
@@ -8682,10 +8778,6 @@ def _read_live_provider_model_ids(provider_id: str) -> list[str]:
     pid = str(provider_id or "").strip()
     if not pid:
         return []
-    try:
-        from hermes_cli.models import provider_model_ids as _provider_model_ids
-    except Exception:
-        return []
 
     candidates = [pid]
     try:
@@ -8697,11 +8789,7 @@ def _read_live_provider_model_ids(provider_id: str) -> list[str]:
 
     seen: set[str] = set()
     for candidate in candidates:
-        try:
-            live_ids = _provider_model_ids(candidate) or []
-        except Exception:
-            logger.debug("Failed to load %s models from hermes_cli", candidate)
-            continue
+        live_ids = _provider_catalog_ids(candidate)
         result: list[str] = []
         for mid in live_ids:
             mid_s = str(mid or "").strip()
@@ -9937,9 +10025,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                     raw_models = []
                     live_fetch_failed = False
                     try:
-                        from hermes_cli.models import provider_model_ids as _provider_model_ids
+                        import hermes_cli.models  # noqa: F401  absent -> the static fallback below
 
-                        live_ids = _provider_model_ids("nous") or []
+                        # Read-only, Profile-scoped: never a Nous refresh (ticket 17).
+                        live_ids = _provider_catalog_ids("nous")
                     except Exception:
                         logger.warning("Failed to load Nous Portal models from hermes_cli")
                         live_ids = []

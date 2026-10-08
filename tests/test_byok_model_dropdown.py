@@ -141,14 +141,15 @@ class TestLiveModelsProviderNormalization:
             r"provider\s*=\s*_resolve_provider_alias\(provider\)",
             src,
         )
+        # The catalog call goes through the Profile-scoped wrapper (ticket 17).
         pmi_call_match = re.search(
-            r"ids\s*=\s*_pmi\(provider\)",
+            r"ids\s*=\s*_provider_catalog_ids\(provider\)",
             src,
         )
         assert alias_match, "_resolve_provider_alias call not found in routes.py"
-        assert pmi_call_match, "ids = _pmi(provider) call not found"
+        assert pmi_call_match, "ids = _provider_catalog_ids(provider) call not found"
         assert alias_match.start() < pmi_call_match.start(), (
-            "alias normalization must occur before ids = _pmi(provider)"
+            "alias normalization must occur before ids = _provider_catalog_ids(provider)"
         )
 
     def test_alias_resolver_works_without_hermes_cli(self):
