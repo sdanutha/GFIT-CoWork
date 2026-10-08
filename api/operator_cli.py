@@ -103,7 +103,15 @@ def run(argv: list[str]) -> int:
 
     try:
         if args.action == "list":
-            for row in profiles.list_profiles_api():
+            warnings: list[str] = []
+            try:
+                rows = profiles.list_profiles_api(warnings=warnings)
+            except profiles.ProfileInventoryUnreadable as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            for warning in warnings:
+                print(f"warning: {warning}", file=sys.stderr)
+            for row in rows:
                 name = row.get("name") if isinstance(row, dict) else None
                 if isinstance(name, str) and not row.get("is_default"):
                     print(_row(roster.view(name)))

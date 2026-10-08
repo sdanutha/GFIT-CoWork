@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import sys
 import threading
 from contextlib import contextmanager
@@ -1978,6 +1979,156 @@ def _read_config_model_without_hermes_cli(home: Path) -> tuple:
     return None, None
 
 
+class ProfileInventoryUnreadable(RuntimeError):
+    """The Profile directories could not be read: the Profile list is not known.
+
+    Never an empty list: no directory is not the same as an unreadable one.
+    """
+
+
+class _ProfileRows(list):
+    """Profile rows; *hermes_problem* says why Hermes Agent's listing was not used, if it failed."""
+
+    hermes_problem: str | None = None
+
+
+def _profile_rows(rows, hermes_problem=None) -> _ProfileRows:
+    result = _ProfileRows(rows)
+    result.hermes_problem = hermes_problem
+    return result
+
+
+def _warn_hermes_listing_failed(cause) -> str:
+    """Log that Hermes Agent's listing was not used, and return the message for the Operator."""
+    message = (
+        f"Hermes Agent's Profile listing failed ({cause}); the Profiles were listed from the "
+        "Profile directories, without Hermes's model and gateway details. Fix the Hermes Agent "
+        "installation."
+    )
+    logger.warning("%s", message)
+    return message
+
+
+def _unreadable_error(path, exc) -> ProfileInventoryUnreadable:
+    return ProfileInventoryUnreadable(
+        f"The Profile directories could not be read ({path}: {exc}); the Profile list is not shown."
+    )
+
+
+def _profile_dir_present(path: Path) -> bool:
+    """True for a directory, False when nothing is there; raises when it cannot be told.
+
+    ``Path.is_dir()`` answers False for an unreadable path, which would make a
+    Profile disappear from the list instead of failing it.
+    """
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise _unreadable_error(path, exc) from exc
+    return stat.S_ISDIR(st.st_mode)
+
+
+def _profile_inventory(default_home, profiles_root, profile_id_re) -> list:
+    """(home, name, is_default) for each Profile directory; raises when they cannot be read."""
+    found = []
+    if _profile_dir_present(default_home):
+        # Upstream hardcodes the base home's display name to "default" even when
+        # the directory is literally ".hermes" — match that exactly.
+        found.append((default_home, 'default', True))
+    if _profile_dir_present(profiles_root):
+        try:
+            entries = sorted(profiles_root.iterdir())
+        except OSError as exc:
+            raise _unreadable_error(profiles_root, exc) from exc
+        found.extend(
+            (entry, entry.name, False) for entry in entries
+            if profile_id_re.match(entry.name) and _profile_dir_present(entry)
+        )
+    return found
+
+
+def _filesystem_profile_inventory() -> list:
+    """The Profile directories by GFIT-CoWork's own Profile paths and name rule: the inventory."""
+    return _profile_inventory(_DEFAULT_HERMES_HOME, _profiles_root(), _PROFILE_ID_RE)
+
+
+def _scan_profile_rows(inventory, read_config_model, check_gateway_running=None) -> list:
+    """One row per inventory entry. The callables only enrich the rows; no gateway
+    probe (None) leaves ``gateway_running`` unknown (None), as does a failing one."""
+    def _row(home: Path, name: str, is_default: bool) -> dict:
+        try:
+            model, provider = read_config_model(home)
+        except Exception:
+            model, provider = None, None
+        gateway_running = None
+        if check_gateway_running is not None:
+            try:
+                gateway_running = check_gateway_running(home)
+            except Exception:
+                gateway_running = None
+        try:
+            enabled_count, total_count = _get_profile_skills_stats(home)
+        except OSError as exc:
+            raise _unreadable_error(home, exc) from exc
+        return {
+            'name': name,
+            'path': str(home),
+            'is_default': is_default,
+            'is_active': False,  # filled in by caller (cheap, varies per request)
+            'gateway_running': gateway_running,
+            'model': model,
+            'provider': provider,
+            'has_env': (home / '.env').exists(),
+            'visible': _profile_visible_from_meta(home),
+            'skill_count': enabled_count,
+            'enabled_skills': enabled_count,
+            'total_skills': total_count,
+        }
+
+    return [_row(home, name, is_default) for home, name, is_default in inventory]
+
+
+def _filesystem_profile_rows(inventory=None) -> list:
+    """The rows from GFIT-CoWork's own Profile paths and name rule, with no Hermes Agent."""
+    return _scan_profile_rows(
+        _filesystem_profile_inventory() if inventory is None else inventory,
+        _read_config_model_without_hermes_cli,
+    )
+
+
+def _same_dir(a, b) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _with_unlisted_profiles(rows: list, hermes_problem=None) -> _ProfileRows:
+    """*rows* from Hermes Agent, reconciled with the Profile directories (the inventory).
+
+    A Profile directory Hermes does not list (another root or name rule, an
+    entry it could not read), or lists under another directory, gets its own
+    directory row in place of Hermes's, and the gap is reported like a failed
+    listing. Rows Hermes lists that are not Profile directories stay as they are.
+    """
+    inventory = _filesystem_profile_inventory()
+    homes = {name: home for home, name, _default in inventory}
+    kept = [row for row in rows if row.get('name') not in homes or _same_dir(row.get('path'), homes[row['name']])]
+    kept_names = {row.get('name') for row in kept}
+    unlisted = [entry for entry in inventory if entry[1] not in kept_names]
+    if not unlisted:
+        return _profile_rows(rows, hermes_problem)
+    names = ", ".join(name for _home, name, _default in unlisted)
+    message = (
+        f"Hermes Agent did not list Profile {names} at its Profile directory; it is listed from "
+        "there, without Hermes's model and gateway details. Check the Hermes Agent installation."
+    )
+    logger.warning("%s", message)
+    return _profile_rows(kept + _filesystem_profile_rows(unlisted), hermes_problem or message)
+
+
 def _build_profile_rows_fast() -> list | None:
     """Build the profile list WITHOUT the upstream alias scan.
 
@@ -1995,79 +2146,81 @@ def _build_profile_rows_fast() -> list | None:
 
     Returns ``None`` if hermes_cli imports but lacks the cheap helpers, so the
     caller falls back to upstream's (slow but correct) ``list_profiles()``.
-    When ``hermes_cli`` cannot be imported at all, the same rows are built from this
+    The Profile directories are the inventory; Hermes Agent only enriches the
+    rows. When ``hermes_cli.profiles`` is not installed, or is installed but
+    fails (on import or in its helpers), the same rows are built from this
     module's own Profile paths and name rule, with the model read straight
-    from each Profile's ``config.yaml`` and no gateway probe, so the Operator
-    command line still sees every named Profile. Forward-compatible: if upstream fixes
-    ``find_alias_for_profile`` this stays fast and correct with nothing to revert.
+    from each Profile's ``config.yaml`` and no gateway probe; a failure is
+    logged and carried as the rows' ``hermes_problem``, as is a Profile
+    directory Hermes leaves out (it is listed too). Directories that cannot be
+    read raise :class:`ProfileInventoryUnreadable`. Forward-compatible: if
+    upstream fixes ``find_alias_for_profile`` this stays fast and correct with
+    nothing to revert.
     """
     try:
-        import hermes_cli.profiles as _upstream_profiles
-    except ImportError:
-        _upstream_profiles = None
-    if _upstream_profiles is None:
-        _get_default_hermes_home = lambda: _DEFAULT_HERMES_HOME  # noqa: E731
-        _get_profiles_root = _profiles_root
-        _read_config_model = _read_config_model_without_hermes_cli
-        _check_gateway_running = lambda _home: False  # noqa: E731
-        _UPSTREAM_PROFILE_ID_RE = _PROFILE_ID_RE
-    else:
-        try:
-            from hermes_cli.profiles import (
-                _get_default_hermes_home,
-                _get_profiles_root,
-                _read_config_model,
-                _check_gateway_running,
-                _PROFILE_ID_RE as _UPSTREAM_PROFILE_ID_RE,
-            )
-        except Exception:
-            return None
+        import hermes_cli.profiles  # noqa: F401
+    except ModuleNotFoundError as exc:
+        # Hermes Agent without hermes_cli, or without its profiles module: the
+        # capability is absent. A module it imports missing is a broken install.
+        if exc.name not in ("hermes_cli", "hermes_cli.profiles"):
+            return _profile_rows(_filesystem_profile_rows(), _warn_hermes_listing_failed(exc))
+        return _profile_rows(_filesystem_profile_rows())
+    except Exception as exc:
+        return _profile_rows(_filesystem_profile_rows(), _warn_hermes_listing_failed(exc))
+    try:
+        from hermes_cli.profiles import (
+            _get_default_hermes_home,
+            _get_profiles_root,
+            _read_config_model,
+            _check_gateway_running,
+            _PROFILE_ID_RE as _UPSTREAM_PROFILE_ID_RE,
+        )
+    except Exception:
+        return None
+    try:
+        rows = _scan_profile_rows(
+            _profile_inventory(_get_default_hermes_home(), _get_profiles_root(), _UPSTREAM_PROFILE_ID_RE),
+            _read_config_model,
+            _check_gateway_running,
+        )
+    except Exception as exc:
+        # Hermes's own root unreadable included: the list fails only when the
+        # Profile directories themselves cannot be read (raised from here).
+        return _profile_rows(_filesystem_profile_rows(), _warn_hermes_listing_failed(exc))
+    return _with_unlisted_profiles(rows)
 
-    def _row(home: Path, name: str, is_default: bool) -> dict:
+
+def _upstream_list_rows() -> _ProfileRows:
+    """Rows from upstream's (slow) ``list_profiles()``; the directories when it fails."""
+    try:
+        from hermes_cli.profiles import list_profiles
+        infos = list_profiles()
+    except Exception as exc:
+        return _profile_rows(_filesystem_profile_rows(), _warn_hermes_listing_failed(exc))
+    result = []
+    for p in infos:
         try:
-            model, provider = _read_config_model(home)
-        except Exception:
-            model, provider = None, None
-        try:
-            gateway_running = _check_gateway_running(home)
-        except Exception:
-            gateway_running = False
-        enabled_count, total_count = _get_profile_skills_stats(home)
-        return {
-            'name': name,
-            'path': str(home),
-            'is_default': is_default,
-            'is_active': False,  # filled in by caller (cheap, varies per request)
-            'gateway_running': gateway_running,
-            'model': model,
-            'provider': provider,
-            'has_env': (home / '.env').exists(),
-            'visible': _profile_visible_from_meta(home),
+            enabled_count, total_count = _get_profile_skills_stats(p.path)
+        except OSError as exc:
+            raise _unreadable_error(p.path, exc) from exc
+        result.append({
+            'name': p.name,
+            'path': str(p.path),
+            'is_default': p.is_default,
+            'is_active': False,
+            'gateway_running': p.gateway_running,
+            'model': p.model,
+            'provider': p.provider,
+            'has_env': p.has_env,
+            'visible': _profile_visible_from_meta(p.path),
             'skill_count': enabled_count,
             'enabled_skills': enabled_count,
             'total_skills': total_count,
-        }
-
-    rows: list = []
-    default_home = _get_default_hermes_home()
-    if default_home.is_dir():
-        # Upstream hardcodes the base home's display name to "default" even when
-        # the directory is literally ".hermes" — match that exactly.
-        rows.append(_row(default_home, 'default', True))
-
-    profiles_root = _get_profiles_root()
-    if profiles_root.is_dir():
-        for entry in sorted(profiles_root.iterdir()):
-            if not entry.is_dir():
-                continue
-            if not _UPSTREAM_PROFILE_ID_RE.match(entry.name):
-                continue
-            rows.append(_row(entry, entry.name, False))
-
-    return rows
+        })
+    return _with_unlisted_profiles(result)
 
 
-def list_profiles_api() -> list:
+def list_profiles_api(warnings: list | None = None) -> list:
     """List all profiles with metadata, serialized for JSON response.
 
     In isolated profile mode (HERMES_HOME points to ~/.hermes/profiles/<name>),
@@ -2079,6 +2232,11 @@ def list_profiles_api() -> list:
     re-opens of the compose-footer dropdown are free; the cache is busted on
     profile create/delete. Falls back to upstream ``list_profiles()`` if the
     cheap helpers are unavailable.
+
+    The Profile directories are the inventory: when Hermes Agent's listing
+    fails, the rows come from them, and the reason is appended to *warnings*
+    (when given) and logged. Raises :class:`ProfileInventoryUnreadable` when the
+    directories cannot be read.
     """
     import time
     global _LIST_PROFILES_CACHE
@@ -2150,40 +2308,18 @@ def list_profiles_api() -> list:
                 _LIST_PROFILES_CACHE = (rows, time.time())
 
     if rows is None:
-        # Fallback: cheap helpers unavailable — use the original (slow) path,
-        # or the default-only dict if hermes_cli isn't importable at all.
+        # Fallback: cheap helpers unavailable — use the original (slow) path.
         logger.debug(
             "list_profiles_api: fast path unavailable, falling back to "
             "upstream list_profiles() (slower)"
         )
-        try:
-            from hermes_cli.profiles import list_profiles
-            infos = list_profiles()
-        except ImportError:
-            return [_default_profile_dict()]
+        rows = _upstream_list_rows()
 
-        active = get_active_profile_name()
-        result = []
-        for p in infos:
-            enabled_count, total_count = _get_profile_skills_stats(p.path)
-            result.append({
-                'name': p.name,
-                'path': str(p.path),
-                'is_default': p.is_default,
-                'is_active': p.name == active,
-                'gateway_running': p.gateway_running,
-                'model': p.model,
-                'provider': p.provider,
-                'has_env': p.has_env,
-                'visible': _profile_visible_from_meta(p.path),
-                'skill_count': enabled_count,
-                'enabled_skills': enabled_count,
-                'total_skills': total_count,
-            })
-        return result
-
+    problem = getattr(rows, "hermes_problem", None)
+    if problem and warnings is not None:
+        warnings.append(problem)
     active = get_active_profile_name()
-    return [{**p, 'is_active': p['name'] == active} for p in rows]
+    return _profile_rows([{**p, 'is_active': p['name'] == active} for p in rows], problem)
 
 
 def _profile_visible_from_meta(profile_path: Path) -> bool:
@@ -2202,7 +2338,7 @@ def _profile_visible_from_meta(profile_path: Path) -> bool:
 
 
 def _default_profile_dict() -> dict:
-    """Fallback profile dict when hermes_cli is not importable."""
+    """The default Profile's row on its own (the list builds its rows from the Profile directories)."""
     enabled_count, compatible_count = _get_profile_skills_stats(_DEFAULT_HERMES_HOME)
     return {
         'name': 'default',
@@ -2684,10 +2820,8 @@ def create_profile_api(name: str, clone_from: str = None,
     _invalidate_list_profiles_cache()
     _invalidate_root_profile_cache()
 
-    # Find and return the newly created profile info.
-    # When hermes_cli is not importable, list_profiles_api() also falls back
-    # to the stub default-only list and won't find the new profile by name.
-    # In that case, return a complete profile dict directly.
+    # Find and return the newly created profile info; the dict below covers a
+    # Profile the list does not show (an isolated-mode clamp).
     for p in list_profiles_api():
         if p['name'] == name:
             return p
