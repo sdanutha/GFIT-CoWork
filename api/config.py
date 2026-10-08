@@ -7546,6 +7546,43 @@ def _credential_pool_profile_tag() -> str:
         return ""
 
 
+# A credential-pool read that fails degrades to "no pool credentials", as a
+# missing capability does, but is logged: once per read, Profile, provider and
+# cause within the interval, never with a credential value or the error's text.
+_CREDENTIAL_READ_WARNED: dict[tuple, float] = {}
+_CREDENTIAL_READ_WARN_INTERVAL_S = 600.0
+
+
+def _credential_capability_absent(exc: ImportError, package: str, module: str) -> bool:
+    """True when *exc* says the capability is not installed, not that it failed inside.
+
+    Not installed: *package* or *module* itself not found, or *module* without
+    the imported name (an older Agent). An ImportError naming anything else, or
+    *package* without a name its module imports, is a broken installation.
+    """
+    if isinstance(exc, ModuleNotFoundError):
+        return exc.name in (package, module)
+    return exc.name == module
+
+
+def _warn_credential_read_failed(read: str, provider_id: str, exc: BaseException) -> None:
+    cause = type(exc).__name__
+    if isinstance(exc, ImportError) and exc.name:
+        cause = f"{cause}: module {exc.name} could not be imported"
+    tag = _credential_pool_profile_tag()
+    now = time.time()
+    if tag:  # without the Profile's identity, never let one Profile's warning hide another's
+        key = (read, tag, provider_id, cause)
+        if now - _CREDENTIAL_READ_WARNED.get(key, float("-inf")) < _CREDENTIAL_READ_WARN_INTERVAL_S:
+            return
+        _CREDENTIAL_READ_WARNED[key] = now
+    logger.warning(
+        "Could not read the credential pool for provider %s (%s, %s; Profile auth store %s); it is "
+        "treated as having no pool credentials. Fix the Hermes Agent installation or that auth store.",
+        provider_id, read, cause, tag or "unknown",
+    )
+
+
 def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
     """Return explicit credential-pool entry payloads for the active profile.
 
@@ -7555,11 +7592,20 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
     """
     _pid = _resolve_provider_alias(provider_id)
     if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
+        _read = "hermes_cli.auth.read_credential_pool"
         try:
             from hermes_cli.auth import read_credential_pool as _read_credential_pool
-
-            raw_entries = _read_credential_pool(_pid)
-        except ImportError:
+        except ImportError as exc:
+            if not _credential_capability_absent(exc, "hermes_cli", "hermes_cli.auth"):
+                _warn_credential_read_failed(_read, _pid, exc)
+            return []
+        except Exception as exc:
+            _warn_credential_read_failed(_read, _pid, exc)
+            return []
+        try:
+            raw_entries = list(_read_credential_pool(_pid) or [])
+        except Exception as exc:
+            _warn_credential_read_failed(_read, _pid, exc)
             return []
         payloads: list[dict[str, Any]] = []
         for entry in raw_entries:
@@ -7574,10 +7620,18 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
             payloads.append(dict(entry))
         return payloads
 
+    _read = "agent.credential_pool.load_pool"
     try:
         from agent.credential_pool import load_pool as _load_pool
-
-        _ck = (_credential_pool_profile_tag(), _pid)
+    except ImportError as exc:
+        if not _credential_capability_absent(exc, "agent", "agent.credential_pool"):
+            _warn_credential_read_failed(_read, _pid, exc)
+        return []
+    except Exception as exc:
+        _warn_credential_read_failed(_read, _pid, exc)
+        return []
+    _ck = (_credential_pool_profile_tag(), _pid)
+    try:
         _cached = _CREDENTIAL_POOL_CACHE.get(_ck)
         if _cached is not None:
             _cp_ts, _cp_pool = _cached
@@ -7591,7 +7645,10 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
             _cp_pool = _load_pool(_pid)
             _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
             _all_entries = _cp_pool.entries() if _cp_pool is not None and hasattr(_cp_pool, "entries") else []
-    except ImportError:
+    except Exception as exc:
+        # Never cached: the next read tries again, under this Profile's key only.
+        _CREDENTIAL_POOL_CACHE.pop(_ck, None)
+        _warn_credential_read_failed(_read, _pid, exc)
         return []
 
     payloads = []
@@ -7639,6 +7696,38 @@ def _has_explicit_pool_credentials(provider_id: str) -> bool:
     cost more than once per TTL window.
     """
     return bool(_pool_entry_payloads(provider_id))
+
+
+def _custom_provider_pool_credentials(provider_id: str) -> tuple[str, str]:
+    """(api_key, base_url) of the pool's selected entry for a custom provider; ("", "") when none.
+
+    A missing ``agent.credential_pool`` is "none" silently; a failing one is
+    "none" too, and is logged without its text.
+    """
+    if not _has_explicit_pool_credentials(provider_id):
+        return "", ""
+    _pid = _resolve_provider_alias(provider_id)
+    _read = "agent.credential_pool.load_pool"
+    try:
+        from agent.credential_pool import load_pool
+    except ImportError as exc:
+        if not _credential_capability_absent(exc, "agent", "agent.credential_pool"):
+            _warn_credential_read_failed(_read, _pid, exc)
+        return "", ""
+    except Exception as exc:
+        _warn_credential_read_failed(_read, _pid, exc)
+        return "", ""
+    try:
+        pool = load_pool(_pid)
+        entry = pool.select() if pool else None
+    except Exception as exc:
+        _warn_credential_read_failed(_read, _pid, exc)
+        return "", ""
+    if not entry:
+        return "", ""
+    return (getattr(entry, "runtime_api_key", "") or ""), str(getattr(entry, "base_url", "") or "").strip()
+
+
 # Disk-backed in-memory cache for get_available_models().
 # Written to disk on every cache population so the cache survives server restarts.
 # Invalidated (file deleted) whenever a provider is added/changed/removed or
@@ -9427,21 +9516,9 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                         _cp_api_key = _thread_local_env_value(_cp_key_env).strip()
                 # Fallback: check credential pool for both api_key and base_url
                 if (not _cp_api_key or not _cp_base_url) and _slug:
-                    try:
-                        from api.config import _has_explicit_pool_credentials
-                        if _has_explicit_pool_credentials(_slug):
-                            from agent.credential_pool import load_pool
-                            _resolved = _resolve_provider_alias(_slug)
-                            _pool = load_pool(_resolved)
-                            if _pool:
-                                _entry = _pool.select()
-                                if _entry:
-                                    if not _cp_api_key:
-                                        _cp_api_key = getattr(_entry, "runtime_api_key", "") or ""
-                                    if not _cp_base_url:
-                                        _cp_base_url = str(getattr(_entry, "base_url", "") or "").strip()
-                    except ImportError:
-                        pass
+                    _pool_key, _pool_base_url = _custom_provider_pool_credentials(_slug)
+                    _cp_api_key = _cp_api_key or _pool_key
+                    _cp_base_url = _cp_base_url or _pool_base_url
 
                 if _slug and _cp_base_url:
                     # Check if user has configured models in config.yaml —
