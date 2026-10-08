@@ -1558,6 +1558,8 @@ def test_no_phantom_custom_group_when_active_provider_is_set(monkeypatch):
     fake_auth = types.ModuleType('hermes_cli.auth')
     fake_auth.get_auth_status = lambda pid: {'key_source': 'env'}
     monkeypatch.setitem(sys.modules, 'hermes_cli.models', fake_mod)
+    # The WebUI's read-only availability (ticket 17) is what reports these providers.
+    monkeypatch.setattr(config, '_read_only_available_providers', fake_mod.list_available_providers)
     monkeypatch.setitem(sys.modules, 'hermes_cli.auth', fake_auth)
 
     result = _available_models_with_full_cfg(
@@ -1593,6 +1595,8 @@ def test_default_model_lands_under_active_provider_group(monkeypatch):
     fake_auth = types.ModuleType('hermes_cli.auth')
     fake_auth.get_auth_status = lambda pid: {'key_source': 'env'}
     monkeypatch.setitem(sys.modules, 'hermes_cli.models', fake_mod)
+    # The WebUI's read-only availability (ticket 17) is what reports these providers.
+    monkeypatch.setattr(config, '_read_only_available_providers', fake_mod.list_available_providers)
     monkeypatch.setitem(sys.modules, 'hermes_cli.auth', fake_auth)
 
     result = _available_models_with_full_cfg(
@@ -1632,6 +1636,8 @@ def test_unknown_providers_do_not_inherit_default_model(monkeypatch):
     fake_auth = types.ModuleType('hermes_cli.auth')
     fake_auth.get_auth_status = lambda pid: {'key_source': 'env'}
     monkeypatch.setitem(sys.modules, 'hermes_cli.models', fake_mod)
+    # The WebUI's read-only availability (ticket 17) is what reports these providers.
+    monkeypatch.setattr(config, '_read_only_available_providers', fake_mod.list_available_providers)
     monkeypatch.setitem(sys.modules, 'hermes_cli.auth', fake_auth)
 
     result = _available_models_with_full_cfg(

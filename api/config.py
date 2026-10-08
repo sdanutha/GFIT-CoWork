@@ -7684,6 +7684,89 @@ def _request_profile_is_root() -> bool:
         return False
 
 
+def _read_only_auth_status(provider_id: str) -> dict[str, Any]:
+    """The Agent's ``get_auth_status(provider_id)``, without the status checks that write (ticket 17).
+
+    Model discovery is a GET and never writes auth.json or the shared Nous
+    store. The Agent's Nous status resolves runtime credentials (refresh,
+    persist, shared store), its Qwen status refreshes an expiring CLI token, and
+    its plugin OAuth status reads through ``load_pool()``, which seeds and
+    persists. Here Nous uses the Agent's refresh-free local snapshot, Qwen its
+    CLI token read without refresh (live while unexpired), and a plugin OAuth
+    provider a live token in ``read_credential_pool()``. Every other status only
+    reads. The root/shared/host fallbacks stay: a User may use the
+    Deployment's logins (ticket 12).
+    """
+    if provider_id == "nous":
+        from hermes_cli.auth_nous import get_nous_auth_status_local
+
+        return get_nous_auth_status_local()
+    if provider_id == "qwen-oauth":
+        from hermes_cli.auth_qwen import resolve_qwen_runtime_credentials
+
+        try:
+            creds = resolve_qwen_runtime_credentials(refresh_if_expiring=False)
+        except Exception:
+            return {"logged_in": False}
+        return {"logged_in": not _expired_ms(creds.get("expires_at_ms")), "source": creds.get("source")}
+    from hermes_cli import auth as _auth
+
+    # The Agent dispatches an OAuth-shaped plugin provider (registry auth_type
+    # oauth_*) to get_plugin_oauth_auth_status; API-key plugin providers keep
+    # their read-only api_key status.
+    pconfig = _auth._registry_lookup(provider_id)
+    if _auth._STATUS_BY_AUTH_TYPE.get(getattr(pconfig, "auth_type", None)) == "get_plugin_oauth_auth_status":
+        from hermes_cli.auth_plugin_providers import PLUGIN_MIRRORED_PROVIDERS
+
+        if provider_id not in PLUGIN_MIRRORED_PROVIDERS:
+            return {"logged_in": False}
+        read_credential_pool = _auth.read_credential_pool
+
+        rows = [row for row in read_credential_pool(provider_id) if isinstance(row, dict)]
+        live = [row for row in rows if (row.get("access_token") or row.get("agent_key") or "").strip()
+                and not _expired_ms(row.get("expires_at_ms"))]
+        return {"configured": True, "logged_in": bool(live)}
+    return _auth.get_auth_status(provider_id)
+
+
+def _expired_ms(expires_at_ms: Any) -> bool:
+    """True when an epoch-milliseconds expiry is in the past; an absent or unreadable one is not expired."""
+    try:
+        return int(expires_at_ms) <= int(time.time() * 1000)
+    except (TypeError, ValueError):
+        return False
+
+
+def _read_only_available_providers() -> list[dict[str, Any]]:
+    """``hermes_cli.models.list_available_providers()`` built from ``_read_only_auth_status`` (ticket 17).
+
+    The same providers (the Agent's canonical list plus ``custom``) and the
+    same rule (``logged_in`` or ``configured``; OpenRouter and custom by their
+    key and base URL, as the Agent's ``_provider_has_credentials``), without
+    the status checks that write.
+    """
+    from hermes_cli import models as _hm
+
+    ids = [entry.slug for entry in _hm.CANONICAL_PROVIDERS] + ["custom"]
+    rows = []
+    for pid in ids:
+        if pid in ("custom", "openrouter"):
+            authenticated = _hm._provider_has_credentials(pid)
+        else:
+            try:
+                status = _read_only_auth_status(pid)
+                authenticated = bool(status.get("logged_in") or status.get("configured"))
+            except (ImportError, AttributeError):
+                # A missing Agent binding fails the whole list (the caller's
+                # environment fallback), never reads as "no provider logged in".
+                raise
+            except Exception as exc:
+                logger.debug("No auth status for provider %s (%s)", pid, type(exc).__name__)
+                authenticated = False
+        rows.append({"id": pid, "authenticated": authenticated})
+    return rows
+
+
 def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
     """Return explicit credential-pool entry payloads for the active profile.
 
@@ -9131,8 +9214,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
 
         _hermes_auth_used = False
         try:
-            from hermes_cli.models import list_available_providers as _lap
-            from hermes_cli.auth import get_auth_status as _gas
+            # Read-only availability (ticket 17): the Agent's list_available_providers()
+            # and get_auth_status() refresh and persist Nous/Qwen logins.
+            _lap = _read_only_available_providers
+            _gas = _read_only_auth_status
 
             for _p in _lap():
                 if not _p.get("authenticated"):

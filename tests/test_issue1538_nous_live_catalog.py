@@ -120,6 +120,9 @@ def _install_fake_hermes_cli(monkeypatch, *, nous_ids=None, raise_on_lookup=Fals
     monkeypatch.setitem(sys.modules, "hermes_cli", fake_pkg)
     monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_models)
     monkeypatch.setitem(sys.modules, "hermes_cli.auth", fake_auth)
+    # Detection reads the WebUI's read-only availability (ticket 17); these fakes are what it reports.
+    monkeypatch.setattr(config, "_read_only_available_providers", fake_models.list_available_providers)
+    monkeypatch.setattr(config, "_read_only_auth_status", fake_auth.get_auth_status)
     monkeypatch.delitem(sys.modules, "agent.credential_pool", raising=False)
     monkeypatch.delitem(sys.modules, "agent", raising=False)
 

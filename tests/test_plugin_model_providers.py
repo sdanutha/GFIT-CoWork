@@ -62,6 +62,8 @@ def _install_fake_hermes_cli(monkeypatch, *, authenticated: bool = True, model_i
 
     monkeypatch.setitem(sys.modules, "hermes_cli", fake_pkg)
     monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_models)
+    # The WebUI's read-only availability (ticket 17) is what reports these providers.
+    monkeypatch.setattr(config, "_read_only_available_providers", fake_models.list_available_providers)
     monkeypatch.setitem(sys.modules, "hermes_cli.auth", fake_auth)
 
 
@@ -239,6 +241,8 @@ class TestPluginFallbackModelsInStaticCatalog:
         )
         monkeypatch.setitem(sys.modules, "hermes_cli", fake_pkg)
         monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_models)
+        # The WebUI's read-only availability (ticket 17) is what reports these providers.
+        monkeypatch.setattr(config, "_read_only_available_providers", fake_models.list_available_providers)
         monkeypatch.setitem(sys.modules, "hermes_cli.auth", fake_auth)
 
         old_cfg = dict(config.cfg)
