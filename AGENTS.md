@@ -105,9 +105,10 @@ Follow that checklist's safety rules:
   (409 `session_rotated`, null continuation). A missing read capability keeps
   legacy behavior.
   Explicit closures and unknown terminal reasons do not authorize a redirect.
-- For Docker build changes in `docker_init.bash`, mirror directory exclusions
-  in both the `rsync` and `cp -a` paths — `/opt/hermes` may contain subdirectories
-  with restricted permissions (e.g. `.playwright/`).
+- For Docker build changes in `docker_init.bash`, mirror exclusions in both the
+  `rsync` path and its `tar` fallback — `/opt/hermes` may contain files and
+  subdirectories with restricted permissions (e.g. `.playwright/`,
+  `tools/.install.lock`).
 
 ## Completion and verification
 

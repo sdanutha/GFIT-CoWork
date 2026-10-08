@@ -497,16 +497,19 @@ else
       rsync -a \
         --exclude='*.egg-info' --exclude='build' --exclude='dist' \
         --exclude='__pycache__' --exclude='.git' \
-        --exclude='.playwright' \
+        --exclude='.playwright' --exclude='.install.lock' \
         "$_agent_src"/ "$_stage_src"/ \
         || error_exit "Failed to stage hermes-agent source to writable build dir"
     else
-      # Fallback when rsync isn't in the image — straight cp -a, then drop
-      # the build artifacts that would trip setuptools.
-      cp -a "$_agent_src"/. "$_stage_src"/ \
+      # Fallback when rsync isn't in the image: tar with the same exclusions
+      # (cp -a cannot skip the unreadable .playwright files or the Agent's
+      # owner-only tools/.install.lock, and fails on them), then drop the
+      # build artifacts that would trip setuptools.
+      (set -o pipefail
+       (cd "$_agent_src" && tar -cf - --exclude='.playwright' --exclude='.install.lock' .) \
+         | (cd "$_stage_src" && tar -xpf -)) \
         || error_exit "Failed to copy hermes-agent source to writable build dir"
       rm -rf "$_stage_src"/*.egg-info "$_stage_src"/build "$_stage_src"/dist 2>/dev/null || true
-      rm -rf "$_stage_src"/.playwright 2>/dev/null || true
       find "$_stage_src" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     fi
     chmod -R u+w "$_stage_src" \
