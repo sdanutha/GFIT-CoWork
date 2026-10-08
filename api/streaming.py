@@ -1066,6 +1066,57 @@ def _clarify_session_config(sid: str) -> dict | None:
         return None
 
 
+def _agent_approval_api():
+    """The Agent's ``tools.approval`` module; None when it is not installed (ticket 15).
+
+    An ImportError raised inside the module (a broken installation) is warned
+    rather than read as "not installed": approvals then fall back to polling,
+    and the agent still blocks on the approval the UI may not surface.
+    """
+    try:
+        import tools.approval as approval
+    except ImportError as exc:
+        if _config._credential_capability_absent(exc, "tools", "tools.approval"):
+            logger.debug("Approval module not available, falling back to polling")
+        else:
+            logger.warning(
+                "The Agent's approval module could not be imported (%s: %s); approval prompts fall "
+                "back to polling. Fix the Hermes Agent installation.", type(exc).__name__, exc.name,
+            )
+        return None
+    return approval
+
+
+def _register_approval_notify(session_id: str, callback) -> bool:
+    """Register *callback* for the session's approval prompts; False when it could not be registered."""
+    approval = _agent_approval_api()
+    if approval is None:
+        return False
+    try:
+        approval.register_gateway_notify(session_id, callback)
+    except Exception as exc:
+        logger.warning(
+            "Approval notifications for session %s could not be registered (%s); falling back to polling",
+            session_id, type(exc).__name__,
+        )
+        return False
+    return True
+
+
+def _session_has_blocking_approval(session_id: str) -> bool:
+    """True when the Agent holds a blocking approval for the session; False when absent or unreadable."""
+    approval = _agent_approval_api()
+    if approval is None:
+        return False
+    try:
+        return bool(approval.has_blocking_approval(session_id))
+    except Exception as exc:
+        logger.warning(
+            "Could not check session %s for a blocking approval (%s)", session_id, type(exc).__name__,
+        )
+        return False
+
+
 def _clarify_timeout_seconds(config: dict | None = None, default: int = 3600) -> int:
     """Resolve the clarify timeout (seconds) for WebUI clarify prompts.
 
@@ -10442,10 +10493,6 @@ def _run_agent_streaming(
             except ImportError:
                 _settle_pending_for_polling = None
                 _cleanup_gateway_pending_mirror = None
-            from tools.approval import (
-                register_gateway_notify as _reg_notify,
-                unregister_gateway_notify as _unreg_notify,
-            )
             def _approval_notify_cb(approval_data):
                 if _settle_pending_for_polling is not None:
                     try:
@@ -10459,8 +10506,10 @@ def _run_agent_streaming(
                     except Exception:
                         logger.warning("Failed to mirror approval into WebUI polling state", exc_info=True)
                 put('approval', approval_data)
-            _reg_notify(session_id, _approval_notify_cb)
-            _approval_registered = True
+            # The import alone degrades to polling; a failure inside the Agent is warned (ticket 15).
+            _approval_registered = _register_approval_notify(session_id, _approval_notify_cb)
+            if _approval_registered:
+                _unreg_notify = getattr(_agent_approval_api(), "unregister_gateway_notify", None)
         except ImportError:
             logger.debug("Approval module not available, falling back to polling")
 
@@ -10889,8 +10938,7 @@ def _run_agent_streaming(
                             _pending as _approval_pending,
                             reconcile_gateway_pending_mirror_locked as _reconcile_gateway_pending_mirror_locked,
                         )
-                        from tools.approval import has_blocking_approval as _has_blocking_approval
-                        if _has_blocking_approval(session_id):
+                        if _session_has_blocking_approval(session_id):
                             p = None
                             with _approval_lock:
                                 p, pending_count, _changed = _reconcile_gateway_pending_mirror_locked(session_id)
