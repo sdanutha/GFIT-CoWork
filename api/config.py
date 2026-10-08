@@ -8706,23 +8706,22 @@ def _provider_catalog_ids(provider_id: str) -> list[str]:
     """
     pid = str(provider_id or "").strip().lower()
     try:
-        import hermes_cli.models as _models
+        import hermes_cli.models as agent_models
     except Exception:
         return []
     try:
-        relay = pid in _PROFILE_SCOPED_CATALOGS and bool(_models._configured_relay_base_url(pid))
-        if pid in _PROFILE_SCOPED_CATALOGS and not relay:
+        if pid in _PROFILE_SCOPED_CATALOGS and not agent_models._configured_relay_base_url(pid):
             if pid == "nous":
-                return list(_nous_catalog_ids(_models))
+                return list(_nous_catalog_ids(agent_models))
             if not _request_profile_is_root():
-                return list(_copilot_catalog_ids(_models))
-        return list(_models.provider_model_ids(pid) or [])
+                return list(_copilot_catalog_ids(agent_models))
+        return list(agent_models.provider_model_ids(pid) or [])
     except Exception as exc:
         logger.debug("Model catalog for %s failed (%s)", pid, type(exc).__name__)
         return []
 
 
-def _nous_catalog_ids(models) -> list[str]:
+def _nous_catalog_ids(agent_models) -> list[str]:
     """Nous: the live catalog with the Profile's own unexpired invoke key, else the curated manifest.
 
     Never ``resolve_nous_runtime_credentials()``: no refresh, quarantine,
@@ -8740,13 +8739,13 @@ def _nous_catalog_ids(models) -> list[str]:
             if base_url.startswith("https://") and _agent_key_is_usable(state, _min_ttl):
                 live = fetch_nous_models(api_key=state["agent_key"], inference_base_url=base_url)
                 if live:
-                    return models._chat_catalog_rows(live)
+                    return agent_models._chat_catalog_rows(live)
         except Exception as exc:
             logger.debug("Live Nous catalog failed (%s); serving the curated list", type(exc).__name__)
-    return models._chat_catalog_rows(models.get_curated_nous_model_ids())
+    return agent_models._chat_catalog_rows(agent_models.get_curated_nous_model_ids())
 
 
-def _copilot_catalog_ids(models) -> list[str]:
+def _copilot_catalog_ids(agent_models) -> list[str]:
     """Copilot: the live catalog with the Profile's own GitHub token, else the curated list.
 
     The token is the Profile's own pool entry (ambient gh-cli rows left out) or,
@@ -8757,13 +8756,13 @@ def _copilot_catalog_ids(models) -> list[str]:
     if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
         tokens += [_thread_local_env_value(name) for name in _COPILOT_TOKEN_ENV_VARS]
     try:
-        token = models._first_exchangeable_copilot_token(t for t in tokens if t.strip())
-        live = models._fetch_github_models(api_key=token) if token else None
+        token = agent_models._first_exchangeable_copilot_token(t for t in tokens if t.strip())
+        live = agent_models._fetch_github_models(api_key=token) if token else None
         if live:
-            return models._chat_catalog_rows(live)
+            return agent_models._chat_catalog_rows(live)
     except Exception as exc:
         logger.debug("Live Copilot catalog failed (%s); serving the curated list", type(exc).__name__)
-    return models._chat_catalog_rows(list(models._PROVIDER_MODELS.get("copilot", [])))
+    return agent_models._chat_catalog_rows(list(agent_models._PROVIDER_MODELS.get("copilot", [])))
 
 
 def _read_live_provider_model_ids(provider_id: str) -> list[str]:
@@ -8778,10 +8777,6 @@ def _read_live_provider_model_ids(provider_id: str) -> list[str]:
     """
     pid = str(provider_id or "").strip()
     if not pid:
-        return []
-    try:
-        import hermes_cli.models  # noqa: F401  the Agent's catalog; absent -> no live ids
-    except Exception:
         return []
 
     candidates = [pid]
@@ -10030,9 +10025,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                     raw_models = []
                     live_fetch_failed = False
                     try:
-                        from hermes_cli.models import provider_model_ids as _provider_model_ids
+                        import hermes_cli.models  # noqa: F401  absent -> the static fallback below
 
-                        live_ids = _provider_model_ids("nous") or []
+                        # Read-only, Profile-scoped: never a Nous refresh (ticket 17).
+                        live_ids = _provider_catalog_ids("nous")
                     except Exception:
                         logger.warning("Failed to load Nous Portal models from hermes_cli")
                         live_ids = []

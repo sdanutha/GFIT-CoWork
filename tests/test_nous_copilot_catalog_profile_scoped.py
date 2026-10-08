@@ -254,3 +254,35 @@ def test_the_models_rebuild_reads_nous_through_the_profile_scoped_catalog(agent,
     _as(monkeypatch, A)
     assert config._read_live_provider_model_ids("nous") == ["nous-live-A"]
     assert ("provider_model_ids", "nous") not in agent.calls
+
+
+def test_the_models_rebuild_nous_group_uses_the_users_own_key(agent, monkeypatch):
+    """/api/models' rebuild lists the Nous group through the Profile-scoped catalog, not provider_model_ids."""
+    agent.models.list_available_providers = lambda: [
+        {"id": "nous", "label": "Nous Portal", "aliases": [], "authenticated": True}]
+    agent.auth.get_auth_status = lambda pid: {"logged_in": pid == "nous", "key_source": "oauth"}
+    _write(agent.root / "auth.json", nous=_nous("ROOT"))
+    _write(agent.home(A) / "auth.json", nous=_nous("A"))
+    before = _files(agent.root)
+    _as(monkeypatch, A)
+    old_cfg, old_mtime = dict(config.cfg), config._cfg_mtime
+    config.cfg.clear()
+    config.cfg.update({"model": {"provider": "nous"}})
+    try:
+        config._cfg_mtime = config.Path(config._get_config_path()).stat().st_mtime
+    except Exception:
+        config._cfg_mtime = 0.0
+    monkeypatch.setattr(config, "_LIVE_REBUILD_BUDGET_SECONDS", 0)
+    config.invalidate_models_cache()
+    try:
+        data = config.get_available_models()
+    finally:
+        config.cfg.clear()
+        config.cfg.update(old_cfg)
+        config._cfg_mtime = old_mtime
+        config.invalidate_models_cache()
+    [group] = [g for g in data.get("groups", []) if g.get("provider_id") == "nous"]
+    assert [m["id"] for m in group["models"]] == ["@nous:nous-live-A"]
+    assert ("provider_model_ids", "nous") not in agent.calls
+    assert ("nous_models", "ROOT", "https://ROOT.inference.example/v1") not in agent.calls
+    assert _files(agent.root) == before

@@ -55,6 +55,32 @@ SAMPLE_NOUS_LIVE_IDS = [
 ]
 
 
+def _serve_read_only_nous_catalog(monkeypatch, fake_models, fake_auth, *, ids, raise_on_lookup):
+    """The Profile-scoped Nous catalog (ticket 17): the live list comes from fetch_nous_models with the
+    Profile's own usable key (here: a Profile auth store holding one), else the curated manifest."""
+    fake_models._configured_relay_base_url = lambda pid: ""
+    fake_models._chat_catalog_rows = list
+    # An empty live catalog with an empty manifest is "the Agent returned nothing".
+    fake_models.get_curated_nous_model_ids = lambda: [] if not (ids or raise_on_lookup) else [
+        m["id"].removeprefix("@nous:") for m in config._PROVIDER_MODELS.get("nous", [])
+    ]
+
+    def _fetch_nous_models(**_kwargs):
+        if raise_on_lookup:
+            raise RuntimeError("simulated hermes_cli failure")
+        return list(ids)
+
+    fake_auth.fetch_nous_models = _fetch_nous_models
+    fake_auth_nous = types.ModuleType("hermes_cli.auth_nous")
+    fake_auth_nous._agent_key_is_usable = lambda state, min_ttl: True
+    fake_constants = types.ModuleType("hermes_cli.auth_constants")
+    fake_constants.NOUS_INVOKE_JWT_MIN_TTL_SECONDS = 120
+    monkeypatch.setitem(sys.modules, "hermes_cli.auth_nous", fake_auth_nous)
+    monkeypatch.setitem(sys.modules, "hermes_cli.auth_constants", fake_constants)
+    store = {"providers": {"nous": {"agent_key": "k", "inference_base_url": "https://inference.example/v1"}}}
+    monkeypatch.setattr(config, "_profile_auth_store", lambda _pid: store)
+
+
 def _install_fake_hermes_cli(monkeypatch, *, nous_ids=None, raise_on_lookup=False):
     """Install fake ``hermes_cli`` modules so detection sees Nous as authenticated
     and ``provider_model_ids("nous")`` returns the desired catalog.
@@ -87,6 +113,10 @@ def _install_fake_hermes_cli(monkeypatch, *, nous_ids=None, raise_on_lookup=Fals
     fake_auth.list_auth_providers = _list_auth_providers
     fake_auth.get_auth_status = _get_auth_status
 
+    _serve_read_only_nous_catalog(
+        monkeypatch, fake_models, fake_auth,
+        ids=[] if raise_on_lookup else list(nous_ids or []), raise_on_lookup=raise_on_lookup,
+    )
     monkeypatch.setitem(sys.modules, "hermes_cli", fake_pkg)
     monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_models)
     monkeypatch.setitem(sys.modules, "hermes_cli.auth", fake_auth)
