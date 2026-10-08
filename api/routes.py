@@ -19480,22 +19480,11 @@ def _handle_live_models(handler, parsed):
                     _api_key = _model_cfg.get("api_key")
                 # Fallback: try credential pool for base_url + api_key
                 if (not _base_url or not _api_key) and provider.startswith("custom:"):
-                    try:
-                        from api.config import _has_explicit_pool_credentials
+                    from api.config import _custom_provider_pool_credentials
 
-                        if _has_explicit_pool_credentials(provider):
-                            from agent.credential_pool import load_pool as _lpool
-                            _resolved = _resolve_provider_alias(provider)
-                            _lm_pool = _lpool(_resolved)
-                            if _lm_pool:
-                                _lm_entry = _lm_pool.select()
-                                if _lm_entry:
-                                    if not _api_key:
-                                        _api_key = getattr(_lm_entry, "runtime_api_key", "") or ""
-                                    if not _base_url:
-                                        _base_url = str(getattr(_lm_entry, "base_url", "") or "").strip()
-                    except ImportError:
-                        pass
+                    _pool_key, _pool_base_url = _custom_provider_pool_credentials(provider)
+                    _api_key = _api_key or _pool_key
+                    _base_url = _base_url or _pool_base_url
                 if _base_url and _api_key:
                     try:
                         import urllib.request
