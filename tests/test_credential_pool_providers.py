@@ -10,7 +10,9 @@ import api.profiles as profiles
 _AMBIENT_SOURCES = {"gh_cli", "gh auth token"}
 
 
-def _install_fake_hermes_cli(monkeypatch, *, with_load_pool: bool = False, pool_data: dict | None = None):
+def _install_fake_hermes_cli(
+    monkeypatch, *, with_load_pool: bool = False, pool_data: dict | None = None, loads: list | None = None,
+):
     """Stub hermes_cli modules so tests are deterministic and offline.
 
     When *with_load_pool* is True, also stubs hermes_cli.credential_pool with a
@@ -64,6 +66,8 @@ def _install_fake_hermes_cli(monkeypatch, *, with_load_pool: bool = False, pool_
                 return self._entries[0] if self._entries else None
 
         def _fake_load_pool(pid):
+            if loads is not None:
+                loads.append(pid)
             # Return ALL entries without filtering — mirrors the real load_pool()
             # which does NOT suppress ambient gh-cli tokens on its own.
             # Ambient-source filtering is the webui's responsibility.
@@ -75,12 +79,15 @@ def _install_fake_hermes_cli(monkeypatch, *, with_load_pool: bool = False, pool_
         monkeypatch.setitem(sys.modules, "agent.credential_pool", fake_cp)
 
 
-def _call_get_available_models(monkeypatch, tmp_path, auth_payload, *, with_load_pool: bool = False):
+def _call_get_available_models(
+    monkeypatch, tmp_path, auth_payload, *, with_load_pool: bool = False, loads: list | None = None,
+):
     """Call get_available_models() with auth.json pinned to a temp Hermes home."""
     _install_fake_hermes_cli(
         monkeypatch,
         with_load_pool=with_load_pool,
         pool_data=auth_payload.get("credential_pool", {}),
+        loads=loads,
     )
 
     (tmp_path / "auth.json").write_text(json.dumps(auth_payload), encoding="utf-8")
@@ -350,6 +357,25 @@ def test_load_pool_explicit_credential_shows_provider(monkeypatch, tmp_path):
     assert "GitHub Copilot" in groups, (
         f"GitHub Copilot must appear when load_pool has at least one usable entry; got {list(groups)}"
     )
+
+
+def test_load_pool_detection_without_a_profile_identity_reads_no_pool(monkeypatch, tmp_path):
+    """No Profile cache identity: no pool is read, cached, or used to detect a provider (ticket 15)."""
+    auth_payload = {
+        "version": 1,
+        "providers": {},
+        "active_provider": "openai-codex",
+        "credential_pool": {
+            "copilot": [{"id": "lp004", "label": "explicit-pat", "source": "manual", "auth_type": "api_key"}]
+        },
+    }
+    monkeypatch.setattr(config, "_credential_pool_profile_tag", lambda: "")
+    cache = {}
+    monkeypatch.setattr(config, "_CREDENTIAL_POOL_CACHE", cache)
+    loads = []
+    result = _call_get_available_models(monkeypatch, tmp_path, auth_payload, with_load_pool=True, loads=loads)
+    assert "GitHub Copilot" not in _group_by_provider(result)
+    assert loads == [] and cache == {}
 
 
 # --- _apply_provider_prefix helper ---

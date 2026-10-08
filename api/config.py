@@ -7539,11 +7539,33 @@ def _credential_pool_profile_tag() -> str:
     report configured in B (and then 401 at request time). Scoping every
     cache key by the active profile's auth-store path keeps pools from
     crossing profile boundaries.
+
+    ``""`` when the Profile cannot be resolved: silently when the request may
+    not read it (``ProfileNotReadable``: another User's Profile, no
+    Admission), with a warning for any other failure.
     """
     try:
         return str(_get_auth_store_path())
-    except Exception:
+    except Exception as exc:
+        try:
+            from api.profiles import ProfileNotReadable as _refused
+        except ImportError:
+            _refused = ()
+        if not isinstance(exc, _refused):
+            _warn_profile_tag_unresolved(exc)
         return ""
+
+
+def _warn_profile_tag_unresolved(exc: BaseException) -> None:
+    cause = type(exc).__name__
+    key = ("profile-tag", cause)
+    now = time.time()
+    if now - _CREDENTIAL_READ_WARNED.get(key, float("-inf")) < _CREDENTIAL_READ_WARN_INTERVAL_S:
+        return
+    _CREDENTIAL_READ_WARNED[key] = now
+    logger.warning(
+        "Could not resolve the active Profile's auth store (%s); no credential pool is read for it.", cause,
+    )
 
 
 # A credential-pool read that fails degrades to "no pool credentials", as a
@@ -7589,8 +7611,17 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
     Readonly profile scopes must not let ``load_pool()`` seed from process env,
     because that can materialize server-default credentials into a named
     profile's auth store. In that mode, read raw auth.json payloads only.
+
+    Without the Profile's identity (``_credential_pool_profile_tag()`` is
+    ``""``), unknown is not allowed: nothing is read, cached or answered from
+    the cache, since the Agent's pool readers would read the process
+    ``HERMES_HOME`` (the server default, or another Profile's).
     """
     _pid = _resolve_provider_alias(provider_id)
+    _tag = _credential_pool_profile_tag()
+    if not _tag:
+        logger.debug("No credential pool for provider %s: the request's Profile is unresolved", _pid)
+        return []
     if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
         _read = "hermes_cli.auth.read_credential_pool"
         try:
@@ -7630,7 +7661,7 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
     except Exception as exc:
         _warn_credential_read_failed(_read, _pid, exc)
         return []
-    _ck = (_credential_pool_profile_tag(), _pid)
+    _ck = (_tag, _pid)
     try:
         _cached = _CREDENTIAL_POOL_CACHE.get(_ck)
         if _cached is not None:
@@ -8979,7 +9010,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                             _canonical_pid = _resolve_provider_alias(str(_pid))
                             # Check credential pool cache first (profile-scoped key
                             # so a pool loaded under another profile can't leak in).
-                            _ck = (_credential_pool_profile_tag(), _pid)
+                            _cp_tag = _credential_pool_profile_tag()
+                            if not _cp_tag:  # unresolved Profile: no pool, cached or read
+                                continue
+                            _ck = (_cp_tag, _pid)
                             _cached = _CREDENTIAL_POOL_CACHE.get(_ck)
                             if _cached is not None:
                                 _cp_ts, _cp_pool = _cached
