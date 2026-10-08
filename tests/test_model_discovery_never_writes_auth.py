@@ -182,6 +182,23 @@ def test_an_unreadable_auth_json_is_no_credentials_warned_without_its_content(
     assert path.read_bytes() == before and deployment.calls == []
 
 
+
+def test_a_users_static_catalog_discovery_writes_no_auth_json(deployment, monkeypatch):
+    """/api/models' request-thread fallback under A's Admission: the Deployment's env key is not persisted."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", f"{SECRET}-deployment-env")
+    custom = {"custom_providers": [{"name": "bothub", "base_url": "https://bothub.example/v1"}]}
+    monkeypatch.setattr(config, "get_config", lambda: custom)
+    monkeypatch.setattr(config, "cfg", custom)
+    root_bytes = _write(deployment.root / "auth.json", {CUSTOM: [_entry("deployment", f"{SECRET}-root")]})
+    _as_user(monkeypatch, A)
+    result = config._static_models_catalog_without_live_probes()
+    assert isinstance(result, dict)
+    assert deployment.calls == []
+    assert not deployment.auth(A).exists() and not deployment.auth(B).exists()
+    assert (deployment.root / "auth.json").read_bytes() == root_bytes
+    assert config._has_explicit_pool_credentials("openrouter") is False
+    assert config._has_explicit_pool_credentials(CUSTOM) is False  # the Deployment's pool is not A's
+
 # ── The real Hermes Agent: what discovery used to write (skipped when it is not installed) ──
 
 

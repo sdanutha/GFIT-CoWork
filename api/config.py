@@ -7605,6 +7605,28 @@ def _warn_credential_read_failed(read: str, provider_id: str, exc: BaseException
     )
 
 
+def _explicit_pool_entries(entries: Any) -> list[dict[str, Any]]:
+    """The non-ambient dict entries of one provider's raw pool list (gh-cli auto-detects left out)."""
+    if not isinstance(entries, list):
+        return []
+    return [
+        dict(entry) for entry in entries
+        if isinstance(entry, dict) and not _is_ambient_gh_cli_entry(
+            str(entry.get("source", "") or ""),
+            str(entry.get("label", "") or ""),
+            str(entry.get("key_source", "") or ""),
+        )
+    ]
+
+
+def _pool_entry_priority(entry: dict[str, Any]) -> int:
+    """A raw pool entry's ``priority`` (lower first, as the Agent orders its pool); 0 when unset or bad."""
+    try:
+        return int(entry.get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _profile_pool_entries(provider_id: str) -> list[dict[str, Any]]:
     """The request Profile's own pool entries for *provider_id*, as its auth.json holds them.
 
@@ -7630,17 +7652,7 @@ def _profile_pool_entries(provider_id: str) -> list[dict[str, Any]]:
         _warn_credential_read_failed("auth.json", _pid, exc)
         return []
     pool = store.get("credential_pool") if isinstance(store, dict) else None
-    entries = pool.get(_pid) if isinstance(pool, dict) else None
-    if not isinstance(entries, list):
-        return []
-    return [
-        dict(entry) for entry in entries
-        if isinstance(entry, dict) and not _is_ambient_gh_cli_entry(
-            str(entry.get("source", "") or ""),
-            str(entry.get("label", "") or ""),
-            str(entry.get("key_source", "") or ""),
-        )
-    ]
+    return _explicit_pool_entries(pool.get(_pid) if isinstance(pool, dict) else None)
 
 
 def _request_profile_is_root() -> bool:
@@ -7649,7 +7661,9 @@ def _request_profile_is_root() -> bool:
         from api.profiles import _is_root_profile, get_active_profile_name
 
         return _is_root_profile(get_active_profile_name())
-    except Exception:
+    except Exception as exc:
+        # Not root: the Profile's own auth.json is read, never load_pool (fails closed).
+        logger.warning("Could not tell whether the request's Profile is the root (%s)", type(exc).__name__)
         return False
 
 
@@ -7757,11 +7771,12 @@ def _custom_provider_pool_credentials(provider_id: str) -> tuple[str, str]:
 
     Credential discovery: the first usable entry of the Profile's own pool by
     priority (a dead or cooling-down entry is skipped), never ``load_pool()``
-    or ``select()``, which seed and persist.
+    or ``select()``, which seed and persist. So the pool's selection strategy
+    (round robin, least used) is not applied: discovery only needs a working key.
     """
     from api.providers import _pool_entry_currently_unusable
 
-    entries = sorted(_profile_pool_entries(provider_id), key=lambda e: _pool_entry_priority(e))
+    entries = sorted(_profile_pool_entries(provider_id), key=_pool_entry_priority)
     for entry in entries:
         if _pool_entry_currently_unusable(entry):
             continue
@@ -7769,13 +7784,6 @@ def _custom_provider_pool_credentials(provider_id: str) -> tuple[str, str]:
         if key:
             return key, str(entry.get("base_url") or "").strip()
     return "", ""
-
-
-def _pool_entry_priority(entry: dict[str, Any]) -> int:
-    try:
-        return int(entry.get("priority") or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 # Disk-backed in-memory cache for get_available_models().
@@ -9024,18 +9032,7 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
             # load_pool(), which seeds and persists (ticket 16).
             if isinstance(_pool, dict) and _pool and _credential_pool_profile_tag():
                 for _pid, _entries in _pool.items():
-                    if not isinstance(_entries, list) or len(_entries) == 0:
-                        continue
-                    _has_explicit_cred = any(
-                        isinstance(_entry, dict)
-                        and not _is_ambient_gh_cli_entry(
-                            str(_entry.get("source", "") or ""),
-                            str(_entry.get("label", "") or ""),
-                            str(_entry.get("key_source", "") or ""),
-                        )
-                        for _entry in _entries
-                    )
-                    if _has_explicit_cred:
+                    if _explicit_pool_entries(_entries):
                         _canonical_pid = _resolve_provider_alias(str(_pid))
                         if _is_known_model_provider(_canonical_pid):
                             detected_providers.add(_canonical_pid)

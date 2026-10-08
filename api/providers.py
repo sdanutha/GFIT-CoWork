@@ -1031,9 +1031,9 @@ def _provider_has_key(provider_id: str) -> bool:
     # `hermes auth add` which store keys in auth.json (not config.yaml).
     # Must be outside the `if env_var:` block above: custom providers
     # (custom:bothub, etc.) have no env var, so that block is skipped.
-    # Uses the cached _has_explicit_pool_credentials helper which also
-    # filters gh-cli / GITHUB_TOKEN ambient entries so copilot doesn't
-    # appear just because `gh` is installed.
+    # _has_explicit_pool_credentials reads the Profile's own auth.json (never
+    # load_pool, which seeds and persists) and filters gh-cli / GITHUB_TOKEN
+    # ambient entries so copilot doesn't appear just because `gh` is installed.
     try:
         from api.config import _has_explicit_pool_credentials
         if _has_explicit_pool_credentials(provider_id):
