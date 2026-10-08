@@ -352,6 +352,34 @@ def test_load_pool_explicit_credential_shows_provider(monkeypatch, tmp_path):
     )
 
 
+def test_load_pool_detection_without_a_profile_identity_reads_no_pool(monkeypatch, tmp_path):
+    """No Profile cache identity: no pool is read, cached, or used to detect a provider (ticket 15)."""
+    auth_payload = {
+        "version": 1,
+        "providers": {},
+        "active_provider": "openai-codex",
+        "credential_pool": {
+            "copilot": [{"id": "lp004", "label": "explicit-pat", "source": "manual", "auth_type": "api_key"}]
+        },
+    }
+    monkeypatch.setattr(config, "_credential_pool_profile_tag", lambda: "")
+    stale = {}
+    monkeypatch.setattr(config, "_CREDENTIAL_POOL_CACHE", stale)
+    loads = []
+    real_install = _install_fake_hermes_cli
+
+    def install(monkeypatch, **kwargs):
+        real_install(monkeypatch, **kwargs)
+        module = sys.modules["agent.credential_pool"]
+        load_pool = module.load_pool
+        monkeypatch.setattr(module, "load_pool", lambda pid: loads.append(pid) or load_pool(pid))
+
+    monkeypatch.setitem(globals(), "_install_fake_hermes_cli", install)
+    result = _call_get_available_models(monkeypatch, tmp_path, auth_payload, with_load_pool=True)
+    assert "GitHub Copilot" not in _group_by_provider(result)
+    assert loads == [] and stale == {}
+
+
 # --- _apply_provider_prefix helper ---
 
 

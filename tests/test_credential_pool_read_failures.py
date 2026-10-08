@@ -245,16 +245,15 @@ def test_a_repeated_failure_is_warned_once_until_the_cause_changes(monkeypatch, 
     assert len(_warnings(caplog)) == 2
 
 
-def test_without_a_profile_identity_warnings_are_never_merged(monkeypatch, caplog, isolated):
-    # An unresolvable auth store gives no Profile tag: one Profile's warning must not hide another's.
+def test_without_a_profile_identity_the_pool_is_not_read(monkeypatch, caplog, isolated, read):
+    # An unresolvable auth store gives no Profile tag: no read, so no failure to warn of (ticket 15).
     isolated["tag"] = ""
-    _install_load_pool(monkeypatch, _raise(RuntimeError("down")))
+    calls = []
+    _install(monkeypatch, read, lambda pid: calls.append(pid))
     caplog.set_level(logging.DEBUG)
-    config._pool_entry_payloads(PROVIDER)
-    config._pool_entry_payloads(PROVIDER)
-    warnings = [w.getMessage() for w in _warnings(caplog)]
-    assert len(warnings) == 2 and all("auth store unknown" in m for m in warnings)
-    assert config._CREDENTIAL_READ_WARNED == {}
+    assert config._pool_entry_payloads(PROVIDER) == []
+    assert calls == [] and _warnings(caplog) == []
+    assert config._CREDENTIAL_READ_WARNED == {} and config._CREDENTIAL_POOL_CACHE == {}
 
 
 # ── The custom-provider fallback: /api/models/live and the model list ──
