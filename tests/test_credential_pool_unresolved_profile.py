@@ -76,6 +76,12 @@ def profile(monkeypatch):
         active["raw_reads"].append(path)
         return [{"source": "manual", "label": POOLS[path].entries()[0].label}]
 
+    _stub_agent(monkeypatch, load_pool, read_credential_pool)
+    monkeypatch.setattr(config, "_get_auth_store_path", auth_store_path)
+    yield active
+
+
+def _stub_agent(monkeypatch, load_pool, read_credential_pool=None):
     for name in ("agent", "hermes_cli"):
         package = types.ModuleType(name)
         package.__path__ = []
@@ -87,13 +93,15 @@ def profile(monkeypatch):
     auth_module.read_credential_pool = read_credential_pool
     monkeypatch.setitem(sys.modules, "hermes_cli.auth", auth_module)
 
-    monkeypatch.setattr(config, "_get_auth_store_path", auth_store_path)
+
+@pytest.fixture(autouse=True)
+def _isolated_cache(monkeypatch):
     monkeypatch.setattr(config, "_resolve_provider_alias", lambda pid: pid)
     monkeypatch.setattr(config, "_CREDENTIAL_POOL_CACHE", {})
     monkeypatch.setattr(config, "_CREDENTIAL_READ_WARNED", {})
     previous = getattr(config._thread_ctx, "block_process_env_fallback", False)
     config._thread_ctx.block_process_env_fallback = False
-    yield active
+    yield
     config._thread_ctx.block_process_env_fallback = previous
 
 
@@ -198,3 +206,67 @@ def test_code_with_no_caller_keeps_its_profile_identity():
     from api.profiles import get_active_hermes_home
 
     assert config._credential_pool_profile_tag() == str(get_active_hermes_home() / "auth.json")
+
+
+def test_an_unexpected_resolution_failure_is_warned_once_without_its_text(profile, monkeypatch, caplog):
+    monkeypatch.setattr(config, "_get_auth_store_path", lambda: (_ for _ in ()).throw(RuntimeError(SECRET)))
+    caplog.set_level(logging.DEBUG)
+    for _ in range(3):
+        assert _labels() == []
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1 and "RuntimeError" in warnings[0]
+    assert SECRET not in caplog.text and profile["loads"] == []
+
+
+# ── The real refusal: get_active_hermes_home under a request's Admission ──
+
+
+def _served(monkeypatch, admission, profile_name):
+    import api.access as access
+    import api.profiles as profiles
+
+    monkeypatch.setattr(access._request, "admission", admission, raising=False)
+    monkeypatch.setattr(access._request, "directory_session", True, raising=False)
+    monkeypatch.setattr(profiles._tls, "profile", profile_name, raising=False)
+
+
+@pytest.fixture
+def deployment(tmp_path, monkeypatch):
+    import api.profiles as profiles
+
+    hermes = tmp_path / "hermes"
+    for uid in ("521740", "671278"):
+        (hermes / "profiles" / uid).mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes))
+    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", hermes)
+    profiles._invalidate_root_profile_cache()
+    loads = []
+    _stub_agent(monkeypatch, lambda pid: loads.append(pid) or POOLS[DEFAULT])
+    yield hermes, loads
+    profiles._invalidate_root_profile_cache()
+
+
+def test_a_users_own_profile_is_read_and_cached_under_it(deployment, monkeypatch):
+    from api.access import ROLE_USER, Admitted
+
+    hermes, loads = deployment
+    _served(monkeypatch, Admitted(ROLE_USER, "521740"), "521740")
+    assert _labels() == ["default"]  # the stub's pool; the point is the key
+    assert set(config._CREDENTIAL_POOL_CACHE) == {(str(hermes / "profiles" / "521740" / "auth.json"), PROVIDER)}
+
+
+@pytest.mark.parametrize("admission,profile_name", [
+    (("user", "521740"), "671278"),  # a User's request bound to another User's Profile
+    (None, "521740"),                # a Directory session with no Admission
+], ids=["another-users-profile", "no-admission"])
+def test_a_refused_request_reads_no_pool(deployment, monkeypatch, caplog, admission, profile_name):
+    from api.access import Admitted
+
+    _, loads = deployment
+    _served(monkeypatch, Admitted(*admission) if admission else None, profile_name)
+    caplog.set_level(logging.DEBUG)
+    assert config._credential_pool_profile_tag() == ""
+    assert _labels() == []
+    assert config._custom_provider_pool_credentials(PROVIDER) == ("", "")
+    assert loads == [] and config._CREDENTIAL_POOL_CACHE == {}
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []

@@ -7540,15 +7540,32 @@ def _credential_pool_profile_tag() -> str:
     cache key by the active profile's auth-store path keeps pools from
     crossing profile boundaries.
 
-    ``""`` when the Profile cannot be resolved (the request may not read it, or
-    has no Admission). Unknown is not allowed: no pool is read, cached or
-    answered from the cache for it, since the Agent's pool readers would read
-    the process ``HERMES_HOME`` (the server default, or another Profile's).
+    ``""`` when the Profile cannot be resolved: silently when the request may
+    not read it (``ProfileNotReadable``: another User's Profile, no
+    Admission), with a warning for any other failure.
     """
     try:
         return str(_get_auth_store_path())
-    except Exception:
+    except Exception as exc:
+        try:
+            from api.profiles import ProfileNotReadable as _refused
+        except ImportError:
+            _refused = ()
+        if not isinstance(exc, _refused):
+            _warn_profile_tag_unresolved(exc)
         return ""
+
+
+def _warn_profile_tag_unresolved(exc: BaseException) -> None:
+    cause = type(exc).__name__
+    key = ("profile-tag", cause)
+    now = time.time()
+    if now - _CREDENTIAL_READ_WARNED.get(key, float("-inf")) < _CREDENTIAL_READ_WARN_INTERVAL_S:
+        return
+    _CREDENTIAL_READ_WARNED[key] = now
+    logger.warning(
+        "Could not resolve the active Profile's auth store (%s); no credential pool is read for it.", cause,
+    )
 
 
 # A credential-pool read that fails degrades to "no pool credentials", as a
@@ -7594,6 +7611,11 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
     Readonly profile scopes must not let ``load_pool()`` seed from process env,
     because that can materialize server-default credentials into a named
     profile's auth store. In that mode, read raw auth.json payloads only.
+
+    Without the Profile's identity (``_credential_pool_profile_tag()`` is
+    ``""``), unknown is not allowed: nothing is read, cached or answered from
+    the cache, since the Agent's pool readers would read the process
+    ``HERMES_HOME`` (the server default, or another Profile's).
     """
     _pid = _resolve_provider_alias(provider_id)
     _tag = _credential_pool_profile_tag()
