@@ -7666,6 +7666,51 @@ def _profile_auth_store(provider_id: str) -> dict[str, Any] | None:
     return store if isinstance(store, dict) else None
 
 
+def _pool_provider_ids(own_store: Any) -> set[str]:
+    """Providers whose credential-pool entries the request Profile's agent can use, for the picker.
+
+    The Agent's ``read_credential_pool`` uses the Profile's own entries for a
+    provider, and falls back to the root (Deployment) Profile's when the Profile
+    has none for it; a User may use the Deployment's logins (ticket 12). Both
+    files are read as they are, never through the Agent's readers. Only explicit
+    entries count (ambient gh-cli ones are left out). The keys themselves stay
+    the Profile's own (``_profile_pool_entries``). Without the Profile's
+    identity, none.
+    """
+    if not _credential_pool_profile_tag():
+        return set()
+    own = own_store.get("credential_pool") if isinstance(own_store, dict) else None
+    own = own if isinstance(own, dict) else {}
+    pools = [own]
+    if not _request_profile_is_root():
+        pools.append(_deployment_credential_pool())
+    ids: set[str] = set()
+    for pool in pools:
+        for pid, entries in pool.items():
+            if pool is not own and isinstance(own.get(pid), list) and own.get(pid):
+                continue  # the Profile's own entries shadow the Deployment's for this provider
+            if _explicit_pool_entries(entries):
+                canonical = _resolve_provider_alias(str(pid))
+                if _is_known_model_provider(canonical):
+                    ids.add(canonical)
+    return ids
+
+
+def _deployment_credential_pool() -> dict[str, Any]:
+    """The root (Deployment) Profile's ``credential_pool``, read as it is; ``{}`` when absent or unreadable."""
+    from api.profiles import _DEFAULT_HERMES_HOME as _root_home
+
+    try:
+        store = json.loads((Path(_root_home) / "auth.json").read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        _warn_credential_read_failed("the Deployment's auth.json", "*", exc)
+        return {}
+    pool = store.get("credential_pool") if isinstance(store, dict) else None
+    return pool if isinstance(pool, dict) else {}
+
+
 def _request_profile_is_root() -> bool:
     """True when the request's Profile is the root (Deployment) Profile, whose store the Agent's own home is.
 
@@ -9198,15 +9243,10 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
             detected_providers.add(active_provider)
 
         try:
-            _pool = auth_store.get("credential_pool", {}) if isinstance(auth_store, dict) else {}
-            # Credential discovery reads the Profile's auth.json as it is, never
-            # load_pool(), which seeds and persists (ticket 16).
-            if isinstance(_pool, dict) and _pool and _credential_pool_profile_tag():
-                for _pid, _entries in _pool.items():
-                    if _explicit_pool_entries(_entries):
-                        _canonical_pid = _resolve_provider_alias(str(_pid))
-                        if _is_known_model_provider(_canonical_pid):
-                            detected_providers.add(_canonical_pid)
+            # Credential discovery reads auth.json files as they are, never
+            # load_pool(), which seeds and persists (ticket 16); the Deployment's
+            # pool counts where the agent would fall back to it (ticket 12).
+            detected_providers.update(_pool_provider_ids(auth_store))
         except Exception:
             logger.debug("Failed to inspect credential_pool from auth store")
 

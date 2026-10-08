@@ -252,3 +252,52 @@ def test_custom_provider_discovery_seeds_no_config_entry(real_agent, monkeypatch
     assert config._custom_provider_pool_credentials(CUSTOM) == (f"{SECRET}-manual", "https://bothub.example/v1")
     assert config._has_explicit_pool_credentials(CUSTOM) is True
     assert (home / "auth.json").read_bytes() == before
+
+
+# ── The picker lists what the agent can reach (ticket 12: Users may use the Deployment's logins) ──
+
+
+def test_the_picker_lists_providers_the_agent_reaches_through_the_deployments_pool(deployment, monkeypatch, scope):
+    """The Agent's read_credential_pool falls back, per provider, to the root Profile's pool when the
+    Profile has no entries for it; discovery lists the same providers, reading both files as they are."""
+    own = _write(deployment.auth(A), {"openrouter": [_entry("a", "k-a")], "anthropic": []})
+    root_bytes = _write(deployment.root / "auth.json", {
+        "deepseek": [_entry("deployment", f"{SECRET}-root")],
+        "openrouter": [_entry("deployment", f"{SECRET}-root")],
+        "copilot": [{**_entry("gh auth token", "gho-x"), "source": "gh_cli"}],  # ambient: not listed
+    })
+    _as_user(monkeypatch, A, scope)
+    store = json.loads(own)
+
+    assert config._pool_provider_ids(store) == {"openrouter", "deepseek"}
+    assert config._has_explicit_pool_credentials("deepseek") is False  # keys stay the Profile's own
+    assert deployment.calls == []
+    assert deployment.auth(A).read_bytes() == own
+    assert (deployment.root / "auth.json").read_bytes() == root_bytes
+
+
+def test_a_profiles_own_entries_shadow_the_deployments_for_that_provider(deployment, monkeypatch):
+    own = _write(deployment.auth(A), {"deepseek": [{**_entry("gh auth token", "x"), "source": "gh_cli"}]})
+    _write(deployment.root / "auth.json", {"deepseek": [_entry("deployment", f"{SECRET}-root")]})
+    _as_user(monkeypatch, A)
+    # The Agent uses A's (ambient-only) entries for deepseek, not the root's; nothing explicit to list.
+    assert config._pool_provider_ids(json.loads(own)) == set()
+
+
+def test_an_unresolved_profile_lists_no_pool_provider(deployment, monkeypatch):
+    _write(deployment.root / "auth.json", {"deepseek": [_entry("deployment", f"{SECRET}-root")]})
+    import api.access as access
+
+    monkeypatch.setattr(access._request, "admission", None, raising=False)
+    monkeypatch.setattr(access._request, "directory_session", True, raising=False)
+    assert config._pool_provider_ids({}) == set()
+
+
+def test_an_unreadable_deployment_pool_lists_only_the_profiles_own(deployment, monkeypatch, caplog):
+    own = _write(deployment.auth(A), {"openrouter": [_entry("a", "k-a")]})
+    (deployment.root / "auth.json").write_text(f'{{"credential_pool": {{"deepseek": "{SECRET}', encoding="utf-8")
+    caplog.set_level(logging.DEBUG)
+    _as_user(monkeypatch, A)
+    assert config._pool_provider_ids(json.loads(own)) == {"openrouter"}
+    assert SECRET not in caplog.text
+    assert any(r.levelno >= logging.WARNING for r in caplog.records)
