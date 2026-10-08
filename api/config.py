@@ -7605,51 +7605,89 @@ def _warn_credential_read_failed(read: str, provider_id: str, exc: BaseException
     )
 
 
-def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
-    """Return explicit credential-pool entry payloads for the active profile.
+def _explicit_pool_entries(entries: Any) -> list[dict[str, Any]]:
+    """The non-ambient dict entries of one provider's raw pool list (gh-cli auto-detects left out)."""
+    if not isinstance(entries, list):
+        return []
+    return [
+        dict(entry) for entry in entries
+        if isinstance(entry, dict) and not _is_ambient_gh_cli_entry(
+            str(entry.get("source", "") or ""),
+            str(entry.get("label", "") or ""),
+            str(entry.get("key_source", "") or ""),
+        )
+    ]
 
-    Readonly profile scopes must not let ``load_pool()`` seed from process env,
-    because that can materialize server-default credentials into a named
-    profile's auth store. In that mode, read raw auth.json payloads only.
 
-    Without the Profile's identity (``_credential_pool_profile_tag()`` is
-    ``""``), unknown is not allowed: nothing is read, cached or answered from
-    the cache, since the Agent's pool readers would read the process
-    ``HERMES_HOME`` (the server default, or another Profile's).
+def _pool_entry_priority(entry: dict[str, Any]) -> int:
+    """A raw pool entry's ``priority`` (lower first, as the Agent orders its pool); 0 when unset or bad."""
+    try:
+        return int(entry.get("priority") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _profile_pool_entries(provider_id: str) -> list[dict[str, Any]]:
+    """The request Profile's own pool entries for *provider_id*, as its auth.json holds them.
+
+    Read-only: credential discovery answers from this and never calls the
+    Agent's pool readers. ``load_pool()`` seeds (config keys, environment keys,
+    singleton files), prunes, normalizes and persists, and ``select()``
+    persists too; ``read_credential_pool()`` falls back to the root Profile's
+    store and follows the Agent's ``HERMES_HOME``, which on a User's request
+    thread is the Deployment's. The file read here is the one the Profile tag
+    names. Ambient gh-cli entries are left out. Without the Profile's identity,
+    nothing is read; an unreadable file is no entries, warned without its text.
     """
     _pid = _resolve_provider_alias(provider_id)
     _tag = _credential_pool_profile_tag()
     if not _tag:
         logger.debug("No credential pool for provider %s: the request's Profile is unresolved", _pid)
         return []
-    if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
-        _read = "hermes_cli.auth.read_credential_pool"
-        try:
-            from hermes_cli.auth import read_credential_pool as _read_credential_pool
-        except ImportError as exc:
-            if not _credential_capability_absent(exc, "hermes_cli", "hermes_cli.auth"):
-                _warn_credential_read_failed(_read, _pid, exc)
-            return []
-        except Exception as exc:
-            _warn_credential_read_failed(_read, _pid, exc)
-            return []
-        try:
-            raw_entries = list(_read_credential_pool(_pid) or [])
-        except Exception as exc:
-            _warn_credential_read_failed(_read, _pid, exc)
-            return []
-        payloads: list[dict[str, Any]] = []
-        for entry in raw_entries:
-            if not isinstance(entry, dict):
-                continue
-            if _is_ambient_gh_cli_entry(
-                str(entry.get("source", "") or ""),
-                str(entry.get("label", "") or ""),
-                str(entry.get("key_source", "") or ""),
-            ):
-                continue
-            payloads.append(dict(entry))
-        return payloads
+    try:
+        store = json.loads(Path(_tag).read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        _warn_credential_read_failed("auth.json", _pid, exc)
+        return []
+    pool = store.get("credential_pool") if isinstance(store, dict) else None
+    return _explicit_pool_entries(pool.get(_pid) if isinstance(pool, dict) else None)
+
+
+def _request_profile_is_root() -> bool:
+    """True when the request's Profile is the root (Deployment) Profile, whose store the Agent's own home is."""
+    try:
+        from api.profiles import _is_root_profile, get_active_profile_name
+
+        return _is_root_profile(get_active_profile_name())
+    except Exception as exc:
+        # Not root: the Profile's own auth.json is read, never load_pool (fails closed).
+        logger.warning("Could not tell whether the request's Profile is the root (%s)", type(exc).__name__)
+        return False
+
+
+def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
+    """Return explicit credential-pool entry payloads for the active profile.
+
+    In a read-only Profile scope, or for any named Profile, the Profile's own
+    auth.json is read as it is (``_profile_pool_entries``): ``load_pool()``
+    would seed and persist, and outside a scope it reads the Agent's
+    ``HERMES_HOME`` (the Deployment's) under a named Profile's cache key. The
+    root Profile outside a read-only scope keeps ``load_pool()`` behind the
+    Profile-scoped cache: that store is the Agent's own.
+
+    Without the Profile's identity (``_credential_pool_profile_tag()`` is
+    ``""``), unknown is not allowed: nothing is read, cached or answered from
+    the cache.
+    """
+    _pid = _resolve_provider_alias(provider_id)
+    _tag = _credential_pool_profile_tag()
+    if not _tag:
+        logger.debug("No credential pool for provider %s: the request's Profile is unresolved", _pid)
+        return []
+    if bool(getattr(_thread_ctx, "block_process_env_fallback", False)) or not _request_profile_is_root():
+        return _profile_pool_entries(provider_id)
 
     _read = "agent.credential_pool.load_pool"
     try:
@@ -7719,44 +7757,33 @@ def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
 
 
 def _has_explicit_pool_credentials(provider_id: str) -> bool:
-    """Return True when the credential pool has at least one non-ambient entry
-    for *provider_id* (i.e. not a gh-cli / GITHUB_TOKEN auto-detect).
+    """Return True when the request Profile's pool has at least one non-ambient
+    entry for *provider_id* (i.e. not a gh-cli / GITHUB_TOKEN auto-detect).
 
-    Reuses ``_CREDENTIAL_POOL_CACHE`` so that callers on hot paths (provider
-    detection, model listing, live-model fetch) don't pay the ~10s load_pool
-    cost more than once per TTL window.
+    Credential discovery: reads the Profile's auth.json as it is and writes
+    nothing (``_profile_pool_entries``).
     """
-    return bool(_pool_entry_payloads(provider_id))
+    return bool(_profile_pool_entries(provider_id))
 
 
 def _custom_provider_pool_credentials(provider_id: str) -> tuple[str, str]:
-    """(api_key, base_url) of the pool's selected entry for a custom provider; ("", "") when none.
+    """(api_key, base_url) of a custom provider's pool entry; ("", "") when none.
 
-    A missing ``agent.credential_pool`` is "none" silently; a failing one is
-    "none" too, and is logged without its text.
+    Credential discovery: the first usable entry of the Profile's own pool by
+    priority (a dead or cooling-down entry is skipped), never ``load_pool()``
+    or ``select()``, which seed and persist. So the pool's selection strategy
+    (round robin, least used) is not applied: discovery only needs a working key.
     """
-    if not _has_explicit_pool_credentials(provider_id):
-        return "", ""
-    _pid = _resolve_provider_alias(provider_id)
-    _read = "agent.credential_pool.load_pool"
-    try:
-        from agent.credential_pool import load_pool
-    except ImportError as exc:
-        if not _credential_capability_absent(exc, "agent", "agent.credential_pool"):
-            _warn_credential_read_failed(_read, _pid, exc)
-        return "", ""
-    except Exception as exc:
-        _warn_credential_read_failed(_read, _pid, exc)
-        return "", ""
-    try:
-        pool = load_pool(_pid)
-        entry = pool.select() if pool else None
-    except Exception as exc:
-        _warn_credential_read_failed(_read, _pid, exc)
-        return "", ""
-    if not entry:
-        return "", ""
-    return (getattr(entry, "runtime_api_key", "") or ""), str(getattr(entry, "base_url", "") or "").strip()
+    from api.providers import _pool_entry_currently_unusable
+
+    entries = sorted(_profile_pool_entries(provider_id), key=_pool_entry_priority)
+    for entry in entries:
+        if _pool_entry_currently_unusable(entry):
+            continue
+        key = str(entry.get("access_token") or "").strip()
+        if key:
+            return key, str(entry.get("base_url") or "").strip()
+    return "", ""
 
 
 # Disk-backed in-memory cache for get_available_models().
@@ -9001,63 +9028,14 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
 
         try:
             _pool = auth_store.get("credential_pool", {}) if isinstance(auth_store, dict) else {}
-            if isinstance(_pool, dict) and _pool:
-                try:
-                    from agent.credential_pool import load_pool as _load_pool
-
-                    for _pid in list(_pool.keys()):
-                        try:
-                            _canonical_pid = _resolve_provider_alias(str(_pid))
-                            # Check credential pool cache first (profile-scoped key
-                            # so a pool loaded under another profile can't leak in).
-                            _cp_tag = _credential_pool_profile_tag()
-                            if not _cp_tag:  # unresolved Profile: no pool, cached or read
-                                continue
-                            _ck = (_cp_tag, _pid)
-                            _cached = _CREDENTIAL_POOL_CACHE.get(_ck)
-                            if _cached is not None:
-                                _cp_ts, _cp_pool = _cached
-                                if (time.time() - _cp_ts) < 86400.0:
-                                    _all_entries = _cp_pool.entries()
-                                else:
-                                    _lp_t0 = time.monotonic()
-                                    _cp_pool = _load_pool(_pid)
-                                    _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
-                                    _all_entries = _cp_pool.entries()
-                            else:
-                                _lp_t0 = time.monotonic()
-                                _cp_pool = _load_pool(_pid)
-                                _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
-                                _all_entries = _cp_pool.entries()
-                            _explicit = [
-                                e for e in _all_entries
-                                if not _is_ambient_gh_cli_entry(
-                                    str(getattr(e, "source", "") or ""),
-                                    str(getattr(e, "label", "") or ""),
-                                    str(getattr(e, "key_source", "") or ""),
-                                )
-                            ]
-                            if _explicit and _is_known_model_provider(_canonical_pid):
-                                detected_providers.add(_canonical_pid)
-                        except Exception:
-                            logger.debug("credential_pool.load_pool(%s) failed", _pid)
-                except ImportError:
-                    for _pid, _entries in _pool.items():
-                        if not isinstance(_entries, list) or len(_entries) == 0:
-                            continue
-                        _has_explicit_cred = any(
-                            isinstance(_entry, dict)
-                            and not _is_ambient_gh_cli_entry(
-                                str(_entry.get("source", "") or ""),
-                                str(_entry.get("label", "") or ""),
-                                str(_entry.get("key_source", "") or ""),
-                            )
-                            for _entry in _entries
-                        )
-                        if _has_explicit_cred:
-                            _canonical_pid = _resolve_provider_alias(str(_pid))
-                            if _is_known_model_provider(_canonical_pid):
-                                detected_providers.add(_canonical_pid)
+            # Credential discovery reads the Profile's auth.json as it is, never
+            # load_pool(), which seeds and persists (ticket 16).
+            if isinstance(_pool, dict) and _pool and _credential_pool_profile_tag():
+                for _pid, _entries in _pool.items():
+                    if _explicit_pool_entries(_entries):
+                        _canonical_pid = _resolve_provider_alias(str(_pid))
+                        if _is_known_model_provider(_canonical_pid):
+                            detected_providers.add(_canonical_pid)
         except Exception:
             logger.debug("Failed to inspect credential_pool from auth store")
 

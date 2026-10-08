@@ -1,16 +1,18 @@
 """A credential-pool read that fails is reported, not taken for "no credentials" (ticket 15).
 
-Four reads of a Profile's credential pool degrade to "no pool credentials"
-when the capability is missing: ``_pool_entry_payloads`` (Hermes Agent's
-``hermes_cli.auth.read_credential_pool`` in a read-only Profile scope, else
-``agent.credential_pool.load_pool`` behind the Profile-scoped cache) and the
-custom-provider fallback that takes a key and base URL from the pool (the model
-list, and ``/api/models/live``). A missing capability stays silent, as before.
-When the capability imports but the read fails (an ImportError raised inside
-it, any other error), the result is the same fail-soft "no pool credentials",
-and the server logs an actionable warning that names the read, the provider
-and the error type, never a credential value or the error's text. A failure is
-never cached and never answered from another Profile's cache entry.
+The root Profile's ``_pool_entry_payloads`` outside a read-only scope reads
+through ``agent.credential_pool.load_pool`` behind the Profile-scoped cache. A
+missing capability is "no pool credentials", silently. When the capability
+imports but the read fails (an ImportError raised inside it, any other error),
+the result is the same fail-soft "no pool credentials", and the server logs an
+actionable warning that names the read, the provider and the error type, never
+a credential value or the error's text. A failure is never cached and never
+answered from another Profile's cache entry.
+
+The custom-provider fallback that takes a key and base URL from the pool (the
+model list, and ``/api/models/live``) is credential discovery: it reads the
+Profile's own auth.json and never the Agent's readers (ticket 16). An
+unreadable auth.json is "no pool credentials", warned without its content.
 """
 from __future__ import annotations
 
@@ -64,13 +66,6 @@ def _install_load_pool(monkeypatch, load_pool):
     monkeypatch.setitem(sys.modules, "agent.credential_pool", module)
 
 
-def _install_read_credential_pool(monkeypatch, read_credential_pool):
-    _package(monkeypatch, "hermes_cli")
-    module = types.ModuleType("hermes_cli.auth")
-    module.read_credential_pool = read_credential_pool
-    monkeypatch.setitem(sys.modules, "hermes_cli.auth", module)
-
-
 class _BrokenImport(importlib.abc.MetaPathFinder):
     def __init__(self, fullname, error):
         self.fullname, self.error = fullname, error
@@ -100,30 +95,14 @@ def isolated(monkeypatch):
     monkeypatch.setattr(config, "_CREDENTIAL_READ_WARNED", {}, raising=False)
     monkeypatch.setattr(config, "_credential_pool_profile_tag", lambda: profile["tag"])
     monkeypatch.setattr(config, "_resolve_provider_alias", lambda pid: pid)
+    monkeypatch.setattr(config, "_request_profile_is_root", lambda: True)  # load_pool's Profile: the Agent's own
     previous = getattr(config._thread_ctx, "block_process_env_fallback", False)
+    config._thread_ctx.block_process_env_fallback = False
     yield profile
     config._thread_ctx.block_process_env_fallback = previous
 
 
-@pytest.fixture(params=["load_pool", "read_credential_pool"])
-def read(request):
-    """The two reads behind _pool_entry_payloads: the cached load, and the read-only Profile scope."""
-    config._thread_ctx.block_process_env_fallback = request.param == "read_credential_pool"
-    return request.param
-
-
-def _install(monkeypatch, read, fn):
-    (_install_load_pool if read == "load_pool" else _install_read_credential_pool)(monkeypatch, fn)
-
-
-def _module(read):
-    return "agent.credential_pool" if read == "load_pool" else "hermes_cli.auth"
-
-
-def _healthy(read):
-    if read == "load_pool":
-        return lambda pid: Pool([Entry()])
-    return lambda pid: [{"source": "manual", "label": "work key", "access_token": SECRET}]
+MODULE = "agent.credential_pool"  # the Agent read behind the root Profile's _pool_entry_payloads
 
 
 def _warnings(caplog):
@@ -139,28 +118,26 @@ def _no_secret(caplog):
 # ── _pool_entry_payloads ──
 
 
-def test_an_absent_capability_is_no_pool_credentials_silently(monkeypatch, caplog, read):
-    monkeypatch.setitem(sys.modules, _module(read), None)  # import raises ModuleNotFoundError naming it
+def test_an_absent_capability_is_no_pool_credentials_silently(monkeypatch, caplog):
+    monkeypatch.setitem(sys.modules, MODULE, None)  # import raises ModuleNotFoundError naming it
     caplog.set_level(logging.DEBUG)
     assert config._pool_entry_payloads(PROVIDER) == []
     assert _warnings(caplog) == []
 
 
-def test_a_capability_without_the_imported_name_is_absent_silently(monkeypatch, caplog, read):
-    _install(monkeypatch, read, None)
-    module = sys.modules[_module(read)]
-    delattr(module, "load_pool" if read == "load_pool" else "read_credential_pool")
+def test_a_capability_without_the_imported_name_is_absent_silently(monkeypatch, caplog):
+    _install_load_pool(monkeypatch, None)
+    delattr(sys.modules[MODULE], "load_pool")
     caplog.set_level(logging.DEBUG)
     assert config._pool_entry_payloads(PROVIDER) == []
     assert _warnings(caplog) == []
 
 
-def test_a_working_read_returns_the_entries(monkeypatch, caplog, read):
-    _install(monkeypatch, read, _healthy(read))
+def test_a_working_read_returns_the_entries(monkeypatch, caplog):
+    _install_load_pool(monkeypatch, (lambda pid: Pool([Entry()])))
     caplog.set_level(logging.DEBUG)
     payloads = config._pool_entry_payloads(PROVIDER)
     assert [p["label"] for p in payloads] == ["work key"]
-    assert config._has_explicit_pool_credentials(PROVIDER) is True
     assert _warnings(caplog) == []
 
 
@@ -169,11 +146,11 @@ def test_a_working_read_returns_the_entries(monkeypatch, caplog, read):
     ImportError("cannot import name 'Fernet' from 'cryptography.fernet'", name="cryptography.fernet"),
     "its-package-lacks-a-name",
 ], ids=["dependency-missing", "inner-name-missing", "package-name-missing"])
-def test_an_import_error_inside_the_capability_is_reported(monkeypatch, caplog, read, error):
+def test_an_import_error_inside_the_capability_is_reported(monkeypatch, caplog, error):
     if error == "its-package-lacks-a-name":  # `from agent import helper` inside the module
-        package = _module(read).split(".")[0]
+        package = MODULE.split(".")[0]
         error = ImportError(f"cannot import name 'helper' from '{package}'", name=package)
-    _broken_import(monkeypatch, _module(read), error)
+    _broken_import(monkeypatch, MODULE, error)
     caplog.set_level(logging.DEBUG)
     assert config._pool_entry_payloads(PROVIDER) == []
     [warning] = _warnings(caplog)
@@ -182,8 +159,8 @@ def test_an_import_error_inside_the_capability_is_reported(monkeypatch, caplog, 
     _no_secret(caplog)
 
 
-def test_an_import_error_raised_by_the_read_is_reported(monkeypatch, caplog, read):
-    _install(monkeypatch, read, _raise(ModuleNotFoundError("No module named 'keyring'", name="keyring")))
+def test_an_import_error_raised_by_the_read_is_reported(monkeypatch, caplog):
+    _install_load_pool(monkeypatch, _raise(ModuleNotFoundError("No module named 'keyring'", name="keyring")))
     caplog.set_level(logging.DEBUG)
     assert config._pool_entry_payloads(PROVIDER) == []
     [warning] = _warnings(caplog)
@@ -195,8 +172,8 @@ def test_an_import_error_raised_by_the_read_is_reported(monkeypatch, caplog, rea
     ValueError(f"malformed entry {{'access_token': '{SECRET}'}}"),
     OSError(13, "Permission denied", f"/profiles/700001/auth.json#{SECRET}"),
 ], ids=["RuntimeError", "ValueError", "OSError"])
-def test_any_other_read_failure_is_reported_without_its_text(monkeypatch, caplog, read, error):
-    _install(monkeypatch, read, _raise(error))
+def test_any_other_read_failure_is_reported_without_its_text(monkeypatch, caplog, error):
+    _install_load_pool(monkeypatch, _raise(error))
     caplog.set_level(logging.DEBUG)
     assert config._pool_entry_payloads(PROVIDER) == []
     [warning] = _warnings(caplog)
@@ -234,35 +211,63 @@ def test_the_cache_still_serves_a_working_profile(monkeypatch):
     assert loads == [PROVIDER]
 
 
-def test_a_repeated_failure_is_warned_once_until_the_cause_changes(monkeypatch, caplog, read):
-    _install(monkeypatch, read, _raise(RuntimeError("down")))
+def test_a_repeated_failure_is_warned_once_until_the_cause_changes(monkeypatch, caplog):
+    _install_load_pool(monkeypatch, _raise(RuntimeError("down")))
     caplog.set_level(logging.DEBUG)
     for _ in range(3):
         config._pool_entry_payloads(PROVIDER)
     assert len(_warnings(caplog)) == 1
-    _install(monkeypatch, read, _raise(OSError("disk")))
+    _install_load_pool(monkeypatch, _raise(OSError("disk")))
     config._pool_entry_payloads(PROVIDER)
     assert len(_warnings(caplog)) == 2
 
 
-def test_without_a_profile_identity_the_pool_is_not_read(monkeypatch, caplog, isolated, read):
+def test_without_a_profile_identity_the_pool_is_not_read(monkeypatch, caplog, isolated):
     # An unresolvable auth store gives no Profile tag: no read, so no failure to warn of (ticket 15).
     isolated["tag"] = ""
     calls = []
-    _install(monkeypatch, read, lambda pid: calls.append(pid))
+    _install_load_pool(monkeypatch, lambda pid: calls.append(pid))
     caplog.set_level(logging.DEBUG)
     assert config._pool_entry_payloads(PROVIDER) == []
     assert calls == [] and _warnings(caplog) == []
     assert config._CREDENTIAL_READ_WARNED == {} and config._CREDENTIAL_POOL_CACHE == {}
 
 
-# ── The custom-provider fallback: /api/models/live and the model list ──
+# ── The custom-provider fallback: /api/models/live and the model list (credential discovery) ──
 
 
 CUSTOM = "custom:test-gateway"
 
 
-def _live_models(monkeypatch, load_pool, *, explicit=True, base_url=None):
+def _profile_pool(isolated, tmp_path, provider, *, content=None):
+    """The request Profile's auth.json holds a pool entry for *provider* (or raw *content*)."""
+    import json
+
+    path = tmp_path / "auth.json"
+    if content is None:
+        entry = {"id": "e1", "label": "work key", "source": "manual", "auth_type": "api_key",
+                 "access_token": SECRET, "base_url": "https://pool.example/v1"}
+        content = json.dumps({"version": 1, "credential_pool": {provider: [entry]}})
+    (path.write_bytes if isinstance(content, bytes) else path.write_text)(content)
+    isolated["tag"] = str(path)
+    return path
+
+
+@pytest.fixture
+def agent_reads(monkeypatch):
+    """load_pool records any call; discovery must make none."""
+    calls = []
+    _install_load_pool(monkeypatch, lambda pid: calls.append(pid) or Pool([Entry()]))
+    return calls
+
+
+UNREADABLE = {
+    "malformed": f'{{"credential_pool": {{"{CUSTOM}": [{{"access_token": "{SECRET}"',
+    "undecodable": b"\xff\xfe" + SECRET.encode(),
+}
+
+
+def _live_models(monkeypatch, *, base_url=None):
     """GET /api/models/live?provider=custom:test-gateway for a provider whose key is in the pool."""
     import io
     import json
@@ -284,11 +289,6 @@ def _live_models(monkeypatch, load_pool, *, explicit=True, base_url=None):
     models = types.ModuleType("hermes_cli.models")
     models.provider_model_ids = lambda provider: []
     monkeypatch.setitem(sys.modules, "hermes_cli.models", models)
-    monkeypatch.setattr(config, "_has_explicit_pool_credentials", lambda pid: explicit)
-    if load_pool is None:
-        monkeypatch.setitem(sys.modules, "agent.credential_pool", None)
-    else:
-        _install_load_pool(monkeypatch, load_pool)
     requested = []
 
     class Response(io.BytesIO):
@@ -307,49 +307,61 @@ def _live_models(monkeypatch, load_pool, *, explicit=True, base_url=None):
     return payload, requested
 
 
-def test_live_models_uses_the_pool_key_when_it_works(monkeypatch, caplog):
+def test_live_models_uses_the_pool_key_from_the_profiles_auth_json(
+    monkeypatch, agent_reads, caplog, isolated, tmp_path,
+):
+    path = _profile_pool(isolated, tmp_path, CUSTOM)
+    before = path.read_bytes()
     caplog.set_level(logging.DEBUG)
-    payload, requested = _live_models(monkeypatch, lambda pid: Pool([Entry()]))
+    payload, requested = _live_models(monkeypatch)
     assert [url for url, _headers in requested] == ["https://pool.example/v1/models"]
     assert "chat-a" in [m["id"] for m in payload["models"]]
-    assert _warnings(caplog) == []
+    assert _warnings(caplog) == [] and agent_reads == []
+    assert path.read_bytes() == before
     _no_secret(caplog)
 
 
-def test_live_models_keeps_a_configured_base_url_and_takes_only_the_missing_key(monkeypatch):
-    payload, requested = _live_models(monkeypatch, lambda pid: Pool([Entry()]),
-                                      base_url="https://configured.example/v1")
+def test_live_models_keeps_a_configured_base_url_and_takes_only_the_missing_key(
+    monkeypatch, agent_reads, isolated, tmp_path,
+):
+    _profile_pool(isolated, tmp_path, CUSTOM)
+    payload, requested = _live_models(monkeypatch, base_url="https://configured.example/v1")
     [(url, headers)] = requested
     assert url == "https://configured.example/v1/models"
     assert headers.get("Authorization") == f"Bearer {SECRET}"
 
 
-def test_live_models_without_the_capability_falls_back_silently(monkeypatch, caplog):
+def test_live_models_without_a_pool_falls_back_silently(monkeypatch, agent_reads, caplog, isolated, tmp_path):
+    isolated["tag"] = str(tmp_path / "auth.json")  # no auth.json at all
     caplog.set_level(logging.DEBUG)
-    payload, requested = _live_models(monkeypatch, None)
+    payload, requested = _live_models(monkeypatch)
     assert requested == [] and [m["id"] for m in payload["models"]] == ["chat-a"]
     assert _warnings(caplog) == []
+    assert not (tmp_path / "auth.json").exists()
 
 
-@pytest.mark.parametrize("error", [
-    ModuleNotFoundError("No module named 'keyring'", name="keyring"),
-    RuntimeError(f"token refresh failed {SECRET}"),
-], ids=["ImportError", "RuntimeError"])
-def test_live_models_with_a_failing_pool_falls_back_and_warns(monkeypatch, caplog, error):
+@pytest.mark.parametrize("kind", sorted(UNREADABLE))
+def test_live_models_with_an_unreadable_auth_json_falls_back_and_warns(
+    monkeypatch, agent_reads, caplog, isolated, tmp_path, kind,
+):
+    path = _profile_pool(isolated, tmp_path, CUSTOM, content=UNREADABLE[kind])
+    before = path.read_bytes()
     caplog.set_level(logging.DEBUG)
-    payload, requested = _live_models(monkeypatch, _raise(error))
+    payload, requested = _live_models(monkeypatch)
     assert requested == [] and [m["id"] for m in payload["models"]] == ["chat-a"]
     assert "error" not in payload
-    [warning] = _warnings(caplog)
-    assert CUSTOM in warning.getMessage() and type(error).__name__ in warning.getMessage()
+    warnings = [w.getMessage() for w in _warnings(caplog)]
+    assert warnings and all(CUSTOM in m for m in warnings)
+    assert path.read_bytes() == before and agent_reads == []
     _no_secret(caplog)
 
 
-def _model_list(monkeypatch, tmp_path, load_pool, *, base_url=None):
+def _model_list(monkeypatch, tmp_path, isolated, *, content=None, base_url=None):
     """get_available_models() for a custom provider whose key (and base URL) are in the pool.
 
-    Returns (result, slug, probes): *probes* are the (base_url, api_key) the
-    model list probed the provider's /v1/models with.
+    Returns (result, slug, probes, unchanged): *probes* are the (base_url,
+    api_key) the model list probed the provider's /v1/models with; *unchanged*
+    is whether the Profile's auth.json kept its bytes.
     """
     import json
 
@@ -363,9 +375,9 @@ def _model_list(monkeypatch, tmp_path, load_pool, *, base_url=None):
     auth.get_auth_status = lambda _pid: {}
     monkeypatch.setitem(sys.modules, "hermes_cli.models", models)
     monkeypatch.setitem(sys.modules, "hermes_cli.auth", auth)
-    _install_load_pool(monkeypatch, load_pool)
     slug = config._custom_provider_slug_from_name("Test Gateway")
-    monkeypatch.setattr(config, "_has_explicit_pool_credentials", lambda pid: pid == slug)
+    auth_path = _profile_pool(isolated, tmp_path, slug, content=content)
+    before = auth_path.read_bytes()
     import io
     import socket
     import urllib.request
@@ -388,7 +400,6 @@ def _model_list(monkeypatch, tmp_path, load_pool, *, base_url=None):
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **kw: [(socket.AF_INET, 0, 0, "", ("93.184.216.34", 0))])
-    (tmp_path / "auth.json").write_text(json.dumps({}), encoding="utf-8")
     monkeypatch.setattr(profiles, "get_active_hermes_home", lambda: tmp_path)
     entry = {"name": "Test Gateway"}
     if base_url:
@@ -402,7 +413,8 @@ def _model_list(monkeypatch, tmp_path, load_pool, *, base_url=None):
         config._cfg_mtime = 0.0
     config.invalidate_models_cache()
     try:
-        return config.get_available_models(), slug, probes
+        result = config.get_available_models()
+        return result, slug, probes, auth_path.read_bytes() == before
     finally:
         config.cfg.clear()
         config.cfg.update(old_cfg)
@@ -410,29 +422,31 @@ def _model_list(monkeypatch, tmp_path, load_pool, *, base_url=None):
         config.invalidate_models_cache()
 
 
-def test_the_model_list_takes_a_custom_providers_key_and_base_url_from_the_pool(monkeypatch, tmp_path, caplog):
+def test_the_model_list_takes_a_custom_providers_key_and_base_url_from_the_pool(
+    monkeypatch, agent_reads, tmp_path, caplog, isolated,
+):
     caplog.set_level(logging.DEBUG)
-    _result, _slug, probes = _model_list(monkeypatch, tmp_path, lambda pid: Pool([Entry()]))
+    _result, _slug, probes, unchanged = _model_list(monkeypatch, tmp_path, isolated)
     assert probes == [("https://pool.example/v1", SECRET)]
-    assert _warnings(caplog) == []
+    assert _warnings(caplog) == [] and agent_reads == []
+    assert unchanged
     _no_secret(caplog)
 
 
-def test_the_model_list_keeps_a_configured_base_url(monkeypatch, tmp_path):
-    _result, _slug, probes = _model_list(monkeypatch, tmp_path, lambda pid: Pool([Entry()]),
-                                         base_url="https://configured.example/v1")
+def test_the_model_list_keeps_a_configured_base_url(monkeypatch, agent_reads, tmp_path, isolated):
+    _result, _slug, probes, _unchanged = _model_list(monkeypatch, tmp_path, isolated,
+                                                     base_url="https://configured.example/v1")
     assert probes == [("https://configured.example/v1", SECRET)]
 
 
-@pytest.mark.parametrize("error", [
-    ModuleNotFoundError("No module named 'keyring'", name="keyring"),
-    RuntimeError(f"token refresh failed {SECRET}"),
-], ids=["ImportError", "RuntimeError"])
-def test_the_model_list_with_a_failing_pool_still_lists_and_warns(monkeypatch, tmp_path, caplog, error):
+@pytest.mark.parametrize("kind", sorted(UNREADABLE))
+def test_the_model_list_with_an_unreadable_auth_json_still_lists_and_warns(
+    monkeypatch, agent_reads, tmp_path, caplog, isolated, kind,
+):
     caplog.set_level(logging.DEBUG)
-    result, slug, probes = _model_list(monkeypatch, tmp_path, _raise(error))
-    assert isinstance(result, dict) and "groups" in result
+    result, slug, probes, unchanged = _model_list(monkeypatch, tmp_path, isolated, content=UNREADABLE[kind])
+    assert isinstance(result, dict) and "groups" in result and unchanged
     assert probes == []  # no key and no base URL from the pool: nothing to probe, as with no pool
     warnings = [w.getMessage() for w in _warnings(caplog)]
-    assert any(slug in m and type(error).__name__ in m for m in warnings), warnings
+    assert any(slug in m for m in warnings), warnings
     _no_secret(caplog)
