@@ -221,6 +221,16 @@ def test_docker_init_excludes_egg_info_during_staging():
         ".playwright so the build doesn't choke on unreadable browser files."
     )
 
+    # The Agent image (nousresearch/hermes-agent:latest, 2026-10-08) ships an
+    # owner-only tools/.install.lock; copying it fails startup the same way.
+    assert "--exclude='.install.lock'" in stage_block, (
+        "rsync staging must --exclude='.install.lock' (an unreadable Agent "
+        "install lock causes rsync error code 23 and kills container startup)."
+    )
+    assert "--exclude='.install.lock'" in stage_block.split("else", 1)[1], (
+        "the cp fallback must skip .install.lock too: cp -a cannot read it either."
+    )
+
 
 def test_docker_init_makes_staged_dir_writable_after_ro_mount_copy():
     """Regression test for the docker-init "could not create hermes_agent.egg-info:
