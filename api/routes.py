@@ -19930,9 +19930,18 @@ def _handle_cron_recent(handler, parsed):
         since = float(qs.get("since", ["0"])[0])
     except (ValueError, TypeError):
         since = 0.0
+    # The import alone means "no cron here"; a broken Agent or a failing read
+    # is warned rather than answered as "nothing completed" silently (ticket 15).
     try:
         from cron.jobs import list_jobs
-
+    except ImportError as exc:
+        if not (isinstance(exc, ModuleNotFoundError) and exc.name in ("cron", "cron.jobs")):
+            logger.warning(
+                "The Agent's cron module could not be imported (%s: %s); no cron completions are reported",
+                type(exc).__name__, exc.name,
+            )
+        return j(handler, {"completions": [], "since": since})
+    try:
         jobs = list_jobs(include_disabled=True)
         completions = []
         for job in jobs:
@@ -19969,7 +19978,10 @@ def _handle_cron_recent(handler, parsed):
             if info.get("message_count") is not None:
                 completion["message_count"] = int(info["message_count"])
         return j(handler, {"completions": completions, "since": since})
-    except ImportError:
+    except ImportError as exc:
+        logger.warning(
+            "Recent cron completions could not be read (%s: %s)", type(exc).__name__, exc.name,
+        )
         return j(handler, {"completions": [], "since": since})
 
 

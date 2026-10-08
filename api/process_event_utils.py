@@ -267,17 +267,24 @@ def schedule_async_delegation_claim_retry(
     delegation_id = str(evt.get("delegation_id") or "").strip()
     if not delegation_id or completion_queue is None:
         return False
+    # The import alone means "no durable delegations here"; a broken Agent or a
+    # failing read is warned: the retry sweep is then not armed (ticket 15).
     try:
         from tools.async_delegation import get_durable_delegation
-
-        durable = get_durable_delegation(delegation_id)
-    except (ImportError, AttributeError):
+    except ImportError as exc:
+        # Not installed, or an older Agent without the name (exc.name is the module then).
+        if exc.name not in ("tools", "tools.async_delegation"):
+            logger.warning(
+                "The Agent's async delegation module could not be imported (%s: %s); "
+                "delegation %s is not retried", type(exc).__name__, exc.name, delegation_id,
+            )
         return False
-    except Exception:
-        logger.debug(
-            "Failed to inspect durable async delegation %s for retry",
-            delegation_id,
-            exc_info=True,
+    try:
+        durable = get_durable_delegation(delegation_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to inspect durable async delegation %s for retry (%s)",
+            delegation_id, type(exc).__name__,
         )
         return False
     if not isinstance(durable, dict) or durable.get("delivery_state") != "pending":
