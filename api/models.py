@@ -5700,8 +5700,7 @@ def new_session(workspace=None, model=None, profile=None, model_provider=None, p
     The session lives in the SESSIONS dict only — no disk write happens until
     the first message is appended (#1171 follow-up).  This avoids the
     "ghost Untitled session on disk" pile-up that occurred when users clicked
-    New Conversation, reloaded the page, or completed onboarding without ever
-    sending a message.  Subsequent code paths that populate state immediately
+    New Conversation or reloaded the page without ever sending a message.  Subsequent code paths that populate state immediately
     (btw / background agent at api/routes.py) call ``s.save()`` themselves
     after setting title/messages, and ``_handle_chat_start`` saves the
     session as soon as the user actually sends a message — both are the

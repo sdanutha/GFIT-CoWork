@@ -11,7 +11,7 @@
 > Python 3.11, 3.12, 3.13, and 3.14 (3 parallel shards each) against every PR, plus a ruff
 > lint gate, a headless browser smoke test, and a Docker smoke test.
 >
-> Notable architecture state: the bootstrap and first-run onboarding flow own setup discovery; the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping. (Version/test-count numbers above are a periodic snapshot — the authoritative source is the latest git tag and `pytest --collect-only`.)
+> Notable architecture state: the bootstrap owns agent and Python discovery, and Setup is the Operator's with `hermes setup` (there is no first-run wizard); the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping. (Version/test-count numbers above are a periodic snapshot — the authoritative source is the latest git tag and `pytest --collect-only`.)
 
 ---
 
@@ -64,7 +64,6 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       goals.py             Persistent-goal commands and profile-scoped native GoalManager bridge
       models.py            Session model + CRUD, per-session profile tracking, CLI/state.db bridge
       profiles.py          Profile state management, hermes_cli wrapper
-      onboarding.py        First-run onboarding status, real provider config writes, OAuth linking, readiness detection
       routes.py            All GET + POST route handlers (if/elif dispatch, no decorators)
       startup.py           Startup helpers: auto_install_agent_deps()
       state_sync.py        /insights sync — message_count to the agent's state.db
@@ -82,7 +81,6 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       panels.js            Cron, skills, memory, profiles, todo, settings (Control Center)
       commands.js          Slash command registry, parser, autocomplete dropdown
       boot.js              Event wiring, mobile nav, voice input, theme/skin boot, bfcache handler
-      onboarding.js        First-run wizard overlay, provider setup flow
       i18n.js              Localization catalog (en, es, de, zh, zh-Hant, ru, …)
       login.js             Login page + open-redirect guard
       icons.js             Lucide icon path registry

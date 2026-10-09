@@ -1,85 +1,4 @@
-import io
 from pathlib import Path
-
-
-class _Headers(dict):
-    def get(self, key, default=None):
-        for k, v in self.items():
-            if k.lower() == key.lower():
-                return v
-        return default
-
-
-class _Handler:
-    def __init__(self, *, client_ip="8.8.8.8", headers=None, body=b"{}"):
-        self.client_address = (client_ip, 12345)
-        self.headers = _Headers(headers or {})
-        self.rfile = io.BytesIO(body)
-        self.wfile = io.BytesIO()
-        self.request = None
-        self.status = None
-        self.sent_headers = []
-
-    def send_response(self, code):
-        self.status = code
-
-    def send_header(self, key, value):
-        self.sent_headers.append((key, value))
-
-    def end_headers(self):
-        pass
-
-
-def test_onboarding_local_gate_ignores_forwarded_ip_unless_trusted(monkeypatch):
-    from api import routes
-
-    monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-    handler = _Handler(
-        client_ip="8.8.8.8",
-        headers={"X-Forwarded-For": "127.0.0.1", "X-Real-IP": "10.0.0.2"},
-    )
-
-    assert routes._onboarding_request_is_local(handler) is False
-
-
-def test_onboarding_local_gate_uses_forwarded_ip_when_explicitly_trusted(monkeypatch):
-    """Even with HERMES_WEBUI_TRUST_FORWARDED_FOR=1, a forwarded header is only
-    honored when the RAW socket peer is a trusted proxy (loopback or in
-    HERMES_WEBUI_TRUSTED_PROXY_CIDRS). A PUBLIC direct client (raw peer 8.8.8.8)
-    that merely SETS X-Forwarded-For can NOT promote itself to local — otherwise
-    a passwordless WebUI with the opt-in enabled would admit any remote attacker
-    to the embedded terminal (#5764). The forwarded IP is consulted only after
-    the un-spoofable socket peer is confirmed to be a trusted proxy.
-    """
-    from api import routes
-
-    monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", "1")
-    monkeypatch.delenv("HERMES_WEBUI_TRUSTED_PROXY_CIDRS", raising=False)
-    handler = _Handler(
-        client_ip="8.8.8.8",
-        headers={"X-Forwarded-For": "10.0.0.2", "X-Real-IP": "203.0.113.11"},
-    )
-
-    # Raw peer 8.8.8.8 is NOT a trusted proxy → forwarded header ignored →
-    # classified by the public raw peer → DENY.
-    assert routes._onboarding_request_is_local(handler) is False
-
-    # With the peer's own network in the trusted-proxy allowlist, the forwarded
-    # client IP (private 10.0.0.2) is now honored → local.
-    monkeypatch.setenv("HERMES_WEBUI_TRUSTED_PROXY_CIDRS", "8.8.8.0/24")
-    assert routes._onboarding_request_is_local(handler) is True
-
-
-def test_onboarding_trusted_forwarded_for_uses_proxy_appended_rightmost_ip(monkeypatch):
-    from api import routes
-
-    monkeypatch.setenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", "1")
-    handler = _Handler(
-        client_ip="10.0.0.10",
-        headers={"X-Forwarded-For": "127.0.0.1, 8.8.8.8"},
-    )
-
-    assert routes._onboarding_request_is_local(handler) is False
 
 
 def test_docker_env_log_obfuscates_password_and_secret_names():
@@ -93,51 +12,8 @@ def test_docker_env_log_obfuscates_password_and_secret_names():
     assert "KEY" in line
 
 
-def test_onboarding_untrusted_forwarded_header_denies_lan_proxy_socket(monkeypatch):
-    """Reverse-proxy regression (release-gate CORE fix): when forwarded headers
-    are present but HERMES_WEBUI_TRUST_FORWARDED_FOR is NOT set, the spoofable
-    header is ignored and locality is judged by the raw socket — but a PRIVATE/LAN
-    raw socket (a separate proxy box that could be forwarding an arbitrary public
-    client) is NOT treated as local. A loopback raw socket is still genuine
-    same-host and remains allowed (a remote attacker cannot forge a 127.0.0.1 TCP
-    source). Operators with a LAN proxy must set HERMES_WEBUI_TRUST_FORWARDED_FOR=1.
-    """
-    from api import routes
-
-    monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-
-    # LAN proxy box (private raw socket) forwarding a public client → DENY
-    handler = _Handler(client_ip="10.0.0.5", headers={"X-Real-IP": "203.0.113.7"})
-    assert routes._onboarding_request_is_local(handler) is False
-    handler2 = _Handler(client_ip="172.20.0.1", headers={"X-Forwarded-For": "8.8.8.8"})
-    assert routes._onboarding_request_is_local(handler2) is False
-
-    # Genuine same-host: loopback raw socket is local even if a forwarded header
-    # is present (the TCP source genuinely came from localhost; unspoofable).
-    handler3 = _Handler(client_ip="127.0.0.1", headers={"X-Forwarded-For": "8.8.8.8"})
-    assert routes._onboarding_request_is_local(handler3) is True
 
 
-def test_onboarding_spoofed_forwarded_header_from_public_socket_denied(monkeypatch):
-    """The original spoof hole: a public client setting X-Forwarded-For=127.0.0.1
-    must NOT bypass the gate. The forwarded header is ignored; the public raw
-    socket governs → denied.
-    """
-    from api import routes
-
-    monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-    handler = _Handler(client_ip="8.8.8.8", headers={"X-Forwarded-For": "127.0.0.1"})
-    assert routes._onboarding_request_is_local(handler) is False
 
 
-def test_onboarding_direct_loopback_without_forwarded_headers_is_local(monkeypatch):
-    """A genuine direct local client (no proxy headers) is still allowed."""
-    from api import routes
-
-    monkeypatch.delenv("HERMES_WEBUI_TRUST_FORWARDED_FOR", raising=False)
-    handler = _Handler(client_ip="127.0.0.1", headers={})
-    assert routes._onboarding_request_is_local(handler) is True
-
-    handler_public = _Handler(client_ip="8.8.8.8", headers={})
-    assert routes._onboarding_request_is_local(handler_public) is False
 

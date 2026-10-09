@@ -541,27 +541,6 @@ def test_detached_worker_scope_scrubs_absent_custom_provider_key_env(monkeypatch
     assert os.environ.get("ISSUE_3957_CUSTOM_KEY") == "from-process-env"
 
 
-def test_account_usage_subprocess_env_blocks_process_default_key(monkeypatch, tmp_path):
-    """Readonly quota probes must not inherit process-default provider keys."""
-    from api.providers import _account_usage_subprocess_env
-
-    base = tmp_path / ".hermes"
-    work_home = base / "profiles" / "work"
-    work_home.mkdir(parents=True)
-    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
-    monkeypatch.setenv("OPENAI_API_KEY", "from-process-env")
-
-    profiles.set_request_profile("work")
-    try:
-        with profiles.profile_env_for_active_request_readonly("quota probe"):
-            env = _account_usage_subprocess_env(work_home, "openai", None)
-    finally:
-        profiles.clear_request_profile()
-
-    assert env["HERMES_HOME"] == str(work_home)
-    assert "OPENAI_API_KEY" not in env
-
-
 def test_active_request_scope_installs_secret_scope(monkeypatch, tmp_path):
     """Inside readonly scope, agent.secret_scope sees profile env, not process env."""
     import types
@@ -676,89 +655,6 @@ def test_detached_worker_scope_installs_secret_scope(monkeypatch, tmp_path):
     assert call_log.get("reset_called") is True
 
 
-def test_account_usage_subprocess_env_strips_bedrock_keys(monkeypatch, tmp_path):
-    """Quota probes must not inherit AWS/Bedrock keys when block_process_env_fallback is set."""
-    from api.providers import _account_usage_subprocess_env
-
-    base = tmp_path / ".hermes"
-    work_home = base / "profiles" / "work"
-    work_home.mkdir(parents=True)
-    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "aws-key-id")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
-
-    profiles.set_request_profile("work")
-    try:
-        with profiles.profile_env_for_active_request_readonly("quota probe"):
-            env = _account_usage_subprocess_env(work_home, "bedrock", None)
-    finally:
-        profiles.clear_request_profile()
-
-    assert env["HERMES_HOME"] == str(work_home)
-    assert "AWS_ACCESS_KEY_ID" not in env
-    assert "AWS_SECRET_ACCESS_KEY" not in env
-
-
-def test_account_usage_subprocess_env_strips_custom_key_env(monkeypatch, tmp_path):
-    """Quota probes must strip custom provider key_env when block_process_env_fallback is set."""
-    from api.providers import _account_usage_subprocess_env
-
-    base = tmp_path / ".hermes"
-    work_home = base / "profiles" / "work"
-    work_home.mkdir(parents=True)
-
-    # Create a config.yaml with a custom provider that has key_env
-    config_yaml = work_home / "config.yaml"
-    config_yaml.write_text(
-        """
-custom_providers:
-  - key_env: MY_CUSTOM_API_KEY
-"""
-    )
-
-    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
-    monkeypatch.setenv("MY_CUSTOM_API_KEY", "custom-secret")
-
-    profiles.set_request_profile("work")
-    try:
-        with profiles.profile_env_for_active_request_readonly("quota probe"):
-            env = _account_usage_subprocess_env(work_home, "openai", None)
-    finally:
-        profiles.clear_request_profile()
-
-    assert env["HERMES_HOME"] == str(work_home)
-    assert "MY_CUSTOM_API_KEY" not in env
-
-
-def test_account_usage_subprocess_env_strips_anthropic_token_aliases(monkeypatch, tmp_path):
-    """Quota probes must not inherit the process-default Anthropic OAuth/token env
-    vars (ANTHROPIC_TOKEN / CLAUDE_CODE_OAUTH_TOKEN) for an empty named profile.
-
-    These are agent-runtime credential env vars absent from the WebUI's settable
-    _PROVIDER_ENV_VAR map, so the strip set must derive them from the agent
-    registry — otherwise the anthropic quota subprocess resolves them via
-    resolve_anthropic_token() and leaks the server-process credential (#3961)."""
-    from api.providers import _account_usage_subprocess_env
-
-    base = tmp_path / ".hermes"
-    work_home = base / "profiles" / "work"
-    work_home.mkdir(parents=True)
-    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
-    monkeypatch.setenv("ANTHROPIC_TOKEN", "process-default-anthropic-token")
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "process-default-oauth-token")
-
-    profiles.set_request_profile("work")
-    try:
-        with profiles.profile_env_for_active_request_readonly("quota probe"):
-            env = _account_usage_subprocess_env(work_home, "anthropic", None)
-    finally:
-        profiles.clear_request_profile()
-
-    assert env["HERMES_HOME"] == str(work_home)
-    assert "ANTHROPIC_TOKEN" not in env
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
-
-
 def test_detached_worker_scope_scrubs_anthropic_token_aliases(monkeypatch, tmp_path):
     """Detached/sync model-rebuild scope must scrub the process-default Anthropic
     OAuth/token env vars too — verified agent model code can resolve Anthropic
@@ -779,37 +675,6 @@ def test_detached_worker_scope_scrubs_anthropic_token_aliases(monkeypatch, tmp_p
 
     assert os.environ.get("ANTHROPIC_TOKEN") == "process-default-anthropic-token"
     assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") == "process-default-oauth-token"
-
-
-def test_account_usage_subprocess_env_strips_non_registry_agent_creds(monkeypatch, tmp_path):
-    """Quota probes must not inherit process-default credential env vars the agent
-    resolves via raw os.getenv() but that are NOT in the auth registry — the
-    generic CUSTOM_API_KEY and the AWS/Bedrock credential family. Otherwise a
-    custom/AWS-backed provider quota probe leaks the server-process credential
-    to an empty named profile (#3961 residual leak class)."""
-    from api.providers import _account_usage_subprocess_env
-
-    base = tmp_path / ".hermes"
-    work_home = base / "profiles" / "work"
-    work_home.mkdir(parents=True)
-    monkeypatch.setattr(profiles, "_DEFAULT_HERMES_HOME", base)
-    monkeypatch.setenv("CUSTOM_API_KEY", "process-default-custom-key")
-    monkeypatch.setenv("AWS_PROFILE", "process-default-aws-profile")
-    monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "process-default-bedrock-token")
-    monkeypatch.setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.2/creds")
-
-    profiles.set_request_profile("work")
-    try:
-        with profiles.profile_env_for_active_request_readonly("quota probe"):
-            env = _account_usage_subprocess_env(work_home, "openai", None)
-    finally:
-        profiles.clear_request_profile()
-
-    assert env["HERMES_HOME"] == str(work_home)
-    assert "CUSTOM_API_KEY" not in env
-    assert "AWS_PROFILE" not in env
-    assert "AWS_BEARER_TOKEN_BEDROCK" not in env
-    assert "AWS_CONTAINER_CREDENTIALS_FULL_URI" not in env
 
 
 def test_detached_worker_scope_scrubs_non_registry_agent_creds(monkeypatch, tmp_path):

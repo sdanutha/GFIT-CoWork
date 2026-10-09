@@ -1,4 +1,4 @@
-# First run
+# Setup
 
 This guide is for the **Operator**: the person with shell access to the
 server who sets up a GFIT-CoWork Deployment and its first Users. There is no
@@ -6,8 +6,8 @@ setup wizard in the web app and no Admin login (ADR 0006); everything below is
 done on the server.
 
 If an AI assistant is helping with install, reinstall, bootstrap, provider
-setup, or first-run support, read
-[`docs/onboarding-agent-checklist.md`](onboarding-agent-checklist.md) before
+setup, or Setup support, read
+[`docs/setup-agent-checklist.md`](setup-agent-checklist.md) before
 running commands or inspecting logs.
 
 The short version:

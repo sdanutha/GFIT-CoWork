@@ -8722,15 +8722,6 @@ def invalidate_credential_pool_cache(provider_id: str):
         _cp_tag = _credential_pool_profile_tag()
         _CREDENTIAL_POOL_CACHE.pop((_cp_tag, provider_id), None)
         _CREDENTIAL_POOL_CACHE.pop((_cp_tag, _resolve_provider_alias(provider_id)), None)
-    try:
-        # api.providers imports from api.config; keep this lazy to avoid
-        # import-cycle/module-initialization issues.
-        from api.providers import invalidate_account_usage_status_cache
-
-        invalidate_account_usage_status_cache(provider_id)
-        invalidate_account_usage_status_cache(_resolve_provider_alias(provider_id))
-    except Exception:
-        logger.debug("Failed to invalidate account usage status cache", exc_info=True)
 
 
 def _get_label_for_model(model_id: str, existing_groups: list) -> str:
@@ -11881,7 +11872,6 @@ def _alias_session_agent_lock(
 
 _SETTINGS_DEFAULTS = {
     "default_workspace": str(DEFAULT_WORKSPACE),
-    "onboarding_completed": False,
     "send_key": "enter",  # 'enter', 'ctrl+enter', or 'shift+enter'
     "show_token_usage": False,  # show input/output token badge below assistant messages
     "show_conversation_outline": False,  # show opt-in desktop jump-to-question outline panel
@@ -12002,6 +11992,8 @@ _SETTINGS_LEGACY_DROP_KEYS = {
     "provider_cost_budget",
     # There is no mode with login turned off (ADR 0006).
     "auth_disabled_acknowledged",
+    # Setup is the Operator's, with `hermes setup`; the first-run wizard is gone.
+    "onboarding_completed",
 }
 _COMPOSER_CONTROL_ORDER_KEYS = {
     key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
@@ -12214,12 +12206,10 @@ def load_settings() -> dict:
         # who never opted in should not have their sidebar silently change.
         # Treat the install as established (and pin the old False default)
         # when show_cli_sessions is absent AND the file already carries
-        # real user state — either onboarding was completed, or some
-        # setting OTHER than a not-yet-completed onboarding flag has been
-        # persisted. Keying on "has saved user state" (not just
-        # onboarding_completed) also covers a CLI-configured user who
-        # tweaked a WebUI setting before running the wizard. A genuinely
-        # new / still-mid-onboarding file falls through to the True default.
+        # real user state — some setting has been persisted, or the file
+        # says the old first-run wizard was finished (the legacy
+        # onboarding_completed key, dropped above but still read here). A
+        # genuinely new file falls through to the True default.
         _established_keys = [
             k for k in stored
             if k not in ("show_cli_sessions", "onboarding_completed")
@@ -12309,7 +12299,6 @@ _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
 # state database) or weaken a safeguard. Every other allowed key is personal.
 _SETTINGS_DEPLOYMENT_KEYS = frozenset({
     "default_workspace",
-    "onboarding_completed",
     "sync_to_insights",
     "api_redact_enabled",
     "dashboard_plugins",
@@ -12347,7 +12336,6 @@ _SETTINGS_FLOAT_RANGES = {
     "tts_pitch": (0.0, 2.0),
 }
 _SETTINGS_BOOL_KEYS = {
-    "onboarding_completed",
     "show_token_usage",
     "show_conversation_outline",
     "show_busy_placeholder_hint",
