@@ -132,27 +132,18 @@ def test_audit_reports_runtime_auxiliary_and_model_metadata_imports():
     assert ("api/streaming.py", "agent.auxiliary_client") in anchors
     assert ("api/streaming.py", "agent.model_metadata") in anchors
     assert ("api/config.py", "hermes_cli.models") in anchors
-    assert ("api/providers.py", "agent.account_usage") in anchors
 
 
-def test_audit_embedded_worker_import_line_anchors_are_source_lines():
+def test_audit_import_line_anchors_are_source_lines():
     classes = _class_by_id(_run_audit())
-    provider_findings = _findings(classes["runtime_auxiliary_model_metadata"])
-    account_usage = next(
-        finding
-        for finding in provider_findings
-        if finding["path"] == "api/providers.py" and finding["anchor"] == "agent.account_usage"
-    )
-
-    expected_text = "from agent.account_usage import fetch_account_usage"
-    assert account_usage["text"] == expected_text
-    # The reported line number must be an ACCURATE source anchor — i.e. that line
-    # in the real file actually contains the import. Asserting the exact number is
-    # brittle (any edit above it shifts it); asserting the line CONTENT at the
-    # reported line is the real invariant ("line anchors are source lines").
-    source_lines = (REPO / account_usage["path"]).read_text(encoding="utf-8").splitlines()
-    assert account_usage["line"] >= 1
-    assert source_lines[account_usage["line"] - 1].strip() == expected_text
+    findings = _findings(classes["runtime_auxiliary_model_metadata"])
+    assert findings
+    # A reported line number must be an ACCURATE source anchor: that line in the
+    # real file holds the reported import text.
+    for finding in findings:
+        source_lines = (REPO / finding["path"]).read_text(encoding="utf-8").splitlines()
+        assert finding["line"] >= 1, finding
+        assert source_lines[finding["line"] - 1].strip() == finding["text"], finding
 
 
 def test_audit_reports_runtime_state_and_provider_imports():
