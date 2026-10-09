@@ -11,7 +11,6 @@ import re as _re
 import ssl
 import sys
 from pathlib import Path
-from api.config import IMAGE_EXTS, MD_EXTS
 
 logger = logging.getLogger(__name__)
 

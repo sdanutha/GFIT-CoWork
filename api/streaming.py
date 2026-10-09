@@ -293,10 +293,6 @@ class _CompactEchoIndex:
                 return None
         return self._offsets[start]
 
-    def compact_view(self) -> str:
-        """The folded text (materialized on demand — never kept as a string)."""
-        return ''.join(self._compact)
-
 
 def _find_compact_echo_suffix_start(value: str, suffix: str) -> int | None:
     """Return the index where a whitespace-folded ``suffix`` starts at the
@@ -5496,13 +5492,11 @@ def _preserve_pre_compression_snapshot(s, old_sid: str) -> None:
         try:
             existing = json.loads(existing_text)
             existing_msgs = len(existing.get('messages') or [])
-            existing_snapshot = bool(existing.get('pre_compression_snapshot'))
         except (json.JSONDecodeError, ValueError):
             # Treat corrupt/malformed old JSON as missing history and rewrite it
             # from the in-memory pre-compression messages below. That is safer
             # than leaving an unreadable recovery snapshot behind.
             existing_msgs = -1
-            existing_snapshot = False
         if len(s.messages) > existing_msgs:
             # In-memory messages are newer than the file; save the full old
             # snapshot from the current session object while preserving its

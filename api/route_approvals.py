@@ -527,18 +527,6 @@ def settle_gateway_pending_run(
     return len(targets), head, total
 
 
-def _gateway_mirrored_pending_run_id(session_key: str, approval_id: str) -> str | None:
-    """Compatibility wrapper for exact run-backed lookup."""
-    approval_id = str(approval_id or "").strip()
-    if not approval_id:
-        return None
-    with _lock:
-        entry = _gateway_pending_mirror_locked(session_key, approval_id=approval_id)
-        if entry:
-            return str(entry.get("run_id") or "").strip() or None
-    return None
-
-
 def submit_gateway_pending_mirror(session_key: str, approval: dict) -> tuple[dict | None, int]:
     """Mirror the live gateway head into WebUI polling state under a typed tag.
 

@@ -540,10 +540,9 @@ def _read_state_db_missing_sidecar_rows(
                 # repair. The _index.json heuristic must NOT gate this path: a
                 # genuine crash that loses the sidecar while its index entry
                 # survives (no durable tombstone) is exactly the case this repair
-                # exists for, and on master it materialized the sidecar. Using
-                # _marks_deleted_webui_session() here (which ORs in the index
-                # heuristic) wrongly classified that crash as a delete and
-                # stopped recovery (#5504 Codex/Opus finding).
+                # exists for, and on master it materialized the sidecar. ORing
+                # in the index heuristic here wrongly classified that crash as
+                # a delete and stopped recovery (#5504 Codex/Opus finding).
                 tombstoned = _durable_tombstone_marks_deleted_webui_session(session_dir, sid)
                 if tombstoned and not include_empty:
                     continue
@@ -745,42 +744,6 @@ def _read_index_session_ids(index_path: Path) -> set[str]:
     return ids
 
 
-def _index_marks_deleted_webui_session(session_dir: Path, sid: str) -> bool:
-    """Return True when _index.json has a WebUI-like entry whose sidecar is missing.
-
-    This is a delete-route heuristic for cases where index pruning and durable
-    tombstone recording both failed; it can also match other sidecar-loss modes.
-    """
-    if not sid or (session_dir / f"{sid}.json").exists():
-        return False
-    index_path = session_dir / '_index.json'
-    if not index_path.exists():
-        return False
-    try:
-        data = json.loads(index_path.read_text(encoding='utf-8'))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return False
-    if not isinstance(data, list):
-        return False
-    for entry in data:
-        if not isinstance(entry, dict) or entry.get('session_id') != sid:
-            continue
-        srcs = [
-            str(entry.get('source_tag') or '').strip().lower(),
-            str(entry.get('raw_source') or '').strip().lower(),
-            str(entry.get('session_source') or '').strip().lower(),
-        ]
-        explicit = [src for src in srcs if src]
-        if any(src in ('webui', 'fork') for src in explicit):
-            return True
-        if explicit:
-            return False
-        is_cli = entry.get('is_cli_session') is True
-        is_read_only = bool(entry.get('read_only') or entry.get('is_read_only'))
-        return not (is_cli or is_read_only)
-    return False
-
-
 def _durable_tombstone_marks_deleted_webui_session(session_dir: Path, sid: str) -> bool:
     """Return True when the durable WebUI delete tombstone contains sid."""
     if not sid or (session_dir / f"{sid}.json").exists():
@@ -810,13 +773,6 @@ def _durable_tombstone_marks_deleted_webui_session(session_dir: Path, sid: str) 
     if not isinstance(ids, list):
         return False
     return sid in {str(value).strip() for value in ids if str(value or '').strip()}
-
-
-def _marks_deleted_webui_session(session_dir: Path, sid: str) -> bool:
-    return (
-        _index_marks_deleted_webui_session(session_dir, sid)
-        or _durable_tombstone_marks_deleted_webui_session(session_dir, sid)
-    )
 
 
 def audit_session_recovery(session_dir: Path, state_db_path: Path | None = None) -> dict:

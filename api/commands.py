@@ -21,19 +21,6 @@ _NEVER_EXPOSE: frozenset[str] = frozenset({
 })
 
 
-# Narrow agent-side execution allowlist for /api/commands/exec.
-_AGENT_COMMAND_ALIASES = {
-    'reload_mcp': 'reload-mcp',
-    'reload_skills': 'reload-skills',
-    'codex_runtime': 'codex-runtime',
-}
-def _parse_agent_command(command: str) -> tuple[str, str]:
-    """Return ``(canonical_name, arg_string)`` from slash-command text."""
-
-    cmd_base, arg_string = _parse_slash_command(command)
-    return _AGENT_COMMAND_ALIASES.get(cmd_base, cmd_base), arg_string
-
-
 def _parse_slash_command(command: str) -> tuple[str, str]:
     """Return ``(command_name, arg_string)`` from slash-command text."""
 
@@ -58,13 +45,6 @@ def _bundle_profile_context(purpose: str):
     except ImportError:
         return nullcontext()
     return profile_env_for_active_request(purpose, logger_override=logger)
-
-
-def _normalize_agent_command_name(command: str) -> str:
-    """Normalize slash text to a canonical command name."""
-
-    canonical, _arg_string = _parse_agent_command(command)
-    return canonical
 
 
 def list_commands(_registry=None) -> list[dict[str, Any]]:
