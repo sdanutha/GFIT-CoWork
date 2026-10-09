@@ -275,7 +275,6 @@ def test_image_exemption_is_scoped_to_direct_message_content_parts(monkeypatch):
             {"role": "assistant", "content": [image_shaped]},
         ],
         "tool_calls": [image_shaped],
-        "todo_state": {"image": image_shaped},
         "runtime_journal_snapshot": {"messages": [image_shaped]},
     }
 
@@ -287,7 +286,6 @@ def test_image_exemption_is_scoped_to_direct_message_content_parts(monkeypatch):
     assert "AKIA" not in result["messages"][0]["metadata"]["image_url"]["url"]
     assert "AKIA" not in result["messages"][1]["content"][0]["image_url"]["url"]
     assert "AKIA" not in result["tool_calls"][0]["image_url"]["url"]
-    assert "AKIA" not in result["todo_state"]["image"]["image_url"]["url"]
     assert "AKIA" not in result["runtime_journal_snapshot"]["messages"][0]["image_url"]["url"]
     assert calls
 

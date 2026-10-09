@@ -225,7 +225,7 @@ when integrating with the live chat SSE relay.
 | `goal_continue` | Goal continuation signal |
 | `pending_steer_leftover` | Leftover steer text after interrupt |
 | `state_saved` | Durable state write acknowledgment |
-| `todo_state` | Todo / checklist panel update |
+| `todo_state` | **Removed.** No longer emitted (the Todos panel is gone); Run Journals recorded before the removal may still hold it, and clients ignore it |
 
 Relay close set (stop draining the live queue): `stream_end`, `cancel`,
 `apperror`, and legacy `error` — see `api.run_journal.SSE_RELAY_CLOSE_EVENTS`.

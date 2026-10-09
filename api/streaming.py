@@ -72,7 +72,6 @@ from api.compression_recovery import stamp_compression_exhausted_recovery
 from api.gateway_chat import WEBUI_LOCAL_CHAT_BACKEND
 from api.metering import meter
 from api.run_journal import RunJournalWriter
-from api.todo_state import attach_todo_state, emit_todo_state
 from api.turn_journal import append_turn_journal_event_for_stream
 from api.usage import prompt_cache_hit_percent
 from api.models import (
@@ -169,7 +168,6 @@ def _session_payload_with_full_messages(session, *, tool_calls=None):
         'messages': messages,
         'message_count': len(messages),
     }
-    attach_todo_state(raw, messages)
     if tool_calls is not None:
         raw['tool_calls'] = tool_calls
     try:
@@ -189,7 +187,6 @@ def _session_payload_with_full_messages(session, *, tool_calls=None):
             messages = list(canonical_messages)
             raw['messages'] = messages
             raw['message_count'] = len(messages)
-            attach_todo_state(raw, messages)
             raw['regeneration_revision'] = revision
         else:
             raw.pop('regeneration_revision', None)
@@ -10983,35 +10980,6 @@ def _run_agent_streaming(
                         'duration': cb_kwargs.get('duration'),
                         'is_error': bool(cb_kwargs.get('is_error', False)),
                     })
-                    # Mirror the todo tool's in-memory state into a
-                    # dedicated SSE event so the Todos panel can update
-                    # in real-time without waiting for the turn to
-                    # settle. The helper guards on name=='todo', sends
-                    # the full snapshot (idempotent under SSE replay)
-                    # and swallows internal errors so emission never
-                    # breaks tool delivery. Prefer the structured
-                    # `result` kwarg from modern Hermes builds; fall
-                    # back to the truncated `preview` only when the
-                    # callback was invoked without one (older builds).
-                    #
-                    # Graceful degradation on old builds: `preview` is a
-                    # truncated snippet, so its JSON is usually unparseable.
-                    # parse_todo_tool_result() then returns None and NO
-                    # todo_state event is emitted — live panel updates are
-                    # silently unavailable on pre-`result` builds. This is
-                    # intended: the panel still hydrates via cold-load on the
-                    # next session GET; it just won't update mid-stream.
-                    emit_todo_state(
-                        put,
-                        name=name,
-                        function_result=(
-                            cb_kwargs.get('result')
-                            if cb_kwargs.get('result') is not None
-                            else preview
-                        ),
-                        session_id=session_id,
-                        stream_id=stream_id,
-                    )
                     _tool_stats = meter().get_stats(stream_id)
                     _tool_stats['session_id'] = session_id
                     _tool_stats['usage'] = _live_usage_snapshot()
@@ -11081,20 +11049,6 @@ def _run_agent_streaming(
                             'tid': tool_call_id,
                             'is_error': False,
                         })
-                        # Mirror the todo tool's in-memory state into
-                        # a dedicated SSE event so the Todos panel can
-                        # update in real-time without waiting for the
-                        # turn to settle. See the legacy path above
-                        # for the contract; the helper handles the
-                        # name guard, payload shape, and swallow-all
-                        # error policy.
-                        emit_todo_state(
-                            put,
-                            name=name,
-                            function_result=function_result,
-                            session_id=session_id,
-                            stream_id=stream_id,
-                        )
                     _tool_stats = meter().get_stats(stream_id)
                     _tool_stats['session_id'] = session_id
                     _tool_stats['usage'] = _live_usage_snapshot()

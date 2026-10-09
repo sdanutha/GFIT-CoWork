@@ -9966,7 +9966,6 @@ from api.run_journal import (
     stale_interrupted_event,
     SSE_RELAY_CLOSE_EVENTS,
 )
-from api.todo_state import attach_todo_state
 from api.providers import provider_has_process_wakeup_recovery_credential
 
 # Approval system -- state and helpers live in api.route_approvals.
@@ -12469,14 +12468,6 @@ def _handle_session_get(handler, parsed) -> bool:
                     if snapshot:
                         raw["runtime_journal_snapshot"] = _runtime_journal_snapshot_for_session_payload(snapshot)
                         raw["pending_attachments"] = getattr(s, "pending_attachments", []) or []
-        # Cold-load: derive the latest settled todo snapshot from the full
-        # merged transcript, not the truncated display window. This keeps
-        # the Todos panel correct after refresh even when the latest todo
-        # tool result is outside msg_limit, and treats an explicit empty
-        # todo list as the current state instead of falling through to an
-        # older non-empty write.
-        if load_messages and _all_msgs:
-            attach_todo_state(raw, _all_msgs)
         if _merged_last_message_at:
             raw["last_message_at"] = max(
                 float(raw.get("last_message_at") or 0),
@@ -12650,7 +12641,6 @@ def _handle_session_get(handler, parsed) -> bool:
             "messages": msgs,
             "tool_calls": [],
         }
-        attach_todo_state(sess, msgs)
         sess = _merge_cli_sidebar_metadata(sess, cli_meta)
         return j(handler, {"session": public_session_projection(sess)})
 

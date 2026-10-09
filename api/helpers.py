@@ -1625,7 +1625,7 @@ def redact_session_data(session_dict: dict) -> dict:
             result[key] = _redact_messages(value, _enabled=_enabled, _active_turn_token=_active_turn_token)
         elif key == 'tool_calls' and isinstance(value, list):
             result[key] = _redact_tool_calls(value, _enabled=_enabled)
-        elif key in {'todo_state', 'runtime_journal_snapshot'}:
+        elif key == 'runtime_journal_snapshot':
             result[key] = _redact_nested_message_containers(value, _enabled=_enabled)
         else:
             # Operational fields (workspace path, ids, config, timestamps, etc.)
