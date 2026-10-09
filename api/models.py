@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover
 
 import api.config as _cfg
 from api.compression_anchor import is_context_compression_marker
+from api.paths import stat_unless_absent
 from api.config import (
     SESSIONS, SESSIONS_MAX,
     LOCK, STREAMS, STREAMS_LOCK, DEFAULT_WORKSPACE, DEFAULT_MODEL, HOME,
@@ -5143,7 +5144,8 @@ def _session_sidecar_exists(sid) -> bool | None:
     if not is_safe_session_id(sid):
         return None
     try:
-        return (_cfg.SESSION_DIR / f'{sid}.json').exists()
+        # Not Path.exists(): on Python 3.14 it answers False for "Permission denied".
+        return stat_unless_absent(_cfg.SESSION_DIR / f'{sid}.json') is not None
     except OSError:
         return None
 

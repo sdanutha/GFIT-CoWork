@@ -20,6 +20,7 @@ from api import config as _config
 from api import directory
 from api.config import load_settings
 from api.helpers import request_declares_body
+from api.paths import stat_unless_absent
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def _load_sessions() -> dict[str, float | dict]:
     blocked by a corrupt or missing sessions file.
     """
     try:
-        if not _SESSIONS_FILE.exists():
+        if stat_unless_absent(_SESSIONS_FILE) is None:
             return {}
         raw = _SESSIONS_FILE.read_text(encoding='utf-8')
         data = json.loads(raw)
@@ -204,7 +205,7 @@ def _load_key(filename: str) -> bytes:
     """Load a 32-byte key from STATE_DIR, generating and persisting one if missing."""
     key_file = _config.STATE_DIR / filename
     try:
-        if key_file.exists():
+        if stat_unless_absent(key_file) is not None:
             raw = key_file.read_bytes()
             if len(raw) >= 32:
                 return raw[:32]

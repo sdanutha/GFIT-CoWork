@@ -1,6 +1,6 @@
 """Regression coverage for the SQLite WAL-reset corruption bug upgrade.
 
-The python:3.12-slim base ships SQLite 3.46.1 (Debian Trixie), which is
+The python:3.14-slim base ships SQLite 3.46.1 (Debian Trixie), which is
 vulnerable to the WAL-reset corruption bug discovered March 2026.
 https://sqlite.org/wal.html#walresetbug
 

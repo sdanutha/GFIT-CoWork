@@ -1201,7 +1201,7 @@ def test_state_db_stitch_old_schema_without_identity_columns_still_stitches(_iso
         conn.close()
 
 
-def test_branch_markers_report_fail_closed_unknown_state():
+def test_branch_markers_report_fail_closed_unknown_state(monkeypatch):
     """Untrusted model_config lineage evidence is 'unknown', never 'no markers'."""
     from api.agent_sessions import _branch_markers
 
@@ -1236,11 +1236,15 @@ def test_branch_markers_report_fail_closed_unknown_state():
 
     # A valid but pathologically deep payload overflows the decoder with
     # RecursionError (not ValueError); it must degrade to 'unknown', not crash.
-    depth = 12_000
-    deep_payload = '[' * depth + ']' * depth
-    with pytest.raises(RecursionError):
-        json.loads(deep_payload)
-    assert _branch_markers({'model_config': deep_payload}) == ('unknown', {})
+    # The decoder raises it directly: on Python 3.14 the overflowing depth
+    # depends on the thread's C stack size, so no fixed depth is reliable.
+    import api.agent_sessions as agent_sessions
+
+    def too_deep(raw, *args, **kwargs):
+        raise RecursionError('maximum recursion depth exceeded while decoding a JSON array')
+
+    monkeypatch.setattr(agent_sessions.json, 'loads', too_deep)
+    assert _branch_markers({'model_config': '[[[]]]'}) == ('unknown', {})
 
 
 def test_untrusted_model_config_markers_fail_closed_inside_tolerance():

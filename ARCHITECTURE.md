@@ -8,7 +8,7 @@
 
 > Current shipped build: `v0.51.792` (July 1, 2026).
 > Automated coverage: ~11,500 tests via `pytest tests/ --collect-only -q`. CI runs on
-> Python 3.11, 3.12, and 3.13 (3 parallel shards each) against every PR, plus a ruff
+> Python 3.11, 3.12, 3.13, and 3.14 (3 parallel shards each) against every PR, plus a ruff
 > lint gate, a headless browser smoke test, and a Docker smoke test.
 >
 > Notable architecture state: the bootstrap and first-run onboarding flow own setup discovery; the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping. (Version/test-count numbers above are a periodic snapshot — the authoritative source is the latest git tag and `pytest --collect-only`.)
@@ -50,7 +50,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
     start.sh               Thin wrapper around bootstrap.py for shell-based startup.
     ctl.sh                 Daemon lifecycle wrapper (start/stop/restart/status/logs) for homelab installs.
     pyproject.toml         Standard build metadata plus the Ruff lint gate; source-checkout launch surface still centers on bootstrap.py / start.sh / ctl.sh.
-    Dockerfile             python:3.12-slim container image
+    Dockerfile             python:3.14-slim container image
     deploy/                Deployment kit: one Team's Compose file, config example, Caddy proxy
     .dockerignore          Excludes .git, tests/, .env* from Docker builds
     api/

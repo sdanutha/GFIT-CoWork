@@ -16,6 +16,25 @@ from pathlib import Path
 HOME = Path.home()
 
 
+_ABSENT_ERRNOS = (errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP)
+
+
+def stat_unless_absent(path) -> os.stat_result | None:
+    """``os.stat(path)``, or None when nothing is there; raises when it cannot be told.
+
+    Python 3.14's ``Path.exists()`` / ``is_dir()`` / ``is_file()`` answer False
+    for every OSError, so "Permission denied" reads as "missing". Use this where
+    an unreadable path must not pass for an absent one: None only for the errors
+    that Python 3.11-3.13's predicates also answered False for.
+    """
+    try:
+        return os.stat(path)
+    except OSError as exc:
+        if exc.errno in _ABSENT_ERRNOS:
+            return None
+        raise
+
+
 def _create_atomic_temp_file(write_path: Path, *, existing: bool) -> tuple[int, str]:
     """Create a same-directory temp file without reading the process umask.
 
