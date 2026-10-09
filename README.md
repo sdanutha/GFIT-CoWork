@@ -212,7 +212,7 @@ Environment variables beyond the Directory settings above (the
 ./scripts/test.sh tests/test_gfit_no_admin.py -v   # one file
 ```
 
-The runner creates or reuses `.venv` with Python 3.11, 3.12 or 3.13 and installs
+The runner creates or reuses `.venv` with Python 3.11, 3.12, 3.13 or 3.14 and installs
 `requirements-dev.txt` when something is missing. `HERMES_WEBUI_TEST_PYTHON`
 picks the base interpreter for `.venv`. Tests run against isolated servers with
 their own state directories; real sessions and cron jobs are never touched.

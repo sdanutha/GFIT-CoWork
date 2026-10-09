@@ -22,7 +22,7 @@ from typing import Optional
 
 import yaml
 
-from api.paths import _atomic_write_text
+from api.paths import _atomic_write_text, stat_unless_absent
 from api.session_events import publish_session_list_changed
 
 logger = logging.getLogger(__name__)
@@ -1774,6 +1774,13 @@ def _skills_stats_lock_for(profile_dir: Path) -> threading.Lock:
         return lock
 
 
+def _is_dir_or_raise(path: Path) -> bool:
+    """``Path.is_dir()`` that raises OSError when the path cannot be examined, so
+    an unreadable Profile never reads as one without skills (see stat_unless_absent)."""
+    st = stat_unless_absent(path)
+    return st is not None and stat.S_ISDIR(st.st_mode)
+
+
 def _skill_tree_max_mtime_ns(skills_dir: Path, config_path: Path) -> int:
     """Return the max st_mtime_ns across config.yaml, skill dirs, and SKILL.md files."""
     max_ns = 0
@@ -1782,7 +1789,7 @@ def _skill_tree_max_mtime_ns(skills_dir: Path, config_path: Path) -> int:
             max_ns = max(max_ns, config_path.stat().st_mtime_ns)
     except OSError:
         pass
-    if not skills_dir.is_dir():
+    if not _is_dir_or_raise(skills_dir):
         return max_ns
     try:
         from agent.skill_utils import EXCLUDED_SKILL_DIRS, SKILL_SUPPORT_DIRS
@@ -1828,7 +1835,7 @@ def _skill_tree_max_mtime_ns(skills_dir: Path, config_path: Path) -> int:
 def _compute_profile_skills_stats(profile_dir: Path) -> tuple[int, int]:
     """Compute (enabled_count, compatible_count) by reading and parsing all SKILL.md files."""
     skills_dir = profile_dir / "skills"
-    if not skills_dir.is_dir():
+    if not _is_dir_or_raise(skills_dir):
         return (0, 0)
 
     disabled = set()

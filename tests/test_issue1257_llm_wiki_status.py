@@ -269,20 +269,26 @@ def test_llm_wiki_status_last_updated_rechecks_status_file_identity(monkeypatch,
 
     monkeypatch.setenv("WIKI_PATH", str(wiki))
 
-    original_stat = Path.stat
+    original_lstat = Path.lstat
     swapped = {"done": False}
 
-    def fake_stat(self, *args, **kwargs):
+    # Swap log.md for a symlink right after its entry lstat, before it is
+    # opened: only the open-time identity recheck can catch it then.
+    # (Path.lstat is patched, not Path.stat: on Python 3.14 lstat no longer
+    # calls stat.)
+    def lstat_then_swap(self, *args, **kwargs):
+        result = original_lstat(self, *args, **kwargs)
         if not swapped["done"] and self == log_path:
             swapped["done"] = True
             log_path.unlink()
             log_path.symlink_to(hidden.name)
-        return original_stat(self, *args, **kwargs)
+        return result
 
-    monkeypatch.setattr(Path, "stat", fake_stat)
+    monkeypatch.setattr(Path, "lstat", lstat_then_swap)
 
     status = routes._build_llm_wiki_status()
 
+    assert swapped["done"]
     assert status["last_updated"] is None
 
 

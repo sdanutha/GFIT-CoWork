@@ -165,12 +165,19 @@ class TestSessionPersistence(unittest.TestCase):
         self.assertIn(str(_TEST_STATE), warning)
 
     def test_session_recursion_failure_warns_with_state_dir_and_starts_fresh(self) -> None:
-        """Deeply nested JSON must warn and fall back to an empty session table."""
+        """Deeply nested JSON must warn and fall back to an empty session table.
+
+        The parser raises RecursionError directly: on Python 3.14 the nesting
+        depth that overflows depends on the thread's C stack size, so no fixed
+        depth reaches this path on every interpreter.
+        """
         sessions_file = _TEST_STATE / '.sessions.json'
-        depth = 50000
+        depth = 50
         sessions_file.write_text('{"token":' * depth + '0' + '}' * depth)
-        with self.assertLogs('api.auth', level='WARNING') as captured:
-            self._simulate_restart()
+        too_deep = RecursionError('maximum recursion depth exceeded while decoding a JSON object')
+        with mock.patch.object(auth.json, 'loads', side_effect=too_deep):
+            with self.assertLogs('api.auth', level='WARNING') as captured:
+                self._simulate_restart()
         self.assertEqual(auth._sessions, {})
         warning = '\n'.join(captured.output)
         self.assertIn('Ignoring malformed auth session store', warning)
@@ -208,6 +215,43 @@ class TestSessionPersistence(unittest.TestCase):
         self.assertIn('.signing_key', warning)
         self.assertIn(str(_TEST_STATE), warning)
         self.assertNotIn(sentinel_key, warning)
+
+    @unittest.skipIf(sys.platform == 'win32' or os.geteuid() == 0, 'needs POSIX permissions as non-root')
+    def test_unstattable_session_store_warns_not_treated_as_missing(self) -> None:
+        """A session store that cannot be stat'ed warns; it is not silently "no file".
+
+        Python 3.14's Path.exists() answers False for "Permission denied".
+        """
+        locked = _TEST_STATE / 'locked-sessions'
+        locked.mkdir(exist_ok=True)
+        auth._SESSIONS_FILE = locked / '.sessions.json'
+        locked.chmod(0)
+        try:
+            with self.assertLogs('api.auth', level='WARNING') as captured:
+                sessions = auth._load_sessions()
+        finally:
+            locked.chmod(0o700)
+        self.assertEqual(sessions, {})
+        warning = '\n'.join(captured.output)
+        self.assertIn('Auth session store read failed', warning)
+        self.assertIn('Permission denied', warning)
+
+    @unittest.skipIf(sys.platform == 'win32' or os.geteuid() == 0, 'needs POSIX permissions as non-root')
+    def test_unstattable_signing_key_warns_as_a_read_failure(self) -> None:
+        """A signing key that cannot be stat'ed warns as a read failure, not a missing key."""
+        locked = _TEST_STATE / 'locked-keys'
+        locked.mkdir(exist_ok=True)
+        api.config.STATE_DIR = locked
+        locked.chmod(0)
+        try:
+            with self.assertLogs('api.auth', level='WARNING') as captured:
+                key = auth._load_key('.signing_key')
+        finally:
+            locked.chmod(0o700)
+        self.assertEqual(len(key), 32)
+        warning = '\n'.join(captured.output)
+        self.assertIn('Auth key read failed', warning)
+        self.assertIn('Permission denied', warning)
 
     def test_signing_key_persist_failure_warns_with_state_dir(self) -> None:
         """Key write failures must warn and still return a generated key."""

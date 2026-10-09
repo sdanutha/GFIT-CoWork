@@ -547,3 +547,27 @@ def test_content_search_scan_recovers_newer_state_db_without_lru_churn(
     assert captured["payload"]["sessions"][0]["session_id"] == stale.session_id
     assert list(SESSIONS.keys()) == order_before, "scan recovery must not promote the LRU"
     assert len(SESSIONS) == size_before, "scan recovery must not insert or evict cache entries"
+
+
+@pytest.mark.skipif(
+    __import__("sys").platform == "win32" or __import__("os").geteuid() == 0,
+    reason="needs POSIX permissions as non-root",
+)
+def test_unstattable_sidecar_is_indeterminate_not_absent(isolated_session_env):
+    """A sidecar that cannot be stat'ed is unknown (None), never "never persisted".
+
+    Python 3.14's Path.exists() answers False for "Permission denied", which
+    would make an unreadable session look like an abandoned empty shell.
+    """
+    from api import config as _cfg
+    from api import models as _models
+
+    sessions_dir = Path(_cfg.SESSION_DIR)
+    (sessions_dir / "abc123.json").write_text("{}", encoding="utf-8")
+    assert _models._session_sidecar_exists("abc123") is True
+    assert _models._session_sidecar_exists("nosuch") is False
+    sessions_dir.chmod(0)
+    try:
+        assert _models._session_sidecar_exists("abc123") is None
+    finally:
+        sessions_dir.chmod(0o700)
