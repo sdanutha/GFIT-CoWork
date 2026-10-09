@@ -78,7 +78,7 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       workspace.js         File preview, file ops, git badge, central api() fetch wrapper
       sessions.js          Session CRUD, list rendering, collapsible groups, search, SSE sync
       messages.js          send(), SSE event handlers, approval/clarify, transcript, recovery
-      panels.js            Cron, skills, memory, profiles, todo, settings (Control Center)
+      panels.js            Cron, skills, memory, profiles, settings (Control Center)
       commands.js          Slash command registry, parser, autocomplete dropdown
       boot.js              Event wiring, mobile nav, voice input, theme/skin boot, bfcache handler
       i18n.js              Localization catalog (en, es, de, zh, zh-Hant, ru, …)
@@ -562,7 +562,7 @@ Core JS modules loaded by the app include:
   2. workspace.js  (~369 lines) File tree, preview, file operations
   3. sessions.js  (~3517 lines) Session CRUD, list rendering, search, SVG icons, dropdown actions, project picker
   4. messages.js  (~2301 lines) send(), SSE event handlers, approval, transcript
-  5. panels.js    (~6480 lines) Cron, skills, memory, workspace, profiles, todo, settings
+  5. panels.js    (~6480 lines) Cron, skills, memory, workspace, profiles, settings
   6. commands.js  (~1302 lines) Slash command registry, parser, autocomplete dropdown
   7. boot.js      (~1607 lines) Event wiring + boot IIFE
 

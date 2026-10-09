@@ -144,7 +144,7 @@ for (const name of [
   '_setNewSessionPending', 'updateQueueBadge', '_clearPendingSelections',
   'clearLiveToolCards', 'setComposerStatus', 'setStatus', 'updateSendBtn',
   'syncTopbar', 'renderMessages', 'startSessionStream', '_setSessionViewedCount',
-  '_setActiveSessionUrl', '_rememberNewChatDraftSession', '_hydrateTodosFromSession',
+  '_setActiveSessionUrl', '_rememberNewChatDraftSession',
   '_setLiveAssistantTps', '_syncCtxIndicator', 'showToast'
 ]) {
   globalThis[name] = () => {};

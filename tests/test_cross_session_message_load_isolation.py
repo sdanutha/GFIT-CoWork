@@ -246,7 +246,6 @@ function createEnvironment() {
   // _setSessionViewedCount / _clearSessionCompletionUnread stubs it replaced.
   globalThis._acknowledgeSessionVisit = () => {};
   globalThis._sessionVisitHasUnreadState = () => false;
-  globalThis.scheduleTodosRefresh = () => {};
   globalThis.startSessionStream = () => {};
   globalThis.syncTopbar = () => {};
   globalThis._captureSameSessionForceReloadHint = () => {};
@@ -260,7 +259,6 @@ function createEnvironment() {
   globalThis._applyPendingSessionModelForSession = () => {};
   globalThis.populateModelDropdown = () => {};
   globalThis._deferSessionSideEffect = (sid, fn) => Promise.resolve(fn());
-  globalThis._hydrateTodosFromSession = () => {};
   globalThis._resolveLineage = () => {};
   globalThis._clearPendingSelections = () => {};
   globalThis._clearQueueCardDisplay = () => {};

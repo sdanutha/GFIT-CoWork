@@ -1496,8 +1496,6 @@ function _serverLiveSnapshotInflight(snapshot, uploaded){
     messages,
     uploaded:Array.isArray(uploaded)?[...uploaded]:[],
     toolCalls,
-    todos:null,
-    todoStateMeta:null,
     reattach:true,
     journalSnapshot:true,
     lastAssistantText,
@@ -1521,20 +1519,14 @@ function _selectLiveRecoveryInflight(localInflight, serverLiveSnapshot, activeSt
   const localId=String(localInflight.streamId||'').trim();
   const serverId=String(serverLiveSnapshot.streamId||'').trim();
   const activeId=requestedActiveId||serverId;
-  const selectDurableSnapshot=()=>{
-    if(activeId&&localId===activeId&&Array.isArray(localInflight.todos)&&localInflight.todoStateMeta){
-      return {...serverLiveSnapshot,todos:localInflight.todos,todoStateMeta:localInflight.todoStateMeta};
-    }
-    return serverLiveSnapshot;
-  };
   if(requestedActiveId&&serverId&&serverId!==requestedActiveId){
     return localId===requestedActiveId?localInflight:null;
   }
-  if(activeId&&localId!==activeId) return selectDurableSnapshot();
+  if(activeId&&localId!==activeId) return serverLiveSnapshot;
 
   const localSeq=Math.max(0,Number(localInflight.lastRunJournalSeq)||0);
   const serverSeq=Math.max(0,Number(serverLiveSnapshot.lastRunJournalSeq)||0);
-  return serverSeq>=localSeq?selectDurableSnapshot():localInflight;
+  return serverSeq>=localSeq?serverLiveSnapshot:localInflight;
 }
 
 function _anchorActivitySceneStreamId(scene){
@@ -1934,7 +1926,6 @@ async function newSession(flash, options={}){
     S.session=data.session;if(typeof _adoptRegenerationRevision==='function') _adoptRegenerationRevision(data.session);S.messages=data.session.messages||[];
     S._pendingSessionToolsets=null;
     if(_sessionSourceFilter==='cli') _sessionSourceFilter='webui';
-    if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
     S.lastUsage={...(data.session.last_usage||{})};
     if(!(options&&options.worktree)) _rememberNewChatDraftSession(S.session);
     if(flash)S.session._flash=true;
@@ -2351,7 +2342,6 @@ async function loadSession(sid){
       if(typeof window!=='undefined') window._modelDropdownReady=modelRefreshPromise;
     }
   }
-  if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
   S.session._modelResolutionDeferred=true;
   S.lastUsage={...(data.session.last_usage||{})};
   // Reset scroll-direction tracker only on real session switches so the new
@@ -2424,13 +2414,6 @@ async function loadSession(sid){
         messages:Array.isArray(stored.messages)&&stored.messages.length?stored.messages:[],
         uploaded:Array.isArray(stored.uploaded)?stored.uploaded:[],
         toolCalls:Array.isArray(stored.toolCalls)?stored.toolCalls:[],
-        // Phase 2: restore the live todo snapshot from persisted INFLIGHT
-        // so the panel does not flicker to empty when a mid-stream
-        // browser reload reattaches before the next `todo_state` event
-        // fires.  Both fields are optional; missing values fall back to
-        // cold-load via session.todo_state.
-        todos:Array.isArray(stored.todos)?stored.todos:null,
-        todoStateMeta:stored.todoStateMeta||null,
         reattach:true,
         lastAssistantText:String(stored.lastAssistantText||''),
         lastReasoningText:String(stored.lastReasoningText||''),
@@ -2498,8 +2481,6 @@ async function loadSession(sid){
     if(_mergePendingSessionMessage(S.session,S.messages)&&inflightMessages===(INFLIGHT[sid].messages||[])){
       INFLIGHT[sid].messages=S.messages;
     }
-    // Refresh todos from cold-load or persisted INFLIGHT before painting.
-    if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
     S.busy=!!activeStreamId;  // #4354: Only assert busy if server confirms active stream.
     // appendLiveToolCard() is guarded by S.activeStreamId; restore it before
     // replaying persisted live tools so the compact Activity count survives
@@ -3551,30 +3532,6 @@ async function _ensureMessagesLoaded(sid, opts) {
     if(typeof _adoptRegenerationRevision==='function') _adoptRegenerationRevision(data.session);
     S.session.message_count=Number(data.session.message_count || msgs.length);
     S.lastUsage={...(data.session.last_usage||S.lastUsage||{})};
-    // Phase 2: the messages=1 response carries the canonical cold-load
-    // `todo_state` snapshot, derived server-side from the FULL untruncated
-    // message list (api/routes.py + api/todo_state.py). The earlier
-    // messages=0 fetch in loadSession() does not include this field —
-    // attach_todo_state is gated on `load_messages`. Without applying it
-    // here, long sessions whose latest todo write falls outside the
-    // _INITIAL_MSG_LIMIT tail would lose the panel on refresh: the
-    // legacy reverse-scan in _legacyTodosFromMessages() can only see the
-    // tail S.messages, while the authoritative snapshot was already
-    // computed by the server and is sitting in this very response.
-    // _hydrateTodosFromSession is idempotent and picks newer of
-    // cold-load vs INFLIGHT by timestamp, so calling it again here is
-    // safe even when an INFLIGHT snapshot was already restored.
-    if(data.session.todo_state !== undefined){
-      S.session.todo_state = data.session.todo_state;
-    }else{
-      delete S.session.todo_state;
-    }
-    if(typeof _hydrateTodosFromSession === 'function'){
-      _hydrateTodosFromSession(S.session);
-    }
-    if(typeof scheduleTodosRefresh === 'function'){
-      scheduleTodosRefresh();
-    }
     // Only sync the viewed count (which also clears any completion-unread
     // marker via _setSessionViewedCount -> _clearSessionCompletionUnread)
     // when the session is STILL actively viewed. A hidden-tab completion that
@@ -4636,7 +4593,6 @@ function _renderBatchActionBar(){
       ids.forEach(_clearHandoffStorageForSession);
       if(S.session&&ids.includes(S.session.session_id)){
         S.session=null;S.messages=[];S.entries=[];localStorage.removeItem('hermes-webui-session');
-        if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(null);
         const remaining=await api('/api/sessions'+_sessionListQueryString());
         if(remaining.sessions&&remaining.sessions.length){await loadSession(remaining.sessions[0].session_id);}
         else{$('msgInner').innerHTML='';$('emptyState').style.display='';}
@@ -9113,7 +9069,6 @@ async function deleteSession(sid, beforeDelete=null){
   }
   if(S.session&&S.session.session_id===sid){
     S.session=null;S.messages=[];S.entries=[];
-    if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(null);
     localStorage.removeItem('hermes-webui-session');
     // load the most recent remaining session, or show blank if none left
     const remaining=await api('/api/sessions'+_sessionListQueryString());

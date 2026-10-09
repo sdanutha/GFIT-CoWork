@@ -18,7 +18,7 @@ let _pendingSettingsTargetPanel = null; // destination selected while settings h
 const APP_TITLEBAR_KEYS = {
   chat: 'tab_chat', tasks: 'tab_tasks', skills: 'tab_skills',
   memory: 'tab_memory', workspaces: 'tab_workspaces',
-  profiles: 'tab_profiles', todos: 'tab_todos', insights: 'tab_insights', settings: 'tab_settings',
+  profiles: 'tab_profiles', insights: 'tab_insights', settings: 'tab_settings',
 };
 const MAIN_VIEW_PANELS = ['settings','skills','memory','tasks','workspaces','insights','plugin'];
 const MAIN_VIEW_SIDEBAR_PANEL_FALLBACKS = { plugin: 'settings' };
@@ -398,7 +398,6 @@ async function switchPanel(name, opts = {}) {
   if (nextPanel === 'skills') await loadSkills();
   if (nextPanel === 'memory') await loadMemory();
   if (nextPanel === 'workspaces') await loadWorkspacesPanel();
-  if (nextPanel === 'todos') loadTodos();
   if (nextPanel === 'insights') await loadInsights();
   if (typeof _syncSystemHealthMonitorVisibility === 'function') _syncSystemHealthMonitorVisibility();
   if (nextPanel === 'settings') {
@@ -2170,79 +2169,6 @@ function _startWebUIVersionSkewMonitor(){
 }
 _startWebUIVersionSkewMonitor();
 
-
-// Phase 2: Single-source-of-truth render.
-//
-// Reads `S.todos` (set by the `todo_state` SSE listener, INFLIGHT
-// restore, or session cold-load — see _hydrateTodosFromSession in
-// ui.js).  When `S.todoStateMeta` is null we have never seen an
-// explicit signal and fall through to the legacy reverse-scan over
-// settled tool messages — this keeps the panel populated against
-// pre-Phase-1 servers and during the upgrade window.
-//
-// The render is short-circuited via `_todosLastRenderedHash` (defined
-// in ui.js): repeated emissions that yield identical DOM are no-ops.
-// Coalescing of bursty live updates happens upstream in
-// scheduleTodosRefresh().
-function loadTodos() {
-  const panel = $('todoPanel');
-  if (!panel) return;
-
-  let todos;
-  if (S.todoStateMeta) {
-    todos = Array.isArray(S.todos) ? S.todos : [];
-  } else {
-    todos = _legacyTodosFromMessages();
-  }
-
-  if (!todos.length) {
-    if (typeof _todosLastRenderedHash !== 'undefined' && _todosLastRenderedHash === '__empty__') return;
-    panel.innerHTML = renderTodoEmptyState();
-    if (typeof _todosLastRenderedHash !== 'undefined') _todosLastRenderedHash = '__empty__';
-    return;
-  }
-
-  if (typeof _todosHash === 'function' && typeof _todosLastRenderedHash !== 'undefined') {
-    const hash = _todosHash(todos);
-    if (hash === _todosLastRenderedHash) return;
-    _todosLastRenderedHash = hash;
-  }
-
-  // Single innerHTML join is the cheapest correct way to materialize
-  // ~10–50 leaf nodes.  All user-controlled content goes through esc().
-  panel.innerHTML = renderTodoRows(todos, {metadata:true});
-}
-
-// Legacy fallback: reverse-scan settled tool messages for the most
-// recent {"todos":[...]} payload.  Used only when no `todo_state`
-// signal has been seen for the current session — primarily during
-// upgrade windows where the server has not yet been redeployed with
-// Phase 1.  Once Phase 1 is universally deployed and a stabilization
-// period has passed, this can be removed (Phase 3).
-//
-// Variable name `sourceMessages` is preserved verbatim from the
-// original loadTodos() implementation so the matching regression
-// test (R-todo-survive-refresh in tests/test_regressions.py) keeps
-// catching any future refactor that drops the raw-session-messages
-// fallback. See the test for the exact contract.
-function _legacyTodosFromMessages() {
-  const sourceMessages = (S.session && Array.isArray(S.session.messages) && S.session.messages.length) ? S.session.messages : S.messages;
-  if (!Array.isArray(sourceMessages)) return [];
-  for (let i = sourceMessages.length - 1; i >= 0; i--) {
-    const m = sourceMessages[i];
-    if (!m || m.role !== 'tool') continue;
-    let content = m.content;
-    if (typeof content !== 'string') {
-      try { content = JSON.stringify(content); } catch (_) { continue; }
-    }
-    if (!content || content.indexOf('"todos"') < 0) continue;
-    try {
-      const d = JSON.parse(content);
-      if (d && Array.isArray(d.todos)) return d.todos;
-    } catch (_) {}
-  }
-  return [];
-}
 
 // ── Insights panel ──
 const STATIC_MODEL_HEALTH_ROWS = [

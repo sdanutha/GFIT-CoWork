@@ -2346,8 +2346,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       currentActivityBurstId:inflight.currentActivityBurstId||0,
       currentLiveSegmentSeq:inflight.currentLiveSegmentSeq||0,
       activityBurstAnchors:Array.isArray(inflight.activityBurstAnchors)?inflight.activityBurstAnchors:[],
-      todos:Array.isArray(inflight.todos)?inflight.todos:S.todos,
-      todoStateMeta:inflight.todoStateMeta||S.todoStateMeta||null,
     });
   }
   function snapshotLiveTurn(){
@@ -5987,47 +5985,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       scrollIfPinned();
     });
 
-    // Phase 2: dedicated `todo_state` event carries a full snapshot of
-    // the upstream TodoStore.  We treat it as the single source of truth
-    // for the Todos panel — never merge, always replace.  The handler
-    // is intentionally cheap: parse, validate, write S.todos, mirror to
-    // INFLIGHT, schedule a RAF render.  Out-of-order events are filtered
-    // by ts; SSE journal replay is idempotent because snapshots are full.
-    // Cross-session protection mirrors every other live listener:
-    // payload.session_id must match activeSid or the event is dropped.
-    source.addEventListener('todo_state',e=>{
-      let d;
-      try{ d=JSON.parse(e.data||'{}'); }catch(_){ return; }
-      if(!d||typeof d!=='object') return;
-      // Cross-session double check: payload.session_id is the SSE-side
-      // filter (some legacy emissions omit it), and S.session.session_id
-      // is the UI-side filter (a late event that arrives after the user
-      // already navigated to another session must not pollute S.todos).
-      // Both must agree with activeSid before we touch global state.
-      if(d.session_id&&d.session_id!==activeSid) return;
-      if(!S.session||S.session.session_id!==activeSid) return;
-      if(!Array.isArray(d.todos)) return;
-      const incomingTs=Number(d.ts)||0;
-      const currentTs=(S.todoStateMeta&&Number(S.todoStateMeta.ts))||0;
-      // Strictly older snapshots are discarded; equal-ts events still
-      // apply so a compression-source refresh can land on the same
-      // second as the tool emit it follows.
-      if(incomingTs&&currentTs&&incomingTs<currentTs) return;
-      S.todos=d.todos;
-      S.todoStateMeta={
-        ts:incomingTs||(Date.now()/1000),
-        source:String(d.source||'tool'),
-        version:Number(d.version)||1,
-      };
-      const inflight=INFLIGHT[activeSid];
-      if(inflight){
-        inflight.todos=S.todos;
-        inflight.todoStateMeta=S.todoStateMeta;
-      }
-      if(typeof persistInflightState==='function') persistInflightState();
-      if(typeof scheduleTodosRefresh==='function') scheduleTodosRefresh();
-    });
-
     source.addEventListener('approval',e=>{
       const d=JSON.parse(e.data);
       _applyToAnchor('approval',d,e);
@@ -6258,7 +6215,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
           // #4720: reset _oldestIdx (full-load symmetry; keeps the #4613 anchor aligned).
           if(typeof _oldestIdx!=='undefined')_oldestIdx=d.session._messages_offset||0;
           S.messages=_filterRecoveryControlMessages(S.messages || []);
-          if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
           if(typeof clearVisibleMessageRowCache==='function') clearVisibleMessageRowCache();
           if(S.session&&S.session.session_id){
             try{localStorage.setItem('hermes-webui-session',S.session.session_id);}catch(_){}
@@ -6938,7 +6894,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         if(typeof _oldestIdx!=='undefined') _oldestIdx=sessionPayload._messages_offset||0;
         _attachProjectedAnchorSceneToLastAssistant(_nextMsgs3018);
         S.messages=_carryForwardEphemeralTurnFields(S.messages||[], _nextMsgs3018);
-        if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
         clearLiveToolCards();if(!assistantText)removeThinking();
         _markSessionViewed(activeSid, sessionPayload.message_count ?? S.messages.length);
         renderMessages({preserveScroll:true});
@@ -6983,7 +6938,7 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       })();
     });
 
-    for(const _runJournalEventName of ['token','interim_assistant','reasoning','tool','tool_complete','todo_state','approval','clarify','state_saved','title','title_status','context_status','goal','goal_continue','done','stream_end','pending_steer_leftover','compressing','compressed','metering','apperror','warning','error','cancel']){
+    for(const _runJournalEventName of ['token','interim_assistant','reasoning','tool','tool_complete','approval','clarify','state_saved','title','title_status','context_status','goal','goal_continue','done','stream_end','pending_steer_leftover','compressing','compressed','metering','apperror','warning','error','cancel']){
       source.addEventListener(_runJournalEventName,_rememberRunJournalCursor);
     }
   }
@@ -7143,7 +7098,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
           : _stagedMessages;
         S.messages=_filterRecoveryControlMessages(_resolvedMessages || []);
         _attachProjectedAnchorSceneToLastAssistant(S.messages);
-        if(typeof _hydrateTodosFromSession==='function') _hydrateTodosFromSession(S.session);
         const _markerOnlyAssistantError=_replaceMarkerOnlyAssistantWithStreamError(S.messages);
         if(_markerOnlyAssistantError&&typeof showToast==='function') showToast('No response received after context compression. Please retry.',5000,'error');
         const hasMessageToolMetadata=S.messages.some(m=>{

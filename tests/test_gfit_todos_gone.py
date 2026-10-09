@@ -47,3 +47,30 @@ def test_the_workspace_todos_setting_is_not_returned_or_stored(srv):
     assert status == 200
     assert body["send_key"] == "ctrl+enter"
     assert "workspace_todos_tab" not in body
+
+
+def test_the_sidebar_has_no_todos_panel_or_rail_button(srv):
+    page = _page(srv)
+    assert 'data-panel="chat"' in page
+    for gone in ('data-panel="todos"', "switchPanel('todos'", 'id="panelTodos"', 'id="todoPanel"'):
+        assert gone not in page, gone
+
+
+def _served_scripts(srv) -> dict[str, str]:
+    import re
+
+    client = srv.logged_in(USER)
+    scripts = {}
+    for src in re.findall(r'<script src="(static/[^"?]+)', _page(srv)):
+        status, body, _ = client.get("/" + src)
+        assert status == 200, src
+        scripts[src] = body
+    assert "static/messages.js" in scripts
+    return scripts
+
+
+def test_the_browser_neither_listens_for_nor_replays_todo_state(srv):
+    """Old Run Journals still hold ``todo_state`` events; the browser ignores them."""
+    for src, js in _served_scripts(srv).items():
+        # No listener, no entry in the replay list, no read of session.todo_state.
+        assert "todo_state" not in js, src

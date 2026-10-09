@@ -1392,24 +1392,13 @@ assert.strictEqual(
   _selectLiveRecoveryInflight(equalLocal, server, 'stream-1'),
   server
 );
-const localWithTodos = {
+// A pre-upgrade browser tail may still carry a todos snapshot; it is ignored.
+const localWithOldTodos = {
   ...local,
   todos:[{id:'todo-1', content:'live task', status:'in_progress'}],
   todoStateMeta:{ts:123},
 };
-const selectedWithTodos = _selectLiveRecoveryInflight(localWithTodos, server, 'stream-1');
-assert.strictEqual(selectedWithTodos.lastAssistantText, server.lastAssistantText);
-assert.deepStrictEqual(selectedWithTodos.todos, localWithTodos.todos);
-assert.deepStrictEqual(selectedWithTodos.todoStateMeta, localWithTodos.todoStateMeta);
-const localWithTodosWithoutMeta = {
-  ...local,
-  todos:[{id:'todo-2', content:'unscoped task', status:'pending'}],
-  todoStateMeta:null,
-};
-const selectedWithoutTodoMeta = _selectLiveRecoveryInflight(localWithTodosWithoutMeta, server, 'stream-1');
-assert.strictEqual(selectedWithoutTodoMeta, server);
-assert.strictEqual(selectedWithoutTodoMeta.todos, undefined);
-assert.strictEqual(selectedWithoutTodoMeta.todoStateMeta, undefined);
+assert.strictEqual(_selectLiveRecoveryInflight(localWithOldTodos, server, 'stream-1'), server);
 const oldStreamLocal = {...local, streamId:'stream-old', lastRunJournalSeq:99};
 assert.strictEqual(
   _selectLiveRecoveryInflight(oldStreamLocal, server, 'stream-1'),

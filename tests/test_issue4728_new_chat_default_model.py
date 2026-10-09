@@ -128,7 +128,6 @@ for (const name of [
   '_setSessionViewedCount',
   '_setActiveSessionUrl',
   '_rememberNewChatDraftSession',
-  '_hydrateTodosFromSession',
   'syncModelChip',
   'syncReasoningChip',
   '_setLiveAssistantTps',

@@ -204,7 +204,6 @@ def test_restore_settled_session_projects_through_production_path(browser):
               window._filterRecoveryControlMessages = messages => messages;
               window._attachProjectedAnchorSceneToLastAssistant = () => {};
               window._mergeSettledToolCallsWithLiveMetadata = calls => calls;
-              window._hydrateTodosFromSession = () => {};
               window._replaceMarkerOnlyAssistantWithStreamError = () => false;
               window.syncTopbar = () => {};
               window.renderMessages = () => {};
