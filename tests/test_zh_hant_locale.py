@@ -200,7 +200,6 @@ def test_zh_hant_locale_includes_representative_translations():
         "approval_heading: '需要核准'",
         "settings_label_language: '語言'",
         "login_title: '登入'",
-        "tab_todos: '待辦'",
     ]
     for entry in expected:
         assert entry in src

@@ -1239,7 +1239,7 @@ def test_preserved_task_list_source_uses_latest_snapshot():
 
 
 
-def test_preserved_task_list_is_suppressed_when_latest_todo_state_has_no_active_items():
+def test_preserved_task_list_is_suppressed_when_latest_todo_result_has_no_active_items():
     src = _read("static/ui.js")
     start = src.find("function _latestTodoToolItems")
     assert start != -1, "latest todo state helper not found"

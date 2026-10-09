@@ -2962,8 +2962,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
         ? s.worklog_details_expanded_default
         : s.activity_feed_expanded_default
     );
-    window._workspaceTodosTab=!!s.workspace_todos_tab;
-    if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
     window._sidebarDensity=(s.sidebar_density==='detailed'?'detailed':'compact');
     window._pinnedSessionsLimit=parseInt(s.pinned_sessions_limit||3,10)||3;
     window._inflightStateLimits={
@@ -3109,8 +3107,6 @@ window._mirrorSpeechSettingsFromServer=_mirrorSpeechSettingsFromServer;
     window._chatActivityDisplayMode='compact_worklog';
     window._transparentStream=false;
     window._transparentEventTimestamps=true;
-    window._workspaceTodosTab=false;
-    if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
     window._sessionJumpButtonsEnabled=false;
     window._structuredCodeDefaultView='auto';
     window._structuredCodeAutoTreeLines=10;

@@ -18,7 +18,7 @@ let _pendingSettingsTargetPanel = null; // destination selected while settings h
 const APP_TITLEBAR_KEYS = {
   chat: 'tab_chat', tasks: 'tab_tasks', skills: 'tab_skills',
   memory: 'tab_memory', workspaces: 'tab_workspaces',
-  profiles: 'tab_profiles', todos: 'tab_todos', insights: 'tab_insights', settings: 'tab_settings',
+  profiles: 'tab_profiles', insights: 'tab_insights', settings: 'tab_settings',
 };
 const MAIN_VIEW_PANELS = ['settings','skills','memory','tasks','workspaces','insights','plugin'];
 const MAIN_VIEW_SIDEBAR_PANEL_FALLBACKS = { plugin: 'settings' };
@@ -398,7 +398,6 @@ async function switchPanel(name, opts = {}) {
   if (nextPanel === 'skills') await loadSkills();
   if (nextPanel === 'memory') await loadMemory();
   if (nextPanel === 'workspaces') await loadWorkspacesPanel();
-  if (nextPanel === 'todos') loadTodos();
   if (nextPanel === 'insights') await loadInsights();
   if (typeof _syncSystemHealthMonitorVisibility === 'function') _syncSystemHealthMonitorVisibility();
   if (nextPanel === 'settings') {
@@ -2170,79 +2169,6 @@ function _startWebUIVersionSkewMonitor(){
 }
 _startWebUIVersionSkewMonitor();
 
-
-// Phase 2: Single-source-of-truth render.
-//
-// Reads `S.todos` (set by the `todo_state` SSE listener, INFLIGHT
-// restore, or session cold-load — see _hydrateTodosFromSession in
-// ui.js).  When `S.todoStateMeta` is null we have never seen an
-// explicit signal and fall through to the legacy reverse-scan over
-// settled tool messages — this keeps the panel populated against
-// pre-Phase-1 servers and during the upgrade window.
-//
-// The render is short-circuited via `_todosLastRenderedHash` (defined
-// in ui.js): repeated emissions that yield identical DOM are no-ops.
-// Coalescing of bursty live updates happens upstream in
-// scheduleTodosRefresh().
-function loadTodos() {
-  const panel = $('todoPanel');
-  if (!panel) return;
-
-  let todos;
-  if (S.todoStateMeta) {
-    todos = Array.isArray(S.todos) ? S.todos : [];
-  } else {
-    todos = _legacyTodosFromMessages();
-  }
-
-  if (!todos.length) {
-    if (typeof _todosLastRenderedHash !== 'undefined' && _todosLastRenderedHash === '__empty__') return;
-    panel.innerHTML = renderTodoEmptyState();
-    if (typeof _todosLastRenderedHash !== 'undefined') _todosLastRenderedHash = '__empty__';
-    return;
-  }
-
-  if (typeof _todosHash === 'function' && typeof _todosLastRenderedHash !== 'undefined') {
-    const hash = _todosHash(todos);
-    if (hash === _todosLastRenderedHash) return;
-    _todosLastRenderedHash = hash;
-  }
-
-  // Single innerHTML join is the cheapest correct way to materialize
-  // ~10–50 leaf nodes.  All user-controlled content goes through esc().
-  panel.innerHTML = renderTodoRows(todos, {metadata:true});
-}
-
-// Legacy fallback: reverse-scan settled tool messages for the most
-// recent {"todos":[...]} payload.  Used only when no `todo_state`
-// signal has been seen for the current session — primarily during
-// upgrade windows where the server has not yet been redeployed with
-// Phase 1.  Once Phase 1 is universally deployed and a stabilization
-// period has passed, this can be removed (Phase 3).
-//
-// Variable name `sourceMessages` is preserved verbatim from the
-// original loadTodos() implementation so the matching regression
-// test (R-todo-survive-refresh in tests/test_regressions.py) keeps
-// catching any future refactor that drops the raw-session-messages
-// fallback. See the test for the exact contract.
-function _legacyTodosFromMessages() {
-  const sourceMessages = (S.session && Array.isArray(S.session.messages) && S.session.messages.length) ? S.session.messages : S.messages;
-  if (!Array.isArray(sourceMessages)) return [];
-  for (let i = sourceMessages.length - 1; i >= 0; i--) {
-    const m = sourceMessages[i];
-    if (!m || m.role !== 'tool') continue;
-    let content = m.content;
-    if (typeof content !== 'string') {
-      try { content = JSON.stringify(content); } catch (_) { continue; }
-    }
-    if (!content || content.indexOf('"todos"') < 0) continue;
-    try {
-      const d = JSON.parse(content);
-      if (d && Array.isArray(d.todos)) return d.todos;
-    } catch (_) {}
-  }
-  return [];
-}
 
 // ── Insights panel ──
 const STATIC_MODEL_HEALTH_ROWS = [
@@ -5581,8 +5507,6 @@ function _preferencesPayloadFromUi(){
   if(showTpsCb) payload.show_tps=showTpsCb.checked;
   const fadeTextCb=$('settingsFadeTextEffect');
   if(fadeTextCb) payload.fade_text_effect=fadeTextCb.checked;
-  const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
-  if(workspaceTodosTabCb) payload.workspace_todos_tab=workspaceTodosTabCb.checked;
   const showCliCb=$('settingsShowCliSessions');
   if(showCliCb) payload.show_cli_sessions=showCliCb.checked;
   const showClaudeCodeCb=$('settingsShowClaudeCodeSessions');
@@ -5699,15 +5623,6 @@ function _rememberPreferencesSaved(payload){
   if(payload.language!==undefined) localStorage.setItem('hermes-pref-language',payload.language);
 }
 
-function _applyWorkspaceTodosTabVisibility(){
-  const tab=$('workspaceTodosTab');
-  if(tab) tab.hidden=!window._workspaceTodosTab;
-  const rp=document.querySelector('.rightpanel');
-  if(!window._workspaceTodosTab && rp && rp.dataset.activeTab==='todos'){
-    if(typeof switchWorkspacePanelTab==='function') switchWorkspacePanelTab('files');
-  }
-}
-
 function _schedulePreferencesAutosave(){
   const payload=_preferencesPayloadFromUi();
   _rememberPreferencesSaved(payload);
@@ -5720,10 +5635,6 @@ function _schedulePreferencesAutosave(){
 async function _autosavePreferencesSettings(payload){
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-    if(payload&&payload.workspace_todos_tab!==undefined){
-      window._workspaceTodosTab=!!(saved&&saved.workspace_todos_tab);
-      if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
-    }
     if(payload&&Object.prototype.hasOwnProperty.call(payload,'fade_text_effect')) window._fadeTextEffect=!!payload.fade_text_effect;
     if(saved&&Object.prototype.hasOwnProperty.call(saved,'pinned_sessions_limit')) window._pinnedSessionsLimit=parseInt(saved.pinned_sessions_limit,10)||3;
     if(payload&&payload.show_tps!==undefined){
@@ -6186,17 +6097,6 @@ async function loadSettingsPanel(){
       window._fadeTextEffect=fadeTextCb.checked;
       fadeTextCb.addEventListener('change',()=>{
         window._fadeTextEffect=fadeTextCb.checked;
-        _schedulePreferencesAutosave();
-      },{once:false});
-    }
-    const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
-    if(workspaceTodosTabCb){
-      workspaceTodosTabCb.checked=!!settings.workspace_todos_tab;
-      window._workspaceTodosTab=workspaceTodosTabCb.checked;
-      _applyWorkspaceTodosTabVisibility();
-      workspaceTodosTabCb.addEventListener('change',()=>{
-        window._workspaceTodosTab=workspaceTodosTabCb.checked;
-        _applyWorkspaceTodosTabVisibility();
         _schedulePreferencesAutosave();
       },{once:false});
     }
@@ -6670,8 +6570,6 @@ function _applySavedSettingsUi(saved, body, opts){
   window._simplifiedToolCalling=true;
   _syncChatActivityDisplayModeControl(body.chat_activity_display_mode);
   _syncTransparentEventTimestampsControl(body.transparent_stream_event_timestamps, body.chat_activity_display_mode);
-  window._workspaceTodosTab=!!body.workspace_todos_tab;
-  if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
   window._sessionJumpButtonsEnabled=!!body.session_jump_buttons;
   if(typeof _applySessionNavigationPrefs==='function') _applySessionNavigationPrefs();
   window._sidebarDensity=sidebarDensity==='detailed'?'detailed':'compact';
@@ -7289,7 +7187,6 @@ async function saveSettings(andClose){
   body.show_busy_placeholder_hint=showBusyPlaceholderHint===true;
   body.show_tps=showTps;
   body.fade_text_effect=fadeTextEffect;
-  body.workspace_todos_tab=!!window._workspaceTodosTab;
   body.show_cli_sessions=showCliSessions;
   // Persist the opt-out child independently; the read path applies the parent gate.
   body.show_claude_code_sessions=showClaudeCodeSessions;

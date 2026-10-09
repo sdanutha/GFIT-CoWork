@@ -53,9 +53,7 @@ def _page(browser):
           <section id="workspaceArtifacts"></section>
           <button id="workspaceFilesTab"></button>
           <button id="workspaceArtifactsTab"></button>
-          <button id="workspaceTodosTab"></button>
           <section id="workspaceFilesPanel"></section>
-          <section id="workspaceTodosPanel"></section>
         </main>
         """
     )
@@ -206,7 +204,6 @@ def test_restore_settled_session_projects_through_production_path(browser):
               window._filterRecoveryControlMessages = messages => messages;
               window._attachProjectedAnchorSceneToLastAssistant = () => {};
               window._mergeSettledToolCallsWithLiveMetadata = calls => calls;
-              window._hydrateTodosFromSession = () => {};
               window._replaceMarkerOnlyAssistantWithStreamError = () => false;
               window.syncTopbar = () => {};
               window.renderMessages = () => {};

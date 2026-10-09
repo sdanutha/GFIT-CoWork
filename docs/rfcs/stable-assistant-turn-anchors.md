@@ -504,7 +504,7 @@ Not every source event should become a readable activity event.
 | Current source | Default classification |
 | --- | --- |
 | `metering` | Usage/live-throughput metadata on the anchor or session. |
-| `todo_state` | Side-panel state snapshot owned by session/turn; not a Worklog event by default. |
+| `todo_state` | Removed: no longer emitted; old journal entries are ignored. |
 | `title` | Session metadata. |
 | `title_status` | Diagnostic/session metadata. |
 | `context_status` | Composer/session context metadata. |
@@ -758,8 +758,6 @@ instead of blank output.
 
 Some events are important but are not assistant activity:
 
-- `todo_state` updates the Todos panel and should remain a side-panel state
-  snapshot by default,
 - `metering` updates usage and live throughput,
 - `title` updates session metadata,
 - `context_status` updates composer/context state.
@@ -888,7 +886,7 @@ contract that produced the current implementation.
 ### Phase 6: Artifacts and side effects
 
 - Attach artifact references to the anchor.
-- Give `state_saved`, workspace mutation, todo, and usage metadata deliberate
+- Give `state_saved`, workspace mutation, and usage metadata deliberate
   ownership.
 - Harden terminal states that currently require special-case rendering.
 - Consider performance work for very long transparent streams only after the

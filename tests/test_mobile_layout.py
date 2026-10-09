@@ -653,9 +653,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
     panels_js = (REPO / "static" / "panels.js").read_text(encoding="utf-8")
     assert "const MAIN_VIEW_PANELS =" in panels_js
     main_view_panels = panels_js.split("const MAIN_VIEW_PANELS =", 1)[1].split("];", 1)[0]
-    assert "'todos'" not in main_view_panels, (
-        "Todos is a sidebar-only panel; adding showing-todos makes main-view sync ambiguous"
-    )
     assert "const MAIN_VIEW_SIDEBAR_PANEL_FALLBACKS = { plugin: 'settings' }" in panels_js
     for panel_id in [
         "panelSettings",
@@ -663,7 +660,6 @@ def test_mobile_sidebar_open_syncs_panel_from_visible_detail_view():
         "panelMemory",
         "panelTasks",
         "panelWorkspaces",
-        "panelTodos",
         "panelInsights",
     ]:
         assert f'id="{panel_id}"' in HTML, f"{panel_id} should exist for mobile sidebar sync"

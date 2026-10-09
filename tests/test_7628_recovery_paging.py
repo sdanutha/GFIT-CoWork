@@ -118,7 +118,6 @@ function runtimeStubs() {
   globalThis.removeThinking = () => calls.push('removeThinking');
   globalThis._flushReasoningToAnchor = () => calls.push('flushReasoning');
   globalThis._applyToAnchor = () => calls.push('applyToAnchor');
-  globalThis._hydrateTodosFromSession = () => calls.push('hydrateTodos');
   globalThis._scheduleAnchorRegistryCleanup = () => calls.push('scheduleAnchorRegistryCleanup');
   globalThis._smdEndParser = () => calls.push('smdEndParser');
   globalThis._markSessionCompletionUnread = () => calls.push('markCompletionUnread');

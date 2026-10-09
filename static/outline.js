@@ -21,12 +21,8 @@ function _outlineAllowed() {
   // The outline is a chat-view affordance only — never show the toggle or panel
   // while another MAIN panel (settings, tasks, insights, …) is active. _currentPanel
   // is owned by panels.js; treat an undefined/absent value as the chat default.
-  // 'todos' is a sidebar-only panel that leaves the chat transcript in <main>, so
-  // the outline stays valid there too (and switching to it emits no <main> class
-  // mutation for the observer, so allowing it keeps the toggle stable).
   const panel = (typeof _currentPanel === 'undefined') ? 'chat' : (_currentPanel || 'chat');
-  const onChatView = panel === 'chat' || panel === 'todos';
-  return window._showConversationOutline === true && !compact && onChatView;
+  return window._showConversationOutline === true && !compact && panel === 'chat';
 }
 
 function _syncOutlinePosition() {

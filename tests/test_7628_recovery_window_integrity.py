@@ -129,7 +129,6 @@ const S = { session: { session_id: 'sid' }, messages: [] };
 let _messagesTruncated = false;
 let _oldestIdx = 0;
 let _adoptRegenerationRevision = () => {};
-let _hydrateTodosFromSession = () => {};
 let _markSessionCompletionUnread = () => {};
 let _setActiveSessionUrl = () => {};
 let _attachProjectedAnchorSceneToLastAssistant = () => {};

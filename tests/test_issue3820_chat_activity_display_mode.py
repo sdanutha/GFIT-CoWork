@@ -784,7 +784,7 @@ def test_fade_text_effect_uses_dynamic_window_check():
     fade_cb_start = PANELS_JS.index(
         "const fadeTextCb=$('settingsFadeTextEffect');\n    if(fadeTextCb){"
     )
-    fade_cb_end = PANELS_JS.index("const workspaceTodosTabCb", fade_cb_start)
+    fade_cb_end = PANELS_JS.index("const showCliCb", fade_cb_start)
     fade_cb_block = PANELS_JS[fade_cb_start:fade_cb_end]
     assert "window._fadeTextEffect=fadeTextCb.checked" in fade_cb_block
     assert "fadeTextCb.addEventListener('change',()=>{" in fade_cb_block
