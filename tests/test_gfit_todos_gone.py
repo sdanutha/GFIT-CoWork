@@ -8,6 +8,11 @@ HTTP tests against an in-process server (see ``tests/_gfit_server.py``).
 from __future__ import annotations
 
 import json
+import queue
+import re
+import sys
+import types
+from unittest import mock
 
 import pytest
 
@@ -33,7 +38,7 @@ def _page(srv) -> str:
 
 def test_the_workspace_panel_has_no_todos_tab_and_settings_no_checkbox(srv):
     page = _page(srv)
-    assert 'id="workspaceFilesTab"' in page or "switchWorkspacePanelTab('files')" in page
+    assert 'id="workspaceFilesTab"' in page
     for gone in ("workspaceTodosTab", "workspaceTodosPanel", "settingsWorkspaceTodosTab",
                  "switchWorkspacePanelTab('todos')"):
         assert gone not in page, gone
@@ -57,8 +62,6 @@ def test_the_sidebar_has_no_todos_panel_or_rail_button(srv):
 
 
 def _served_scripts(srv) -> dict[str, str]:
-    import re
-
     client = srv.logged_in(USER)
     scripts = {}
     for src in re.findall(r'<script src="(static/[^"?]+)', _page(srv)):
@@ -201,11 +204,6 @@ class _StructuredCallbackAgent(_AgentBase):
 
 @pytest.mark.parametrize("agent_cls", [_ProgressCallbackAgent, _StructuredCallbackAgent])
 def test_a_todo_tool_call_streams_as_a_tool_card_and_no_todo_state(agent_cls, cleanup_test_sessions):
-    import queue
-    import sys
-    import types
-    from unittest import mock
-
     import api.streaming as streaming
 
     session = _FakeSession(f"todos_gone_{agent_cls.__name__}")
