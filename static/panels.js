@@ -5581,8 +5581,6 @@ function _preferencesPayloadFromUi(){
   if(showTpsCb) payload.show_tps=showTpsCb.checked;
   const fadeTextCb=$('settingsFadeTextEffect');
   if(fadeTextCb) payload.fade_text_effect=fadeTextCb.checked;
-  const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
-  if(workspaceTodosTabCb) payload.workspace_todos_tab=workspaceTodosTabCb.checked;
   const showCliCb=$('settingsShowCliSessions');
   if(showCliCb) payload.show_cli_sessions=showCliCb.checked;
   const showClaudeCodeCb=$('settingsShowClaudeCodeSessions');
@@ -5699,15 +5697,6 @@ function _rememberPreferencesSaved(payload){
   if(payload.language!==undefined) localStorage.setItem('hermes-pref-language',payload.language);
 }
 
-function _applyWorkspaceTodosTabVisibility(){
-  const tab=$('workspaceTodosTab');
-  if(tab) tab.hidden=!window._workspaceTodosTab;
-  const rp=document.querySelector('.rightpanel');
-  if(!window._workspaceTodosTab && rp && rp.dataset.activeTab==='todos'){
-    if(typeof switchWorkspacePanelTab==='function') switchWorkspacePanelTab('files');
-  }
-}
-
 function _schedulePreferencesAutosave(){
   const payload=_preferencesPayloadFromUi();
   _rememberPreferencesSaved(payload);
@@ -5720,10 +5709,6 @@ function _schedulePreferencesAutosave(){
 async function _autosavePreferencesSettings(payload){
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
-    if(payload&&payload.workspace_todos_tab!==undefined){
-      window._workspaceTodosTab=!!(saved&&saved.workspace_todos_tab);
-      if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
-    }
     if(payload&&Object.prototype.hasOwnProperty.call(payload,'fade_text_effect')) window._fadeTextEffect=!!payload.fade_text_effect;
     if(saved&&Object.prototype.hasOwnProperty.call(saved,'pinned_sessions_limit')) window._pinnedSessionsLimit=parseInt(saved.pinned_sessions_limit,10)||3;
     if(payload&&payload.show_tps!==undefined){
@@ -6186,17 +6171,6 @@ async function loadSettingsPanel(){
       window._fadeTextEffect=fadeTextCb.checked;
       fadeTextCb.addEventListener('change',()=>{
         window._fadeTextEffect=fadeTextCb.checked;
-        _schedulePreferencesAutosave();
-      },{once:false});
-    }
-    const workspaceTodosTabCb=$('settingsWorkspaceTodosTab');
-    if(workspaceTodosTabCb){
-      workspaceTodosTabCb.checked=!!settings.workspace_todos_tab;
-      window._workspaceTodosTab=workspaceTodosTabCb.checked;
-      _applyWorkspaceTodosTabVisibility();
-      workspaceTodosTabCb.addEventListener('change',()=>{
-        window._workspaceTodosTab=workspaceTodosTabCb.checked;
-        _applyWorkspaceTodosTabVisibility();
         _schedulePreferencesAutosave();
       },{once:false});
     }
@@ -6670,8 +6644,6 @@ function _applySavedSettingsUi(saved, body, opts){
   window._simplifiedToolCalling=true;
   _syncChatActivityDisplayModeControl(body.chat_activity_display_mode);
   _syncTransparentEventTimestampsControl(body.transparent_stream_event_timestamps, body.chat_activity_display_mode);
-  window._workspaceTodosTab=!!body.workspace_todos_tab;
-  if(typeof _applyWorkspaceTodosTabVisibility==='function') _applyWorkspaceTodosTabVisibility();
   window._sessionJumpButtonsEnabled=!!body.session_jump_buttons;
   if(typeof _applySessionNavigationPrefs==='function') _applySessionNavigationPrefs();
   window._sidebarDensity=sidebarDensity==='detailed'?'detailed':'compact';
@@ -7289,7 +7261,6 @@ async function saveSettings(andClose){
   body.show_busy_placeholder_hint=showBusyPlaceholderHint===true;
   body.show_tps=showTps;
   body.fade_text_effect=fadeTextEffect;
-  body.workspace_todos_tab=!!window._workspaceTodosTab;
   body.show_cli_sessions=showCliSessions;
   // Persist the opt-out child independently; the read path applies the parent gate.
   body.show_claude_code_sessions=showClaudeCodeSessions;

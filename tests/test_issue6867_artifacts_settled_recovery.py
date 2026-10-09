@@ -53,9 +53,7 @@ def _page(browser):
           <section id="workspaceArtifacts"></section>
           <button id="workspaceFilesTab"></button>
           <button id="workspaceArtifactsTab"></button>
-          <button id="workspaceTodosTab"></button>
           <section id="workspaceFilesPanel"></section>
-          <section id="workspaceTodosPanel"></section>
         </main>
         """
     )
