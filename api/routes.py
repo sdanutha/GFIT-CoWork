@@ -66,7 +66,6 @@ from api.session_ownership import (
     request_profile_reach,
     request_session_ownership,
 )
-from api.trusted_proxy import forwarded_client_address, peer_address, peer_is_trusted_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -5456,89 +5455,6 @@ def _client_ip_for_rate_limit(handler) -> str:
     except Exception:
         pass
     return "unknown"
-
-
-def _truthy_env(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _ip_is_loopback_or_private(raw: str):
-    """Parse an IP string; return (parsed_ok, is_loopback_or_private).
-
-    Returns (False, False) for empty/malformed input so callers fail closed.
-    """
-    import ipaddress
-
-    raw = (raw or "").strip()
-    if not raw:
-        return (False, False)
-    try:
-        addr = ipaddress.ip_address(raw)
-    except ValueError:
-        return (False, False)
-    return (True, bool(addr.is_loopback or addr.is_private))
-
-
-def _onboarding_request_is_local(handler) -> bool:
-    """Return True when an unauthenticated onboarding request is local/private.
-
-    Trust model (single, symmetric — see the full truth table in
-    tests/test_cvd3_terminal_local_origin_gate.py):
-
-    * Forwarded client-IP headers are honored ONLY when the RAW socket peer is a
-      trusted proxy (loopback, or an address in HERMES_WEBUI_TRUSTED_PROXY_CIDRS).
-      This is checked on the un-spoofable socket address, so a direct client
-      cannot promote itself to "local" by sending X-Forwarded-For: 127.0.0.1.
-    * When the peer is NOT a trusted proxy, forwarded headers are ignored and the
-      request is classified by the raw socket peer directly. A direct loopback or
-      private/LAN client (no proxy) is therefore still correctly local.
-    * HERMES_WEBUI_TRUST_FORWARDED_FOR=1 is the opt-in that makes us CONSULT the
-      forwarded chain at all; without it the raw peer is authoritative. Either
-      way the classification fails closed on malformed/empty chains.
-    """
-    trust_forwarded = _truthy_env("HERMES_WEBUI_TRUST_FORWARDED_FOR")
-    peer_trusted = peer_is_trusted_proxy(handler)
-
-    if trust_forwarded and peer_trusted:
-        client_ip = forwarded_client_address(handler)
-        if client_ip is None:
-            # Malformed/empty forwarded chain from a trusted proxy → fail closed.
-            return False
-        parsed_ok, is_local = _ip_is_loopback_or_private(client_ip)
-        return parsed_ok and is_local
-
-    # Not consulting the forwarded chain (either the opt-in is off, or the raw
-    # peer is not a trusted proxy). Classify by the raw socket peer — it cannot
-    # be spoofed by a header. A public peer sending X-Forwarded-For: 127.0.0.1 is
-    # therefore correctly rejected (its raw peer is public).
-    raw = peer_address(handler)
-    parsed_ok, is_local = _ip_is_loopback_or_private(raw)
-    if not parsed_ok:
-        return False
-
-    import ipaddress
-
-    addr = ipaddress.ip_address(raw.strip())
-    if addr.is_loopback:
-        # A loopback TCP source is genuinely same-host and unspoofable → local
-        # even if a (ignored) forwarded header is present.
-        return True
-
-    # Non-loopback raw peer. A forwarded header being PRESENT here means the
-    # request most likely arrived through a proxy we have NOT been told to trust
-    # (no trusted-proxy env, or the peer isn't in the allowlist) — so a
-    # private/LAN raw peer could be an untrusted proxy relaying an arbitrary
-    # (public) client we can't see. Deny in that case; require the operator to
-    # opt in via HERMES_WEBUI_TRUST_FORWARDED_FOR (+ HERMES_WEBUI_TRUSTED_PROXY_CIDRS
-    # for a non-loopback proxy). With NO forwarded header, a direct private/LAN
-    # client (the common direct-LAN deployment) stays local.
-    forwarded_present = bool(
-        (handler.headers.get("X-Forwarded-For", "") or "").strip()
-        or (handler.headers.get("X-Real-IP", "") or "").strip()
-    )
-    if forwarded_present:
-        return False
-    return bool(is_local)
 
 
 # Above this many distinct client keys, sweep out entries whose timestamps have
@@ -17857,7 +17773,7 @@ def _handle_tts(handler, parsed):
         if not api_key:
             # Fall back to reading from Hermes .env file
             try:
-                from api.onboarding import _load_env_file
+                from api.providers import _load_env_file
                 from api.profiles import get_active_hermes_home
                 api_key = _load_env_file(get_active_hermes_home() / ".env").get("ELEVENLABS_API_KEY", "")
             except Exception:
@@ -17937,7 +17853,7 @@ def _handle_tts(handler, parsed):
             api_key = os.getenv("OPENAI_API_KEY", "").strip()
         if not api_key:
             try:
-                from api.onboarding import _load_env_file
+                from api.providers import _load_env_file
                 from api.profiles import get_active_hermes_home
                 env_cfg = _load_env_file(get_active_hermes_home() / ".env")
                 api_key = env_cfg.get("VOICE_TOOLS_OPENAI_KEY", "") or env_cfg.get("OPENAI_API_KEY", "")

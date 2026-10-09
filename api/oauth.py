@@ -1,9 +1,7 @@
-"""In-app OAuth flow implementations for onboarding.
+"""Provider credential helpers shared by chat streaming and the model routes.
 
-The browser receives only WebUI-local flow metadata (flow_id, user_code,
-verification_uri, high-level status). Provider device/auth codes and OAuth
-tokens stay server-side and are persisted to the active Hermes profile's
-``auth.json`` credential_pool.
+OAuth logins themselves are Setup, done by the Operator with Hermes Agent's own
+tools; GFIT-CoWork only reads the resulting ``auth.json``.
 """
 
 from __future__ import annotations
@@ -19,35 +17,17 @@ logger = logging.getLogger(__name__)
 AUTH_JSON_PATH = Path.home() / ".hermes" / "auth.json"
 
 def resolve_runtime_provider_with_anthropic_env_lock(resolver, *args, **kwargs):
-    """Resolve runtime credentials under the Anthropic onboarding env lock.
+    """Resolve runtime credentials under the process-env lock.
 
     Request paths must resolve Anthropic env fallbacks per outbound request,
-    not cache ANTHROPIC_TOKEN or ANTHROPIC_API_KEY across onboarding. Sharing
-    the process-env lock prevents a chat stream from observing one stale
-    Anthropic env value while onboarding has already cleared the other.
+    not cache ANTHROPIC_TOKEN or ANTHROPIC_API_KEY. Sharing the process-env
+    lock prevents a chat stream from observing one stale Anthropic env value
+    while another request is changing the other.
     """
     from api.streaming import _ENV_LOCK
 
     with _ENV_LOCK:
         return resolver(*args, **kwargs)
-
-
-def _get_active_hermes_home() -> Path:
-    """Return the active Hermes profile home directory, falling back to ~/.hermes when profile resolution fails."""
-    try:
-        from api.profiles import get_active_hermes_home
-
-        return Path(get_active_hermes_home())
-    except Exception as exc:
-        # Per Opus advisor on stage-296: log the silent fallback so a corrupt
-        # profile state ending up writing tokens to ~/.hermes (instead of the
-        # active profile) is observable in logs rather than failing silently.
-        logger.warning(
-            "Falling back to ~/.hermes for OAuth credential storage: "
-            "active-profile resolution failed: %s",
-            exc,
-        )
-        return Path.home() / ".hermes"
 
 
 # ── legacy auth.json helpers ────────────────────────────────────────────────
@@ -69,7 +49,3 @@ def read_auth_json():
     """Public wrapper for streaming credential self-heal code."""
     return _read_auth_json()
 
-
-# ── Anthropic / Claude Code credential linking ─────────────────────────────
-
-# ── Codex protocol ──────────────────────────────────────────────────────────

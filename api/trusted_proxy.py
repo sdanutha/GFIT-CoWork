@@ -2,8 +2,7 @@
 
 A request's socket peer is its address, unless the peer is a trusted proxy
 (loopback, or an address in ``HERMES_WEBUI_TRUSTED_PROXY_CIDRS``) speaking for
-the client in ``X-Forwarded-For``. Used by the login rate limit (api.login) and
-the onboarding local-request check (api.routes).
+the client in ``X-Forwarded-For``. Used by the login rate limit (api.login).
 """
 import os
 

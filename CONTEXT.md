@@ -20,6 +20,10 @@ _Avoid_: account, member
 A person with shell access to the Deployment's server, who looks after it through Hermes Agent's own tools and GFIT-CoWork's command line: creating, disabling and deleting Profiles, setting up providers and keys, and handing work over. The Operator is not a role in GFIT-CoWork and has no login to it.
 _Avoid_: Admin, root, superuser, owner
 
+**Setup**:
+What the Operator does on the server, with Hermes Agent's own `hermes setup` and `hermes model`, to give a Deployment its providers, keys and default model before anyone logs in. Users never do Setup, and GFIT-CoWork has no step of its own for it.
+_Avoid_: onboarding, first run, wizard
+
 **Profile**:
 A Hermes Agent profile: one agent identity with its own config, memory, skills, sessions and Workspaces. A logged-in User can reach only their own Profile.
 _Avoid_: bot, persona

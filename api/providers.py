@@ -1,8 +1,8 @@
-"""GFIT-CoWork -- provider management endpoints.
+"""GFIT-CoWork -- provider credential helpers.
 
-Provides CRUD operations for configuring provider API keys post-onboarding.
-Closes #586 (allow provider key update) and part of #604 (model picker
-multi-provider support).
+Reads a Profile's provider keys and credential pool for the model picker and
+chat. Provider Setup is the Operator's, with `hermes setup` / `hermes model`;
+the web app has no provider settings page (remove-admin ticket 04).
 """
 
 from __future__ import annotations
@@ -695,8 +695,7 @@ _PROVIDER_ENV_VAR: dict[str, str] = {
 
 # Read-only legacy env-var aliases.  When `_provider_has_key(pid)` looks up its
 # canonical env var name and finds nothing, it also checks any aliases listed
-# here.  Onboarding (api/onboarding.py:apply_onboarding_setup) only writes the
-# canonical name.  Use this for env vars that were renamed in a past release;
+# here.  Hermes Agent's Setup writes only the canonical name.  Use this for env vars that were renamed in a past release;
 # add an entry, ship for a few releases, then remove the alias once enough
 # users have upgraded.
 _PROVIDER_ENV_VAR_ALIASES: dict[str, tuple[str, ...]] = {

@@ -1,14 +1,14 @@
-# Agent-assisted onboarding checklist
+# Agent-assisted Setup checklist
 
 This checklist is for an AI assistant helping a human install, reinstall, or
-debug a GFIT-CoWork first run ([`docs/onboarding.md`](onboarding.md)). There is
+debug a GFIT-CoWork Setup ([`docs/setup.md`](setup.md)). There is
 no setup wizard in the web app: the Operator sets up providers and Profiles on
 the server (ADR 0006).
 Use it before running bootstrap commands, inspecting logs, or recommending a
 cleanup path.
 
-If you are an AI assistant, read this file before assisting with onboarding,
-bootstrap, provider setup, reinstall, or first-run support.
+If you are an AI assistant, read this file before assisting with Setup,
+bootstrap, provider setup, reinstall, or support for a failed first start.
 
 ## Role split
 
@@ -35,7 +35,7 @@ The assistant owns:
 - Do not print API keys, OAuth tokens, cookies, full `.env` files, full
   `auth.json` files, or password hashes.
 - Do not modify real cron jobs, real sessions, real profiles, or real memory
-  files during an onboarding trial.
+  files during a Setup trial.
 - Do not expose WebUI on a public interface without a Directory login and
   explicit human approval.
 - Do not proxy or tunnel local service checks such as `localhost`,
@@ -72,12 +72,12 @@ The server needs a Directory to start; a trial uses the in-memory Directory
 with one trial User. Let the human choose the trial password.
 
 ```bash
-mkdir -p ~/hermes-onboarding-test
-export HERMES_HOME=~/hermes-onboarding-test/.hermes
-export HERMES_WEBUI_STATE_DIR=~/hermes-onboarding-test/webui
+mkdir -p ~/hermes-setup-test
+export HERMES_HOME=~/hermes-setup-test/.hermes
+export HERMES_WEBUI_STATE_DIR=~/hermes-setup-test/webui
 export HERMES_WEBUI_PORT=8789
 export HERMES_WEBUI_DIRECTORY=memory
-export HERMES_WEBUI_DIRECTORY_USERS=~/hermes-onboarding-test/users.json
+export HERMES_WEBUI_DIRECTORY_USERS=~/hermes-setup-test/users.json
 # users.json: {"<employee ID>": {"password": "<chosen by the human>", "display_name": "..."}}
 hermes setup                                   # the human picks the provider and enters the key
 python3 -m api.operator_cli create <employee ID> --clone-from default
@@ -94,7 +94,7 @@ The bootstrap writes a port-specific log under the selected WebUI state
 directory:
 
 ```text
-~/hermes-onboarding-test/webui/bootstrap-8789.log
+~/hermes-setup-test/webui/bootstrap-8789.log
 ```
 
 For daemon-style installs, `ctl.sh` writes the daemon log to the active
@@ -114,8 +114,8 @@ After the server starts, collect status without secrets:
 ```bash
 curl -sS http://127.0.0.1:8789/health
 python3 -m api.operator_cli list
-find ~/hermes-onboarding-test -maxdepth 3 -type f | sort
-tail -n 120 ~/hermes-onboarding-test/webui/bootstrap-8789.log
+find ~/hermes-setup-test -maxdepth 3 -type f | sort
+tail -n 120 ~/hermes-setup-test/webui/bootstrap-8789.log
 ```
 
 The startup banner in the log names the Directory, the agent directory and
@@ -125,7 +125,7 @@ GitHub or Discord support report.
 
 ## Pass criteria
 
-A local onboarding trial passes when:
+A local Setup trial passes when:
 
 - `/health` returns successfully.
 - The trial User logs in and lands in their own Profile (the name in the

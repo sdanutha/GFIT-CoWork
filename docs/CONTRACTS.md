@@ -212,7 +212,7 @@ Required checks:
   list the regression or manual invariant check.
 - Contract-affecting PRs include `Contract Routing`; intentional contract
   changes also include `Contract Change`.
-- Onboarding/setup validation used isolated `HERMES_HOME` and
+- Setup validation used isolated `HERMES_HOME` and
   `HERMES_WEBUI_STATE_DIR`, unless the human operator explicitly requested real
   state.
 - Docs updates are included or explicitly not needed, and release-note-worthy
@@ -223,16 +223,16 @@ Required checks:
 Green CI plus a focused diff is not sufficient if the PR description or evidence
 does not match the touched subsystem.
 
-## Setup, onboarding, and operational references
+## Setup and operational references
 
 - [`TESTING.md`](../TESTING.md): automated test command and manual browser test
   plan.
 - [`ARCHITECTURE.md`](../ARCHITECTURE.md): API, module layout, and design
   constraints.
-- [`docs/onboarding.md`](onboarding.md): first run: the Directory, provider setup on the server and the first Profile.
-- [`docs/onboarding-agent-checklist.md`](onboarding-agent-checklist.md): safety
+- [`docs/setup.md`](setup.md): Setup: the Directory, provider setup on the server and the first Profile.
+- [`docs/setup-agent-checklist.md`](setup-agent-checklist.md): safety
   rules for assistant-led install, reinstall, bootstrap, provider setup, local
-  model setup, Docker onboarding, and WSL onboarding.
+  model setup, and Docker setup.
 - [`docs/docker.md`](docker.md): Docker compose setup, common failures, and
   bind-mount migration.
 - [`docs/troubleshooting.md`](troubleshooting.md): diagnostic flows for common
@@ -254,7 +254,7 @@ Before opening a change for review, confirm:
   which layer they mutate and include a regression for the invariant.
 - New dependencies, build tools, frameworks, or long-lived processes are avoided
   unless the benefit and rollback story are explicit.
-- Onboarding/setup validation uses isolated `HERMES_HOME` and
+- Setup validation uses isolated `HERMES_HOME` and
   `HERMES_WEBUI_STATE_DIR` unless the human operator explicitly asks to use real
   state.
 - Secrets, private paths, local-only workflows, and personal notes stay out of

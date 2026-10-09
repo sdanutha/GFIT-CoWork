@@ -135,11 +135,11 @@ def test_deployment_webui_points_at_gateway_service():
 # ── 5: Docker localhost troubleshooting (#3012) ─────────────────────────────
 
 
-def test_onboarding_docs_cover_linux_host_gateway_for_container_localhost():
-    """REGRESSION (#3012): local-provider onboarding docs must include the
+def test_setup_docs_cover_linux_host_gateway_for_container_localhost():
+    """REGRESSION (#3012): local-provider Setup docs must include the
     Linux Docker host-gateway shape, not only Docker Desktop's
     `host.docker.internal` shortcut."""
-    src = (REPO / "docs" / "onboarding.md").read_text(encoding="utf-8")
+    src = (REPO / "docs" / "setup.md").read_text(encoding="utf-8")
     assert "host.docker.internal" in src
     assert "host-gateway" in src
     assert "extra_hosts" in src

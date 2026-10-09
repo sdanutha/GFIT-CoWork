@@ -165,7 +165,7 @@ Do not introduce new infrastructure or dependencies unless the gain is clear and
 
 ### Be Careful With User-Facing Changes
 
-This project is heavily UI-driven. If you change interaction flows, session behavior, workspace browsing, onboarding, or mobile layouts:
+This project is heavily UI-driven. If you change interaction flows, session behavior, workspace browsing, login, or mobile layouts:
 
 - test the happy path
 - test reload behavior where relevant

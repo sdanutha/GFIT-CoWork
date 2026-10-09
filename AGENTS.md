@@ -17,17 +17,17 @@ unrelated work. Keep subsystem-specific safety and contract requirements below.
 - `CHANGELOG.md` for release-history questions; ordinary PRs do not edit it
 - `ARCHITECTURE.md` for design constraints and current module layout
 - `TESTING.md` for local verification commands and relevant manual checks
-- `docs/onboarding.md` for first-run onboarding behavior
+- `docs/setup.md` for Setup: the Directory, providers on the server, the first Profile
 - `docs/troubleshooting.md` for diagnostic flows
 - `docs/rfcs/README.md` for larger RFCs and state/durability contracts
 - `docs/UIUX-GUIDE.md` and `DESIGN.md` for layout, interaction flow, themes,
   chat rendering, and composer chrome
 
-## Onboarding and reinstall support
+## Setup and reinstall support
 
-If the task involves install, reinstall, bootstrap, first-run onboarding,
-provider setup, local model server setup, Docker onboarding, WSL onboarding, or
-support for a failed first run, read `docs/onboarding-agent-checklist.md`
+If the task involves install, reinstall, bootstrap, Setup, provider setup,
+local model server setup, Docker setup, or support for a failed first start,
+read `docs/setup-agent-checklist.md`
 before running commands or inspecting logs.
 
 Follow that checklist's safety rules:
@@ -56,7 +56,7 @@ Follow that checklist's safety rules:
 - Prefer the existing Python + vanilla JavaScript structure. Do not add
   dependencies, build tools, frameworks, or long-lived processes without clear
   justification and a rollback story.
-- Update docs when changing setup, onboarding, runtime behavior, architecture,
+- Update docs when changing Setup, runtime behavior, architecture,
   testing guidance, or user-facing workflows.
 - Do not edit `CHANGELOG.md` in ordinary contributor PRs. The owner writes it;
   there is no release workflow. If a change is release-note worthy, include
@@ -136,7 +136,7 @@ This permission applies only with confirmed isolated state and no live
 credentials or services; the runner manages Python dependencies but is not a
 network sandbox. It does not authorize modifying real state, handling credentials,
 restarting existing services, or exposing the app beyond localhost. Those actions
-require explicit human approval and the onboarding safety rules still apply.
+require explicit human approval and the Setup safety rules still apply.
 If verification is blocked, report the blocker rather than claim completion.
 
 ## Local state and secrets

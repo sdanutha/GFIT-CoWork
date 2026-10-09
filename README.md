@@ -94,7 +94,7 @@ A Profile is named after the person's employee ID. `--clone-from default`
 copies the `default` Profile's config, skills and, from its `.env`, only the
 provider keys, so the new Profile can use the Team's model right away. The
 `default` Profile's `.env` is readable by every User's agent: keep secrets
-Users must not see out of it (see [docs/onboarding.md](docs/onboarding.md)). **Disable** keeps the
+Users must not see out of it (see [docs/setup.md](docs/setup.md)). **Disable** keeps the
 data: the command line pauses the Profile's scheduled jobs, and the running
 server notices within seconds, signs the person out and stops their running
 turns; later logins are told their access is suspended. **Enable** lets them
@@ -162,9 +162,9 @@ State lives outside the repo, in `~/.hermes/webui/` by default (sessions,
 Workspaces, settings, projects, the Profile roster). Override it with
 `HERMES_WEBUI_STATE_DIR`. Provider setup is done on the server with Hermes
 Agent's own tools (`hermes setup`, `hermes model`); see
-[`docs/onboarding.md`](docs/onboarding.md). If an AI assistant is helping with
-install or first-run support, have it read
-[`docs/onboarding-agent-checklist.md`](docs/onboarding-agent-checklist.md) first.
+[`docs/setup.md`](docs/setup.md). If an AI assistant is helping with
+install or Setup support, have it read
+[`docs/setup-agent-checklist.md`](docs/setup-agent-checklist.md) first.
 
 By default GFIT-CoWork runs Hermes Agent in-process, reading the Profile's
 config directly. Routing chat through a running Hermes Gateway instead is
@@ -266,8 +266,8 @@ must match.
 - [`deploy/README.md`](deploy/README.md) — adding a Team, adding a User, running a pilot
 - [`docs/docker.md`](docs/docker.md) — the image: volumes, UID/GID, the gateway, upgrades, common failures
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — diagnostic flows for common failures
-- [`docs/onboarding.md`](docs/onboarding.md) — first run: the Directory, provider setup on the server, the first Profile
-- [`docs/onboarding-agent-checklist.md`](docs/onboarding-agent-checklist.md) — safety rules for assistant-led install support
+- [`docs/setup.md`](docs/setup.md) — Setup: the Directory, provider setup on the server, the first Profile
+- [`docs/setup-agent-checklist.md`](docs/setup-agent-checklist.md) — safety rules for assistant-led install support
 - [`docs/advanced-chat-setup.md`](docs/advanced-chat-setup.md) — Gateway-backed chat and recall prefill
 
 **Using and customizing**

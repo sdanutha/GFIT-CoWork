@@ -939,14 +939,6 @@ const LOCALES = {
     suggest_files: 'What files are in this workspace?',
     suggest_schedule: "What's on my schedule today?",
     suggest_plan: 'Help me plan a small project.',
-    // onboarding
-    oauth_login_codex: 'Login with Codex (ChatGPT)',
-    oauth_codex_step1: 'Step 1: Visit this URL and enter the code',
-    oauth_codex_step2: 'Step 2: Enter this code on the page',
-    oauth_codex_polling: 'Waiting for authorization...',
-    oauth_codex_success: 'Codex OAuth login successful!',
-    oauth_codex_error: 'OAuth login failed',
-    oauth_codex_expired: 'Code expired, please try again',
 
     // panel/runtime i18n
     error_prefix: 'Error: ',
@@ -2144,14 +2136,6 @@ const LOCALES = {
     suggest_files: 'Quali file ci sono in questo workspace?',
     suggest_schedule: 'Cosa ho in programma oggi?',
     suggest_plan: 'Aiutami a pianificare un piccolo progetto.',
-    // onboarding
-    oauth_login_codex: 'Accedi con Codex (ChatGPT)',
-    oauth_codex_step1: 'Passo 1: Visita questo URL e inserisci il codice',
-    oauth_codex_step2: 'Passo 2: Inserisci questo codice nella pagina',
-    oauth_codex_polling: 'In attesa di autorizzazione...',
-    oauth_codex_success: 'Accesso Codex OAuth riuscito!',
-    oauth_codex_error: 'Accesso OAuth fallito',
-    oauth_codex_expired: 'Codice scaduto, riprova',
 
     // panel/runtime i18n
     error_prefix: 'Errore: ',
@@ -3352,14 +3336,6 @@ const LOCALES = {
     suggest_files: 'このワークスペースにあるファイルは?',
     suggest_schedule: '今日のスケジュールは?',
     suggest_plan: '小さなプロジェクトの計画を手伝って。',
-    // onboarding
-    oauth_login_codex: 'Codex (ChatGPT) でログイン',
-    oauth_codex_step1: 'ステップ 1: この URL にアクセスしてコードを入力',
-    oauth_codex_step2: 'ステップ 2: ページにこのコードを入力',
-    oauth_codex_polling: '認可待ち...',
-    oauth_codex_success: 'Codex OAuth ログインに成功しました!',
-    oauth_codex_error: 'OAuth ログインに失敗しました',
-    oauth_codex_expired: 'コードの有効期限が切れました。もう一度お試しください',
 
     // panel/runtime i18n
     error_prefix: 'エラー: ',
@@ -4255,13 +4231,6 @@ const LOCALES = {
     suggest_files: 'Какие файлы есть в этом рабочем пространстве?',
     suggest_schedule: 'Что у меня сегодня в расписании?',
     suggest_plan: 'Помоги спланировать небольшой проект.',
-    oauth_login_codex: 'Войти через Codex (ChatGPT)',
-    oauth_codex_step1: 'Шаг 1. Перейдите по этому URL и введите код',
-    oauth_codex_step2: 'Шаг 2. Введите этот код на странице',
-    oauth_codex_polling: 'Ожидание авторизации...',
-    oauth_codex_success: 'Вход через Codex OAuth выполнен!',
-    oauth_codex_error: 'Не удалось выполнить вход через OAuth',
-    oauth_codex_expired: 'Срок действия кода истёк, повторите попытку',
     error_prefix: 'Ошибка: ',
     default: 'default',
     search: 'Поиск',
@@ -5424,14 +5393,6 @@ const LOCALES = {
     suggest_files: '¿Qué archivos hay en este espacio de trabajo?',
     suggest_schedule: '¿Qué tengo hoy en mi agenda?',
     suggest_plan: 'Ayúdame a planificar un proyecto pequeño.',
-    // onboarding
-    oauth_login_codex: 'Iniciar sesión con Codex (ChatGPT)',
-    oauth_codex_step1: 'Paso 1: Visita esta URL e introduce el código',
-    oauth_codex_step2: 'Paso 2: Introduce este código en la página',
-    oauth_codex_polling: 'Esperando la autorización...',
-    oauth_codex_success: '¡Inicio de sesión con Codex OAuth correcto!',
-    oauth_codex_error: 'Error al iniciar sesión con OAuth',
-    oauth_codex_expired: 'El código ha caducado, inténtalo de nuevo',
 
     // panel/runtime i18n
     error_prefix: 'Error: ',
@@ -6825,13 +6786,6 @@ const LOCALES = {
     session_time_bucket_this_week: 'Diese Woche',
     session_time_bucket_last_week: 'Letzte Woche',
     session_time_bucket_older: 'Älter',
-    oauth_login_codex: 'Mit Codex (ChatGPT) anmelden',
-    oauth_codex_step1: 'Schritt 1: Rufe diese URL auf und gib den Code ein',
-    oauth_codex_step2: 'Schritt 2: Gib diesen Code auf der Seite ein',
-    oauth_codex_polling: 'Warten auf Autorisierung...',
-    oauth_codex_success: 'Codex-OAuth-Anmeldung erfolgreich!',
-    oauth_codex_error: 'OAuth-Anmeldung fehlgeschlagen',
-    oauth_codex_expired: 'Der Code ist abgelaufen, bitte versuche es erneut',
     error_prefix: 'Fehler: ',
     default: 'default',
     search: 'Search',
@@ -7727,15 +7681,7 @@ const LOCALES = {
     settings_desc_webhook_sessions: '将Webhook运行情况以对话形式显示在侧边栏。仅在启用非 GFIT-CoWork 会话时此功能才会生效。默认关闭；大量的路由信息可能会使侧边栏信息泛滥。',
     settings_desc_kanban_sessions: '将Kanban工作线程的运行情况以对话形式显示在侧边栏。仅在启用非 GFIT-CoWork 会话时此功能才会生效。默认关闭；工作线程运行是内部操作，可能会使侧边栏信息泛滥。',
     settings_desc_previous_messaging_sessions: '显示被 reset 或 compression 替换的较旧的 Discord、Telegram、Slack 和 Weixin 会话。',
-    // onboarding
     archive_extracted: (n, c) => `从 ${c} 个压缩包中解压了 ${n} 个文件`,
-    oauth_login_codex: '使用 Codex (ChatGPT) 登录',
-    oauth_codex_step1: '步骤 1：访问此 URL 并输入代码',
-    oauth_codex_step2: '步骤 2：在页面上输入此代码',
-    oauth_codex_polling: '等待授权…',
-    oauth_codex_success: 'Codex OAuth 登录成功！',
-    oauth_codex_error: 'OAuth 登录失败',
-    oauth_codex_expired: '代码已过期，请重试',
 
     // panel/runtime i18n
     error_prefix: '错误：',
@@ -9172,14 +9118,6 @@ const LOCALES = {
     suggest_files: '這個工作區有哪些檔案？',
     suggest_schedule: '今天有哪些行程？',
     suggest_plan: '協助我規劃一個小專案。',
-    // onboarding
-    oauth_login_codex: '使用 Codex（ChatGPT）登入',
-    oauth_codex_step1: '步驟 1：前往此 URL 並輸入驗證碼',
-    oauth_codex_step2: '步驟 2：在頁面上輸入此驗證碼',
-    oauth_codex_polling: '正在等待授權…',
-    oauth_codex_success: 'Codex OAuth 登入成功！',
-    oauth_codex_error: 'OAuth 登入失敗',
-    oauth_codex_expired: '驗證碼已過期，請再試一次',
 
     // panel/runtime i18n
     error_prefix: '錯誤：',
@@ -10268,14 +10206,6 @@ const LOCALES = {
     suggest_files: 'Quais arquivos estão neste workspace?',
     suggest_schedule: 'O que tenho na agenda hoje?',
     suggest_plan: 'Me ajude a planejar um pequeno projeto.',
-    // onboarding
-    oauth_login_codex: 'Entrar com o Codex (ChatGPT)',
-    oauth_codex_step1: 'Etapa 1: Acesse esta URL e insira o código',
-    oauth_codex_step2: 'Etapa 2: Insira este código na página',
-    oauth_codex_polling: 'Aguardando autorização...',
-    oauth_codex_success: 'Login com Codex OAuth realizado com sucesso!',
-    oauth_codex_error: 'Falha no login com OAuth',
-    oauth_codex_expired: 'O código expirou, tente novamente',
 
     // panel/runtime i18n
     error_prefix: 'Erro: ',
@@ -11380,14 +11310,6 @@ const LOCALES = {
     suggest_files: '이 워크스페이스에는 어떤 파일이 있나요?',
     suggest_schedule: '오늘 일정에는 무엇이 있나요?',
     suggest_plan: '작은 프로젝트 계획을 도와주세요.',
-    // onboarding
-    oauth_login_codex: 'Codex(ChatGPT)로 로그인',
-    oauth_codex_step1: '1단계: 이 URL을 방문하여 코드를 입력하세요',
-    oauth_codex_step2: '2단계: 페이지에 이 코드를 입력하세요',
-    oauth_codex_polling: '인증을 기다리는 중...',
-    oauth_codex_success: 'Codex OAuth 로그인 성공!',
-    oauth_codex_error: 'OAuth 로그인 실패',
-    oauth_codex_expired: '코드가 만료되었습니다. 다시 시도하세요',
 
     // panel/runtime i18n
     error_prefix: 'Error: ',
@@ -12663,13 +12585,6 @@ const LOCALES = {
     suggest_files: 'Quels fichiers se trouvent dans cet espace de travail ?',
     suggest_schedule: 'Quel est mon programme aujourd\'hui ?',
     suggest_plan: 'Aidez-moi à planifier un petit projet.',
-    oauth_login_codex: 'Se connecter avec Codex (ChatGPT)',
-    oauth_codex_step1: 'Étape 1 : Visitez cette URL et entrez le code',
-    oauth_codex_step2: 'Étape 2 : Entrez ce code sur la page',
-    oauth_codex_polling: 'En attente d\'autorisation\u2026',
-    oauth_codex_success: 'Connexion OAuth Codex réussie !',
-    oauth_codex_error: 'Échec de la connexion OAuth',
-    oauth_codex_expired: 'Code expiré, veuillez réessayer',
     error_prefix: 'Erreur : ',
     default: 'par défaut',
     search: 'Rechercher',
@@ -13269,13 +13184,6 @@ const LOCALES = {
     notifications_permission_status: (status) => `Povolení: ${status}`,
     notifications_test_btn: 'Odeslat test',
     notifications_unsupported: 'Notifikace nejsou v tomto prohlížeči podporovány.',
-    oauth_codex_error: 'OAuth přihlášení selhalo',
-    oauth_codex_expired: 'Kód vypršel, prosím zkuste znovu',
-    oauth_codex_polling: 'Čekám na autorizaci…',
-    oauth_codex_step1: 'Krok 1: Navštivte tuto URL a zadejte kód',
-    oauth_codex_step2: 'Krok 2: Zadejte tento kód na stránce',
-    oauth_codex_success: 'Codex OAuth přihlášení úspěšné!',
-    oauth_login_codex: 'Přihlásit se přes Codex (ChatGPT)',
     open_in_browser: 'Otevřít v prohlížeči',
     outline_empty: 'Zatím žádné otázky.',
     outline_loading: 'Načítám…',
@@ -14934,14 +14842,6 @@ const LOCALES = {
     suggest_files: 'Bu çalışma alanında hangi dosyalar var?',
     suggest_schedule: 'Nerelerdesiniz?',
     suggest_plan: 'Küçük bir proje planlamama yardım et.',
-    // onboarding
-    oauth_login_codex: 'Codex (ChatGPT) ile giriş yap',
-    oauth_codex_step1: 'Adım 1: Bu URL\'yi ziyaret edin ve kodu girin',
-    oauth_codex_step2: 'Adım 2: Bu kodu sayfaya girin',
-    oauth_codex_polling: 'Yetkilendirme bekleniyor...',
-    oauth_codex_success: 'Codex OAuth girişi başarılı!',
-    oauth_codex_error: 'OAuth girişi başarısız',
-    oauth_codex_expired: 'Kodun süresi doldu, lütfen tekrar deneyin',
 
     // panel/runtime i18n
     error_prefix: 'Hata:',
@@ -16221,14 +16121,6 @@ const LOCALES = {
     suggest_files: 'Jakie pliki znajdują się w tym obszarze roboczym?',
     suggest_schedule: 'Co mam dziś w harmonogramie?',
     suggest_plan: 'Pomóż mi zaplanować mały projekt.',
-    // onboarding
-    oauth_login_codex: 'Zaloguj się przez Codex (ChatGPT)',
-    oauth_codex_step1: 'Krok 1: Odwiedź ten URL i wpisz kod',
-    oauth_codex_step2: 'Krok 2: Wpisz ten kod na stronie',
-    oauth_codex_polling: 'Oczekiwanie na autoryzację...',
-    oauth_codex_success: 'Logowanie Codex OAuth powiodło się!',
-    oauth_codex_error: 'Logowanie OAuth nie powiodło się',
-    oauth_codex_expired: 'Kod wygasł, spróbuj ponownie',
 
     // panel/runtime i18n
     error_prefix: 'Błąd: ',
@@ -17307,14 +17199,6 @@ const LOCALES = {
     suggest_files: 'Workspace này có những file gì?',
     suggest_schedule: "Hôm nay tôi có lịch gì?",
     suggest_plan: 'Giúp tôi lập kế hoạch cho một dự án nhỏ.',
-    // onboarding
-    oauth_login_codex: 'Đăng nhập bằng Codex (ChatGPT)',
-    oauth_codex_step1: 'Bước 1: Truy cập URL này và nhập mã',
-    oauth_codex_step2: 'Bước 2: Nhập mã này trên trang',
-    oauth_codex_polling: 'Đang chờ xác thực...',
-    oauth_codex_success: 'Đăng nhập OAuth Codex thành công!',
-    oauth_codex_error: 'Đăng nhập OAuth thất bại',
-    oauth_codex_expired: 'Mã đã hết hạn, vui lòng thử lại',
 
     // panel/runtime i18n
     error_prefix: 'Lỗi: ',

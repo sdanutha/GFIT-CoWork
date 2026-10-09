@@ -116,9 +116,9 @@ def _fresh_tts_limiter(monkeypatch):
 
 
 def test_openai_tts_no_key_returns_503(monkeypatch):
-    import api.onboarding as onboarding
+    import api.providers as providers
 
-    monkeypatch.setattr(onboarding, "_load_env_file", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(providers, "_load_env_file", lambda *_args, **_kwargs: {})
     h = _post({"text": "Hello", "engine": "openai"}, client="10.82.0.1")
     routes._handle_tts(h, None)
     assert h.status == 503
