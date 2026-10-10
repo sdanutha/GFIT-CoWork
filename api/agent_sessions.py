@@ -1413,9 +1413,8 @@ def read_session_lineage_metadata(db_path: Path, session_ids: list[str] | set[st
             # from the materialized ancestors so branchy compression lineages can
             # mark the real freshest tip, not just the newest direct sibling.
             #
-            # IN-clause is chunked to 500 to stay under SQLITE_MAX_VARIABLE_NUMBER
-            # on older sqlite (Python 3.9 ships sqlite 3.31 which defaults to 999;
-            # newer Python ships sqlite 3.32+ at 32766). On a power user with
+            # IN-clause is chunked to 500 to stay under SQLITE_MAX_VARIABLE_NUMBER,
+            # which SQLite before 3.32 defaults to 999. On a power user with
             # 2000+ sessions in the sidebar, an unchunked first hop would raise
             # `OperationalError: too many SQL variables`, get swallowed by the
             # except below, and silently disable lineage collapse forever.
