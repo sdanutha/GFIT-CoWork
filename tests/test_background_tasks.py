@@ -57,7 +57,7 @@ class TestGetResultsKeepsRunningTasks(unittest.TestCase):
 
         # The running task MUST still be tracked — otherwise the worker
         # thread's complete_background call cannot find it.
-        remaining = self.bg.get_background_tasks(parent)
+        remaining = self.bg._BACKGROUND_TASKS.get(parent, [])
         self.assertEqual(len(remaining), 1, (
             "get_results dropped the still-running task — subsequent "
             "complete_background() calls will silently no-op and the "
@@ -79,7 +79,7 @@ class TestGetResultsKeepsRunningTasks(unittest.TestCase):
         self.assertEqual(results[0]["answer"], "42")
 
         # Done one is gone; running one is still tracked
-        remaining = self.bg.get_background_tasks(parent)
+        remaining = self.bg._BACKGROUND_TASKS.get(parent, [])
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0]["task_id"], "task-run")
         self.assertEqual(remaining[0]["status"], "running")
