@@ -13,7 +13,7 @@
     Assumes Python + hermes-agent + the GFIT-CoWork Python deps are already
     installed natively on Windows - same assumption start.sh makes
     when invoked outside a fresh bootstrap. For first-time setup, the
-    native Windows path is to install Python 3.11+, then create a
+    native Windows path is to install Python 3.14, then create a
     Windows venv (`python -m venv venv`) and `pip install -r
     requirements.txt` from the hermes-agent root in PowerShell - this
     script then finds `venv\Scripts\python.exe` automatically. A venv

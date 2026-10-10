@@ -39,7 +39,7 @@ def test_local_test_runner_uses_supported_venv_before_pytest_collection():
     conftest = (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
     resolve_body = runner.split("resolve_venv_python() {", 1)[1].split("\n}\n\nVENV_PY", 1)[0]
 
-    assert "python3.14 python3.13 python3.12 python3.11 python3" in runner
+    assert "for candidate in python3.14 python3; do" in runner
     assert "requirements-dev.txt" in runner
     assert 'HERMES_WEBUI_TEST_PYTHON' in runner
     assert "resolve_venv_python()" in runner
@@ -50,7 +50,7 @@ def test_local_test_runner_uses_supported_venv_before_pytest_collection():
     # Destructive-fs guard: never create/clear a virtualenv through a symlinked .venv
     # (`python -m venv --clear` would empty the symlink's target).
     assert '-L "$VENV_DIR"' in runner
-    assert "GFIT-CoWork tests require Python 3.11, 3.12, 3.13, or 3.14" in conftest
+    assert "GFIT-CoWork tests require Python 3.14" in conftest
     assert "Run ./scripts/test.sh" in conftest
 
 
@@ -90,9 +90,9 @@ def test_local_test_runner_accepts_windows_layout_venv_from_base_python(tmp_path
         if [[ "${1:-}" == "-" ]]; then
           program="$(cat)"
           if [[ "$program" == *"sys.version_info[:3]"* ]]; then
-            echo "3.11.15"
+            echo "3.14.0"
           elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
-            echo "3.11"
+            echo "3.14"
           fi
           exit 0
         fi
@@ -116,9 +116,9 @@ def test_local_test_runner_accepts_windows_layout_venv_from_base_python(tmp_path
         if [[ "${1:-}" == "-" ]]; then
           program="$(cat)"
           if [[ "$program" == *"sys.version_info[:3]"* ]]; then
-            echo "3.11.15"
+            echo "3.14.0"
           elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
-            echo "3.11"
+            echo "3.14"
           fi
           exit 0
         fi
@@ -172,9 +172,9 @@ def test_local_test_runner_rejects_venv_without_accepted_python_path(tmp_path):
         if [[ "${1:-}" == "-" ]]; then
           program="$(cat)"
           if [[ "$program" == *"sys.version_info[:3]"* ]]; then
-            echo "3.11.15"
+            echo "3.14.0"
           elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
-            echo "3.11"
+            echo "3.14"
           fi
           exit 0
         fi
@@ -207,6 +207,73 @@ def test_local_test_runner_rejects_venv_without_accepted_python_path(tmp_path):
     assert "does not contain bin/python or Scripts/python.exe" in result.stderr
     assert not proof.exists()
     assert not (repo / ".venv").exists()
+
+def test_local_test_runner_rejects_python_older_than_314(tmp_path):
+    repo = tmp_path / "repo"
+    scripts_dir = repo / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", scripts_dir / "test.sh")
+    _make_executable(scripts_dir / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+
+    fake_python = repo / "fake-python"
+    fake_python.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "-" ]]; then
+          program="$(cat)"
+          if [[ "$program" == *"raise SystemExit"* ]]; then
+            exec python3 -c "import sys; sys.version_info = (3, 12, 9); exec(sys.stdin.read())" <<<"$program" 2>/dev/null || true
+          fi
+          if [[ "$program" == *"sys.version_info[:3]"* ]]; then
+            echo "3.12.9"
+          elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
+            echo "3.12"
+          fi
+          exit 0
+        fi
+        exit 99
+        """), encoding="utf-8")
+    _make_executable(fake_python)
+
+    env = os.environ.copy()
+    env["HERMES_WEBUI_TEST_PYTHON"] = "./fake-python"
+
+    result = subprocess.run(
+        ["bash", "scripts/test.sh", "tests/example_test.py"],
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "Unsupported Python for GFIT-CoWork tests" in result.stderr
+    assert "Use Python 3.14." in result.stderr
+    assert not (repo / ".venv").exists()
+
+
+def test_ci_and_packaging_target_python_314_only():
+    import re
+
+    workflows = ROOT / ".github" / "workflows"
+    for path in sorted(workflows.glob("*.yml")):
+        versions = re.findall(r"python-version:\s*(.+)", path.read_text(encoding="utf-8"))
+        for value in versions:
+            value = value.strip()
+            if value.startswith("${{"):
+                continue
+            assert value in ("'3.14'", "['3.14']"), f"{path.name}: python-version {value}"
+    tests = (workflows / "tests.yml").read_text(encoding="utf-8")
+    assert "python-version: ['3.14']" in tests
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.14"' in pyproject
+    assert 'target-version = "py314"' in pyproject
+    assert "Programming Language :: Python :: 3.11" not in pyproject
+
 
 def test_live_model_success_log_is_debug_not_default_console_log():
     ui = (ROOT / "static" / "ui.js").read_text(encoding="utf-8")
