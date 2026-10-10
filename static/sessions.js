@@ -498,10 +498,6 @@ function _sessionViewedCountRecord(value, transcriptGeneration = 0) {
   };
 }
 
-function _sessionViewedCountValue(value) {
-  return _sessionViewedCountRecord(value).message_count;
-}
-
 function _sessionViewedRecordWins(candidate, current) {
   const ours = _sessionViewedCountRecord(candidate);
   const theirs = _sessionViewedCountRecord(current);
@@ -3159,17 +3155,6 @@ function sidValue() {
   return S && S.session && S.session.session_id ? S.session.session_id : null;
 }
 
-function _extractHandoffSummaryPayload(content){
-  if(!content) return null;
-  if(typeof content!=='string') return null;
-  try {
-    const parsed=JSON.parse(content);
-    return parsed&&typeof parsed==='object'&&parsed._handoff_summary_card===true?parsed:null;
-  } catch (e) {
-    return null;
-  }
-}
-
 async function _generateHandoffSummary(sid, rounds) {
   // Treat handoff like a slash-command result: the composer dock entry
   // disappears and the transient summary card renders in the transcript.
@@ -4346,17 +4331,6 @@ function _sessionSnapshotById(sid){
   if(S.session&&S.session.session_id===sid) return S.session;
   return (_allSessions||[]).find(s=>s&&s.session_id===sid)||null;
 }
-function _pinnedSessionCount(){
-  return (_allSessions||[]).filter(s=>s&&s.pinned&&!s.archived).length;
-}
-function _getPinnedSessionsLimit(){
-  const limit=parseInt(window._pinnedSessionsLimit||3,10);
-  return (Number.isFinite(limit)&&limit>0)?limit:3;
-}
-function _pinnedSessionsLimitMessage(){
-  const limit=_getPinnedSessionsLimit();
-  return `Only ${limit} conversations can be pinned. Unpin one before pinning another.`;
-}
 function _worktreeSessionCount(ids){
   return (ids||[]).reduce((count,sid)=>{
     const session=_sessionSnapshotById(sid);
@@ -4526,11 +4500,6 @@ function selectAllSessions(){
     const sid=cb.dataset.sid;
     if(sid){cb.checked=_selectedSessions.has(sid);const item=cb.closest('.session-item,.session-child-session-fork');if(item)item.classList.toggle('selected',_selectedSessions.has(sid));}
   });
-  _updateBatchActionBar();
-}
-function deselectAllSessions(){
-  _selectedSessions.clear();
-  document.querySelectorAll('.session-select-cb').forEach(cb=>{cb.checked=false;const item=cb.closest('.session-item,.session-child-session-fork');if(item)item.classList.remove('selected');});
   _updateBatchActionBar();
 }
 function _updateBatchActionBar(){
@@ -4727,24 +4696,6 @@ function _buildSessionAction(label, meta, icon, onSelect, extraClass=''){
     await onSelect();
   };
   return opt;
-}
-
-function _sessionMarkdownLabel(session){
-  const sid=session&&session.session_id?String(session.session_id):'';
-  const title=String((session&&(session.title||session.name))||'Conversation').replace(/\s+/g,' ').trim()||'Conversation';
-  const shortSid=sid?sid.slice(0,12):'';
-  const label=shortSid?`${title} (${shortSid})`:title;
-  return label.replace(/([\\\[\]])/g,'\\$1').slice(0,120);
-}
-
-function _sessionMarkdownUrlSid(sid){
-  return encodeURIComponent(String(sid||'')).replace(/[()]/g, ch => ch==='('?'%28':'%29');
-}
-
-function _sessionInternalReferenceForSession(session){
-  const sid=session&&session.session_id;
-  if(!sid) return '';
-  return `[${_sessionMarkdownLabel(session)}](session://${_sessionMarkdownUrlSid(sid)})`;
 }
 
 async function _copyTextToClipboard(text){
@@ -6580,24 +6531,6 @@ function _serverNowMs() {
   return Date.now() - _serverTimeDelta;
 }
 
-function _serverTzOptions() {
-  // Build a timeZone option from _serverTz (e.g. "+0800" → "Etc/GMT-8").
-  // Falls back to undefined (uses browser timezone) when:
-  //   - _serverTz is not set or is UTC (no offset to apply)
-  //   - _serverTz is malformed
-  //   - _serverTz has a fractional-hour component (India +0530, Iran +0330,
-  //     Newfoundland -0330, Nepal +0545, etc.) — IANA Etc/GMT zones cannot
-  //     express half/quarter-hour offsets; use _formatInServerTz() instead
-  //     for correct fractional-offset formatting.
-  if (!_serverTz || _serverTz === '+0000' || _serverTz === '-0000') return undefined;
-  const m = _serverTz.match(/^([+-])(\d{2})(\d{2})$/);
-  if (!m) return undefined;
-  if (m[3] !== '00') return undefined;  // fractional offset — caller must use _formatInServerTz
-  // IANA Etc/GMT uses inverted sign: UTC+8 → "Etc/GMT-8"
-  const sign = m[1] === '+' ? '-' : '+';
-  return { timeZone: `Etc/GMT${sign}${parseInt(m[2])}` };
-}
-
 function _formatInServerTz(date, options) {
   // Format `date` in the server's wall-clock timezone, including correct
   // handling of fractional-hour offsets that Etc/GMT cannot express.
@@ -6777,12 +6710,6 @@ function _sessionSegmentCount(s){
   if(Array.isArray(s._lineage_segments)) counts.push(s._lineage_segments.length);
   const count=Math.max(0,...counts.map(n=>Number.isFinite(n)?n:0));
   return count>1?count:0;
-}
-
-function _clearLineageReportCache(){
-  _lineageReportCache.clear();
-  _lineageReportInflight.clear();
-  _lineageReportCacheGeneration++;
 }
 
 function _pruneLineageReportCacheToVisibleSessions(sessions){

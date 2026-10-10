@@ -20,7 +20,6 @@ def test_batch_select_functions_exist():
         'exitSessionSelectMode',
         'toggleSessionSelect',
         'selectAllSessions',
-        'deselectAllSessions',
         '_updateBatchActionBar',
         '_renderBatchActionBar',
         '_showBatchProjectPicker',

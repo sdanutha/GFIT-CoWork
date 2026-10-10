@@ -809,13 +809,11 @@ def test_workspace_close_button_present():
         "handleWorkspaceClose() or closeWorkspacePanel() must be wired to a button to close the workspace panel on mobile"
 
 
-def test_toggle_mobile_files_js_defined():
-    """toggleMobileFiles() must be defined in boot.js."""
+def test_mobile_workspace_panel_closes_from_chat():
+    """boot.js toggles the right panel's mobile-open class and closes it from the chat."""
     boot_js = (REPO / "static" / "boot.js").read_text(encoding="utf-8")
-    assert "function toggleMobileFiles()" in boot_js, \
-        "toggleMobileFiles() missing from static/boot.js"
     assert "mobile-open" in boot_js, \
-        "toggleMobileFiles() must toggle mobile-open class on the right panel"
+        "boot.js must toggle mobile-open class on the right panel"
     assert "function closeMobileWorkspacePanelFromChat(e)" in boot_js
     assert "$('mainChat')?.addEventListener('pointerdown', closeMobileWorkspacePanelFromChat);" in boot_js
 

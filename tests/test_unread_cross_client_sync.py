@@ -113,7 +113,6 @@ _HELPER_FNS = [
     "_sessionExistsForUnreadState",
     "_sessionListLoaded",
     "_sessionViewedCountRecord",
-    "_sessionViewedCountValue",
     "_sessionViewedRecordWins",
     "_sessionTranscriptGenerationForUnread",
     "_mergeSessionViewedCounts",
@@ -209,7 +208,7 @@ function makeClient() {{
   return {{
     viewed: (sid) => {{
       const counts = _getSessionViewedCounts();
-      return Object.prototype.hasOwnProperty.call(counts, sid) ? _sessionViewedCountValue(counts[sid]) : null;
+      return Object.prototype.hasOwnProperty.call(counts, sid) ? _sessionViewedCountRecord(counts[sid]).message_count : null;
     }},
     setViewed: _setSessionViewedCount,
     clearViewed: _clearSessionViewedCount,

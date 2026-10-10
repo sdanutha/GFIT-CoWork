@@ -3049,9 +3049,6 @@ function _reconcileModelDropdownSelection(sel,data,previousState,opts){
   }
   return null;
 }
-function _providerQualifiedModelValueForSelect(sel, modelId){
-  return _modelStateForSelect(sel,modelId).model;
-}
 function _readPersistedModelState(){
   try{
     const raw=localStorage.getItem(MODEL_STATE_KEY);
@@ -4068,119 +4065,6 @@ function _appendOverflowOptionsToGroup(group, extraModels){
     group.dataset.overflowExpanded='1';
   }
   return appended;
-}
-
-function _mountSearchableModelSelect(opts={}){
-  const root=opts.root;
-  if(!root) return null;
-  const choices=Array.isArray(opts.choices)
-    ? opts.choices
-      .map(choice=>choice&&choice.id?{id:String(choice.id),label:String(choice.label||choice.id)}:null)
-      .filter(Boolean)
-    : [];
-  const selectedValue=String(opts.selectedValue||'');
-  const onModelChange=typeof opts.onModelChange==='function' ? opts.onModelChange : ()=>{};
-  const selectId=opts.selectId||'';
-  const customInputId=opts.customInputId||'';
-  const listedChoiceIds=new Set(choices.map(choice=>choice.id));
-  const listedSelection=listedChoiceIds.has(selectedValue) ? selectedValue : '';
-  const customSelection=listedSelection ? '' : selectedValue;
-  let lastListedValue=listedSelection||(choices[0]?choices[0].id:'');
-  root.innerHTML=
-    `<div class="model-search-row">`+
-      `<input class="model-search-input" type="text" placeholder="${esc(t('model_search_placeholder')||'Search models…')}" spellcheck="false" autocomplete="off">`+
-      `<button class="model-search-clear" title="Clear search">${li('x',10)}</button>`+
-    `</div>`+
-    `<select ${selectId?`id="${esc(selectId)}"`:''}></select>`+
-    `<div class="model-group model-custom-sep">${esc(t('model_custom_label')||'Custom model ID')}</div>`+
-    `<div class="model-custom-row">`+
-      `<input ${customInputId?`id="${esc(customInputId)}"`:''} class="model-custom-input" type="text" placeholder="${esc(t('model_custom_placeholder')||'e.g. openai/gpt-5.4')}" spellcheck="false" autocomplete="off">`+
-      `<button class="model-custom-btn" title="Use this model">${li('plus',12)}</button>`+
-    `</div>`;
-  const searchInput=root.querySelector('.model-search-input');
-  const clearButton=root.querySelector('.model-search-clear');
-  const selectEl=selectId ? root.querySelector(`#${selectId}`) : root.querySelector('select');
-  const customInput=customInputId ? root.querySelector(`#${customInputId}`) : root.querySelector('.model-custom-input');
-  const customButton=root.querySelector('.model-custom-btn');
-  if(!searchInput||!clearButton||!selectEl||!customInput||!customButton) return null;
-
-  const noMatchesOption=document.createElement('option');
-  noMatchesOption.value='';
-  noMatchesOption.textContent='No matching models';
-  noMatchesOption.disabled=true;
-  noMatchesOption.hidden=true;
-  selectEl.appendChild(noMatchesOption);
-
-  for(const choice of choices){
-    const option=document.createElement('option');
-    option.value=choice.id;
-    option.textContent=choice.label;
-    selectEl.appendChild(option);
-  }
-  if(listedSelection){
-    selectEl.value=listedSelection;
-  }else if(customSelection){
-    selectEl.selectedIndex=-1;
-  }else if(choices.length){
-    selectEl.value=choices[0].id;
-    onModelChange(lastListedValue);
-  }
-  customInput.value=customSelection;
-
-  const applyFilter=()=>{
-    const needle=(searchInput.value||'').trim().toLowerCase();
-    let visibleCount=0;
-    for(const option of Array.from(selectEl.options)){
-      if(option===noMatchesOption) continue;
-      const haystack=`${option.textContent||''} ${option.value||''}`.toLowerCase();
-      const visible=!needle||haystack.includes(needle);
-      option.hidden=!visible;
-      if(visible) visibleCount++;
-    }
-    noMatchesOption.hidden=visibleCount!==0;
-  };
-
-  const applyCustomSelection=()=>{
-    onModelChange((customInput.value||'').trim());
-  };
-
-  searchInput.addEventListener('input', applyFilter);
-  clearButton.addEventListener('click', ()=>{
-    searchInput.value='';
-    applyFilter();
-    searchInput.focus();
-  });
-  selectEl.addEventListener('change', ()=>{
-    customInput.value='';
-    lastListedValue=selectEl.value||lastListedValue;
-    onModelChange(lastListedValue);
-  });
-  customInput.addEventListener('input', ()=>{
-    const value=(customInput.value||'').trim();
-    if(value){
-      selectEl.selectedIndex=-1;
-      onModelChange(value);
-      return;
-    }
-    customInput.value='';
-    if(lastListedValue){
-      selectEl.value=lastListedValue;
-      onModelChange(lastListedValue);
-      return;
-    }
-    onModelChange('');
-  });
-  customInput.addEventListener('keydown', (event)=>{
-    if(event.key!=='Enter') return;
-    event.preventDefault();
-    applyCustomSelection();
-  });
-  customButton.addEventListener('click', (event)=>{
-    event.preventDefault();
-    applyCustomSelection();
-  });
-  applyFilter();
-  return {searchInput,selectEl,customInput,customButton};
 }
 
 function renderModelDropdown(){
@@ -6370,13 +6254,6 @@ function _processedElapsedLabel(seconds){
 const _COMPRESSION_ELAPSED_MAX_SECONDS=5*60;
 let _compressionElapsedTimer=null;
 function _compressionElapsedStartedAt(state){const n=Number(state&&state.startedAt);return Number.isFinite(n)&&n>0?n:null;}
-function _compressionElapsedLabel(state){
-  const started=_compressionElapsedStartedAt(state);
-  if(!started)return'';
-  const elapsed=Math.max(0,(Date.now()/1000)-started);
-  if(elapsed>=_COMPRESSION_ELAPSED_MAX_SECONDS)return '5+ min';
-  return _formatActiveElapsedTimer(elapsed);
-}
 function _compressionElapsedExpired(state){const started=_compressionElapsedStartedAt(state);return !!(started&&((Date.now()/1000)-started)>=_COMPRESSION_ELAPSED_MAX_SECONDS);}
 function _compressionLiveCardNode(){return document.querySelector('[data-live-compression-card="1"][data-compression-started-at]');}
 function _compressionLiveCardState(){
@@ -6401,9 +6278,6 @@ function _clearCompressionElapsedTimer(){if(_compressionElapsedTimer){clearInter
 let _activityElapsedTimer=null;
 let _activityElapsedTimerGroup=null;
 function _activityNowSeconds(){return Date.now()/1000;}
-function _isActivityTimerGroup(group){
-  return !!(group&&group.getAttribute('data-run-activity-group')==='1');
-}
 function _activityElapsedStartedAt(group){
   if(!group)return null;
   const raw=(group.dataset&&group.dataset.turnStartedAt!==undefined&&group.dataset.turnStartedAt!=='')
@@ -6430,16 +6304,6 @@ function _activitySettledProcessedLabel(group){
     if(legacy) durationText=legacy;
   }
   return durationText?t('processed_elapsed',durationText):'';
-}
-function _activityMarkObserved(group, ts){
-  if(!group||group.getAttribute('data-live-tool-call-group')!=='1')return;
-  const stamp=Number(ts||_activityNowSeconds());
-  if(Number.isFinite(stamp)&&stamp>0) group.setAttribute('data-last-activity-at',String(stamp));
-}
-function _activityLastObservedAge(group){
-  const stamp=Number(group&&group.getAttribute('data-last-activity-at'));
-  if(!Number.isFinite(stamp)||stamp<=0)return null;
-  return Math.max(0,_activityNowSeconds()-stamp);
 }
 function _activityClockLabel(ts){
   const stamp=Number(ts||_activityNowSeconds());
@@ -6584,27 +6448,6 @@ function _activityStatusNode({kind='info',label='',detail='',status='done',ts=nu
   const iconMap={run:li('play',13),model:li('bot',13),waiting:'<span class="tool-card-running-dot"></span>',thinking:li('lightbulb',13),tool:li('wrench',13),done:li('check',13),warning:li('alert-triangle',13)};
   row.innerHTML=`<span class="agent-activity-status-icon">${iconMap[kind]||li('clock',13)}</span><span class="agent-activity-status-copy"><span class="agent-activity-status-label">${esc(label)}</span>${detail?`<span class="agent-activity-status-detail">${esc(detail)}</span>`:''}</span><span class="agent-activity-status-time">${esc(_activityClockLabel(ts))}</span>`;
   return row;
-}
-function _appendActivityEvent(group, event){
-  if(!group)return null;
-  const body=group.querySelector('.tool-call-group-body');
-  if(!body)return null;
-  const eventId=event&&event.id;
-  let row=eventId?body.querySelector(`.agent-activity-status[data-activity-event-id="${CSS.escape(eventId)}"]`):null;
-  const next=_activityStatusNode(event||{});
-  if(row){row.replaceWith(next);row=next;}
-  else{body.appendChild(next);row=next;}
-  _activityMarkObserved(group,event&&event.ts);
-  return row;
-}
-function _ensureLiveActivityBaseline(group){
-  if(!group||group.getAttribute('data-live-tool-call-group')!=='1')return;
-  const started=_activityElapsedStartedAt(group)||_activityNowSeconds();
-  if(!group.getAttribute('data-turn-started-at')) group.setAttribute('data-turn-started-at',String(started));
-  if(!group.getAttribute('data-last-activity-at')) group.setAttribute('data-last-activity-at',String(started));
-  _appendActivityEvent(group,{id:'run-started',kind:'run',label:'Run started',detail:'Observable activity will appear here as the agent works.',status:'done',ts:started});
-  const modelLabel=(S.session&&S.session.model)?getModelLabel(S.session.model):'';
-  if(modelLabel)_appendActivityEvent(group,{id:'run-model',kind:'model',label:`Model: ${modelLabel}`,detail:S.activeProfile&&S.activeProfile!=='default'?`Profile: ${S.activeProfile}`:'',status:'done',ts:started});
 }
 function _setActivityElapsedStartedAt(group){
   if(!group||group.getAttribute('data-live-tool-call-group')!=='1')return;
@@ -13755,29 +13598,6 @@ function normalizeLiveActivityGroupPlacement(turn){
     _syncWorklogReasonFromAnchor(group, anchor);
   }
 }
-function ensureRunActivityGroup(inner, opts){
-  opts=opts||{};
-  if(!inner) return null;
-  let group=inner.querySelector('.tool-call-group[data-run-activity-group="1"]');
-  if(!group){
-    group=document.createElement('div');
-    const collapsed=opts.collapsed!==false;
-    group.className='tool-call-group agent-activity-group run-activity-group'+(collapsed?' tool-call-group-collapsed':' open');
-    group.setAttribute('data-tool-call-group','1');
-    group.setAttribute('data-agent-activity-group','1');
-    group.setAttribute('data-run-activity-group','1');
-    group.innerHTML=`<button type="button" class="tool-call-group-summary" aria-expanded="${collapsed?'false':'true'}" onclick="_toggleActivityGroup(this)"><span class="tool-call-group-chevron">${li('chevron-right',12)}</span><span class="tool-call-group-label">Running</span><span class="tool-call-group-duration"></span></button><div class="tool-call-group-body"></div>`;
-    if(inner.firstChild) inner.insertBefore(group, inner.firstChild);
-    else inner.appendChild(group);
-  }
-  if(opts.turnDuration!==undefined&&opts.turnDuration!==null) group.setAttribute('data-turn-duration',String(opts.turnDuration));
-  if(opts.turnStartedAt!==undefined&&opts.turnStartedAt!==null) group.setAttribute('data-turn-started-at',String(opts.turnStartedAt));
-  _setActivityElapsedStartedAt(group);
-  _ensureLiveActivityBaseline(group);
-  _syncToolCallGroupSummary(group);
-  if(opts.live!==false) _startActivityElapsedTimer(group);
-  return group;
-}
 // ── LiveFooter timer (module-level singleton) ──────────────────────────────
 const _liveRunStatusTimers={};  // keyed by sessionId, max 1 active
 let _liveRunStatusTokens=null;
@@ -13847,17 +13667,6 @@ function _renderLiveRunStatusContent(el,startedAt){
   const timeStr=_formatRunElapsed(elapsed);
   const tokens=_liveRunStatusTokens;
   el.innerHTML=`<span class="live-run-status-dot tool-card-running-dot"></span><span class="live-run-status-text lf-time">${timeStr}</span>${tokens?`<span class="lf-sep">·</span><span class="lf-tokens">${_fmtTokens(tokens)} tokens</span>`:''}<span class="lf-sep">·</span><span class="lf-status">Running</span>`;
-}
-function updateLiveRunStatus(opts){
-  if(opts&&opts.sessionId&&_liveRunStatusSessionId&&opts.sessionId!==_liveRunStatusSessionId) return;
-  if(opts&&opts.tokens!==undefined)_liveRunStatusTokens=opts.tokens;
-  const el=$('liveRunStatus');
-  if(el&&!el.hidden){
-    _moveLiveRunStatusToTurnEnd(el);
-    const timer=_liveRunStatusTimers[_liveRunStatusSessionId];
-    const startedAt=timer&&timer.startedAt||null;
-    _renderLiveRunStatusContent(el,startedAt);
-  }
 }
 function _syncLiveRunStatusAfterRender(){
   const sid=S.session&&S.session.session_id;
@@ -14028,21 +13837,10 @@ function _compressionCardsHtml(state){
     </div>
     ${referenceHtml}`;
 }
-function _autoCompressionBaseDetail(state){
-  const running=state&&state.phase==='running';
-  if(running)return 'Compressing context';
-  if(state&&state.phase==='done')return 'Context auto-compressed';
-  return '';
-}
 function _autoCompressionPreviewText(state){
   const running=state&&state.phase==='running';
   if(running)return 'Compressing context';
   if(state&&state.phase==='done')return 'Context auto-compressed';
-  return '';
-}
-function _autoCompressionDetailText(state){
-  const running=state&&state.phase==='running';
-  if(running)return '';
   return '';
 }
 function _autoCompressionCardsHtml(state){
@@ -14575,10 +14373,6 @@ function _handoffCardsNode(state){
   wrap.className='compression-turn handoff-turn';
   wrap.innerHTML=`<div class="compression-turn-blocks">${_handoffCardsHtml(state)}</div>`;
   return wrap;
-}
-function _contextCompactionMessageHtml(m, tsTitle='', preservedMessages=[]){
-  const text=msgContent(m)||String(m.content||'');
-  return `<div class="compression-turn"><div class="compression-turn-blocks">${_compressionReferenceCardHtml(text, false, tsTitle)}${_preservedCompressionTaskListCardsHtml(preservedMessages)}</div></div>`;
 }
 function renderCompressionUi(){
   const el=$('liveCompressionCards');
@@ -17782,19 +17576,6 @@ function _toolVisibleTargetLabel(tc, opts){
   }
   return _shortToolLabel(target, opts.limit||112);
 }
-function _toolCommandTitle(command){
-  const normalized=String(command||'').replace(/\s+/g,' ').trim();
-  if(!normalized) return '';
-  if(/^git\s+fetch\b/i.test(normalized)) return 'git fetch';
-  if(/^git\s+(?:status|rev-list|branch)\b/i.test(normalized)) return 'git ahead/behind';
-  if(/^git\s+log\b/i.test(normalized)) return 'git log';
-  if(/\bcurl\b/i.test(normalized)&&/\/health\b/i.test(normalized)) return 'health check';
-  if(/\b(?:ps|pgrep)\b/i.test(normalized)) return 'process check';
-  const m=normalized.match(/\blsof\b.*(?:-i|:)(\d{2,5})\b/i);
-  if(m) return `port ${m[1]} check`;
-  if(/\blaunchctl\b/i.test(normalized)) return 'launchctl';
-  return _shortToolLabel(normalized,72);
-}
 function _toolQueryTitle(query){
   const normalized=String(query||'').replace(/\s+/g,' ').trim();
   return _shortToolLabel(normalized,72);
@@ -18314,61 +18095,6 @@ function _syncToolCallGroupSummary(group){
   }
 }
 
-function _activityProgressLabelForToolName(name){
-  const key=String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,'_');
-  if(!key) return 'Working';
-  if(key.includes('search')||key.includes('grep')) return 'Searching workspace';
-  if(key.includes('read')||key.includes('view')||key.includes('open')) return 'Reading files';
-  if(key.includes('write')||key.includes('patch')||key.includes('edit')) return 'Updating files';
-  if(key.includes('terminal')||key.includes('shell')||key.includes('command')||key.includes('process')) return 'Running command';
-  if(key.includes('web')||key.includes('fetch')||key.includes('curl')) return 'Checking web data';
-  if(key.includes('todo')||key.includes('plan')) return 'Planning next steps';
-  return 'Working';
-}
-
-function _toolCardVisibleNameText(nameEl){
-  if(!nameEl) return '';
-  const specific=nameEl.querySelector&&nameEl.querySelector('.tool-card-name-label');
-  const generic=nameEl.querySelector&&nameEl.querySelector('.tool-card-name-generic');
-  if(specific&&generic){
-    const card=nameEl.closest&&nameEl.closest('.tool-card');
-    const preferred=(card&&card.classList&&card.classList.contains('open'))?generic:specific;
-    return String(preferred.textContent||'').trim();
-  }
-  return String(nameEl.textContent||'').trim();
-}
-
-function _activityLatestToolName(group){
-  if(!group) return '';
-  const running=group.querySelector('.tool-card.tool-card-running .tool-card-name');
-  const latest=running || Array.from(group.querySelectorAll('.tool-card-name')).pop();
-  return _toolCardVisibleNameText(latest);
-}
-
-function _activityWaitingDetail(group,label=''){
-  const toolName=_activityLatestToolName(group);
-  if(toolName){
-    const action=_activityProgressLabelForToolName(toolName);
-    if(group&&group.querySelector('.tool-card.tool-card-running')) return `${action}: ${toolName}. Results will appear here.`;
-    return `Last step: ${action} (${toolName}); now choosing the next action or composing a response.`;
-  }
-  if(String(label||'').toLowerCase().includes('model')) return 'Reviewing the prompt and context, then choosing the next action or composing the response.';
-  return 'The agent is running; tool results and response text will appear here.';
-}
-
-function _activityLiveProgressLabel(group){
-  if(!group||group.getAttribute('data-live-tool-call-group')!=='1') return '';
-  const idleAge=_activityLastObservedAge(group);
-  if(idleAge!==null&&idleAge>=90) return `No recent activity for ${_formatActiveElapsedTimer(idleAge)}`;
-  const running=group.querySelector('.tool-card.tool-card-running .tool-card-name');
-  const latest=running?_toolCardVisibleNameText(running):_activityLatestToolName(group);
-  const waiting=group.querySelector('.agent-activity-status-waiting .agent-activity-status-label');
-  if(latest) return _activityProgressLabelForToolName(latest);
-  if(waiting&&waiting.textContent&&String(waiting.textContent).toLowerCase().includes('model')) return 'Reviewing prompt and context';
-  if(waiting&&waiting.textContent) return waiting.textContent;
-  return 'Starting agent';
-}
-
 // ── Live tool card helpers (called during SSE streaming) ──
 // Live cards are inserted INLINE inside #msgInner (tagged with data-live-tid)
 // so the streaming layout matches the settled layout produced by renderMessages
@@ -18504,12 +18230,6 @@ function appendLiveToolCard(tc){
   if(typeof scrollIfPinned==='function') scrollIfPinned();
 }
 
-function _findLatestLiveAssistantByBurst(inner, burstId){
-  if(!inner || !burstId) return null;
-  const candidates=Array.from(inner.querySelectorAll(`[data-live-assistant="1"][data-activity-burst-id="${CSS.escape(String(burstId))}"]`))
-    .filter(el=>el.isConnected!==false);
-  return candidates[candidates.length-1] || null;
-}
 function _findLatestLiveAssistantBySegment(inner, segmentSeq){
   if(!inner || !segmentSeq) return null;
   const candidates=Array.from(inner.querySelectorAll(`[data-live-assistant="1"][data-live-segment-seq="${CSS.escape(String(segmentSeq))}"]`)).filter(el=>el.isConnected!==false);

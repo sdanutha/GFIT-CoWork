@@ -20,7 +20,6 @@ _HELPER_NAMES = (
     "_sessionExistsForUnreadState",
     "_sessionListLoaded",
     "_sessionViewedCountRecord",
-    "_sessionViewedCountValue",
     "_sessionViewedRecordWins",
     "_sessionTranscriptGenerationForUnread",
     "_mergeSessionViewedCounts",

@@ -455,10 +455,8 @@ class TestToolCallGroupingStatic:
             "A saved closed Activity group should still override the live expanded default."
         )
 
-    def test_live_activity_summary_shows_readable_progress_without_persisted_content(self):
+    def test_live_activity_summary_shows_processed_time_without_persisted_content(self):
         sync_fn = _function_body(UI_JS, "_syncToolCallGroupSummary")
-        progress_fn = _function_body(UI_JS, "_activityProgressLabelForToolName")
-        live_progress_fn = _function_body(UI_JS, "_activityLiveProgressLabel")
         assert "_activityLiveProgressLabel" not in sync_fn, (
             "Live compact Activity rows should no longer mix transient tool-progress text "
             "into the processed-time anchor."
@@ -466,11 +464,6 @@ class TestToolCallGroupingStatic:
         assert "_activityProcessedElapsedLabel(group)" in sync_fn and "durationEl.textContent='';" in sync_fn, (
             "The Worklog summary should own the processed-time anchor while the old "
             "duration slot stays empty."
-        )
-        for label in ("Searching workspace", "Reading files", "Updating files", "Running command"):
-            assert label in progress_fn
-        assert "tool-card-running" in live_progress_fn, (
-            "The live progress label should prefer the currently running tool over older completed tools."
         )
         assert "tool-call-group-list" not in sync_fn, (
             "Readable progress must not reintroduce the noisy secondary tool-name list."

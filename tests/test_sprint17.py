@@ -87,7 +87,6 @@ def test_static_commands_js_served():
         body = r.read().decode()
         assert r.status == 200
         assert "COMMANDS" in body
-        assert "executeCommand" in body
 
 
 # ── Workspace: subdir listing ───────────────────────────────────────────────

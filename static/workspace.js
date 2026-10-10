@@ -1198,12 +1198,6 @@ async function uploadOsDropToWorkspace(dataTransfer, destDir) {
   if (S.session) await loadDir(S.currentDir);
 }
 
-function _clearWorkspaceOsUploadDragOver() {
-  document.querySelectorAll('.file-item.drag-over-upload,.breadcrumb-seg.drag-over-upload').forEach((el) => {
-    el.classList.remove('drag-over-upload');
-  });
-}
-
 function _bindWorkspaceOsUploadDropTarget(el, destDir) {
   // Use addEventListener (not on-property assignment) so these OS-upload
   // handlers COMPOSE with the workspace tree-MOVE handlers bound by

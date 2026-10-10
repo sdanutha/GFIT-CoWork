@@ -427,7 +427,7 @@ def test_transparent_stream_live_branch_uses_direct_rows():
     assert "_syncTransparentEventControls(turn)" in append_thinking_block
 
     append_tool_start = UI_JS.index("function appendLiveToolCard(tc){")
-    append_tool_end = UI_JS.index("function _findLatestLiveAssistantByBurst", append_tool_start)
+    append_tool_end = UI_JS.index("function _findLatestLiveAssistantBySegment", append_tool_start)
     append_tool_block = UI_JS[append_tool_start:append_tool_end]
     assert "if(isTransparentStream())" in append_tool_block
     assert "_decorateTransparentEventRow(buildToolCard(tc)" in append_tool_block

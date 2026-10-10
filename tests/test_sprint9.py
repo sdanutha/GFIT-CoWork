@@ -109,7 +109,7 @@ def test_all_functions_present_across_modules(cleanup_test_sessions):
         "newSession", "renderSessionList", "loadDir", "switchPanel",
         "loadCrons", "loadSkills", "loadMemory", "editMessage",
         "regenerateResponse", "clearConversation", "highlightCode",
-        "toggleSkillForm", "submitSkillSave", "toggleMemoryEdit",
+        "submitSkillSave",
     ]
     for fn in required:
         assert fn in all_src, f"Function {fn} missing from all modules"

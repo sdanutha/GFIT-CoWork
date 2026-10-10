@@ -83,7 +83,6 @@ class TestCronSkillCacheInvalidation:
 
     def test_cache_busted_on_form_open(self):
         src = self._panels_src()
-        # toggleCronForm should set cache to null unconditionally
         # openCronCreate() opens the task create form (renamed from toggleCronForm
         # in the main-view refactor). It must null the skills cache before fetching.
         m = re.search(

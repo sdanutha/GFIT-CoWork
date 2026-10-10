@@ -7,7 +7,7 @@ def run(body, extra=()):
              '_approvalPromptGeneration', '_bumpApprovalPromptGeneration',
              '_clarifyPromptGeneration', '_bumpClarifyPromptGeneration',
              '_rememberApprovalPending', '_clearApprovalPendingForSession',
-             '_clearClarifyPendingForSession', '_approvalDismissKey', '_legacyApprovalDismissKey',
+             '_clearClarifyPendingForSession', '_approvalDismissKey',
              '_getDismissedApprovals', '_isApprovalDismissed', '_markApprovalDismissed',
              '_unmarkApprovalDismissed', 'dismissApprovalCard',
              '_startApprovalFallbackPoll', 'showApprovalCard',

@@ -151,7 +151,7 @@ def test_service_worker_precaches_same_origin_vendor_shell_assets():
 
 def test_cancel_session_stream_closes_local_eventsource_on_failure_path():
     boot = (ROOT / "static" / "boot.js").read_text(encoding="utf-8")
-    helper = boot[boot.index("async function cancelSessionStream"):boot.index("async function _savedSessionShouldStaySidebarOnly")]
+    helper = boot[boot.index("async function cancelSessionStream"):boot.index("async function _savedSessionSidebarOnlyState")]
 
     assert "closeLiveStream(sid,streamId" in helper or "closeLiveStream(sid, streamId" in helper
     assert "catch(e){/* cancel request failed - cleanup below still runs */}" not in helper

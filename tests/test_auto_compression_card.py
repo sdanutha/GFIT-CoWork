@@ -609,13 +609,11 @@ def test_auto_compression_running_card_keeps_elapsed_timer_out_of_visible_copy()
     helper = src[start:end]
 
     assert "const _COMPRESSION_ELAPSED_MAX_SECONDS=5*60;" in src
-    assert "function _compressionElapsedLabel(state)" in src
     assert "_formatActiveElapsedTimer" in src
     assert "_compressionElapsedLabel(state)" not in helper
     assert "elapsedLabel" not in helper
     assert "`Elapsed: ${elapsedLabel}`" not in helper
     assert "_autoCompressionPreviewText(state)" in helper
-    assert "_autoCompressionDetailText(state)" in helper
     assert "function _startCompressionElapsedTimer()" in src
     assert "function _clearCompressionElapsedTimer()" in src
     assert "function _updateCompressionElapsedCards(state)" in src
@@ -627,8 +625,8 @@ def test_auto_compression_uses_command_action_copy():
     src = _read("static/ui.js")
     start = src.find("function _autoCompressionPreviewText")
     assert start != -1, "auto compression preview helper not found"
-    end = src.find("function _autoCompressionDetailText", start)
-    assert end != -1, "auto compression detail helper not found after preview helper"
+    end = src.find("function _autoCompressionCardsHtml", start)
+    assert end != -1, "auto compression card helper not found after preview helper"
     helper = src[start:end]
 
     assert "Compressing context" in helper
@@ -723,43 +721,39 @@ def test_final_settle_drops_transient_automatic_compression_state():
     assert "compressionState=null;" in helper
 
 
-def test_auto_compression_elapsed_cap_uses_non_frozen_label():
+def test_auto_compression_elapsed_timer_stops_at_cap():
     src = _read("static/ui.js")
-    start = src.find("function _compressionElapsedLabel")
-    assert start != -1, "elapsed label helper not found"
-    end = src.find("function _compressionElapsedExpired", start)
-    assert end != -1, "elapsed expiry helper not found after label helper"
-    helper = src[start:end]
+    start = src.find("function _compressionElapsedExpired")
+    assert start != -1, "elapsed expiry helper not found"
+    helper = src[start:src.find("\n", start)]
 
-    assert "'5+ min'" in helper
-    assert "elapsed>=_COMPRESSION_ELAPSED_MAX_SECONDS" in helper
-    assert "return '05:00'" not in helper
+    assert ">=_COMPRESSION_ELAPSED_MAX_SECONDS" in helper
+    assert "if(_compressionElapsedExpired(state)) _clearCompressionElapsedTimer();" in src
 
 
 def test_auto_compression_running_detail_avoids_duplicate_message_text():
     src = _read("static/ui.js")
-    start = src.find("function _autoCompressionDetailText")
-    assert start != -1, "auto compression detail helper not found"
-    end = src.find("function _autoCompressionCardsHtml", start)
-    assert end != -1, "auto compression card helper not found after detail helper"
+    start = src.find("function _autoCompressionPreviewText")
+    assert start != -1, "auto compression preview helper not found"
+    end = src.find("function _compressionCardsNode", start)
+    assert end != -1, "compression cards node helper not found after auto helpers"
     helper = src[start:end]
 
-    assert "if(running)return '';" in helper
+    assert "Elapsed" not in helper
     assert "`Elapsed: ${elapsedLabel}`" not in helper
     assert "${base}\\nElapsed:" not in helper
 
 
 def test_auto_compression_done_detail_is_not_persisted_in_worklog():
     src = _read("static/ui.js")
-    start = src.find("function _autoCompressionDetailText")
-    assert start != -1, "auto compression detail helper not found"
-    end = src.find("function _autoCompressionCardsHtml", start)
-    assert end != -1, "auto compression card helper not found after detail helper"
+    start = src.find("function _autoCompressionPreviewText")
+    assert start != -1, "auto compression preview helper not found"
+    end = src.find("function _compressionCardsNode", start)
+    assert end != -1, "compression cards node helper not found after auto helpers"
     helper = src[start:end]
 
     assert "continuationSessionId" not in helper
     assert "Continued in compressed session" not in helper
-    assert "return '';" in helper
 
 
 def test_auto_compression_live_card_keeps_elapsed_state_for_timer_refresh():
