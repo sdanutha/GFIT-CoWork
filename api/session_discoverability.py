@@ -1,12 +1,24 @@
-"""Read-only sidebar discoverability audit for GFIT-CoWork sessions.
+"""Sidebar discoverability audit for GFIT-CoWork sessions (an Operator tool).
 
-This module does not repair or mutate session state. It cross-checks the four
-places that decide whether a session can be found from the WebUI sidebar:
+It cross-checks the four places that decide whether a session can be found
+from the WebUI sidebar:
 
 - JSON sidecars under the WebUI session directory
 - ``_index.json`` sidebar metadata
 - canonical ``state.db`` rows/messages
 - the live ``api.models.all_sessions()`` sidebar response, when available
+
+The audit, and ``--repair-safe`` without ``--apply``, open ``state.db``
+read-only and do not change the session files. Reading the live sidebar
+response calls ``all_sessions()``, which starts the server's index rebuild
+when ``HERMES_WEBUI_STATE_DIR``'s ``_index.json`` is missing.
+
+``--repair-safe --apply`` needs ``--backup-dir``. It copies each file it
+changes there, then writes ``<session_id>.json`` and ``_index.json`` in the
+session directory: it clears a stale ``is_cli_session`` flag on a WebUI
+session, or writes a missing sidecar from its ``state.db`` row. It never
+writes ``state.db``. The server writes the same files, so apply at a quiet time
+and restart the server after. See docs/troubleshooting.md.
 """
 from __future__ import annotations
 
@@ -627,12 +639,12 @@ def render_discoverability_markdown(report: dict) -> str:
 
 
 def _main() -> int:
-    parser = argparse.ArgumentParser(description="Read-only GFIT-CoWork session discoverability audit")
+    parser = argparse.ArgumentParser(description="GFIT-CoWork session discoverability audit (read-only unless --repair-safe --apply)")
     parser.add_argument("--session-dir", type=Path, required=True)
     parser.add_argument("--state-db", type=Path, default=None)
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument("--repair-safe", action="store_true", help="Plan/apply deterministic discoverability repairs")
-    parser.add_argument("--apply", action="store_true", help="Apply --repair-safe changes; default is dry-run")
+    parser.add_argument("--apply", action="store_true", help="With --repair-safe: write the planned repairs (needs --backup-dir; quiet time, restart the server after). Ignored without --repair-safe")
     parser.add_argument("--backup-dir", type=Path, default=None, help="Required with --repair-safe --apply")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()

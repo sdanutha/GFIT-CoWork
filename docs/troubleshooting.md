@@ -261,6 +261,51 @@ python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confir
 
 ---
 
+## A session is missing from the sidebar
+
+**Symptom.** A User says a conversation they had is gone from the sidebar, but the Profile's `state.db` still has its messages.
+
+**Why.** The sidebar is built from the WebUI session files (`<state dir>/sessions/<session_id>.json` and `_index.json`), not from `state.db` directly. A session disappears when its file is missing or shrunken, when its `_index.json` entry is missing, when a WebUI session is wrongly flagged as an imported CLI session (`is_cli_session`), or when its compression lineage has no visible representative. A session can also simply be older than the sidebar's recency window (`HERMES_WEBUI_VISIBLE_SESSION_LIMIT`); search for it before treating it as lost.
+
+**Diagnostic.** Run these on the server, as the Operator, with the same environment as the web server.
+
+1. The session store audit, which is read-only:
+
+   ```bash
+   python3 -m api.operator_cli sessions-audit
+   ```
+
+   It reports shrunken or missing session files, orphan backups and index gaps.
+
+2. If that is clean, run the discoverability audit. It also checks the sidebar's own listing and the CLI flags. It does not read the repo `.env`, so set `HERMES_HOME` and `HERMES_WEBUI_STATE_DIR` as the server has them:
+
+   ```bash
+   python3 -m api.session_discoverability \
+     --session-dir "$HERMES_WEBUI_STATE_DIR/sessions" \
+     --state-db "$HERMES_HOME/profiles/<employee ID>/state.db" \
+     --format markdown
+   ```
+
+   It opens `state.db` read-only and does not change the session files. One exception: to compare with the sidebar's own listing it loads the server's session list, and when `$HERMES_WEBUI_STATE_DIR/sessions/_index.json` is missing that starts the server's normal index rebuild, which writes a new `_index.json`. Each finding names the session, its kind (`api_missing_messageful`, `state_db_messageful_missing_sidecar`, `persisted_source_flag_stale`, `source_misclassified`, `lineage_missing_visible_representative`) and a recommendation.
+
+**Fix.**
+
+- For what `sessions-audit` found, run `python3 -m api.operator_cli sessions-repair` when nobody is using the Deployment, then restart the server.
+- For a stale CLI flag or a missing session file, add `--repair-safe` to the discoverability command. It prints the planned repairs and changes nothing. To apply them, at a quiet time:
+
+  ```bash
+  python3 -m api.session_discoverability \
+    --session-dir "$HERMES_WEBUI_STATE_DIR/sessions" \
+    --state-db "$HERMES_HOME/profiles/<employee ID>/state.db" \
+    --repair-safe --apply --backup-dir /path/to/backup
+  ```
+
+  It copies each file it changes into `--backup-dir` first, then rewrites `<session_id>.json` and `_index.json`. It never writes `state.db`. Without `--backup-dir` it refuses, and `--apply` without `--repair-safe` is ignored. Restart the server afterwards, because the server writes the same files.
+
+**When to file a bug.** File a bug if a session is still missing after both repairs report clean, or if a finding comes back after a restart. Include the markdown report with private paths redacted.
+
+---
+
 ## 404 after login
 
 **Symptom.** Logging in redirects to `/sessions` and the browser shows a `404 not found` error instead of the chat interface.
