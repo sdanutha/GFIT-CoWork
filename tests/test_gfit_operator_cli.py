@@ -269,7 +269,7 @@ def test_the_watcher_settles_only_when_the_roster_changes(srv):
 
 def test_on_start_the_watcher_settles_profiles_disabled_while_it_was_down(srv):
     srv.logged_in(ALICE)
-    roster.disable(ALICE)  # as if the Operator disabled Alice while the server was stopped
+    assert cli("disable", ALICE) == 0  # the Operator disables Alice while the server is stopped
     roster_watch.reset()
 
     assert roster_watch.check() == [ALICE]

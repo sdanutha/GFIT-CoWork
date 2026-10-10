@@ -52,7 +52,7 @@ def deployment(monkeypatch, tmp_path):
                 return
             roster.add(name)
             if not active:
-                roster.disable(name)
+                roster.disable_profile(name)
 
     return Deployment()
 

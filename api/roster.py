@@ -446,18 +446,6 @@ def stop_live_work(name: str) -> None:
     _cancel_runs(name)
 
 
-def disable(name: str) -> None:
-    """Mark Profile *name*'s record disabled and pause its jobs, with no guards."""
-    _set(name, status=STATUS_DISABLED)
-    _pause_jobs(name)
-
-
-def enable(name: str) -> None:
-    """Mark Profile *name*'s record active and resume its paused jobs, with no guards."""
-    _set(name, status=STATUS_ACTIVE)
-    _resume_jobs(name)
-
-
 def disable_profile(name: str) -> dict:
     """Disable Profile *name*: its scheduled jobs pause now and its data stays.
 
