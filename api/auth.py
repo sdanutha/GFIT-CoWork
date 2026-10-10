@@ -710,13 +710,8 @@ def _is_loopback(addr: str) -> bool:
     """Return True if *addr* is a loopback address (127.x.x.x, ::1, or ::ffff:127.x.x.x)."""
     import ipaddress as _ipaddress
     try:
-        ip = _ipaddress.ip_address(addr)
-        if ip.is_loopback:
-            return True
-        # Python < 3.12: is_loopback is False for ::ffff:127.x.x.x (gh-117566)
-        if hasattr(ip, 'ipv4_mapped') and ip.ipv4_mapped is not None:
-            return ip.ipv4_mapped.is_loopback
-        return False
+        # Python 3.14: is_loopback is also True for ::ffff:127.x.x.x (gh-117566)
+        return _ipaddress.ip_address(addr).is_loopback
     except ValueError:
         return False
 
