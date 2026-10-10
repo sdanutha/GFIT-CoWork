@@ -447,7 +447,7 @@ def test_active_codex_at_provider_session_model_preserved(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "@openai-codex:gpt-5.5"
     )
 
@@ -722,7 +722,7 @@ def test_bare_gemini_session_model_normalizes_to_active_provider_default(monkeyp
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "gemini-3.1-pro-preview"
     )
 
@@ -743,7 +743,7 @@ def test_prefixed_google_session_model_normalizes_to_active_provider_default(mon
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "google/gemini-3.1-pro-preview"
     )
 
@@ -771,7 +771,7 @@ def test_legacy_at_provider_session_model_normalizes_when_provider_hidden(monkey
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "@copilot:gpt-5.5"
     )
 
@@ -806,7 +806,7 @@ def test_active_at_provider_session_model_preserved_with_hint(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "@openai-codex:gpt-5.4-mini"
     )
 
@@ -841,7 +841,7 @@ def test_routable_non_active_at_provider_session_model_is_preserved(monkeypatch)
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "@copilot:gpt-5.4"
     )
 
@@ -850,7 +850,7 @@ def test_routable_non_active_at_provider_session_model_is_preserved(monkeypatch)
 
 
 def test_issue1253_duplicate_model_id_active_provider_hint_preserved(monkeypatch):
-    """@provider:model where hint matches active provider must survive _resolve_compatible_session_model.
+    """@provider:model where hint matches active provider must survive _resolve_compatible_session_model_state.
 
     Regression test for #1253: when two providers both expose the same bare model ID
     (e.g. both custom:edith and openai both expose 'gpt-5.4'), the picker stores the
@@ -886,11 +886,11 @@ def test_issue1253_duplicate_model_id_active_provider_hint_preserved(monkeypatch
     )
 
     # User selected the custom:edith model — explicit @provider:model form.
-    effective, changed = routes._resolve_compatible_session_model("@custom:edith")
+    effective, _provider, changed = routes._resolve_compatible_session_model_state("@custom:edith")
 
     # Must NOT be stripped to 'edith' — that would route to the default provider.
     assert changed is False, (
-        f"_resolve_compatible_session_model must not strip @custom:edith "
+        f"_resolve_compatible_session_model_state must not strip @custom:edith "
         f"(got effective='{effective}', changed={changed})"
     )
     assert effective == "@custom:edith", (
@@ -933,7 +933,7 @@ def test_named_custom_provider_hint_with_colon_is_preserved(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "@custom:sub2api:gpt-5.4-mini"
     )
 
@@ -1106,7 +1106,7 @@ def test_stale_at_provider_model_falls_back_when_family_mismatches(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "@copilot:claude-opus-4.6"
     )
 
@@ -1417,7 +1417,7 @@ def test_google_active_provider_keeps_valid_gemini_session_model(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "gemini-3.1-pro-preview"
     )
 
@@ -1693,10 +1693,10 @@ def test_unknown_prefix_model_passes_through_unchanged(monkeypatch):
         "my-local-llm/variant-1",
         "lmstudio-community/Qwen2.5-Coder-7B-Instruct-GGUF",
     ):
-        effective, changed = routes._resolve_compatible_session_model(custom_model)
+        effective, _provider, changed = routes._resolve_compatible_session_model_state(custom_model)
         assert changed is False, (
             f"Model '{custom_model}' has an unknown prefix and must pass through unchanged, "
-            f"but _resolve_compatible_session_model returned changed=True (effective='{effective}')"
+            f"but _resolve_compatible_session_model_state returned changed=True (effective='{effective}')"
         )
         assert effective == custom_model, (
             f"Expected '{custom_model}', got '{effective}'"
@@ -1756,7 +1756,7 @@ def test_stale_openai_model_cleared_for_custom_only_provider(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "openai/gpt-5.4-mini"
     )
 
@@ -1785,7 +1785,7 @@ def test_stale_openai_model_cleared_for_custom_provider_with_default(monkeypatch
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "openai/gpt-5.4-mini"
     )
 
@@ -1811,7 +1811,7 @@ def test_openrouter_model_preserved_when_openrouter_group_present(monkeypatch):
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "openai/gpt-5.4-mini"
     )
 
@@ -1837,7 +1837,7 @@ def test_custom_namespace_model_always_preserved_on_custom_provider(monkeypatch)
         },
     )
 
-    effective, changed = routes._resolve_compatible_session_model(
+    effective, _provider, changed = routes._resolve_compatible_session_model_state(
         "custom/my-local-llm"
     )
 

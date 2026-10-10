@@ -6893,12 +6893,6 @@ def _resolve_compatible_session_model_state(
     return model, requested_provider, False
 
 
-def _resolve_compatible_session_model(model_id: str | None) -> tuple[str, bool]:
-    """Return (effective_model, model_was_normalized) for legacy callers."""
-    effective_model, _provider, changed = _resolve_compatible_session_model_state(model_id)
-    return effective_model, changed
-
-
 def _normalize_session_model_in_place(session) -> str:
     original_model = getattr(session, "model", None) or ""
     original_provider = _clean_session_model_provider(
@@ -8095,23 +8089,6 @@ def _messages_for_limited_payload(messages) -> list:
     return [_tool_message_for_limited_payload(msg) for msg in list(messages or [])]
 
 
-def _limited_webui_messages_for_display(session, state_db_messages) -> list:
-    """Return the display sidecar plus only necessary state.db rows for msg_limit.
-
-    Paginated session loads are latency-sensitive and should not stitch every
-    lineage segment before slicing the tail. Keep the lightweight
-    pre-compression snapshot stitch so continuation sessions can still reveal
-    archived history, then merge only newer state.db rows that have not reached
-    the sidecar yet.
-    """
-    sidecar_messages = _webui_sidecar_lineage_messages_for_display(session)
-    return _limited_webui_messages_for_display_with_sidecar(
-        session,
-        sidecar_messages,
-        state_db_messages,
-    )
-
-
 def _display_merge_session_is_active(session) -> bool:
     """Return whether any canonical in-memory projection is active/pending."""
     if getattr(session, "active_stream_id", None) or getattr(
@@ -8188,6 +8165,14 @@ def _limited_webui_messages_for_display_with_sidecar(
     state_db_signature=_DISPLAY_STATE_SIGNATURE_UNSET,
     msg_before=None,
 ) -> list:
+    """Return the display sidecar plus only necessary state.db rows for msg_limit.
+
+    Paginated session loads are latency-sensitive and should not stitch every
+    lineage segment before slicing the tail. Keep the lightweight
+    pre-compression snapshot stitch so continuation sessions can still reveal
+    archived history, then merge only newer state.db rows that have not reached
+    the sidecar yet. ``sidecar_messages=None`` reads the sidecar lineage here.
+    """
     if sidecar_messages is None:
         sidecar_messages = _webui_sidecar_lineage_messages_for_display(session)
     else:
@@ -17405,11 +17390,6 @@ def _tts_resolve_pinned_addresses(hostname: str, port: int | None) -> list[str]:
     return pinned_hosts
 
 
-def _tts_resolve_pinned_address(hostname: str) -> str:
-    """Return the first vetted literal address for direct helper callers."""
-    return _tts_resolve_pinned_addresses(hostname, None)[0]
-
-
 def _normalized_openai_tts_base_url(base_url: str) -> str:
     from urllib.parse import urlsplit, urlunsplit
 
@@ -18010,11 +17990,6 @@ def _session_media_token_allows_path(sid: str, target: Path, allowed_mimes: set[
             except Exception:
                 continue
     return False
-
-
-def _session_media_token_allows_image_path(sid: str, target: Path, image_mimes: set[str]) -> bool:
-    """Backward-compatible image-only wrapper for existing callers/tests."""
-    return _session_media_token_allows_path(sid, target, image_mimes)
 
 
 def _path_is_within_root(child: Path, root: Path) -> bool:

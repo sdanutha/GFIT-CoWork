@@ -187,19 +187,19 @@ def test_openai_tts_config_overrides(monkeypatch):
     assert captured["body"] == {"model": "tts-custom", "input": "Hello", "voice": "nova"}
 
 
-def test_tts_resolve_pinned_address_accepts_public_ip(monkeypatch):
+def test_tts_resolve_pinned_addresses_accepts_public_ip(monkeypatch):
     def _fake_getaddrinfo(*_args, **_kwargs):
         return [(0, 0, 0, "", ("1.1.1.1", 0))]
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
-    assert routes._tts_resolve_pinned_address("1.1.1.1") == "1.1.1.1"
+    assert routes._tts_resolve_pinned_addresses("1.1.1.1", None) == ["1.1.1.1"]
 
 
-def test_tts_resolve_pinned_address_rejects_blocked_target(monkeypatch):
+def test_tts_resolve_pinned_addresses_rejects_blocked_target(monkeypatch):
     def _fake_getaddrinfo(*_args, **_kwargs):
         return [(0, 0, 0, "", ("10.0.0.5", 0))]
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
     with pytest.raises(ValueError, match="not allowed"):
-        routes._tts_resolve_pinned_address("public.example.com")
+        routes._tts_resolve_pinned_addresses("public.example.com", None)
 
 
 def test_tts_addr_is_blocked_covers_non_global_ranges():
@@ -219,17 +219,17 @@ def test_tts_addr_is_blocked_covers_non_global_ranges():
     assert routes._tts_addr_is_blocked("203.0.113.10") is True
 
 
-def test_tts_resolve_pinned_address_rejects_cgnat_rebind_target(monkeypatch):
+def test_tts_resolve_pinned_addresses_rejects_cgnat_rebind_target(monkeypatch):
     # A host that resolves into the CGNAT/Tailscale range must be rejected at
     # pinning time (regression for the 100.64.0.0/10 blocklist gap).
     def _fake_getaddrinfo(*_args, **_kwargs):
         return [(0, 0, 0, "", ("100.64.12.34", 0))]
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
     with pytest.raises(ValueError, match="not allowed"):
-        routes._tts_resolve_pinned_address("tailnet-rebind.example.com")
+        routes._tts_resolve_pinned_addresses("tailnet-rebind.example.com", None)
 
 
-def test_tts_resolve_pinned_address_rejects_mixed_addresses(monkeypatch):
+def test_tts_resolve_pinned_addresses_rejects_mixed_addresses(monkeypatch):
     def _fake_getaddrinfo(*_args, **_kwargs):
         return [
             (0, 0, 0, "", ("203.0.113.10", 0)),
@@ -237,7 +237,7 @@ def test_tts_resolve_pinned_address_rejects_mixed_addresses(monkeypatch):
         ]
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
     with pytest.raises(ValueError, match="not allowed"):
-        routes._tts_resolve_pinned_address("public.example.com")
+        routes._tts_resolve_pinned_addresses("public.example.com", None)
 
 
 def test_openai_tts_does_not_connect_to_rebound_private_address(monkeypatch):

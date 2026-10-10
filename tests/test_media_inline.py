@@ -615,7 +615,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             session = SimpleNamespace(messages=[{"role": "assistant", "content": f"MEDIA:{image}"}])
             with mock.patch.object(routes, "get_session", return_value=session):
                 self.assertTrue(
-                    routes._session_media_token_allows_image_path(
+                    routes._session_media_token_allows_path(
                         "s-media", image, {"image/png"}
                     )
                 )
@@ -629,7 +629,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             session = SimpleNamespace(messages=[{"role": "assistant", "content": "MEDIA:/tmp/other.png"}])
             with mock.patch.object(routes, "get_session", return_value=session):
                 self.assertFalse(
-                    routes._session_media_token_allows_image_path(
+                    routes._session_media_token_allows_path(
                         "s-media", image, {"image/png"}
                     )
                 )
@@ -643,7 +643,7 @@ class TestMediaEndpointUnit(unittest.TestCase):
             session = SimpleNamespace(messages=[{"role": "assistant", "content": f"MEDIA:{text_file}"}])
             with mock.patch.object(routes, "get_session", return_value=session):
                 self.assertFalse(
-                    routes._session_media_token_allows_image_path(
+                    routes._session_media_token_allows_path(
                         "s-media", text_file, {"image/png"}
                     )
                 )
