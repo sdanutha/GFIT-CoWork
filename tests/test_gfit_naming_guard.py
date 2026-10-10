@@ -46,7 +46,6 @@ AVOIDED_WORDS = {"member", "members", "pinned"}
 KEPT: dict[tuple[str, str], str] = {
     ("api/routes.py", "_visible_pinned_lineage_ids"): "upstream: pinned sessions in the sidebar",
     ("api/routes.py", "_tts_resolve_pinned_addresses"): "upstream: TTS requests pinned to resolved addresses",
-    ("api/routes.py", "_tts_resolve_pinned_address"): "upstream: TTS requests pinned to resolved addresses",
     ("api/routes.py", "_PinnedHTTPSConnection"): "upstream: TTS requests pinned to resolved addresses",
     ("api/routes.py", "_PinnedHTTPSHandler"): "upstream: TTS requests pinned to resolved addresses",
 }

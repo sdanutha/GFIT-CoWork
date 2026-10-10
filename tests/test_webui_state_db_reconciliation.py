@@ -755,8 +755,9 @@ def test_msg_limit_session_load_reads_only_recent_state_db_tail(monkeypatch, tmp
 
     real_reader = routes.get_state_db_session_messages
     full_state_messages = real_reader(sid)
-    full_all_messages = routes._limited_webui_messages_for_display(
+    full_all_messages = routes._limited_webui_messages_for_display_with_sidecar(
         session,
+        None,
         full_state_messages,
     )
     expected_window, expected_offset = routes._message_window_for_display(
@@ -813,8 +814,9 @@ def test_msg_limit_session_load_falls_back_with_null_state_db_timestamp(monkeypa
 
     real_reader = routes.get_state_db_session_messages
     full_state_messages = real_reader(sid)
-    full_all_messages = routes._limited_webui_messages_for_display(
+    full_all_messages = routes._limited_webui_messages_for_display_with_sidecar(
         session,
+        None,
         full_state_messages,
     )
     expected_window, expected_offset = routes._message_window_for_display(
@@ -1112,8 +1114,9 @@ def test_msg_limit_session_load_bails_when_older_state_db_row_changes_offsets(mo
 
     real_reader = routes.get_state_db_session_messages
     full_state_messages = real_reader(sid)
-    full_all_messages = routes._limited_webui_messages_for_display(
+    full_all_messages = routes._limited_webui_messages_for_display_with_sidecar(
         session,
+        None,
         full_state_messages,
     )
     expected_window, expected_offset = routes._message_window_for_display(
@@ -1165,8 +1168,9 @@ def test_msg_limit_session_load_bails_when_older_state_db_user_changes_offsets(m
 
     real_reader = routes.get_state_db_session_messages
     full_state_messages = real_reader(sid)
-    full_all_messages = routes._limited_webui_messages_for_display(
+    full_all_messages = routes._limited_webui_messages_for_display_with_sidecar(
         session,
+        None,
         full_state_messages,
     )
     expected_window, expected_offset = routes._message_window_for_display(
@@ -1218,8 +1222,9 @@ def test_msg_limit_session_load_bails_when_prefloor_key_counts_mask_offset_chang
 
     real_reader = routes.get_state_db_session_messages
     full_state_messages = real_reader(sid)
-    full_all_messages = routes._limited_webui_messages_for_display(
+    full_all_messages = routes._limited_webui_messages_for_display_with_sidecar(
         session,
+        None,
         full_state_messages,
     )
     expected_window, expected_offset = routes._message_window_for_display(
@@ -1281,8 +1286,9 @@ def test_msg_limit_session_load_bails_when_prefloor_tool_calls_mask_offset_chang
 
     real_reader = routes.get_state_db_session_messages
     full_state_messages = real_reader(sid)
-    full_all_messages = routes._limited_webui_messages_for_display(
+    full_all_messages = routes._limited_webui_messages_for_display_with_sidecar(
         session,
+        None,
         full_state_messages,
     )
     expected_window, expected_offset = routes._message_window_for_display(
