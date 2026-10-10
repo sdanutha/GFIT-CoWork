@@ -166,6 +166,54 @@ def test_office_save_route_accepts_safe_docx_and_rejects_preview_only_formats(tm
     assert "preview-only" in captured["bad"][0]
 
 
+def test_file_read_classifies_office_extension_case_insensitively(tmp_path, monkeypatch):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "REPORT.DOCX").write_bytes(_simple_docx_bytes("alpha"))
+    captured = _patch_file_ops(monkeypatch, workspace)
+
+    routes._handle_file_read(object(), urlparse("/api/file?session_id=sid&path=REPORT.DOCX"))
+
+    payload = captured["ok"]
+    assert payload["preview_kind"] == "office"
+    assert payload["office_format"] == "docx"
+    assert payload["content"] == "alpha"
+
+
+def test_plain_file_save_refuses_office_documents_in_any_case(tmp_path, monkeypatch):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    target = workspace / "Notes.Xlsx"
+    original = _simple_xlsx_bytes()
+    target.write_bytes(original)
+    captured = _patch_file_ops(monkeypatch, workspace)
+
+    routes._handle_file_save(
+        object(),
+        {"session_id": "sid", "path": "Notes.Xlsx", "content": "plain text"},
+    )
+
+    assert captured["bad"] == ("Use /api/file/office-save for Office documents", 400)
+    assert target.read_bytes() == original
+
+
+@pytest.mark.parametrize("name", ["notes.txt", "x.docm"])
+def test_office_save_refuses_files_that_are_not_office_documents(tmp_path, monkeypatch, name):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    target = workspace / name
+    target.write_bytes(b"original")
+    captured = _patch_file_ops(monkeypatch, workspace)
+
+    routes._handle_office_file_save(
+        object(),
+        {"session_id": "sid", "path": name, "content": "changed"},
+    )
+
+    assert captured["bad"] == ("Office save is only available for .docx, .xlsx, and .pptx files", 400)
+    assert target.read_bytes() == b"original"
+
+
 def test_office_save_route_returns_503_when_office_parsers_are_missing(tmp_path, monkeypatch):
     workspace = tmp_path / "ws"
     workspace.mkdir()

@@ -22935,7 +22935,9 @@ def _handle_file_save(handler, body):
             return bad(handler, "File not found", 404)
         if target.is_dir():
             return bad(handler, "Cannot save: path is a directory")
-        if Path(str(body["path"])).suffix.lower() in {".docx", ".xlsx", ".pptx"}:
+        from api.office_documents import is_claimed_office_path
+
+        if is_claimed_office_path(body["path"]):
             return bad(handler, "Use /api/file/office-save for Office documents")
         data = str(body.get("content", "")).encode("utf-8")
         fd = open_anchored_write_fd(ws_root, target)
@@ -22965,9 +22967,10 @@ def _handle_office_file_save(handler, body):
             return bad(handler, "File not found", 404)
         if target.is_dir():
             return bad(handler, "Cannot save: path is a directory")
-        if Path(str(body["path"])).suffix.lower() not in {".docx", ".xlsx", ".pptx"}:
+        from api.office_documents import is_claimed_office_path, save_office_document
+
+        if not is_claimed_office_path(body["path"]):
             return bad(handler, "Office save is only available for .docx, .xlsx, and .pptx files")
-        from api.office_documents import save_office_document
 
         current_bytes = _read_anchored_file_bytes(ws_root, target)
         preview, updated_bytes = save_office_document(body["path"], current_bytes, body.get("content", ""))
