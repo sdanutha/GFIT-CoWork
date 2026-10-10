@@ -75,7 +75,3 @@ def get_results(parent_sid: str) -> list[dict[str, Any]]:
         } for t in done]
 
 
-def get_background_tasks(parent_sid: str) -> list[dict[str, Any]]:
-    """Return all background tasks (running and done) for a parent session."""
-    with _lock:
-        return list(_BACKGROUND_TASKS.get(parent_sid, []))

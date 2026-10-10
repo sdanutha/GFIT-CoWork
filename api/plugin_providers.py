@@ -80,14 +80,6 @@ def invalidate_plugin_model_provider_cache() -> None:
         _PROFILES_BY_NAME = None
 
 
-def plugin_model_provider_ids() -> frozenset[str]:
-    """Slugs from ``list_providers()`` that are not already WebUI-static."""
-    static = _webui_static_provider_ids()
-    return frozenset(
-        pid for pid in plugin_model_provider_profiles().keys() if pid not in static
-    )
-
-
 def plugin_model_provider_display_name(provider_id: str) -> str | None:
     profile = plugin_model_provider_profiles().get((provider_id or "").strip().lower())
     if profile is None:

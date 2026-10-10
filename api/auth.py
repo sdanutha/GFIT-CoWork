@@ -706,16 +706,6 @@ def check_auth_or_close(handler, parsed) -> bool:
     return False
 
 
-def _is_loopback(addr: str) -> bool:
-    """Return True if *addr* is a loopback address (127.x.x.x, ::1, or ::ffff:127.x.x.x)."""
-    import ipaddress as _ipaddress
-    try:
-        # Python 3.14: is_loopback is also True for ::ffff:127.x.x.x (gh-117566)
-        return _ipaddress.ip_address(addr).is_loopback
-    except ValueError:
-        return False
-
-
 def _is_secure_context(handler=None) -> bool:
     """Return True if cookies should carry the Secure flag.
 

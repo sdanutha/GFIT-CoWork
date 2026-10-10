@@ -2,7 +2,6 @@
 
 Covers:
 - SameSite=Lax on the auth cookie
-- _is_loopback() helper
 - _is_secure_context() priority logic:
     1. HERMES_WEBUI_SECURE override
     2. Direct TLS (getpeercert)
@@ -13,7 +12,7 @@ Covers:
 import http.cookies
 import io
 
-from api.auth import _is_loopback, _is_secure_context, set_auth_cookie, COOKIE_NAME
+from api.auth import _is_secure_context, set_auth_cookie, COOKIE_NAME
 
 
 # ── Mock handler helpers ─────────────────────────────────────────────────────
@@ -61,49 +60,6 @@ class _MockHandler:
             if name == 'Set-Cookie':
                 return val
         return ''
-
-
-# ── _is_loopback tests ───────────────────────────────────────────────────────
-
-
-def test_is_loopback_127_0_0_1():
-    assert _is_loopback('127.0.0.1') is True
-
-
-def test_is_loopback_127_255_255_255():
-    assert _is_loopback('127.255.255.255') is True
-
-
-def test_is_loopback_ipv6_loopback():
-    assert _is_loopback('::1') is True
-
-
-def test_is_loopback_ipv4_mapped_ipv6_loopback():
-    assert _is_loopback('::ffff:127.0.0.1') is True
-
-
-def test_is_loopback_private_not_loopback():
-    assert _is_loopback('10.0.0.1') is False
-
-
-def test_is_loopback_rfc1918_not_loopback():
-    assert _is_loopback('192.168.1.1') is False
-
-
-def test_is_loopback_ipv4_mapped_ipv6_loopback_range():
-    assert _is_loopback('::ffff:127.255.255.255') is True
-
-
-def test_is_loopback_ipv6_not_loopback():
-    assert _is_loopback('2001:db8::1') is False
-
-
-def test_is_loopback_ipv4_mapped_ipv6_private_not_loopback():
-    assert _is_loopback('::ffff:10.0.0.1') is False
-
-
-def test_is_loopback_ipv4_mapped_ipv6_rfc1918_not_loopback():
-    assert _is_loopback('::ffff:192.168.1.1') is False
 
 
 # ── samesite=Lax tests ──────────────────────────────────────────────────────

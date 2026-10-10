@@ -74,15 +74,12 @@ class TestPluginOnlyExcludesStaticProviders:
         from api.plugin_providers import (
             effective_provider_display_name,
             is_plugin_model_provider,
-            plugin_model_provider_ids,
         )
         from api.config import _PROVIDER_DISPLAY
 
         assert is_plugin_model_provider("yandex") is True
-        assert "yandex" in plugin_model_provider_ids()
         for static_pid in ("custom", "gemini", "nous", "anthropic"):
             assert is_plugin_model_provider(static_pid) is False, static_pid
-            assert static_pid not in plugin_model_provider_ids()
         assert effective_provider_display_name("custom", _PROVIDER_DISPLAY) == "Custom"
         assert effective_provider_display_name("gemini", _PROVIDER_DISPLAY) == "Gemini"
 
