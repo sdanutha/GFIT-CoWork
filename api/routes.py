@@ -22820,19 +22820,6 @@ def _git_session_and_workspace(handler, session_id: str):
         return None, None
 
 
-def _git_locked_by_active_stream(session) -> bool:
-    stream_id = getattr(session, "active_stream_id", None)
-    if not stream_id:
-        return False
-    try:
-        from api.config import STREAMS, STREAMS_LOCK
-
-        with STREAMS_LOCK:
-            return stream_id in STREAMS
-    except Exception:
-        return False
-
-
 def _handle_git_status(handler, parsed):
     qs = parse_qs(parsed.query)
     workspace = _git_session_workspace(handler, qs.get("session_id", [""])[0])
