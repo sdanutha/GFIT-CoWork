@@ -1090,35 +1090,6 @@ MAX_FILE_BYTES = 400_000
 MAX_UPLOAD_BYTES = _env_mb_bytes("HERMES_WEBUI_MAX_UPLOAD_MB", 20)
 
 # ── File type maps ───────────────────────────────────────────────────────────
-IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".bmp"}
-MD_EXTS = {".md", ".markdown", ".mdown"}
-CODE_EXTS = {
-    ".py",
-    ".js",
-    ".ts",
-    ".jsx",
-    ".tsx",
-    ".css",
-    ".html",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".sh",
-    ".bash",
-    ".txt",
-    ".log",
-    ".env",
-    ".csv",
-    ".xml",
-    ".sql",
-    ".rs",
-    ".go",
-    ".java",
-    ".c",
-    ".cpp",
-    ".h",
-}
 MIME_MAP = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -3439,7 +3410,6 @@ CUSTOM_SELECTION_MALFORMED = "malformed"   # ``custom:`` with no slug behind it
 # AmbiguousCustomProviderError out of _unique_custom_provider_entry, so the
 # actionable rename message reaches the user (routes turn it into a 400) instead
 # of being silently degraded into a keyless or ambient-authority send.
-CUSTOM_SELECTION_AMBIGUOUS = "ambiguous"
 # Statuses for which NO authority owns the route.
 CUSTOM_SELECTION_UNOWNED = (CUSTOM_SELECTION_MISSING, CUSTOM_SELECTION_MALFORMED)
 

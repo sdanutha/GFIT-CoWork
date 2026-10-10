@@ -26,8 +26,7 @@ def test_pwa_edge_swipe_gesture_is_registered_for_mobile_sidebar():
     assert "if(_isTouchPointerEvent(e))return" in BOOT_JS
 
 
-def test_pwa_sidebar_swipe_is_edge_gated_standalone_and_horizontal():
-    assert "_isPwaStandalone()" in BOOT_JS
+def test_pwa_sidebar_swipe_is_edge_gated_and_horizontal():
     assert "_PWA_SIDEBAR_SWIPE_EDGE" in BOOT_JS
     assert "_PWA_SIDEBAR_SWIPE_CLAIM" in BOOT_JS
     assert "_PWA_SIDEBAR_SWIPE_TRIGGER" in BOOT_JS

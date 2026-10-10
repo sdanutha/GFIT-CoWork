@@ -1636,8 +1636,6 @@ class TestFrontendModelProviderState:
         src = _read("static/ui.js")
         assert "hermes-webui-model-state" in src
         assert "function _writePersistedModelState" in src
-        assert "_providerQualifiedModelValueForSelect(sel, modelId)" in src
-        assert "return _modelStateForSelect(sel,modelId).model" in src
 
     def test_named_custom_live_models_keep_provider_prefix(self):
         """Live models from custom:* providers should keep explicit provider context."""

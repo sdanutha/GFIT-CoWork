@@ -31,7 +31,7 @@ def replay_probe(restored_scene, count, skip_unkeyed=True, has_rows=True):
         'static/sessions.js',
     )
     append = source_slice(
-        ui, 'function appendLiveToolCard(', '\nfunction _findLatestLiveAssistantByBurst',
+        ui, 'function appendLiveToolCard(', '\nfunction _findLatestLiveAssistantBySegment',
         'static/ui.js',
     )
     script = r"""

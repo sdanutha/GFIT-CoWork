@@ -369,15 +369,6 @@ def get_session_info(cookie_value: str) -> dict | None:
     return info
 
 
-def session_bound_profile(cookie_value: str) -> str | None:
-    info = get_session_info(cookie_value)
-    if not info:
-        return None
-    bound_profile = info.get('bound_profile')
-    bound_profile = str(bound_profile or '').strip()
-    return bound_profile or None
-
-
 def _remember_request_session(handler, info: dict | None) -> dict | None:
     handler._request_session = info
     return info

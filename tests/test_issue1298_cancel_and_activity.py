@@ -345,7 +345,7 @@ class TestIssue1298ActivityGroupExpandPersistence:
         # The inline onclick may delegate to _toggleActivityGroup(); that helper
         # must still call _onLiveActivityToggle(group) so user toggles are
         # captured into _liveActivityUserExpanded.
-        m = re.search(r'class="tool-call-group-summary"[^`]*`', src)
+        m = re.search(r'class="tool-call-group-summary[ "][^`]*`', src)
         assert m, "live activity summary button template must be present"
         assert "onclick=\"_toggleActivityGroup(this)\"" in m.group(0), (
             "ensureActivityGroup() summary button should use the shared toggle helper"

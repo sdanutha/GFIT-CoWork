@@ -96,11 +96,6 @@ async function cancelSessionStream(session){
   return true;
 }
 
-async function _savedSessionShouldStaySidebarOnly(sid){
-  const state = await _savedSessionSidebarOnlyState(sid);
-  return !!(state&&state.sidebarOnly);
-}
-
 async function _savedSessionSidebarOnlyState(sid){
   if(!sid) return false;
   try{
@@ -284,11 +279,6 @@ function closeWorkspacePanel(){
   _setWorkspacePanelMode('closed');
 }
 
-function ensureWorkspacePreviewVisible(){
-  if(_workspacePanelMode==='closed') _setWorkspacePanelMode('preview');
-  else syncWorkspacePanelUI();
-}
-
 function handleWorkspaceClose(){
   if(_hasWorkspacePreviewVisible()){
     clearPreview();
@@ -407,14 +397,6 @@ const _PWA_SIDEBAR_SWIPE_CLAIM=10;
 const _PWA_SIDEBAR_SWIPE_TRIGGER=64;
 const _PWA_SIDEBAR_SWIPE_MAX_VERTICAL=56;
 let _pwaSidebarSwipe=null;
-
-function _isPwaStandalone(){
-  try{
-    return document.documentElement.classList.contains('pwa-standalone')
-      || window.matchMedia('(display-mode: standalone)').matches
-      || window.navigator.standalone===true;
-  }catch(_){return false;}
-}
 
 function _isInteractiveSwipeTarget(target){
   try{return !!(target&&target.closest&&target.closest('input,textarea,select,button,a,[contenteditable="true"],.topbar-chips,.composer-left,.sidebar,.rightpanel'));}
@@ -583,9 +565,6 @@ function expandSidebar(){
     }
   }catch(_){}
 })();
-function toggleMobileFiles(){
-  toggleWorkspacePanel();
-}
 function closeMobileWorkspacePanelFromChat(e){
   if(!_isCompactWorkspaceViewport()||_workspacePanelMode==='closed') return;
   const panel=document.querySelector('.rightpanel');

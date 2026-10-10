@@ -658,10 +658,6 @@ function _cronSchedulePresetStateForInput(value) {
   return { presetId: 'custom' };
 }
 
-function _cronSchedulePresetIdForValue(value) {
-  return _cronSchedulePresetStateForInput(value).presetId;
-}
-
 function _syncCronSchedulePresetFromInput() {
   const presetEl = $('cronFormSchedulePreset');
   const scheduleEl = $('cronFormSchedule');
@@ -1950,15 +1946,6 @@ async function saveCronForm(){
 
 // Back-compat aliases for any stale callers
 const submitCronCreate = saveCronForm;
-function toggleCronForm(){ openCronCreate(); }
-
-function _cronOutputSnippet(content) {
-  // Extract the response body from a cron output .md file
-  const lines = content.split('\n');
-  const responseIdx = lines.findIndex(l => l.startsWith('## Response') || l.startsWith('# Response'));
-  const body = (responseIdx >= 0 ? lines.slice(responseIdx + 1) : lines).join('\n').trim();
-  return body.slice(0, 600) || '(empty)';
-}
 
 function _formatCronRunUsageStrip(usage) {
   if (!usage || typeof usage !== 'object') return '';
@@ -2999,7 +2986,6 @@ async function saveSkillForm() {
 
 // Back-compat aliases (delete flow + any old callers)
 const submitSkillSave = saveSkillForm;
-function toggleSkillForm(){ openSkillCreate(); }
 
 async function deleteCurrentSkill() {
   if (!_currentSkillDetail) return;
@@ -3330,9 +3316,6 @@ function cancelMemoryEdit() {
   _renderMemoryDetail(_currentMemorySection);
 }
 
-// Legacy alias (kept for any stale references)
-function toggleMemoryEdit() { editCurrentMemory(); }
-function closeMemoryEdit() { cancelMemoryEdit(); }
 
 async function submitMemorySave() {
   if (!_currentMemorySection) return;
@@ -3679,20 +3662,6 @@ function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
     li('settings',12),
     ()=>{closeWsDropdown();mobileSwitchPanel('workspaces');}
   ));
-}
-
-function toggleWsDropdown(){
-  const dd=$('wsDropdown');
-  if(!dd)return;
-  const open=dd.classList.contains('open');
-  if(open){closeWsDropdown();}
-  else{
-    closeProfileDropdown(); // close profile dropdown if open
-    loadWorkspaceList().then(data=>{
-      renderWorkspaceDropdownInto(dd, data.workspaces, S.session?.workspace||S._profileDefaultWorkspace||data.last||'');
-      _setWorkspaceDropdownOpenState(dd,true);
-    });
-  }
 }
 
 function toggleComposerWsDropdown(){
@@ -4111,17 +4080,6 @@ function _wireWorkspaceFormPathSuggestions(){
 document.addEventListener('click',e=>{
   if(!e.target.closest('.workspace-form-path-wrap')) closeWorkspacePathSuggestions();
 });
-
-async function removeWorkspace(path){
-  const _rmWs=await showConfirmDialog({title:t('workspace_remove_confirm_title'),message:t('workspace_remove_confirm_message',path),confirmLabel:t('remove'),danger:true,focusCancel:true});
-  if(!_rmWs) return;
-  try{
-    const data=await api('/api/workspaces/remove',{method:'POST',body:JSON.stringify({path})});
-    _workspaceList=data.workspaces;
-    renderWorkspacesPanel(data.workspaces);
-    showToast(t('workspace_removed'));
-  }catch(e){setStatus(t('remove_failed')+e.message);}
-}
 
 async function promptWorkspacePath(){
   // Opus review Q6: if called from blank page (no session), auto-create one first.

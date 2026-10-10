@@ -175,13 +175,10 @@ def test_session_pin_cap_has_backend_and_frontend_guards():
     assert 'if len(pinned_lineage_ids) >= pinned_sessions_limit:' in ROUTES_PY
     assert 'Up to {pinned_sessions_limit} sessions can be pinned' in ROUTES_PY
 
-    assert 'function _pinnedSessionCount()' in SESSIONS_JS
-    assert 'function _getPinnedSessionsLimit()' in SESSIONS_JS
     assert 'function _pinnedSessionsLimit()' not in SESSIONS_JS
     assert 'const pinLimitReached=!session.pinned&&_pinnedSessionCount()>=_getPinnedSessionsLimit();' not in SESSIONS_JS
     assert 'if(pinLimitReached)' not in SESSIONS_JS
     assert "await api('/api/session/pin'" in SESSIONS_JS
-    assert 'Only ${limit} conversations can be pinned' in SESSIONS_JS
     assert ".session-action-opt.is-disabled{opacity:.55;cursor:not-allowed;}" in STYLE_CSS
 
 

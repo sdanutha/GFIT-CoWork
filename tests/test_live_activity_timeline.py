@@ -34,19 +34,8 @@ def _function_source(src, name):
     raise AssertionError(f"function {name} did not close")
 
 
-def test_run_activity_group_has_observable_baseline_events():
-    assert "function _ensureLiveActivityBaseline(group)" in UI_JS
-    assert "function ensureRunActivityGroup(inner, opts)" in UI_JS
-    assert "data-run-activity-group" in UI_JS
-    assert "Run started" in UI_JS
-    assert "Observable activity will appear here as the agent works." in UI_JS
-    assert "Model: ${modelLabel}" in UI_JS
-    assert "_ensureLiveActivityBaseline(group);" in UI_JS
-    assert "ensureActivityGroup(inner, opts)" in UI_JS
-
-
 def test_per_segment_tool_activity_does_not_include_run_metadata_rows():
-    activity_fn = UI_JS.split("function ensureActivityGroup(inner, opts)", 1)[1].split("function ensureRunActivityGroup", 1)[0]
+    activity_fn = UI_JS.split("function ensureActivityGroup(inner, opts)", 1)[1].split("function _formatRunElapsed", 1)[0]
     tool_fn = UI_JS.split("function appendLiveToolCard(tc)", 1)[1].split("function clearLiveToolCards", 1)[0]
     assert "_ensureLiveActivityBaseline" not in activity_fn
     assert "_appendActivityEvent(group" not in tool_fn
@@ -67,12 +56,10 @@ def test_tool_activity_uses_tool_cards_and_run_activity_owns_timer():
     assert "Activity · Running" not in UI_JS
     assert "_processedElapsedLabel" in UI_JS
     assert "t('processed_elapsed',text)" in UI_JS
-    assert "_isActivityTimerGroup(group)" in UI_JS
     assert "opts.turnDuration" in UI_JS
     assert "data-turn-duration" in UI_JS
     assert "durationText?` Done in ${durationText}`" in UI_JS
-    assert "return !!(group&&group.getAttribute('data-run-activity-group')==='1');" in UI_JS
-    live_summary_fn = UI_JS.split("function _syncToolCallGroupSummary(group)", 1)[1].split("function _activityProgressLabelForToolName", 1)[0]
+    live_summary_fn = UI_JS.split("function _syncToolCallGroupSummary(group)", 1)[1].split("function appendLiveToolCard", 1)[0]
     assert "_activityLiveProgressLabel(group)" not in live_summary_fn
     assert "_activityProcessedElapsedLabel(group)" in live_summary_fn
     assert "durationEl.textContent='';" in live_summary_fn
@@ -130,7 +117,7 @@ def test_reattach_normalizes_live_activity_group_placement_by_burst_anchor():
     assert "normalizeLiveActivityGroupPlacement(restored)" in UI_JS
     activity_fn = UI_JS.split("function ensureActivityGroup(inner, opts)", 1)[1].split("function normalizeLiveActivityGroupPlacement", 1)[0]
     assert "anchor.insertAdjacentElement('afterend',group);" in activity_fn
-    normalize_fn = UI_JS.split("function normalizeLiveActivityGroupPlacement(turn)", 1)[1].split("function ensureRunActivityGroup", 1)[0]
+    normalize_fn = UI_JS.split("function normalizeLiveActivityGroupPlacement(turn)", 1)[1].split("function _formatRunElapsed", 1)[0]
     assert '.tool-call-group[data-live-tool-worklog-group="1"],.tool-call-group[data-live-tool-call-group="1"]' in normalize_fn
     assert "_findLiveAssistantAnchorForSegment(blocks, segmentSeq)" in normalize_fn
     assert "_findLatestVisibleLiveAssistantByBurst(blocks, burstId)" in normalize_fn

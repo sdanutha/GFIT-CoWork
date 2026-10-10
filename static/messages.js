@@ -7467,12 +7467,6 @@ function _approvalDismissKey(sid, approvalId) {
   return _promptNotifyKey('approval', sid, pending);
 }
 
-function _legacyApprovalDismissKey(sid, approvalId) {
-  const pending = typeof approvalId === 'object' ? approvalId : {approval_id: approvalId};
-  const id = pending && pending.approval_id;
-  return sid && id ? String(sid) + '\0' + String(id) : '';
-}
-
 function _getDismissedApprovals() {
   try { return JSON.parse(localStorage.getItem(_DISMISSED_APPROVALS_KEY) || '[]'); }
   catch (_) { return []; }

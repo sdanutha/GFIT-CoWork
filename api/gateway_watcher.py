@@ -208,7 +208,6 @@ class GatewayWatcher:
     # visibility. Keep the hot poll index-only and bound detection of rare
     # role-only mutations with a periodic parity projection.
     PROJECTION_PARITY_INTERVAL = 60.0
-    SUBSCRIBER_TIMEOUT = 30  # seconds before sending keepalive comment
 
     def __init__(
         self,

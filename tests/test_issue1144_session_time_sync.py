@@ -88,7 +88,6 @@ def _run_time_case(script_body: str, tz: str = "UTC") -> dict:
             "_sessionTimestampMs",
             "_localDayOrdinal",
             "_serverNowMs",
-            "_serverTzOptions",
             "_sessionCalendarBoundaries",
             "_formatSessionDate",
             "_formatRelativeSessionTime",
@@ -276,66 +275,6 @@ def test_explicit_now_param_overrides_server_clock():
 
 
 # ---------------------------------------------------------------------------
-# JS: _serverTzOptions builds correct timeZone option
-# ---------------------------------------------------------------------------
-
-def test_server_tz_options_positive_offset():
-    result = _run_time_case(
-        """
-        _serverTz = '+0800';
-        const opts = _serverTzOptions();
-        process.stdout.write(JSON.stringify({
-          tz: opts ? opts.timeZone : null,
-        }));
-        """
-    )
-    assert result["tz"] == "Etc/GMT-8"
-
-
-def test_server_tz_options_negative_offset():
-    result = _run_time_case(
-        """
-        _serverTz = '-0500';
-        const opts = _serverTzOptions();
-        process.stdout.write(JSON.stringify({
-          tz: opts ? opts.timeZone : null,
-        }));
-        """
-    )
-    assert result["tz"] == "Etc/GMT+5"
-
-
-def test_server_tz_options_utc_returns_undefined():
-    result = _run_time_case(
-        """
-        _serverTz = '+0000';
-        const opts = _serverTzOptions();
-        process.stdout.write(JSON.stringify({
-          isUndefined: opts === undefined,
-          isNull: opts === null,
-          type: typeof opts,
-        }));
-        """
-    )
-    assert result["isUndefined"] is True
-    assert result["isNull"] is False
-    assert result["type"] == "undefined"
-
-
-def test_server_tz_options_empty_returns_undefined():
-    result = _run_time_case(
-        """
-        _serverTz = '';
-        const opts = _serverTzOptions();
-        process.stdout.write(JSON.stringify({
-          isUndefined: opts === undefined,
-        }));
-        """
-    )
-    assert result["isUndefined"] is True
-
-
-# ---------------------------------------------------------------------------
 # JS: _formatMessageFooterTimestamp uses server timezone
 # ---------------------------------------------------------------------------
 
@@ -447,13 +386,13 @@ def test_message_footer_timestamp_handles_fractional_offset():
 
 
 def test_message_footer_timestamp_falls_back_without_server_tz():
-    """Without _serverTzOptions, should use browser timezone (no crash)."""
+    """Without the sessions.js server-tz state, should use browser timezone (no crash)."""
     is_same_day_fn = _extract_is_same_local_day()
     fmt_fn = _extract_ui_function("_formatMessageFooterTimestamp")
     script = textwrap.dedent(
         f"""
         process.env.TZ = 'UTC';
-        // _serverTzOptions is not defined — simulates sessions.js not loaded
+        // _serverTz is not defined — simulates sessions.js not loaded
         let _serverTimeDelta = 0;
         {is_same_day_fn}
         {fmt_fn}
@@ -475,7 +414,6 @@ def test_sessions_js_has_server_time_compensation_vars():
     assert "_serverTimeDelta" in SESSIONS_JS
     assert "_serverTz" in SESSIONS_JS
     assert "function _serverNowMs()" in SESSIONS_JS
-    assert "function _serverTzOptions()" in SESSIONS_JS
 
 
 def test_sessions_js_captures_server_time_on_fetch():
@@ -498,9 +436,8 @@ def test_ui_js_message_timestamp_uses_server_tz():
     so they pick up the server's wall-clock time (with correct fractional
     offset handling) rather than always rendering in browser TZ."""
     # _formatInServerTz is the canonical helper that handles both whole-hour
-    # and fractional offsets (e.g. India +0530). _serverTzOptions is the
-    # whole-hour fast path; either reference indicates server-tz awareness.
-    assert "_formatInServerTz" in UI_JS or "_serverTzOptions" in UI_JS, (
+    # and fractional offsets (e.g. India +0530).
+    assert "_formatInServerTz" in UI_JS, (
         "ui.js must reference one of the server-tz helpers so message "
         "timestamps render in the server's wall-clock time"
     )

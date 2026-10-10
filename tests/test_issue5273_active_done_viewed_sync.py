@@ -161,7 +161,7 @@ def _run_done_compaction_harness(
         _markSessionCompletedInList(completedSession, activeSid);
         const cacheRow=_allSessions.find(s=>s&&s.session_id===completedSid);
         const unreadAfterCacheUpdate=_hasUnreadForSession(cacheRow);
-        const viewedCountAfterCacheUpdate=_sessionViewedCountValue(_getSessionViewedCounts()[completedSid]);
+        const viewedCountAfterCacheUpdate=_sessionViewedCountRecord(_getSessionViewedCounts()[completedSid]).message_count;
         if ({str(is_session_viewed).lower()}) {{
           _markSessionViewed(completedSid, completedMessageCount);
         }}
@@ -172,7 +172,7 @@ def _run_done_compaction_harness(
           unreadAfterActiveBranchSync:_hasUnreadForSession(cacheRow),
           hasCompletionUnread:_hasSessionCompletionUnread(completedSid),
           completionUnreadMessageCount:_getSessionCompletionUnread()[completedSid]?.message_count ?? null,
-          viewedCount:_sessionViewedCountValue(_getSessionViewedCounts()[completedSid]),
+          viewedCount:_sessionViewedCountRecord(_getSessionViewedCounts()[completedSid]).message_count,
           cacheRow,
         }}));
         """

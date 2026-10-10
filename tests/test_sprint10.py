@@ -181,11 +181,6 @@ def test_cron_history_button_in_panels_js(cleanup_test_sessions):
     assert "_loadCronDetailRuns" in src
     assert "cron_last_output" in src  # i18n key used by the runs card
 
-def test_cron_output_snippet_helper(cleanup_test_sessions):
-    src, _ = get_text("/static/panels.js")
-    assert "_cronOutputSnippet" in src
-
-
 def test_cron_output_usage_metadata_parses_optional_fields(cleanup_test_sessions):
     from api.routes import _cron_output_usage_metadata
 

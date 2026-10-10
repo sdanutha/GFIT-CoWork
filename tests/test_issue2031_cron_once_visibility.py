@@ -80,22 +80,22 @@ console.log(JSON.stringify(cases));
 def test_cron_schedule_preset_matching():
     script = _cron_schedule_source() + r"""
 const cases = {
-  hourly: _cronSchedulePresetIdForValue("every 1h"),
-  hourlyCron: _cronSchedulePresetIdForValue("15 * * * *"),
-  daily: _cronSchedulePresetIdForValue("30 7 * * *"),
-  weekdays: _cronSchedulePresetIdForValue("5 22 * * 1-5"),
-  weekly: _cronSchedulePresetIdForValue("45 8 * * 3"),
-  monthly: _cronSchedulePresetIdForValue("10 6 15 * *"),
-  empty: _cronSchedulePresetIdForValue(""),
-  trimMatch: _cronSchedulePresetIdForValue("  30 7 * * *  "),
-  custom: _cronSchedulePresetIdForValue("0 9 * * * 0"),
-  shorthand: _cronSchedulePresetIdForValue("@daily"),
-  invalidDaily: _cronSchedulePresetIdForValue("99 99 * * *"),
-  invalidHourly: _cronSchedulePresetIdForValue("60 * * * *"),
-  ambiguousSunday: _cronSchedulePresetIdForValue("0 9 * * 7"),
-  invalidWeekly: _cronSchedulePresetIdForValue("0 9 * * 8"),
-  invalidMonthDayZero: _cronSchedulePresetIdForValue("0 9 0 * *"),
-  invalidMonthly: _cronSchedulePresetIdForValue("0 9 32 * *"),
+  hourly: _cronSchedulePresetStateForInput("every 1h").presetId,
+  hourlyCron: _cronSchedulePresetStateForInput("15 * * * *").presetId,
+  daily: _cronSchedulePresetStateForInput("30 7 * * *").presetId,
+  weekdays: _cronSchedulePresetStateForInput("5 22 * * 1-5").presetId,
+  weekly: _cronSchedulePresetStateForInput("45 8 * * 3").presetId,
+  monthly: _cronSchedulePresetStateForInput("10 6 15 * *").presetId,
+  empty: _cronSchedulePresetStateForInput("").presetId,
+  trimMatch: _cronSchedulePresetStateForInput("  30 7 * * *  ").presetId,
+  custom: _cronSchedulePresetStateForInput("0 9 * * * 0").presetId,
+  shorthand: _cronSchedulePresetStateForInput("@daily").presetId,
+  invalidDaily: _cronSchedulePresetStateForInput("99 99 * * *").presetId,
+  invalidHourly: _cronSchedulePresetStateForInput("60 * * * *").presetId,
+  ambiguousSunday: _cronSchedulePresetStateForInput("0 9 * * 7").presetId,
+  invalidWeekly: _cronSchedulePresetStateForInput("0 9 * * 8").presetId,
+  invalidMonthDayZero: _cronSchedulePresetStateForInput("0 9 0 * *").presetId,
+  invalidMonthly: _cronSchedulePresetStateForInput("0 9 32 * *").presetId,
 };
 console.log(JSON.stringify(cases));
 """
@@ -488,7 +488,7 @@ def test_cron_form_surfaces_one_shot_warning_copy_markers_and_preset_markup():
     assert "id=\"cronFormScheduleMonthDay\"" in panels
     assert "id=\"cronFormSchedulePreview\"" in panels
     assert "cron_schedule_once_warning" in panels
-    assert "_cronSchedulePresetIdForValue" in panels
+    assert "_cronSchedulePresetStateForInput" in panels
     assert "_cronSchedulePresetOptionHtml" in panels
     assert "_initCronSchedulePresetControls" in panels
     # Raw-cron `input` only updates the warning/preview (NOT preset re-detection),

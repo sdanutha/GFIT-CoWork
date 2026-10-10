@@ -324,5 +324,5 @@ def _boot_default_apply_snippet() -> str:
 def _reconcile_selection_snippet() -> str:
     marker = "function _reconcileModelDropdownSelection"
     start = UI_JS.index(marker)
-    end = UI_JS.index("function _providerQualifiedModelValueForSelect", start)
+    end = UI_JS.index("function _readPersistedModelState", start)
     return UI_JS[start:end]

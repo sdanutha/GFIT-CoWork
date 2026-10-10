@@ -764,10 +764,8 @@ def test_settled_anchor_scene_carries_live_disclosure_state_by_stream():
 
 
 def test_live_footer_owner_guard_blocks_stale_session_updates():
-    update = _function_body(UI_JS, "updateLiveRunStatus")
     hide = _function_body(UI_JS, "hideLiveRunStatus")
 
-    assert "opts&&opts.sessionId&&_liveRunStatusSessionId&&opts.sessionId!==_liveRunStatusSessionId" in update
     assert "sid&&_liveRunStatusSessionId&&sid!==_liveRunStatusSessionId" in hide
 
 

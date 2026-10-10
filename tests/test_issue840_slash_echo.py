@@ -9,22 +9,23 @@ def _read(name):
 
 
 class TestExecuteCommandReturnValue:
-    """executeCommand() now returns null or {noEcho:bool} instead of true/false."""
+    """send() runs a matched slash command and echoes it unless it is noEcho."""
 
-    def test_execute_command_returns_null_on_no_match(self):
-        src = _read("static/commands.js")
-        idx = src.find("function executeCommand(")
-        block = src[idx:idx + 400]
-        # Must return null (not false) when no command matched
-        assert "return null;" in block, (
-            "executeCommand must return null when no command found (not false)"
-        )
+    def _send_slash_block(self):
+        src = _read("static/messages.js")
+        idx = src.find("const _cmd=_parsedCmd?COMMANDS.find(c=>c.name===_parsedCmd.name):null;")
+        assert idx >= 0, "send() must look up slash commands in COMMANDS"
+        return src[idx:idx + 1200]
 
-    def test_execute_command_returns_noecho_object(self):
-        src = _read("static/commands.js")
-        assert "return {noEcho:" in src, (
-            "executeCommand must return {noEcho:...} when a command runs"
-        )
+    def test_send_echoes_only_commands_without_noecho(self):
+        block = self._send_slash_block()
+        assert "if(!_cmd.noEcho){" in block
+        assert "S.messages.push({role:'user',content:text" in block
+
+    def test_send_rolls_back_echo_when_handler_opts_out(self):
+        block = self._send_slash_block()
+        assert "if(_cmd.fn(_parsedCmd.args)===false){" in block
+        assert "if(_pushedUser){S.messages.pop();renderMessages();}" in block
 
     def test_no_echo_flag_on_clear(self):
         src = _read("static/commands.js")

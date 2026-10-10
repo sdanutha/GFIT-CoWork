@@ -66,19 +66,11 @@ def test_session_action_menu_has_copy_link_action():
     assert "t('session_copy_link_desc')" in SESSIONS_JS
 
 
-def test_session_link_copies_internal_markdown_reference_not_external_url():
-    assert "function _sessionInternalReferenceForSession" in SESSIONS_JS
-    assert "session://${_sessionMarkdownUrlSid(sid)}" in SESSIONS_JS
-    assert "_copyTextToClipboard(ref)" in SESSIONS_JS
+def test_session_link_copies_an_openable_url():
+    copy_fn = _extract_js_function(SESSIONS_JS, "_copySessionLink")
+    assert "const ref=(window.location.origin||'')+_sessionUrlForSid(sid);" in copy_fn
+    assert "_copyTextToClipboard(ref)" in copy_fn
     assert "function _sessionAbsoluteUrlForSid" not in SESSIONS_JS
-
-
-def test_session_link_markdown_url_encodes_parentheses():
-    assert "function _sessionMarkdownUrlSid" in SESSIONS_JS
-    assert "encodeURIComponent(String(sid||''))" in SESSIONS_JS
-    assert "replace(/[()]/g" in SESSIONS_JS
-    assert "%28" in SESSIONS_JS
-    assert "%29" in SESSIONS_JS
 
 
 def test_session_link_label_collapses_multiline_titles():

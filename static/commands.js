@@ -49,19 +49,6 @@ function parseCommand(text){
   return {name,args};
 }
 
-function executeCommand(text){
-  const parsed=parseCommand(text);
-  if(!parsed)return null;
-  const cmd=COMMANDS.find(c=>c.name===parsed.name);
-  if(!cmd)return null;
-  // A handler may return `false` to opt out of interception — e.g. /reasoning
-  // with an effort level falls through so the agent's own handler sees it,
-  // preserving the pre-existing pass-through behaviour for that subcommand.
-  if(cmd.fn(parsed.args)===false)return null;
-  // Return noEcho flag so send() knows whether to echo the command as a user message (#840).
-  return {noEcho:!!cmd.noEcho};
-}
-
 // Agent-registry slash commands that the WebUI actually dispatches when
 // submitted. The autocomplete must not advertise anything outside this set:
 // a non-dispatchable registry command (e.g. /agents) would otherwise fall
