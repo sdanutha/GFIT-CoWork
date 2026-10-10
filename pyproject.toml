@@ -10,12 +10,9 @@ license = {text = "MIT"}
 authors = [{name = "GFIT-CoWork contributors"}, {name = "Hermes WebUI contributors"}]
 classifiers = [
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dynamic = ["version", "dependencies"]
 
 [project.urls]
@@ -52,8 +49,8 @@ version_file = "api/_scm_version.py"
 # scripts/ruff_lint.py and TESTING.md > "Python lint gate (ruff)".
 
 [tool.ruff]
-# Match the Python versions exercised in CI (tests.yml matrix: 3.11–3.14).
-target-version = "py311"
+# Match the Python version exercised in CI (tests.yml matrix: 3.14).
+target-version = "py314"
 # Keep the linter scoped to the application + tests; never crawl vendored or
 # generated trees. (These are belt-and-suspenders; the gate passes explicit files.)
 extend-exclude = [
