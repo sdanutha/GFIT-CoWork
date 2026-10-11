@@ -417,17 +417,6 @@ def _destructive_remote_command_args(args: list[str], cwd: Path, env: dict[str, 
     return args
 
 
-def _has_repo_local_filters(cwd: Path, env: dict[str, str]) -> bool:
-    names = _filter_names_for_scope("--local", cwd, env)
-    names |= _filter_names_for_scope("--worktree", cwd, env, ignore_unsupported=True)
-    return bool(names)
-
-
-def _block_filtered_destructive_write(ctx: GitContext, message: str) -> None:
-    if workspace_git_destructive_enabled() and _has_repo_local_filters(ctx.repo_root, _clean_git_env()):
-        raise GitWorkspaceError(message, "filtered_path")
-
-
 def resolve_git_context(workspace: str | Path) -> GitContext | None:
     ws = Path(workspace).expanduser().resolve()
     result = _run_git(ws, ["rev-parse", "--show-toplevel"], check=False)
@@ -967,40 +956,3 @@ def git_diff(workspace: str | Path, path: str, kind: str = "unstaged") -> dict:
         "deletions": deletions,
         "diff": "" if binary else diff,
     }
-
-
-def _selected_temp_index_env(ctx: GitContext, specs: list[str]) -> tuple[dict[str, str], str]:
-    _block_filtered_destructive_write(
-        ctx,
-        "Repository uses local Git filters; selected commit staging may corrupt index content. "
-        "Use the terminal to commit manually.",
-    )
-    fd, index_path = tempfile.mkstemp(prefix="hermes-webui-git-index-")
-    os.close(fd)
-    Path(index_path).unlink(missing_ok=True)
-    env = {"GIT_INDEX_FILE": index_path}
-    try:
-        head = _run_git(
-            ctx,
-            ["rev-parse", "--verify", "HEAD"],
-            check=False,
-            env=env,
-            destructive=True,
-        )
-        if head.returncode == 0:
-            _run_git(ctx, ["read-tree", "HEAD"], check=True, env=env, destructive=True)
-        else:
-            _run_git(ctx, ["read-tree", "--empty"], check=True, env=env, destructive=True)
-        _run_git(
-            ctx,
-            ["add", "-A", "--", *specs],
-            check=True,
-            env=env,
-            destructive=True,
-            disable_filter_attributes=True,
-        )
-        return env, index_path
-    except Exception:
-        Path(index_path).unlink(missing_ok=True)
-        raise
-

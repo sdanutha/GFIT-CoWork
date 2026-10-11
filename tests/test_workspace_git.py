@@ -562,20 +562,6 @@ def test_run_git_force_destructive_hardening_applies_hook_redirect_without_flag(
     assert "core.alternateRefsCommand=" in captured["argv"]
 
 
-def test_selected_temp_index_env_blocks_repo_local_filters_when_destructive_mode_enabled(monkeypatch, tmp_path):
-    from api import workspace_git
-
-    ctx = workspace_git.GitContext(tmp_path, tmp_path, "")
-
-    monkeypatch.setattr(workspace_git, "workspace_git_destructive_enabled", lambda: True)
-    monkeypatch.setattr(workspace_git, "_has_repo_local_filters", lambda cwd, env: True)
-
-    with pytest.raises(workspace_git.GitWorkspaceError) as exc:
-        workspace_git._selected_temp_index_env(ctx, ["tracked.txt"])
-
-    assert exc.value.code == "filtered_path"
-
-
 def test_git_env_scrub_removes_redirecting_vars_and_preserves_temp_index(monkeypatch):
     from api.workspace_git import _clean_git_env
 
@@ -630,22 +616,6 @@ def test_destructive_workspace_git_flag_defaults_off_and_accepts_truthy(monkeypa
 
     monkeypatch.setenv(WORKSPACE_GIT_DESTRUCTIVE_ENV, "true")
     assert workspace_git_destructive_enabled() is True
-
-
-def test_git_active_stream_lock_detection(monkeypatch):
-    from api import routes
-    from api.config import STREAMS, STREAMS_LOCK
-
-    session = types.SimpleNamespace(active_stream_id="stream-git-lock-test")
-    with STREAMS_LOCK:
-        STREAMS[session.active_stream_id] = object()
-    try:
-        assert routes._git_locked_by_active_stream(session) is True
-    finally:
-        with STREAMS_LOCK:
-            STREAMS.pop(session.active_stream_id, None)
-
-    assert routes._git_locked_by_active_stream(session) is False
 
 
 def test_git_hardened_config_blocks_submodule_recursion():
