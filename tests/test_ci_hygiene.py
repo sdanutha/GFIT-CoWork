@@ -1,0 +1,282 @@
+"""Small hygiene regression checks for CI and frontend console noise."""
+
+import os
+import shutil
+import stat
+import subprocess
+import textwrap
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+def _make_executable(path):
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def test_github_actions_installs_version_specifiers_safely():
+    """Unquoted `pyyaml>=6.0` is parsed by the shell as stdout redirection.
+
+    The tests job installs from requirements-dev.txt, so no specifier reaches
+    the shell at all.
+    """
+    for name in ("tests.yml", "browser-smoke.yml", "conversation-lifecycle.yml"):
+        text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        assert "pip install pyyaml>=6.0" not in text, name
+    tests = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    assert "pip install -r requirements-dev.txt" in tests
+
+
+def test_pytest_integration_marker_is_registered():
+    config = ROOT / "pytest.ini"
+    text = config.read_text(encoding="utf-8")
+
+    assert "markers" in text
+    assert "integration:" in text
+
+
+def test_local_test_runner_uses_supported_venv_before_pytest_collection():
+    runner = (ROOT / "scripts" / "test.sh").read_text(encoding="utf-8")
+    conftest = (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
+    resolve_body = runner.split("resolve_venv_python() {", 1)[1].split("\n}\n\nVENV_PY", 1)[0]
+
+    assert "for candidate in python3.14 python3; do" in runner
+    assert "requirements-dev.txt" in runner
+    assert 'HERMES_WEBUI_TEST_PYTHON' in runner
+    assert "resolve_venv_python()" in runner
+    assert '"$VENV_DIR/bin/python" "$VENV_DIR/Scripts/python.exe"' in runner
+    assert 'if [[ -x "$candidate" ]]; then' in resolve_body
+    assert 'printf \'%s\\n\' "$candidate"' in resolve_body
+    assert "exec \"$PYTHON_BIN\" -m pytest" in runner
+    # Destructive-fs guard: never create/clear a virtualenv through a symlinked .venv
+    # (`python -m venv --clear` would empty the symlink's target).
+    assert '-L "$VENV_DIR"' in runner
+    assert "GFIT-CoWork tests require Python 3.14" in conftest
+    assert "Run ./scripts/test.sh" in conftest
+
+
+def test_local_test_runner_bootstrap_handles_broken_venvs_safely():
+    runner = (ROOT / "scripts" / "test.sh").read_text(encoding="utf-8")
+    select_body = runner.split("select_python() {", 1)[1].split("\n}\n\nPYTHON_BIN", 1)[0]
+    create_body = runner.split("create_or_rebuild_venv() {", 1)[1].split("\n}\n\nselect_python", 1)[0]
+
+    assert "has_pip()" in runner
+    assert 'if ! "$base_py" -m venv "${venv_args[@]}"; then' in create_body
+    assert 'rm -rf "$VENV_DIR"' in create_body
+    assert 'VENV_PY="$(resolve_venv_python || true)"' in create_body
+    assert 'does not contain bin/python or Scripts/python.exe' in create_body
+    assert 'if ! has_pip "$VENV_PY"; then' in create_body
+    assert 'venv_guidance "$base_py"' in create_body
+    assert 'printf \'%s\\n\' "$requested_path"' not in select_body
+    assert 'base_py="$requested_path"' in select_body
+    assert 'desired_major_minor="$(python_major_minor "$base_py")"' in select_body
+    assert 'VENV_PY="$(resolve_venv_python || true)"' in select_body
+    assert 'if has_pip "$VENV_PY"; then' in select_body
+    assert 'does not contain bin/python or Scripts/python.exe; rebuilding.' in select_body
+    assert 'create_or_rebuild_venv "$base_py" rebuild' in select_body
+
+
+def test_local_test_runner_accepts_windows_layout_venv_from_base_python(tmp_path):
+    repo = tmp_path / "repo"
+    scripts_dir = repo / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", scripts_dir / "test.sh")
+    _make_executable(scripts_dir / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+
+    fake_venv_python_source = repo / "fake-venv-python-source"
+    fake_venv_python_source.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "-" ]]; then
+          program="$(cat)"
+          if [[ "$program" == *"sys.version_info[:3]"* ]]; then
+            echo "3.14.0"
+          elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
+            echo "3.14"
+          fi
+          exit 0
+        fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "pip" && "${3:-}" == "--version" ]]; then
+          echo "pip 24.0"
+          exit 0
+        fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "pytest" ]]; then
+          printf '%s\\n' "$0" > "$PYTEST_PROOF_FILE"
+          printf '%s\\n' "$@" >> "$PYTEST_PROOF_FILE"
+          exit 0
+        fi
+        exit 99
+        """), encoding="utf-8")
+    _make_executable(fake_venv_python_source)
+
+    fake_base_python = repo / "fake-python"
+    fake_base_python.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "-" ]]; then
+          program="$(cat)"
+          if [[ "$program" == *"sys.version_info[:3]"* ]]; then
+            echo "3.14.0"
+          elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
+            echo "3.14"
+          fi
+          exit 0
+        fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+          target="${@: -1}"
+          mkdir -p "$target/Scripts"
+          cp "$FAKE_VENV_PY_SOURCE" "$target/Scripts/python.exe"
+          chmod +x "$target/Scripts/python.exe"
+          exit 0
+        fi
+        exit 99
+        """), encoding="utf-8")
+    _make_executable(fake_base_python)
+
+    proof = repo / "pytest-proof.txt"
+    env = os.environ.copy()
+    env["HERMES_WEBUI_TEST_PYTHON"] = "./fake-python"
+    env["FAKE_VENV_PY_SOURCE"] = "./fake-venv-python-source"
+    env["PYTEST_PROOF_FILE"] = str(proof)
+
+    result = subprocess.run(
+        ["bash", "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (repo / ".venv" / "Scripts" / "python.exe").exists()
+    proof_lines = proof.read_text(encoding="utf-8").splitlines()
+    assert proof_lines[0].replace("\\", "/").endswith("/.venv/Scripts/python.exe")
+    assert proof_lines[1:] == ["-m", "pytest", "tests/example_test.py", "-v", "--timeout=60"]
+
+def test_local_test_runner_rejects_venv_without_accepted_python_path(tmp_path):
+    repo = tmp_path / "repo"
+    scripts_dir = repo / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", scripts_dir / "test.sh")
+    _make_executable(scripts_dir / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+    (repo / ".venv").mkdir()
+    (repo / ".venv" / "pyvenv.cfg").write_text("home = fake\n", encoding="utf-8")
+
+    fake_base_python = repo / "fake-python"
+    fake_base_python.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "-" ]]; then
+          program="$(cat)"
+          if [[ "$program" == *"sys.version_info[:3]"* ]]; then
+            echo "3.14.0"
+          elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
+            echo "3.14"
+          fi
+          exit 0
+        fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+          target="${@: -1}"
+          mkdir -p "$target"
+          touch "$target/pyvenv.cfg"
+          exit 0
+        fi
+        exit 99
+        """), encoding="utf-8")
+    _make_executable(fake_base_python)
+
+    proof = repo / "pytest-proof.txt"
+    env = os.environ.copy()
+    env["HERMES_WEBUI_TEST_PYTHON"] = "./fake-python"
+    env["PYTEST_PROOF_FILE"] = str(proof)
+
+    result = subprocess.run(
+        ["bash", "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "does not contain bin/python or Scripts/python.exe" in result.stderr
+    assert not proof.exists()
+    assert not (repo / ".venv").exists()
+
+def test_local_test_runner_rejects_python_older_than_314(tmp_path):
+    repo = tmp_path / "repo"
+    scripts_dir = repo / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", scripts_dir / "test.sh")
+    _make_executable(scripts_dir / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+
+    fake_python = repo / "fake-python"
+    fake_python.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        if [[ "${1:-}" == "-" ]]; then
+          program="$(cat)"
+          if [[ "$program" == *"raise SystemExit"* ]]; then
+            exec python3 -c "import sys; sys.version_info = (3, 12, 9); exec(sys.stdin.read())" <<<"$program" 2>/dev/null || true
+          fi
+          if [[ "$program" == *"sys.version_info[:3]"* ]]; then
+            echo "3.12.9"
+          elif [[ "$program" == *"sys.version_info[:2]"* ]]; then
+            echo "3.12"
+          fi
+          exit 0
+        fi
+        exit 99
+        """), encoding="utf-8")
+    _make_executable(fake_python)
+
+    env = os.environ.copy()
+    env["HERMES_WEBUI_TEST_PYTHON"] = "./fake-python"
+
+    result = subprocess.run(
+        ["bash", "scripts/test.sh", "tests/example_test.py"],
+        cwd=repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "Unsupported Python for GFIT-CoWork tests" in result.stderr
+    assert "Use Python 3.14." in result.stderr
+    assert not (repo / ".venv").exists()
+
+
+def test_ci_and_packaging_target_python_314_only():
+    import re
+
+    workflows = ROOT / ".github" / "workflows"
+    for path in sorted(workflows.glob("*.yml")):
+        versions = re.findall(r"python-version:\s*(.+)", path.read_text(encoding="utf-8"))
+        for value in versions:
+            value = value.strip()
+            if value.startswith("${{"):
+                continue
+            assert value in ("'3.14'", "['3.14']"), f"{path.name}: python-version {value}"
+    tests = (workflows / "tests.yml").read_text(encoding="utf-8")
+    assert "python-version: ['3.14']" in tests
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires-python = ">=3.14"' in pyproject
+    assert 'target-version = "py314"' in pyproject
+    assert "Programming Language :: Python :: 3.11" not in pyproject
+
+
+def test_live_model_success_log_is_debug_not_default_console_log():
+    ui = (ROOT / "static" / "ui.js").read_text(encoding="utf-8")
+
+    assert "console.debug('[hermes] Live models loaded" in ui
+    assert "console.log('[hermes] Live models loaded" not in ui

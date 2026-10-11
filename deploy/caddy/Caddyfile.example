@@ -1,0 +1,26 @@
+# GFIT-CoWork -- one reverse proxy for every Deployment on this server.
+#
+# Serves HTTPS and sends each hostname to its own Deployment's GFIT_PORT.
+# Copy to Caddyfile next to deploy/caddy/docker-compose.yml. Add one block per
+# Team (see "Add a new Team" in deploy/README.md), then reload:
+#
+#   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+# Internal hostnames cannot get a public certificate, so use the company
+# certificate or, for a pilot, Caddy's own CA. Caddy redirects http:// to https://.
+(gfit_tls) {
+	# A company certificate for *.cowork.gfit.co.th, placed in ./certs.
+	tls /etc/caddy/certs/cowork.crt /etc/caddy/certs/cowork.key
+	# For a pilot without a company certificate, use this line instead:
+	# tls internal
+}
+
+sales.cowork.gfit.co.th {
+	import gfit_tls
+	reverse_proxy 127.0.0.1:8801
+}
+
+account.cowork.gfit.co.th {
+	import gfit_tls
+	reverse_proxy 127.0.0.1:8802
+}

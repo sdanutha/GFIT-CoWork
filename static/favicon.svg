@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="GFIT-CoWork logo">
+  <title>GFIT-CoWork logo</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#08EBF1"/><stop offset="1" stop-color="#3889FD"/></linearGradient>
+    <radialGradient id="tile" cx="50%" cy="42%" r="75%">
+      <stop offset="0%" stop-color="#0D3460"/>
+      <stop offset="100%" stop-color="#021128"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14.3" fill="url(#tile)"/>
+  <path d="M41.9 22.1 A14 14 0 1 0 46 32 H33" fill="none" stroke="url(#g)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

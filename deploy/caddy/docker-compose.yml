@@ -1,0 +1,24 @@
+# GFIT-CoWork -- the HTTPS reverse proxy for every Deployment on this server.
+#
+# Runs once per server, not once per Team. It uses the host network so it can
+# reach each Deployment on 127.0.0.1:<GFIT_PORT>.
+#
+#   cp Caddyfile.example Caddyfile   # then edit the hostnames and ports
+#   docker compose up -d
+
+name: gfit-proxy
+
+services:
+  caddy:
+    image: caddy:2
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/caddy/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
