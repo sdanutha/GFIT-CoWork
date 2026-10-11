@@ -23,7 +23,7 @@ tests, and even executing the file all miss them. Issue **#3162** was exactly th
 a `const` binding reassigned inside `_ensureMessagesLoaded` bricked "load conversation
 messages" on every mobile message (v0.51.161–166).
 
-The guard is a curated, zero-false-positive ESLint config (`eslint.runtime-guard.config.mjs`)
+The guard is a curated, zero-false-positive ESLint config (`scripts/eslint.runtime-guard.config.mjs`)
 that runs ONLY runtime-error rules (`no-const-assign`, `no-import-assign`) over
 `static/**/*.js`. It is NOT a style linter and has no formatting rules.
 
@@ -33,7 +33,7 @@ npm install --no-save --before=<a-date-≥48h-ago> eslint   # package-age guard
 # run the guard:
 npm run lint:runtime
 # or directly:
-npx eslint --no-config-lookup -c eslint.runtime-guard.config.mjs "static/**/*.js"
+npx eslint --no-config-lookup -c scripts/eslint.runtime-guard.config.mjs "static/**/*.js"
 ```
 
 ## Native raster redaction boundary

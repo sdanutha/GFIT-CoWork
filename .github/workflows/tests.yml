@@ -161,7 +161,7 @@ jobs:
 
       - name: ESLint runtime-error gate (no-const-assign / no-import-assign, #3162)
         if: needs.changes.outputs.docs_only != 'true'
-        run: npx eslint --no-config-lookup -c eslint.runtime-guard.config.mjs "static/**/*.js"
+        run: npx eslint --no-config-lookup -c scripts/eslint.runtime-guard.config.mjs "static/**/*.js"
 
       - name: Scope / undefined-reference gate (#3696)
         if: needs.changes.outputs.docs_only != 'true'

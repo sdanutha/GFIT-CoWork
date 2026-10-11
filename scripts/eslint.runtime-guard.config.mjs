@@ -16,7 +16,7 @@
 //   - no-redeclare (1 hit): redeclared loop var in panels.js
 // If those are cleaned up later, they can be promoted into this guard.
 //
-// Run: npx eslint -c eslint.runtime-guard.config.mjs "static/**/*.js"
+// Run: npx eslint -c scripts/eslint.runtime-guard.config.mjs "static/**/*.js"
 // (tests/test_static_js_runtime_lint.py runs this automatically when eslint is present.)
 
 export default [
