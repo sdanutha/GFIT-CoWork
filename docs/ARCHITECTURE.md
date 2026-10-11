@@ -58,6 +58,15 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       auth.py              Session store and cookie, CSRF, signed Profile cookie, per-request gate
       login.py             Directory login, rate limit, startup login check
       trusted_proxy.py     Client address behind a trusted reverse proxy
+      directory.py         The Directory interface and the in-memory Directory
+      ldap_directory.py    The company AD as a Directory (LDAPS / StartTLS)
+      access.py            Admission: who is calling and which Profile the request is bound to
+      route_table.py       Every route a User may call; anything else is refused (fail closed)
+      session_ownership.py Which sessions a request may touch
+      workspace_policy.py  Which paths a request may touch (inside the User's Profile)
+      roster.py            The Profile roster (display name, status, last login)
+      roster_watch.py      The running server noticing a disabled Profile
+      operator_cli.py      The Operator's command line (python3 -m api.operator_cli)
       config.py            Discovery, globals, model detection, reloadable config
       helpers.py           HTTP helpers: j(), bad(), require(), resolve_inside(), security headers
       goals.py             Persistent-goal commands and profile-scoped native GoalManager bridge

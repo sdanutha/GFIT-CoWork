@@ -161,6 +161,7 @@ gfit() { docker compose exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin
 2. Tell them the URL. They log in with their employee ID (`600001`,
    `GFIT\600001` or `600001@gfit.co.th` all work) and their AD password.
 
+Every command is described in [docs/operator.md](../docs/operator.md).
 `gfit list` shows every Profile with its status and last login. It lists
 the Profile directories, so a broken Hermes Agent install does not hide
 anyone: it prints a `warning:` line naming the problem and lists them

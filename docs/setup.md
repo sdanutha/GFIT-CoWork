@@ -32,7 +32,7 @@ config, cron jobs and provider credentials belong to Hermes Agent, one Profile
 per User.
 
 The bootstrap supports Linux, macOS and WSL2. Native Windows runs with
-`pwsh .\start.ps1` (see the README).
+`pwsh .\start.ps1`.
 
 ## Install path choices
 
@@ -65,7 +65,7 @@ python3 bootstrap.py
 
 Then open `http://127.0.0.1:8789` and log in as `521740` / `trial-only`. The
 in-memory Directory is for trials and tests only; a Deployment uses the
-company AD (`HERMES_WEBUI_DIRECTORY=ldap`, see the README).
+company AD (`HERMES_WEBUI_DIRECTORY=ldap`, see [Login](#login)).
 
 If your repo has a `.env` file, the bootstrap and the command line load it.
 Remove or adjust any `HERMES_HOME`, `HERMES_WEBUI_STATE_DIR` or
@@ -132,10 +132,44 @@ services:
 
 ## Login
 
-Login is the Directory alone (see the README's "Login with an employee ID").
-A person can log in only after the Operator has created their Profile; an
-unknown employee ID is told they have no access yet, and a disabled Profile is
-told its access is suspended.
+A User signs in with their employee ID (`521740`, `GFIT\521740` or
+`521740@gfit.co.th` all work) and password. The password is checked by the
+**Directory**; GFIT-CoWork never stores or logs it. Login succeeds only when the
+Directory accepts the password **and** a Profile named after the employee ID
+exists and is active. The session is then bound to that Profile. Every person
+who logs in is a **User**; nobody logs in to the `default` Profile. An unknown
+employee ID is told they have no access yet, and a disabled Profile is told its
+access is suspended.
+
+| Variable | Meaning |
+| --- | --- |
+| `HERMES_WEBUI_DIRECTORY` | Which Directory to use: `ldap` uses the company AD; `memory` uses the in-memory Directory. Required: unset, the server does not start. Any other value refuses every login. |
+| `HERMES_WEBUI_LDAP_URL` | For `ldap`: `ldaps://ad-host` or `ldap://ad-host` with `HERMES_WEBUI_LDAP_STARTTLS=1`. Plain LDAP is refused. |
+| `HERMES_WEBUI_LDAP_BIND_FORMAT`, `HERMES_WEBUI_LDAP_DOMAIN` | For `ldap`: `upn` (`521740@domain`) or `domain` (`DOMAIN\521740`), plus the domain. |
+| `HERMES_WEBUI_LDAP_BASE_DN`, `HERMES_WEBUI_LDAP_USER_FILTER` | For `ldap`: where and how to look the user up to read `displayName` (filter default `(sAMAccountName={username})`). |
+| `HERMES_WEBUI_LDAP_CA_CERT` | For `ldap`: the CA certificate of the AD server, when the system does not trust it. |
+| `HERMES_WEBUI_DIRECTORY_USERS` | For `memory`: a JSON file standing in for AD, e.g. `{"521740": {"password": "dev-only", "display_name": "Somchai Jaidee"}}`. For tests and local development only. |
+
+Wrong-password attempts are rate-limited per IP (5 per minute). Behind a
+reverse proxy, set `HERMES_WEBUI_TRUST_FORWARDED_FOR=1` (and
+`HERMES_WEBUI_TRUSTED_PROXY_CIDRS` for a proxy not on loopback) so attempts are
+counted per person's forwarded address, not per proxy. When AD cannot
+be reached, login says the directory is unavailable rather than that the
+password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
+stand-in (see [its README](../dev/mock-ldap/README.md)).
+
+The Directory is the only way in, and login is always on.
+The upstream login methods (the shared `HERMES_WEBUI_PASSWORD` or Settings
+password, passkeys, OIDC and the trusted header) are removed: a leftover
+setting of theirs lets nobody in, and startup reports it as ignored. So does a
+leftover `HERMES_WEBUI_ADMIN_USERS` from an earlier version: it grants nothing,
+and the people it names log in as Users to their own Profile, if they have one.
+A stored upstream password hash or passkey file is left on disk and ignored.
+The trusted proxy settings (`HERMES_WEBUI_TRUST_FORWARDED_FOR`,
+`HERMES_WEBUI_TRUSTED_PROXY_CIDRS`) stay for the rate limit.
+
+There is no mode with login turned off: with no Directory the server does not
+start, on any address, and names the Directory settings.
 
 For installed PWAs, prefer the Directory login over proxy basic auth. Reverse
 proxies are supported, but HTTP basic-auth challenges in front of the
