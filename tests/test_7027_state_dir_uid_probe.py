@@ -30,8 +30,8 @@ catch shell-quoting or ordering regressions inside the block (the pattern
 mirrors ``tests/test_docker_env_readonly_vars.py``).
 
 The startup-health half of this contract — a real container coming up on a
-host-owned state mount — is covered by the ``state-dir-uid`` job in
-``.github/workflows/docker-smoke.yml``.
+host-owned state mount — has no automated check; there is no hosted CI
+(docs/adr/0007-no-hosted-ci.md), so verify it by hand when touching the probe.
 """
 import shutil
 import subprocess

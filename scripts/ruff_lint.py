@@ -22,13 +22,13 @@ Two modes:
 
 Usage::
 
-    python3 scripts/ruff_lint.py --diff origin/main     # the CI / pre-release gate
+    python3 scripts/ruff_lint.py --diff origin/main     # the pre-merge / pre-release gate
     python3 scripts/ruff_lint.py --all                    # backlog report
     python3 scripts/ruff_lint.py --all --strict           # fail on ANY tree finding
 
 ruff is resolved from PATH, or run via ``uvx ruff`` / ``python -m ruff`` as a
 fallback. If ruff cannot be found at all the gate prints a notice and exits 0 (a
-dev without ruff is not blocked; CI installs ruff so enforcement still holds there —
+dev without ruff is not blocked; ./scripts/test.sh installs ruff so enforcement holds there —
 same contract as the ESLint guard).
 """
 from __future__ import annotations
@@ -141,7 +141,7 @@ def _print_findings(findings: list[dict]) -> None:
 def run_diff(base: str) -> int:
     ruff = _ruff_cmd()
     if ruff is None:
-        print("ruff_lint: ruff not found on PATH — skipping (CI installs ruff). OK.")
+        print("ruff_lint: ruff not found on PATH — skipping (./scripts/test.sh installs ruff). OK.")
         return 0
     merge_base, files = _changed_py_files(base)
     if not files:

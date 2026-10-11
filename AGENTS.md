@@ -159,19 +159,20 @@ HERMES_WEBUI_PORT=8789 \
 python3 bootstrap.py
 ```
 
-Do not include private machine instructions in this tracked file. Use a
-git-ignored local note for personal workflow details.
+Do not include private machine instructions in this tracked file. Keep personal
+workflow details in your user-level `~/.claude/CLAUDE.md`, and personal Claude
+Code settings in the git-ignored `.claude/settings.local.json`.
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues are tracked as local markdown files under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Issues are tracked as local markdown files under `.scratch/<feature>/`. See `.claude/rules/issue-tracker.md`.
 
 ### Triage labels
 
-Uses the five default triage labels (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+Uses the five default triage labels (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `.claude/rules/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: one `CONTEXT.md` plus `docs/adr/` at the repo root. See `.claude/rules/domain.md`.

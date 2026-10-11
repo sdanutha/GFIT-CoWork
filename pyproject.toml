@@ -55,7 +55,7 @@ markers = [
 ]
 
 [tool.ruff]
-# Match the Python version exercised in CI (tests.yml matrix: 3.14).
+# Match the only supported Python version (3.14).
 target-version = "py314"
 # Keep the linter scoped to the application + tests; never crawl vendored or
 # generated trees. (These are belt-and-suspenders; the gate passes explicit files.)

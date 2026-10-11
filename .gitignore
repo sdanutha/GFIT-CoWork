@@ -16,13 +16,9 @@ archive/
 .env
 .env.*
 !.env.example
-.claude/
-CLAUDE.md
-AGENTS.local.md
-.cursorrules
-.windsurfrules
-.aider*
-copilot-instructions.md
+# Claude Code: .claude/ is tracked; personal settings and runtime locks are not.
+.claude/settings.local.json
+.claude/*.lock
 
 # Generated screenshots and transient artifacts
 screenshot-*.png
@@ -54,17 +50,6 @@ docs/*
 !docs/architecture/**
 !docs/adr/
 !docs/adr/**
-!docs/agents/
-!docs/agents/**
-
-# Local-only AI assistant context — never committed even under docs/.
-docs/AGENTS.md
-docs/CLAUDE.md
-docs/.cursorrules
-docs/.windsurfrules
-.specify/
-AGENT_TRACE.yaml
-EXECUTION_LOG.md
 
 # Local-only PR review harness: rendering drivers, sample bank, fixtures.
 # Used by Claude during deep reviews; never shared in the repo.

@@ -7,9 +7,8 @@
 > Keep this document updated as architecture changes are made.
 
 > Current shipped build: `v0.51.792` (July 1, 2026).
-> Automated coverage: ~11,500 tests via `pytest tests/ --collect-only -q`. CI runs on
-> Python 3.14 (5 parallel shards) against every PR, plus a ruff
-> lint gate, a headless browser smoke test, and a Docker smoke test.
+> Automated coverage: ~11,500 tests via `./scripts/test.sh tests/ --collect-only -q`,
+> run locally on Python 3.14. There is no hosted CI (docs/adr/0007-no-hosted-ci.md).
 >
 > Notable architecture state: the bootstrap owns agent and Python discovery, and Setup is the Operator's with `hermes setup` (there is no first-run wizard); the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping. (Version/test-count numbers above are a periodic snapshot — the authoritative source is the latest git tag and `pytest --collect-only`.)
 
