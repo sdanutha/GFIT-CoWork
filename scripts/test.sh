@@ -77,11 +77,11 @@ import importlib.util
 
 modules = [
     "cryptography",
-    "mcp",
     "pytest",
     "pytest_asyncio",
     "pytest_shard",
     "pytest_timeout",
+    "ruamel.yaml",
     "ruff",
     "yaml",
 ]
@@ -223,6 +223,17 @@ else
   ensure_pip "$PYTHON_BIN"
   "$PYTHON_BIN" -m pip install --upgrade pip
   "$PYTHON_BIN" -m pip install -r "$REQ_FILE"
+fi
+
+# --parallel N: run N pytest-shard processes at once and combine their results.
+if [[ "${1:-}" == --parallel=* ]]; then
+  shards="${1#--parallel=}"
+  shift
+  exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$shards" "$@"
+fi
+if [[ "${1:-}" == "--parallel" ]]; then
+  shift
+  exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$@"
 fi
 
 if [[ $# -eq 0 ]]; then

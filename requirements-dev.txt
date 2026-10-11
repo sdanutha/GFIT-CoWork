@@ -8,6 +8,10 @@ pytest-timeout
 pytest-asyncio
 pytest-shard
 ruff
+# Hermes Agent runtime dependency. The suite imports the installed agent's
+# modules in this interpreter (hermes_yaml imports ruamel.yaml); the agent's
+# own venv has it, this one must too. Pin matches the agent's Python 3.14 pin.
+ruamel.yaml==0.18.16
 # Optional Office parsers — runtime-optional (commented in requirements.txt), but
 # installed here so the workspace Office-preview tests (tests/test_issue540_*.py)
 # run under the documented ./scripts/test.sh entry point. These files

@@ -339,6 +339,22 @@ def requeue_async_delegation_event(
         )
 
 
+def restore_durable_completions(process_registry: Any) -> None:
+    """Replay pending durable completions onto the queue before a consumer reads it.
+
+    Hermes Agent replays the launch Profile's delegation ledger on the first
+    consume, not on import (#123265); the call is once per process on its side.
+    Older builds replay on import and have no ``restore_completions``.
+    """
+    restore = getattr(process_registry, "restore_completions", None)
+    if not callable(restore):
+        return
+    try:
+        restore()
+    except Exception:
+        logger.warning("Failed to restore durable async completions", exc_info=True)
+
+
 def _cancel_async_delegation_claim_retry(_delegation_id: str) -> None:
     # Retry is a shared durable-store sweep, not a per-delegation timer. It must
     # remain armed because other pending records may rely on the same sweep.

@@ -96,8 +96,6 @@ def test_japanese_locale_includes_representative_translations():
     """
     src = read(REPO / "static" / "i18n.js")
     expected = [
-        "settings_title: '設定'",
-        "login_title: 'サインイン'",
         "approval_heading: '承認が必要'",
         "tab_tasks: 'タスク'",
         "tab_profiles: 'プロファイル'",

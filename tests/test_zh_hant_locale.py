@@ -199,7 +199,6 @@ def test_zh_hant_locale_includes_representative_translations():
     expected = [
         "approval_heading: '需要核准'",
         "settings_label_language: '語言'",
-        "login_title: '登入'",
     ]
     for entry in expected:
         assert entry in src

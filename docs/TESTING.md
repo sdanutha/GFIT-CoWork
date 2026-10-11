@@ -8,12 +8,39 @@
 > Prerequisites: SSH tunnel is active on port 8787. Open http://localhost:8787 in browser.
 > Server health check: curl http://127.0.0.1:8787/health should return {"status":"ok"}.
 >
-> Automated coverage: ~11,500 tests collected via `./scripts/test.sh tests/ --collect-only -q`. There is no hosted CI ([ADR 0007](adr/0007-no-hosted-ci.md)): run the suite locally on Python 3.14 with `./scripts/test.sh`, and run the ruff diff gate, the headless browser smoke test, and the Docker smoke test by hand when a change touches what they cover. The suite covers the bootstrap, Directory login and Profile admission, CSS regression coverage for thinking/tool card animation, streaming session persistence, mobile layout breakpoints, locale parity across 14 languages, and hundreds of issue/PR-pinned regression tests.
+> Automated coverage: ~19,900 tests collected via `./scripts/test.sh tests/ --collect-only -q`. There is no hosted CI ([ADR 0007](adr/0007-no-hosted-ci.md)): run the suite locally on Python 3.14 with `./scripts/test.sh`, and run the ruff diff gate, the headless browser smoke test, and the Docker smoke test by hand when a change touches what they cover. The suite covers the bootstrap, Directory login and Profile admission, CSS regression coverage for thinking/tool card animation, streaming session persistence, mobile layout breakpoints, locale parity across 14 languages, and hundreds of issue/PR-pinned regression tests.
 > Run: `./scripts/test.sh`
 >
 > Local regression focus: verify that a previously closed workspace panel stays visually closed from first paint through boot completion on desktop refresh; there should be no brief open-then-close flash.
 
 ---
+
+## Running the suite in parallel
+
+`./scripts/test.sh --parallel N [pytest args]` splits the run into N
+`pytest-shard` shards, runs them at once, and prints one combined summary, the
+FAILED/ERROR test ids, and a non-zero exit if any shard failed. Each shard's
+full log stays in the temp directory named on the first line. With no pytest
+args it runs `tests/ -q --timeout=60`. Without `--parallel` the runner behaves
+as before.
+
+```bash
+./scripts/test.sh --parallel 8              # whole suite
+./scripts/test.sh --parallel 4 tests/test_model_resolver.py
+```
+
+Each shard is its own pytest process; `tests/conftest.py` gives every process
+its own free port and state dir, so `--parallel` refuses a pinned
+`HERMES_WEBUI_TEST_PORT` or `HERMES_WEBUI_TEST_STATE_DIR`.
+
+Measured on a 14-core Mac (2026-10-11, the same commit, both green): the
+whole suite took 145s with `--parallel 8` and 939s (15m39s) serially. The sharded run reported 230 skipped against 221 serially; the skip reasons were not compared.
+
+The suite also isolates `HOME` (not only `HERMES_HOME`): Hermes Agent reads
+provider logins from the user's home (Copilot token stores, plugin OAuth
+stores) and GitHub token variables, so tests must never see the machine's own.
+Only `DOCKER_CONFIG` is pointed back at the real `~/.docker`, for the docker
+CLI's plugins.
 
 ## Static JS runtime lint (brick-class regression guard)
 

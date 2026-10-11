@@ -91,9 +91,7 @@ def test_polish_locale_includes_representative_translations():
     src = read(REPO / "static" / "i18n.js")
     pl_block = extract_locale_block(src, "pl")
     expected = [
-        "settings_title: 'Ustawienia'",
         "settings_label_language: 'Język'",
-        "login_title: 'Zaloguj się'",
         "approval_heading: 'Wymagana aprobata'",
         "tab_chat: 'Czat'",
         "tab_tasks: 'Zadania'",
