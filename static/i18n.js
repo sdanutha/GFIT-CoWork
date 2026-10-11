@@ -923,7 +923,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Surface kanban worker runs as conversations in the sidebar. Only active when non-GFIT-CoWork sessions are enabled. Defaults off; worker runs are internal and can flood the sidebar.',
     settings_desc_previous_messaging_sessions: 'Show older Discord, Telegram, Slack, and Weixin sessions that were replaced by reset or compression.',
     sign_out: 'Sign Out',
-    settings_shutdown_stopped_message: 'Server stopped. You can close this tab.',
     // Providers panel
     cancel: 'Cancel',
     create_job: 'Create job',
@@ -2115,7 +2114,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Mostra le esecuzioni dei worker kanban come conversazioni nella barra laterale. Attivo solo quando le sessioni non-GFIT-CoWork sono abilitate. Disattivato per impostazione predefinita; le esecuzioni dei worker sono interne e possono inondare la barra laterale.',
     settings_desc_previous_messaging_sessions: 'Mostra sessioni Discord, Telegram, Slack e Weixin più vecchie sostituite da reset o compressione.',
     sign_out: 'Esci',
-    settings_shutdown_stopped_message: 'Server arrestato. Puoi chiudere questa scheda.',
     // Providers panel
     cancel: 'Annulla',
     create_job: 'Crea job',
@@ -3310,7 +3308,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Kanbanワーカーの実行をサイドバーの会話として表示します。GFIT-CoWork以外のセッションが有効な場合のみ機能します。デフォルトはオフ。ワーカー実行は内部的なもので、サイドバーを溢れさせる可能性があります。',
     settings_desc_previous_messaging_sessions: 'reset または compression によって置き換えられた以前の Discord、Telegram、Slack、Weixin セッションを表示します。',
     sign_out: 'サインアウト',
-    settings_shutdown_stopped_message: 'サーバーは停止しました。このタブを閉じて構いません。',
     // Providers panel
     cancel: 'キャンセル',
     create_job: 'ジョブを作成',
@@ -4203,7 +4200,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Показывать запуски kanban-воркеров как беседы в боковой панели. Работает только при включённых не-GFIT-CoWork сеансах. По умолчанию выключено; запуски воркеров — внутренние и могут переполнить боковую панель.',
     settings_desc_previous_messaging_sessions: 'Показывать предыдущие сеансы Discord, Telegram, Slack и Weixin, замененные сбросом или сжатием.',
     sign_out: 'Выйти',
-    settings_shutdown_stopped_message: 'Сервер остановлен. Можно закрыть эту вкладку.',
     // Providers panel
     cancel: 'Отмена',
     create_job: 'Создать задание',
@@ -5359,7 +5355,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Mostrar las ejecuciones de los workers kanban como conversaciones en la barra lateral. Solo activo cuando las sesiones no-GFIT-CoWork están habilitadas. Desactivado por defecto; las ejecuciones de workers son internas y pueden inundar la barra lateral.',
     settings_desc_previous_messaging_sessions: 'Mostrar sesiones antiguas de Discord, Telegram, Slack y Weixin reemplazadas por reset o compresión.',
     sign_out: 'Cerrar sesión',
-    settings_shutdown_stopped_message: 'Servidor detenido. Puedes cerrar esta pestaña.',
     // Providers panel (English fallback — native translations welcome in follow-up PRs)
     cancel: 'Cancelar',
     create_job: 'Crear tarea',
@@ -6465,7 +6460,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Kanban-Worker-Läufe als Unterhaltungen in der Seitenleiste anzeigen. Nur aktiv, wenn Nicht-GFIT-CoWork-Sitzungen aktiviert sind. Standardmäßig aus; Worker-Läufe sind intern und können die Seitenleiste überfluten.',
     settings_desc_previous_messaging_sessions: 'Zeigt ältere Discord-, Telegram-, Slack- und Weixin-Sitzungen, die durch Reset oder Compression ersetzt wurden.',
     sign_out: 'Abmelden',
-    settings_shutdown_stopped_message: 'Server gestoppt. Du kannst diesen Tab schließen.',
     // Providers panel (English fallback — native translations welcome in follow-up PRs)
     cancel: 'Abbrechen',
     create_job: 'Job erstellen',
@@ -7625,7 +7619,6 @@ const LOCALES = {
     suggest_schedule: '今天有什么安排？',
     suggest_files: '这个工作区有哪些文件？',
     sign_out: '退出登录',
-    settings_shutdown_stopped_message: '服务器已停止。你可以关闭此标签页。',
     // Providers panel (English fallback — native translations welcome in follow-up PRs)
     settings_label_rtl: '从右到左聊天布局',
     settings_desc_rtl: '为阿拉伯语或希伯来语等语言翻转聊天消息和编辑器输入的对齐方式。仅影响聊天区域 — 侧边栏和其他面板保持从左到右。',
@@ -9067,7 +9060,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: '將Kanban worker 的執行顯示為側邊欄中的對話。僅在啟用非 GFIT-CoWork 工作階段時才有效。預設為關閉；worker 執行是內部的，可能會使側邊欄氾濫。',
     settings_desc_previous_messaging_sessions: '顯示被 reset 或 compression 替換的較舊的 Discord、Telegram、Slack 和 Weixin 對話。',
     sign_out: '登出',
-    settings_shutdown_stopped_message: '伺服器已停止。可以關閉這個分頁。',
     // Providers panel
     cancel: '取消',
     create_job: '建立工作',
@@ -10150,7 +10142,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Mostrar execuções dos workers kanban como conversas na barra lateral. Ativo apenas quando as sessões não-GFIT-CoWork estão habilitadas. Desativado por padrão; execuções de workers são internas e podem inundar a barra lateral.',
     settings_desc_previous_messaging_sessions: 'Mostrar sessões antigas de Discord, Telegram, Slack e Weixin substituídas por reset ou compressão.',
     sign_out: 'Sair',
-    settings_shutdown_stopped_message: 'Servidor parado. Você pode fechar esta aba.',
     // Providers panel
     cancel: 'Cancelar',
     create_job: 'Criar tarefa',
@@ -11249,7 +11240,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Kanban 워커 실행을 사이드바의 대화로 표시합니다. 비 GFIT-CoWork 세션이 활성화된 경우에만 작동합니다. 기본적으로 꺼져 있습니다. 워커 실행은 내부 작업이며 사이드바를 넘칠 수 있습니다.',
     settings_desc_previous_messaging_sessions: 'reset 또는 compression으로 교체된 이전 Discord, Telegram, Slack, Weixin 세션을 표시합니다.',
     sign_out: '로그아웃',
-    settings_shutdown_stopped_message: '서버가 중지되었습니다. 이 탭을 닫아도 됩니다.',
     // Providers panel
     cancel: '취소',
     create_job: 'Create job',
@@ -12521,7 +12511,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Afficher les exécutions des workers kanban comme des conversations dans la barre latérale. Uniquement actif lorsque les sessions non-GFIT-CoWork sont activées. Désactivé par défaut ; les exécutions de workers sont internes et peuvent inonder la barre latérale.',
     settings_desc_previous_messaging_sessions: 'Afficher les anciennes sessions Discord, Telegram, Slack et Weixin qui ont été remplacées par une réinitialisation ou une compression.',
     sign_out: 'Se déconnecter',
-    settings_shutdown_stopped_message: 'Serveur arrêté. Vous pouvez fermer cet onglet.',
     cancel: 'Annuler',
     create_job: 'Créer une tâche',
     save_skill: 'Enregistrer la compétence',
@@ -13407,7 +13396,6 @@ const LOCALES = {
     settings_section_preferences_title: 'Předvolby',
     settings_section_system_meta: 'Verze instance a kontroly přístupu.',
     settings_section_system_title: 'Systém',
-    settings_shutdown_stopped_message: 'Server zastaven. Tuto záložku můžete zavřít.',
     settings_sidebar_density_compact: 'Kompaktní',
     settings_sidebar_density_detailed: 'Detailní',
     settings_tab_appearance: 'Vzhled',
@@ -14766,7 +14754,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Kanban worker çalıştırmalarını kenar çubuğunda konuşmalar olarak göster. Yalnızca GFIT-CoWork dışı oturumlar etkinleştirildiğinde aktif. Varsayılan olarak kapalı; worker çalıştırmaları dahili olup kenar çubuğunu doldurabilir.',
     settings_desc_previous_messaging_sessions: 'Sıfırlama veya sıkıştırmayla değiştirilen eski Discord, Telegram, Slack ve Weixin oturumlarını gösterin.',
     sign_out: 'Oturumu Kapat',
-    settings_shutdown_stopped_message: 'Sunucu durduruldu. Bu sekmeyi kapatabilirsiniz.',
     // Providers panel
     cancel: 'İptal etmek',
     create_job: 'İş oluştur',
@@ -16040,7 +16027,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Wyświetlaj uruchomienia workerów kanban jako konwersacje na pasku bocznym. Aktywne tylko wtedy, gdy włączone są sesje spoza GFIT-CoWork. Domyślnie wyłączone; uruchomienia workerów są wewnętrzne i mogą zalać pasek boczny.',
     settings_desc_previous_messaging_sessions: 'Pokaż starsze sesje z Discorda, Telegrama, Slacka i Weixin, które zostały zastąpione przez reset lub kompresję.',
     sign_out: 'Wyloguj się',
-    settings_shutdown_stopped_message: 'Serwer został zatrzymany. Możesz zamknąć tę kartę.',
     // Providers panel
     cancel: 'Anuluj',
     create_job: 'Utwórz zadanie',
@@ -17115,7 +17101,6 @@ const LOCALES = {
     settings_desc_kanban_sessions: 'Hiển thị các lần chạy của kanban worker như các cuộc trò chuyện trong sidebar. Chỉ hoạt động khi bật phiên không phải GFIT-CoWork. Mặc định tắt; các lần chạy worker là nội bộ và có thể làm sidebar bị ngập.',
     settings_desc_previous_messaging_sessions: 'Hiển thị các phiên Discord, Telegram, Slack và Weixin cũ đã bị thay thế bởi reset hoặc nén.',
     sign_out: 'Đăng xuất',
-    settings_shutdown_stopped_message: 'Server đã dừng. Bạn có thể đóng tab này.',
     // Providers panel
     cancel: 'Hủy',
     create_job: 'Tạo job',
