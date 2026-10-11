@@ -109,7 +109,7 @@ def test_profile_env_cannot_override_visible_session_limit(tmp_path):
 
 
 def test_setting_is_documented():
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    readme = (REPO_ROOT / "docs" / "configuration.md").read_text(encoding="utf-8")
     env_example = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     assert "| `HERMES_WEBUI_VISIBLE_SESSION_LIMIT` | `20` |" in readme
     assert "# HERMES_WEBUI_VISIBLE_SESSION_LIMIT=20" in env_example

@@ -13,8 +13,12 @@ The external autonomous agent (by Nous Research) that GFIT-CoWork drives. GFIT-C
 _Avoid_: the backend, the bot
 
 **User**:
-A person who logs in to GFIT-CoWork with their company AD account. Each User owns exactly one Profile, which the Operator creates in advance and names after their AD username. User is the only role in GFIT-CoWork.
+A person who logs in to GFIT-CoWork with their company AD account. Each User owns exactly one Profile, which the Operator creates in advance and names after their employee ID. User is the only role in GFIT-CoWork.
 _Avoid_: account, member
+
+**Employee ID**:
+A person's company employee number (e.g. `521740`), which is also their AD username. A User logs in with it and their Profile is named after it.
+_Avoid_: AD username, user ID, login name
 
 **Operator**:
 A person with shell access to the Deployment's server, who looks after it through Hermes Agent's own tools and GFIT-CoWork's command line: creating, disabling and deleting Profiles, setting up providers and keys, and handing work over. The Operator is not a role in GFIT-CoWork and has no login to it.
@@ -33,7 +37,7 @@ GFIT-CoWork's own record of each Profile: the User's display name, whether the P
 _Avoid_: user list, member table
 
 **Admission**:
-The decision, from an AD username the company AD has confirmed, of whether that person may use the Deployment and in which Profile: they need their own Profile, and it must be active. It is made at login and again on every request, so a change to the Profile roster takes effect at once.
+The decision, from an employee ID the company AD has confirmed, of whether that person may use the Deployment and in which Profile: they need their own Profile, and it must be active. It is made at login and again on every request, so a change to the Profile roster takes effect at once.
 _Avoid_: authorization, access check
 
 **Bound**:
