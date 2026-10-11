@@ -48,7 +48,7 @@ def _make_state_db(path: Path, session_ids):
         conn.close()
 
 
-def test_agent_session_row_exists_true_for_present_row(tmp_path, monkeypatch):
+def test_agent_session_rows_existing_includes_present_row(tmp_path, monkeypatch):
     from api import models
 
     home = tmp_path / "home"
@@ -56,10 +56,10 @@ def test_agent_session_row_exists_true_for_present_row(tmp_path, monkeypatch):
     _make_state_db(home / "state.db", ["sess-present"])
     monkeypatch.setattr(models, "_active_state_db_path", lambda: home / "state.db")
 
-    assert models.agent_session_row_exists("sess-present") is True
+    assert "sess-present" in models.agent_session_rows_existing(["sess-present"])
 
 
-def test_agent_session_row_exists_false_for_deleted_row(tmp_path, monkeypatch):
+def test_agent_session_rows_existing_omits_deleted_row(tmp_path, monkeypatch):
     """The core fix: a session id that is NOT in state.db is reported gone."""
     from api import models
 
@@ -68,31 +68,31 @@ def test_agent_session_row_exists_false_for_deleted_row(tmp_path, monkeypatch):
     _make_state_db(home / "state.db", ["other-session"])
     monkeypatch.setattr(models, "_active_state_db_path", lambda: home / "state.db")
 
-    assert models.agent_session_row_exists("sess-deleted") is False
+    assert "sess-deleted" not in models.agent_session_rows_existing(["sess-deleted"])
 
 
-def test_agent_session_row_exists_safe_true_when_db_missing(tmp_path, monkeypatch):
+def test_agent_session_rows_existing_assumes_present_when_db_missing(tmp_path, monkeypatch):
     """No agent DB on this instance -> never claim a row is gone (no data loss)."""
     from api import models
 
     monkeypatch.setattr(
         models, "_active_state_db_path", lambda: tmp_path / "nope" / "state.db"
     )
-    assert models.agent_session_row_exists("anything") is True
+    assert models.agent_session_rows_existing(["anything"]) == frozenset({"anything"})
 
 
-def test_agent_session_row_exists_empty_id_is_false(tmp_path, monkeypatch):
+def test_agent_session_rows_existing_ignores_empty_ids(tmp_path, monkeypatch):
     from api import models
 
     home = tmp_path / "home"
     home.mkdir()
     _make_state_db(home / "state.db", ["x"])
     monkeypatch.setattr(models, "_active_state_db_path", lambda: home / "state.db")
-    assert models.agent_session_row_exists("") is False
-    assert models.agent_session_row_exists(None) is False
+    assert models.agent_session_rows_existing([""]) == frozenset()
+    assert models.agent_session_rows_existing([None]) == frozenset()
 
 
-def test_agent_session_row_exists_handles_missing_sessions_table(tmp_path, monkeypatch):
+def test_agent_session_rows_existing_assumes_present_without_sessions_table(tmp_path, monkeypatch):
     """A state.db without a `sessions` table degrades to safe-True."""
     from api import models
 
@@ -104,7 +104,7 @@ def test_agent_session_row_exists_handles_missing_sessions_table(tmp_path, monke
     conn.commit()
     conn.close()
     monkeypatch.setattr(models, "_active_state_db_path", lambda: db)
-    assert models.agent_session_row_exists("whatever") is True
+    assert models.agent_session_rows_existing(["whatever"]) == frozenset({"whatever"})
 
 
 def test_agent_session_rows_existing_returns_present_subset(tmp_path, monkeypatch):

@@ -6455,8 +6455,8 @@ def agent_session_rows_existing(
     instead of opening one SQLite connection per candidate row.
 
     Degrades safely to ``frozenset(wanted)`` (assume all present) on any error,
-    when the DB is missing, or when the ``sessions`` table is absent — matching
-    ``agent_session_row_exists()`` so a transient failure never causes pruning.
+    when the DB is missing, or when the ``sessions`` table is absent, so a
+    transient failure never causes pruning.
     """
     wanted = {str(sid).strip() for sid in (session_ids or []) if str(sid or "").strip()}
     if not wanted:
@@ -6558,25 +6558,6 @@ def agent_session_zero_message_sids(
             exc_info=True,
         )
         return frozenset()
-
-
-def agent_session_row_exists(session_id: str, *, profile=None) -> bool:
-    """Return True if ``session_id`` still has a backing row in the agent state.db.
-
-    Used to detect orphaned imported-CLI sidecars (#3238): the WebUI sidebar
-    must NOT rely on the session's presence in ``get_cli_sessions()`` to decide
-    whether its backing CLI row still exists, because that helper caps at
-    ``CLI_VISIBLE_SESSION_LIMIT`` (20) rows — a still-existing session can fall
-    out of the recent window and look "deleted." This is an exact, uncapped
-    existence probe against the ``sessions`` table.
-
-    Degrades safely to ``True`` (assume present) on any error or when the DB is
-    unreadable, so a transient failure never causes a stale-pruning data loss.
-    """
-    sid = str(session_id or "").strip()
-    if not sid:
-        return False
-    return sid in agent_session_rows_existing([sid], profile=profile)
 
 
 def _sidebar_title_is_generic_webui(title: str | None) -> bool:

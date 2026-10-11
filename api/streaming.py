@@ -6953,11 +6953,6 @@ def _dedupe_replayed_context_messages(previous_context, result_messages, msg_tex
     return previous_context + candidates
 
 
-def _dedupe_replayed_active_context(previous_context, result_messages, msg_text=None):
-    """Keep model context append-only without re-appending a replayed tail."""
-    return _dedupe_replayed_context_messages(previous_context, result_messages, msg_text)
-
-
 def _is_context_compression_marker(msg):
     return is_context_compression_marker(msg)
 

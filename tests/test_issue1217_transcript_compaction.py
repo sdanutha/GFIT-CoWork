@@ -9,7 +9,6 @@ from api.models import Session, reconciled_state_db_messages_for_session, state_
 from api.streaming import (
     _assistant_reply_added_after_current_turn,
     _context_messages_for_new_turn,
-    _dedupe_replayed_active_context,
     _dedupe_replayed_context_messages,
     _merge_display_messages_after_agent_result,
     _new_turn_context_from_messages,
@@ -266,7 +265,7 @@ def test_replayed_active_tail_after_compression_is_not_duplicated():
         result_messages,
         "choose B",
     )
-    next_context = _dedupe_replayed_active_context(previous_context, result_messages)
+    next_context = _dedupe_replayed_context_messages(previous_context, result_messages)
 
     assert [m["content"] for m in merged] == [
         "old visible transcript",
