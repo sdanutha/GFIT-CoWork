@@ -419,6 +419,24 @@ def _discover_python(agent_dir) -> str:
 HERMES_AGENT = _discover_agent_dir()
 VENV_PYTHON  = _discover_python(HERMES_AGENT)
 
+# Isolate HOME too, not only HERMES_HOME. The Agent finds provider logins in
+# the user's home (Copilot's ~/.copilot and ~/.config/github-copilot token
+# stores, plugin OAuth stores) and in GitHub token env vars; with the real
+# HOME, the suite saw this machine's logins as the test Profile's and the
+# model catalog ran live network probes against them. The agent dir was
+# discovered from the real HOME above; pin it so the test server (which
+# discovers it again) still finds it. Kept beside TEST_STATE_DIR, which the
+# server fixture wipes.
+TEST_HOME = TEST_STATE_DIR.with_name(TEST_STATE_DIR.name + '-home')
+shutil.rmtree(TEST_HOME, ignore_errors=True)
+TEST_HOME.mkdir(parents=True)
+os.environ['HOME'] = str(TEST_HOME)
+for _host_var in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
+                  'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'):
+    os.environ.pop(_host_var, None)
+if HERMES_AGENT:
+    os.environ['HERMES_WEBUI_AGENT_DIR'] = str(HERMES_AGENT)
+
 # Work dir: agent dir if found, else repo root
 WORKDIR = str(HERMES_AGENT) if HERMES_AGENT else str(REPO_ROOT)
 
