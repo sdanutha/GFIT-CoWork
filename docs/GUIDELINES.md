@@ -156,4 +156,4 @@ coverage stops instead of finding it the hard way.
 
 *Companion to [`AGENTS.md`](../AGENTS.md), [`CONTRIBUTING.md`](../CONTRIBUTING.md), and
 [`docs/CONTRACTS.md`](CONTRACTS.md). For UI/UX specifics see [`docs/UIUX-GUIDE.md`](UIUX-GUIDE.md)
-and [`DESIGN.md`](../DESIGN.md).*
+and [`DESIGN.md`](DESIGN.md).*

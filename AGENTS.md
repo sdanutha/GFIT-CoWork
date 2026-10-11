@@ -15,12 +15,12 @@ unrelated work. Keep subsystem-specific safety and contract requirements below.
 - `docs/CONTRACTS.md` to find the contract/RFC for the subsystem being changed
 - `docs/GUIDELINES.md` for bug-class coverage, state ownership, and evidence standards
 - `CHANGELOG.md` for release-history questions; ordinary PRs do not edit it
-- `ARCHITECTURE.md` for design constraints and current module layout
-- `TESTING.md` for local verification commands and relevant manual checks
+- `docs/ARCHITECTURE.md` for design constraints and current module layout
+- `docs/TESTING.md` for local verification commands and relevant manual checks
 - `docs/setup.md` for Setup: the Directory, providers on the server, the first Profile
 - `docs/troubleshooting.md` for diagnostic flows
 - `docs/rfcs/README.md` for larger RFCs and state/durability contracts
-- `docs/UIUX-GUIDE.md` and `DESIGN.md` for layout, interaction flow, themes,
+- `docs/UIUX-GUIDE.md` and `docs/DESIGN.md` for layout, interaction flow, themes,
   chat rendering, and composer chrome
 
 ## Setup and reinstall support

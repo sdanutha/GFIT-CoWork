@@ -46,7 +46,7 @@ version_file = "api/_scm_version.py"
 # runtime layout while still keeping the source-checkout launch surface
 # (`bootstrap.py`, `start.sh`, `ctl.sh`) authoritative. The Ruff gate remains
 # forward-looking and line-scoped on NEW/CHANGED Python code; see
-# scripts/ruff_lint.py and TESTING.md > "Python lint gate (ruff)".
+# scripts/ruff_lint.py and docs/TESTING.md > "Python lint gate (ruff)".
 
 [tool.ruff]
 # Match the Python version exercised in CI (tests.yml matrix: 3.14).

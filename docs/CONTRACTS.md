@@ -119,7 +119,7 @@ that slice.
 
 ## UI, UX, and theme contracts
 
-- [`DESIGN.md`](../DESIGN.md): design tokens and the current calm-console
+- [`DESIGN.md`](DESIGN.md): design tokens and the current calm-console
   direction: conversation first, quiet metadata, restrained accents, and
   progressive disclosure for debugging detail.
 - [`docs/UIUX-GUIDE.md`](UIUX-GUIDE.md): contributor-facing synthesis of the
@@ -129,7 +129,7 @@ that slice.
   the real app stylesheet.
 - [`docs/ui-ux/two-stage-proposal.html`](ui-ux/two-stage-proposal.html):
   existing two-stage chat UX proposal for issue #536.
-- [`THEMES.md`](../THEMES.md): theme and skin guidance; the core palette
+- [`THEMES.md`](THEMES.md): theme and skin guidance; the core palette
   variable contract lives in `static/style.css`.
 
 Current appearance has a theme axis (`light`, `dark`, `system`) and a separate
@@ -225,9 +225,9 @@ does not match the touched subsystem.
 
 ## Setup and operational references
 
-- [`TESTING.md`](../TESTING.md): automated test command and manual browser test
+- [`TESTING.md`](TESTING.md): automated test command and manual browser test
   plan.
-- [`ARCHITECTURE.md`](../ARCHITECTURE.md): API, module layout, and design
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): API, module layout, and design
   constraints.
 - [`docs/setup.md`](setup.md): Setup: the Directory, provider setup on the server and the first Profile.
 - [`docs/setup-agent-checklist.md`](setup-agent-checklist.md): safety
