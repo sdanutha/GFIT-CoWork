@@ -77,11 +77,11 @@ import importlib.util
 
 modules = [
     "cryptography",
-    "mcp",
     "pytest",
     "pytest_asyncio",
     "pytest_shard",
     "pytest_timeout",
+    "ruamel.yaml",
     "ruff",
     "yaml",
 ]
