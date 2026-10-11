@@ -56,6 +56,7 @@ from api.process_event_utils import (
     completion_delivery_id,
     release_async_delegation_delivery,
     requeue_async_delegation_event,
+    restore_durable_completions,
     schedule_async_delegation_claim_retry,
 )
 
@@ -1806,6 +1807,7 @@ def _drain_loop() -> None:
         logger.warning("bg_task_complete drain unavailable: %s", exc)
         return
     logger.info("bg_task_complete drain thread started")
+    restore_durable_completions(process_registry)
     while not _DRAIN_STOP.is_set():
         # Read the queue defensively: a rebuilt/partially-initialized registry
         # may not expose ``completion_queue`` (mirrors streaming.py's
