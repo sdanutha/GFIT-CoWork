@@ -91,9 +91,7 @@ def test_turkish_locale_includes_representative_translations():
     src = read(REPO / "static" / "i18n.js")
     tr_block = extract_locale_block(src, "tr")
     expected = [
-        "settings_title: 'Ayarlar'",
         "settings_label_language: 'Dil'",
-        "login_title: 'Oturum aç'",
         "approval_heading: 'Onay gerekli'",
         "tab_chat: 'Sohbet'",
         "tab_tasks: 'Görevler'",

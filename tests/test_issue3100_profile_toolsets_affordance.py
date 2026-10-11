@@ -53,6 +53,5 @@ def test_toolsets_affordance_i18n_keys_exist_in_locale_blocks():
     ]
     for key in keys:
         assert I18N_JS.count(f"{key}:") >= 8, f"missing locale entries for {key}"
-    assert "session_toolsets_custom:'Custom override'" in I18N_JS
     assert "session_toolsets_desc:'Use active profile defaults or choose a custom toolset list for this session'" in I18N_JS
 

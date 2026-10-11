@@ -24,6 +24,9 @@ def _copy_repo_without_heavy_dirs(dst: Path) -> Path:
             ".pytest_cache",
             ".ruff_cache",
             "__pycache__",
+            # Node harness scripts other tests write into the repo root and
+            # delete again; under --parallel one can vanish mid-copy.
+            "tmp*.cjs",
         ),
     )
     return repo_copy

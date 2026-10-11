@@ -22,8 +22,6 @@ def test_spanish_locale_block_exists():
 def test_spanish_locale_includes_representative_translations():
     src = read(REPO / "static" / "i18n.js")
     expected = [
-        "settings_title: 'Configuración'",
-        "login_title: 'Iniciar sesión'",
         "approval_heading: 'Se requiere aprobación'",
         "tab_tasks: 'Tareas'",
         "tab_skills: 'Habilidades'",

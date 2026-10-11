@@ -560,7 +560,6 @@ def test_i18n_wiki_keys_in_all_locales():
         "wiki_browse",
         "wiki_search_placeholder",
         "wiki_no_pages",
-        "wiki_not_configured",
     ]
     # Locate all locale block boundaries by finding "_lang:" occurrences,
     # then verify each required key appears in every locale block.

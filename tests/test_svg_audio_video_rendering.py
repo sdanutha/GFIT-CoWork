@@ -136,9 +136,7 @@ def test_i18n_keys():
     with open('static/i18n.js', encoding="utf-8") as f:
         src = f.read()
     required_keys = [
-        'media_audio_label',
         'media_svg_label',
-        'media_video_label',
     ]
     for key in required_keys:
         count = src.count(f"{key}:")

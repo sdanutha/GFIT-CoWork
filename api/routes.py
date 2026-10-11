@@ -10024,8 +10024,9 @@ _LOGIN_LOCALE = {
         "invalid_pw": "\u5bc6\u78bc\u932f\u8aa4",
         "conn_failed": "\u9023\u63a5\u5931\u6557",
     },
-    # Strings mirror static/i18n.js login_* keys for the corresponding locale.
-    # See issue #1442. When adding a new locale to LOCALES in i18n.js, also add
+    # This table is the only source of the login page's strings (the page does
+    # not load static/i18n.js). See issue #1442. When adding a new locale to
+    # LOCALES in i18n.js, also add
     # the matching entry here — tests/test_login_locale_parity.py enforces this.
     "it": {
         "lang": "it-IT",

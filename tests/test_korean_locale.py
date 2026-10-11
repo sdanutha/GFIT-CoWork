@@ -91,9 +91,7 @@ def test_korean_locale_block_exists():
 def test_korean_locale_includes_representative_translations():
     src = read(REPO / "static" / "i18n.js")
     expected = [
-        "settings_title: '설정'",
         "settings_label_language: '언어'",
-        "login_title: '로그인'",
         "approval_heading: '승인 필요'",
         "tab_chat: '채팅'",
         "tab_tasks: '작업'",

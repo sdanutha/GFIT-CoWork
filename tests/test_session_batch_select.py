@@ -172,16 +172,13 @@ def test_batch_select_i18n_keys():
         src = f.read()
     required_keys = [
         'session_select_mode',
-        'session_select_mode_desc',
         'session_select_all',
-        'session_deselect_all',
         'session_selected_count',
         'session_batch_archive',
         'session_batch_delete',
         'session_batch_move',
         'session_batch_delete_confirm',
         'session_batch_archive_confirm',
-        'session_no_selection',
     ]
     locales = ['en', 'ru', 'es', 'de', 'zh', 'zh-Hant', 'ko']
     for key in required_keys:

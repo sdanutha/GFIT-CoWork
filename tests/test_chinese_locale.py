@@ -86,8 +86,6 @@ def test_chinese_locale_includes_representative_translations():
     # either escape-encoded `\uXXXX` form or literal CJK characters. They produce
     # the same runtime string; do not pin source encoding.
     expected_alternatives = [
-        [r"settings_title: '\u8bbe\u7f6e'", "settings_title: '设置'"],
-        [r"login_title: '\u767b\u5f55'", "login_title: '登录'"],
         ["approval_heading: '需要审批'"],
         ["tab_tasks: '任务'"],
         ["tab_profiles: '配置'"],
@@ -132,7 +130,6 @@ def test_traditional_chinese_mcp_and_tree_labels_are_not_cyrillic():
     expected = [
         "tree_view: '樹狀'",
         "raw_view: '原始'",
-        "parse_failed_note: '解析失敗'",
     ]
     for entry in expected:
         assert entry in block

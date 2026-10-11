@@ -1,16 +1,3 @@
-// Early boot initialization that must run before any other code.
-// These run during script evaluation to handle server-stopped state
-// and cross-tab shutdown broadcasts as early as possible.
-(function(){
-  // Clear stale stop-server flag on successful page load (server is reachable)
-  try{localStorage.removeItem('hermes-webui-server-stopped');}catch(_){}
-  // Listen for shutdown broadcast from other tabs
-  try {
-    var _stopChan = new BroadcastChannel('hermes-webui-shutdown');
-    _stopChan.onmessage = function() { _showServerStopped(); };
-  } catch(_) {}
-})();
-
 // cancelStream: stop the active chat stream.
 // See docs/rfcs/webui-run-state-consistency-contract.md (Invariants #2, #4)
 // for the owner-aware + terminal-settle rationale.
@@ -3491,9 +3478,3 @@ window.addEventListener('pageshow', async (event) => {
     } catch (_) {}
   }
 });
-
-
-function _showServerStopped() {
-  var stoppedMsg = (typeof t === 'function' ? t('settings_shutdown_stopped_message') : 'Server stopped. You can close this tab.');
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--muted);font-family:var(--font-ui);font-size:14px"><p>' + stoppedMsg + '</p></div>';
-}
