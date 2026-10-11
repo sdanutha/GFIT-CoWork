@@ -22,3 +22,7 @@ Supersedes in part ADR 0002 (server-level features open to the Admin) and ADR 00
 - There is no mode with login turned off: a server with no Directory refuses to start, on any address. Local development and the test suite use the in-memory Directory; the shared test server logs in one test User bound to their own Profile, so the tests exercise the production Admission (docs/TESTING.md, "How the automated tests log in").
 - A request's Profile is its Admission's and nothing else: the Profile cookie, Profile switching and every all-Profiles view (the session list, search, projects and cron "other Profiles" toggles, the all-Profiles CLI import) are gone.
 - Handing over a departed User's work is done on the server, not by reading their Profile in the web app.
+
+## Clarification (2026-10-12)
+
+The removed extensions system refers specifically to GFIT-CoWork WebUI Extensions, including `/api/extensions/*`, the sidecar proxy, and Settings > Extensions. It does not refer to the still-supported dashboard plugin routes (`/plugins/*`, `/dashboard-plugins/*`, `/api/plugins`) or the separately managed Hermes Dashboard.
