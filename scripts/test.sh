@@ -225,6 +225,17 @@ else
   "$PYTHON_BIN" -m pip install -r "$REQ_FILE"
 fi
 
+# --parallel N: run N pytest-shard processes at once and combine their results.
+if [[ "${1:-}" == --parallel=* ]]; then
+  shards="${1#--parallel=}"
+  shift
+  exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$shards" "$@"
+fi
+if [[ "${1:-}" == "--parallel" ]]; then
+  shift
+  exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$@"
+fi
+
 if [[ $# -eq 0 ]]; then
   set -- tests/ -v --timeout=60
 fi
