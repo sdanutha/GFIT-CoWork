@@ -77,7 +77,7 @@ def test_docker_docs_do_not_claim_native_gpu_passthrough_verification():
 
 
 def test_docker_init_preserves_supplemental_device_groups_for_runtime_user():
-    docker_init = _repo_text("docker_init.bash")
+    docker_init = _repo_text("deploy/docker/docker_init.bash")
     root_phase = docker_init[:docker_init.index("exec su -s /bin/bash")]
 
     assert "for gid in $(id -G)" in root_phase

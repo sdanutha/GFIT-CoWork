@@ -132,7 +132,7 @@ def test_docker_init_stages_agent_source_for_writable_install():
     install` — that hits the :ro mount and fails. It must stage the source
     into a writable build dir first (the staged path is used in the install
     invocation)."""
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     # The fix uses an /app staging path that's clearly distinct from the
     # mounted source path. Pin the staging marker.
@@ -177,7 +177,7 @@ def test_docker_init_excludes_egg_info_during_staging():
     `"egg-info" in src` check would pass on a stray comment mention, so
     we require the actual exclusion mechanics to be present.
     """
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     # Find the staging block: rsync invocation OR cp-fallback. Both must
     # actually exclude *.egg-info — a comment mention is not enough.
@@ -244,7 +244,7 @@ def test_docker_init_makes_staged_dir_writable_after_ro_mount_copy():
     both copy paths and BEFORE the install. This test pins that ordering and the
     `u+w` form (so the staged tree isn't accidentally made world-writable).
     """
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     stage_idx = src.index("_stage_src=")
     install_idx = src.index("uv pip install", stage_idx)
@@ -295,7 +295,7 @@ def test_docker_init_uses_editable_install():
     hermes-agent staged source. The upstream setup.py build guard blocks
     bdist_wheel outside Nix builds. Editable installs use build_editable
     which bypasses the guard entirely."""
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     install_lines = [
         line for line in src.splitlines()
@@ -318,7 +318,7 @@ def test_docker_init_stages_to_persistent_path():
     target under /app/ alongside the venv avoids runtimes that mount or clean
     /tmp independently while retaining /app/ across ordinary restarts.
     """
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     stage_line = [
         line for line in src.splitlines()
@@ -343,7 +343,7 @@ def test_docker_init_retains_staged_source_after_editable_install():
     """An editable install records the staged source path in a .pth file.
     Removing the source tree after install breaks imports at runtime.
     Ensure no `rm -rf "$_stage_src"` appears after the install line."""
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     stage_idx = src.index("_stage_src=")
     install_idx = src.index("uv pip install", stage_idx)
