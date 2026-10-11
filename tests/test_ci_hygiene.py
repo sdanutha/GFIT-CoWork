@@ -27,8 +27,10 @@ def test_github_actions_installs_version_specifiers_safely():
 
 
 def test_pytest_integration_marker_is_registered():
-    config = ROOT / "pytest.ini"
+    config = ROOT / "pyproject.toml"
     text = config.read_text(encoding="utf-8")
+
+    assert "[tool.pytest.ini_options]" in text
 
     assert "markers" in text
     assert "integration:" in text

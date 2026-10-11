@@ -48,6 +48,12 @@ version_file = "api/_scm_version.py"
 # forward-looking and line-scoped on NEW/CHANGED Python code; see
 # scripts/ruff_lint.py and docs/TESTING.md > "Python lint gate (ruff)".
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that hit the live test server or external integration surface",
+    "reproduction: tests that execute a direct issue reproduction fixture",
+]
+
 [tool.ruff]
 # Match the Python version exercised in CI (tests.yml matrix: 3.14).
 target-version = "py314"

@@ -8,7 +8,7 @@ asserted the strings existed, and even *running* the file doesn't compile an
 uncalled function body. Only a real scope-aware linter (ESLint `no-const-assign`)
 or executing the exact function would have flagged it.
 
-This test runs ESLint with `eslint.runtime-guard.config.mjs` — a curated set of
+This test runs ESLint with `scripts/eslint.runtime-guard.config.mjs` — a curated set of
 zero-false-positive RUNTIME-error rules (no style rules) — over `static/**/*.js`.
 
 Graceful skip: if node or a local/global eslint isn't available, the test SKIPS
@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-CONFIG = REPO / "eslint.runtime-guard.config.mjs"
+CONFIG = REPO / "scripts" / "eslint.runtime-guard.config.mjs"
 
 
 def _find_eslint():
