@@ -8,7 +8,7 @@
 > Prerequisites: SSH tunnel is active on port 8787. Open http://localhost:8787 in browser.
 > Server health check: curl http://127.0.0.1:8787/health should return {"status":"ok"}.
 >
-> Automated coverage: ~11,500 tests collected via `./scripts/test.sh tests/ --collect-only -q`. Tests run on every PR via GitHub Actions on Python 3.14 (5 parallel shards), alongside a ruff lint gate, a headless browser smoke test, and a Docker smoke test. The suite covers the bootstrap, Directory login and Profile admission, CSS regression coverage for thinking/tool card animation, streaming session persistence, mobile layout breakpoints, locale parity across 14 languages, and hundreds of issue/PR-pinned regression tests.
+> Automated coverage: ~11,500 tests collected via `./scripts/test.sh tests/ --collect-only -q`. There is no hosted CI ([ADR 0007](adr/0007-no-hosted-ci.md)): run the suite locally on Python 3.14 with `./scripts/test.sh`, and run the ruff diff gate, the headless browser smoke test, and the Docker smoke test by hand when a change touches what they cover. The suite covers the bootstrap, Directory login and Profile admission, CSS regression coverage for thinking/tool card animation, streaming session persistence, mobile layout breakpoints, locale parity across 14 languages, and hundreds of issue/PR-pinned regression tests.
 > Run: `./scripts/test.sh`
 >
 > Local regression focus: verify that a previously closed workspace panel stays visually closed from first paint through boot completion on desktop refresh; there should be no brief open-then-close flash.
@@ -82,9 +82,10 @@ python3 scripts/ruff_lint.py --all
 `tests/test_ruff_forward_lint.py` holds the **whole tree** free of E9 (real
 syntax/runtime) findings and verifies the curated config shape; it runs in-suite
 when ruff is present and **skips gracefully** when it isn't — so environments
-without ruff aren't blocked, while CI (which installs ruff) enforces it. The
-diff-scoped gate runs as the `lint` job in `.github/workflows/tests.yml` and is
-also part of the maintainer pre-release pre-gate.
+without ruff aren't blocked; `./scripts/test.sh` installs ruff from
+`requirements-dev.txt`, so the runner enforces it. The diff-scoped gate has no
+automated runner; run it by hand before merging, and it is part of the
+maintainer pre-release pre-gate.
 
 ## Automated browser smoke (runtime brick-class gate)
 
@@ -96,8 +97,7 @@ that throws only when a real browser executes the page (e.g. a `function X(){}` 
 `tests/browser_smoke.py` boots the real `server.py` (agent-free, on an ephemeral
 port, with an isolated temp state dir) and loads the key pages in headless
 Chromium, failing if **any** console error or uncaught JS exception fires on load.
-It runs in CI (`.github/workflows/browser-smoke.yml`) on every PR and push to
-master, and locally:
+Nothing runs it automatically; run it locally when a change touches page load:
 
 ```bash
 pip install playwright && python -m playwright install chromium
@@ -154,12 +154,12 @@ HISTORICAL_HYDRATION_TEST_BITE=break-tool-link \
   python tests/browser_historical_transcript_hydration.py
 ```
 
-The dedicated `Conversation lifecycle (informational)` workflow keeps the existing
-proof rows (`normal`, `terminal-error`, and `historical-transcript-hydration`)
-non-blocking while the public matrix expands. The Chromium
-`reconnect-scene-redraw` row does **not** allow failures: it exercises the real
-`loadSession` reconnect path and fails the workflow on a regression. Required
-merge checks remain a maintainer-controlled repository setting.
+The proof rows (`normal`, `terminal-error`, and
+`historical-transcript-hydration`) are informational while the public matrix
+expands. The Chromium `reconnect-scene-redraw` row does **not** allow failures:
+it exercises the real `loadSession` reconnect path, so treat a failure as a
+regression. Nothing runs these automatically; run them by hand when a change
+touches the conversation lifecycle.
 The maintainer's private QA harness remains broader; later public slices will
 add cancellation, compression, and recovery coverage.
 

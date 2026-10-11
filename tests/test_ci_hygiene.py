@@ -1,4 +1,4 @@
-"""Small hygiene regression checks for CI and frontend console noise."""
+"""Small hygiene regression checks for the test runner, packaging, and console noise."""
 
 import os
 import shutil
@@ -11,19 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _make_executable(path):
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
-def test_github_actions_installs_version_specifiers_safely():
-    """Unquoted `pyyaml>=6.0` is parsed by the shell as stdout redirection.
-
-    The tests job installs from requirements-dev.txt, so no specifier reaches
-    the shell at all.
-    """
-    for name in ("tests.yml", "browser-smoke.yml", "conversation-lifecycle.yml"):
-        text = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-        assert "pip install pyyaml>=6.0" not in text, name
-    tests = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    assert "pip install -r requirements-dev.txt" in tests
 
 
 def test_pytest_integration_marker_is_registered():
@@ -257,20 +244,7 @@ def test_local_test_runner_rejects_python_older_than_314(tmp_path):
     assert not (repo / ".venv").exists()
 
 
-def test_ci_and_packaging_target_python_314_only():
-    import re
-
-    workflows = ROOT / ".github" / "workflows"
-    for path in sorted(workflows.glob("*.yml")):
-        versions = re.findall(r"python-version:\s*(.+)", path.read_text(encoding="utf-8"))
-        for value in versions:
-            value = value.strip()
-            if value.startswith("${{"):
-                continue
-            assert value in ("'3.14'", "['3.14']"), f"{path.name}: python-version {value}"
-    tests = (workflows / "tests.yml").read_text(encoding="utf-8")
-    assert "python-version: ['3.14']" in tests
-
+def test_packaging_targets_python_314_only():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.14"' in pyproject
     assert 'target-version = "py314"' in pyproject

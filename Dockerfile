@@ -134,7 +134,7 @@ COPY --chown=root:root . /apptoo
 
 # Bake the git version tag into the image so the settings badge works even
 # when .git is not present (it is excluded by .dockerignore).
-# CI passes: --build-arg HERMES_VERSION=$(git describe --tags --always)
+# Release builds pass: --build-arg HERMES_VERSION=$(git describe --tags --always)
 # Local builds that omit the arg get "unknown" as the fallback.
 ARG HERMES_VERSION=unknown
 RUN echo "__version__ = '${HERMES_VERSION}'" > /apptoo/api/_version.py

@@ -31,6 +31,11 @@ def test_repository_agents_file_is_excluded_from_docker_context():
     assert _excluded_by_root_rule("AGENTS.md", _dockerignore_rules())
 
 
+def test_repository_claude_folder_is_excluded_from_docker_context():
+    """The repository's Claude Code settings and rules must not enter the runtime image."""
+    assert "/.claude" in _dockerignore_rules()
+
+
 def test_workspace_agents_file_is_not_recursively_excluded():
     """A selected workspace may still provide its own Agent instructions."""
     assert not _excluded_by_root_rule("workspace/AGENTS.md", _dockerignore_rules())

@@ -186,12 +186,12 @@ PR body.
 The static tests for this guidance are advisory coverage. They pin contributor
 wording so the rule stays visible. This advisory coverage is not an automated
 policy gate; static coverage is not an automated policy gate and does not enforce
-PR-body content on GitHub. A future release-time or CI check could
+PR-body content on GitHub. A future release-time check could
 surface contract-affecting diffs whose PR body lacks `Contract Routing`, but this
 document only defines the review expectation.
 
 Release batches should list included contract-affecting PRs explicitly so
-reviewers can distinguish ordinary green-CI fixes from changes that update the
+reviewers can distinguish ordinary green-test fixes from changes that update the
 project's product or runtime guardrails.
 
 ## PR preparation checklist
@@ -220,7 +220,7 @@ Required checks:
 - After the GitHub write, read the PR back and verify the headings rendered as
   intended.
 
-Green CI plus a focused diff is not sufficient if the PR description or evidence
+Green tests plus a focused diff is not sufficient if the PR description or evidence
 does not match the touched subsystem.
 
 ## Setup and operational references

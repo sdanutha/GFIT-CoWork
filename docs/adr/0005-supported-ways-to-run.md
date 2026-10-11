@@ -5,7 +5,7 @@ GFIT-CoWork runs in exactly three ways. On a server, every Team's Deployment run
 ## Consequences
 
 - Not supported, and removed from the repo: Upstream's three root Compose setups (`docker-compose.yml`, `docker-compose.two-container.yml`, `docker-compose.three-container.yml`) with their example env file, the Nix flake and NixOS module, and the WSL autostart kit. Git history keeps them (ADR 0001). Do not re-add them.
-- `start.ps1` and its native-Windows CI check stay, and so does bootstrap's runtime WSL detection that tells native Windows apart from WSL. A review that finds them unused on the server should not delete them.
-- The Docker smoke workflow brings up `deploy/`, built from the change's own Dockerfile, so CI protects the Deployment every Team actually runs.
+- `start.ps1` stays (its native-Windows CI check was removed with all hosted CI, ADR 0007), and so does bootstrap's runtime WSL detection that tells native Windows apart from WSL. A review that finds them unused on the server should not delete them.
+- The Docker smoke workflow that brought up `deploy/` from the change's own Dockerfile was removed with all hosted CI (ADR 0007). Bring `deploy/` up by hand when a change touches the image or the kit.
 - The README and `docs/docker.md` describe only `deploy/`. What they say about the image itself (volumes, UID/GID, the read-only agent source) applies to the image as `deploy/` runs it.
 - Tests that guarded the root Compose files either guard `deploy/` instead, when `deploy/` does the same thing, or are gone, when only the Upstream setups did it.

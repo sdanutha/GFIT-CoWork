@@ -1,7 +1,7 @@
 # GFIT-CoWork local test/lint dependencies.
 #
 # Runtime dependencies stay in requirements.txt. This file mirrors the Python
-# tools CI installs for contributor validation.
+# tools ./scripts/test.sh installs for contributor validation.
 -r requirements.txt
 pytest
 pytest-timeout

@@ -218,7 +218,7 @@ picks the base interpreter for `.venv`. Tests run against isolated servers with
 their own state directories; real sessions and cron jobs are never touched.
 Login is on in the tests too: the shared test server logs in one test User bound
 to their own Profile (see "How the automated tests log in" in docs/TESTING.md).
-CI runs the same suite on every pull request to `main` and `dev`. See
+There is no hosted CI; this local run is the gate. See
 [`docs/TESTING.md`](docs/TESTING.md) for manual checks.
 
 ## Architecture
