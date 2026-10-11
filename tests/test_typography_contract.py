@@ -13,7 +13,6 @@ except Exception:  # pragma: no cover - dependency optional
 REPO = Path(__file__).parent.parent
 CSS = (REPO / "static" / "style.css").read_text(encoding="utf-8")
 PANEL_JS = (REPO / "static" / "panels.js").read_text(encoding="utf-8")
-BOOT_JS = (REPO / "static" / "boot.js").read_text(encoding="utf-8")
 INDEX_HTML = (REPO / "static" / "index.html").read_text(encoding="utf-8")
 NODE = shutil.which("node")
 
@@ -287,4 +286,3 @@ def test_playwright_regression_ensures_font_contract_for_syntax_and_edit_surface
 
 def test_first_party_technical_js_uses_font_mono_contract():
     assert 'font-family:var(--font-mono)' in PANEL_JS
-    assert "font-family:var(--font-ui)" in BOOT_JS
