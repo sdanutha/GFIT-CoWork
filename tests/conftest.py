@@ -13,6 +13,7 @@ PATH DISCOVERY:
     3. Common install paths (~/.hermes/hermes-agent)
     4. System python3 as a last resort
 """
+import copy
 import json
 import inspect
 import multiprocessing
@@ -308,6 +309,37 @@ def _no_stream_left_open(request):
 
 
 @pytest.fixture(autouse=True)
+def _restore_config_cache_identity():
+    """Restore api.config's loaded-config identity after every test.
+
+    A test that reloads config under a temporary HERMES_CONFIG_PATH leaves
+    ``_cfg_path`` (and the cache contents) pointing at that file after
+    monkeypatch restores the env. The next ``get_available_models()`` then
+    sees the path change and reloads from disk, which rebinds ``config.cfg``
+    and throws away a later test's patched config (seen under pytest-shard as
+    test_issue2399's picker built from an empty config). Restore the path,
+    mtime, fingerprint, the ``cfg`` binding and the cache contents whenever a
+    test changed which file is loaded.
+    """
+    mod = sys.modules.get('api.config')
+    if mod is None:
+        yield
+        return
+    saved_identity = (mod._cfg_path, mod._cfg_mtime, getattr(mod, '_cfg_fingerprint', None))
+    saved_cfg = mod.cfg
+    saved_cache = copy.deepcopy(dict(mod._cfg_cache))
+    yield
+    if (mod._cfg_path, mod._cfg_mtime) == saved_identity[:2] and mod.cfg is saved_cfg:
+        return
+    mod._cfg_cache.clear()
+    mod._cfg_cache.update(saved_cache)
+    mod.cfg = saved_cfg
+    mod._cfg_path, mod._cfg_mtime = saved_identity[:2]
+    if hasattr(mod, '_cfg_fingerprint'):
+        mod._cfg_fingerprint = saved_identity[2]
+
+
+@pytest.fixture(autouse=True)
 def _restore_profile_home_globals():
     """Restore HERMES_HOME / HERMES_BASE_HOME after every test.
 
@@ -430,6 +462,10 @@ VENV_PYTHON  = _discover_python(HERMES_AGENT)
 TEST_HOME = TEST_STATE_DIR.with_name(TEST_STATE_DIR.name + '-home')
 shutil.rmtree(TEST_HOME, ignore_errors=True)
 TEST_HOME.mkdir(parents=True)
+# The docker CLI finds its plugins (compose) under ~/.docker; keep that one
+# directory reachable for the deployment-kit checks. It holds no provider login.
+if not os.environ.get('DOCKER_CONFIG') and (HOME / '.docker').is_dir():
+    os.environ['DOCKER_CONFIG'] = str(HOME / '.docker')
 os.environ['HOME'] = str(TEST_HOME)
 for _host_var in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
                   'COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'):
