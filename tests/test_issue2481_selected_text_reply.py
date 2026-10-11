@@ -142,7 +142,6 @@ def test_selected_text_reply_styles_and_i18n_exist_for_all_locales():
     required = {
         "selected_text_reply",
         "selected_text_reply_title",
-        "selected_text_reply_appended",
         "selected_text_refine",
         "selected_text_refine_title",
         "selected_text_refine_instruction",

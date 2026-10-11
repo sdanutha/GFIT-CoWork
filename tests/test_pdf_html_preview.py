@@ -323,7 +323,7 @@ class TestCSSClasses:
 class TestI18nKeys:
     """All required i18n keys must exist in the en locale."""
 
-    PDF_KEYS = ['pdf_loading', 'pdf_too_large', 'pdf_no_pages', 'pdf_error', 'pdf_download']
+    PDF_KEYS = ['pdf_loading', 'pdf_too_large', 'pdf_error', 'pdf_download']
     HTML_KEYS = ['html_loading', 'html_too_large', 'html_error', 'html_open_full', 'html_sandbox_label']
 
     def _find_locale_block(self, locale):

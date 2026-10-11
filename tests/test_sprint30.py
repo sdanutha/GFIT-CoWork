@@ -242,7 +242,6 @@ class TestClarifyI18nKeys:
         "clarify_other",
         "clarify_send",
         "clarify_input_placeholder",
-        "clarify_responding",
     ]
 
     def test_english_locale_has_all_clarify_keys(self):

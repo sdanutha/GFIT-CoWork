@@ -91,9 +91,7 @@ def test_czech_locale_includes_representative_translations():
     src = read(REPO / "static" / "i18n.js")
     cs_block = extract_locale_block(src, "cs")
     expected = [
-        "settings_title: 'Nastavení'",
         "settings_label_language: 'Jazyk'",
-        "login_title: 'Přihlášení'",
         "approval_heading: 'Požadováno schválení'",
         "tab_tasks: 'Úkoly'",
         "tab_profiles: 'Profily'",

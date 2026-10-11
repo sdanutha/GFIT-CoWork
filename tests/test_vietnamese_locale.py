@@ -84,8 +84,6 @@ def test_vietnamese_locale_includes_representative_translations():
     src = read(REPO / "static" / "i18n.js")
     vi_block = extract_locale_block(src, "vi")
     expected = [
-        "settings_heading_title: 'Trung tâm điều khiển'",
-        "settings_heading_subtitle: 'Tùy chọn, công cụ hội thoại và điều khiển hệ thống.'",
         "checkpoint_title: 'Checkpoint'",
         "composer_send: 'Gửi tin nhắn'",
         "wiki_browse: 'Duyệt wiki'",

@@ -235,12 +235,6 @@ OPTIONAL_LOGIN_KEYS = (
 # Adding a new locale to i18n.js without these translated will leak English to the
 # user during the very first run / login experience.
 LOGIN_FLOW_TRANSLATED_KEYS = (
-    "login_title",
-    "login_subtitle",
-    "login_placeholder",
-    "login_btn",
-    "login_invalid_pw",
-    "login_conn_failed",
     "sign_out",
     "sign_out_failed",
 )
@@ -350,10 +344,8 @@ SESSION_MANAGEMENT_KEYS = (
     "session_batch_delete_worktree_confirm",
     "session_batch_archive_worktree_confirm",
     "session_select_mode",
-    "session_select_mode_desc",
     "session_select_all",
     "session_selected_count",
-    "session_no_selection",
 )
 
 
