@@ -396,7 +396,7 @@ def test_transparent_stream_live_branch_uses_direct_rows():
     assert "return toolCount?`Trace: ${toolCount} ${toolCount===1?'tool':'tools'}`:'Trace';" in UI_JS
     assert "return `Activity: ${toolCount} ${toolCount===1?'tool':'tools'}`" not in UI_JS
     assert "Activity: ${parts.join(' · ')}" not in UI_JS
-    # The summary must not list thinking count (DESIGN.md:75 forbids a second
+    # The summary must not list thinking count (docs/DESIGN.md:75 forbids a second
     # trailing count badge, and thinking rows render as their own rows).
     assert "thinkingCount" not in _transparentEventCountLabelBlock(UI_JS)
     assert "function _setTransparentRowsExpanded" in UI_JS

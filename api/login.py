@@ -306,6 +306,6 @@ def startup_check() -> StartupCheck:
         "[!!] Refusing to start: no Directory is configured, so nobody could log in.",
         f"     To use the company AD, {_DIRECTORY_HINT}.",
         "     For local development, set HERMES_WEBUI_DIRECTORY=memory and",
-        "     HERMES_WEBUI_DIRECTORY_USERS to a JSON file of test users (see TESTING.md).",
+        "     HERMES_WEBUI_DIRECTORY_USERS to a JSON file of test users (see docs/TESTING.md).",
     ]
     return StartupCheck(False, lines)

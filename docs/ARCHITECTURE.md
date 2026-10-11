@@ -90,8 +90,8 @@ actions. The topbar remains focused on conversation context and the workspace/fi
       ~1,150 test files    ~11,500 tests collected via pytest (run `pytest --collect-only -q` for exact)
       test_regressions.py  Permanent regression gate
     CONTRIBUTING.md        Contributor workflow and PR expectations.
-    ARCHITECTURE.md        THIS FILE.
-    TESTING.md             Manual browser test plan and automated coverage reference.
+    docs/ARCHITECTURE.md   THIS FILE.
+    docs/TESTING.md        Manual browser test plan and automated coverage reference.
     CHANGELOG.md           Release notes per version.
     requirements.txt       Python dependencies.
     .env.example           Sample environment variable overrides.

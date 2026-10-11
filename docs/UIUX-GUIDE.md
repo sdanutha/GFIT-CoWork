@@ -2,8 +2,8 @@
 
 This document summarizes UI/UX principles that are already visible in the
 repository. It is a contributor guide, not a new design proposal. Source
-documents include [`DESIGN.md`](../DESIGN.md), [`README.md`](../README.md),
-[`THEMES.md`](../THEMES.md), [`docs/ui-ux/index.html`](ui-ux/index.html),
+documents include [`DESIGN.md`](DESIGN.md), [`README.md`](../README.md),
+[`THEMES.md`](THEMES.md), [`docs/ui-ux/index.html`](ui-ux/index.html),
 [`docs/ui-ux/two-stage-proposal.html`](ui-ux/two-stage-proposal.html), and
 design comments in `static/style.css`.
 

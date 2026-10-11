@@ -14,7 +14,7 @@ zero-false-positive RUNTIME-error rules (no style rules) — over `static/**/*.j
 Graceful skip: if node or a local/global eslint isn't available, the test SKIPS
 (with a clear reason) rather than failing — so environments without the toolchain
 aren't blocked. The release gate runs in an environment where eslint IS installed
-(see TESTING.md), so the guard is enforced there.
+(see docs/TESTING.md), so the guard is enforced there.
 """
 import json
 import shutil
@@ -47,7 +47,7 @@ def test_static_js_has_no_runtime_error_lint():
         pytest.skip(
             "eslint not installed — install with "
             "`npm install --no-save --before=<48h-ago> eslint` to enforce the "
-            "runtime-error guard locally (CI/release env has it). See TESTING.md."
+            "runtime-error guard locally (CI/release env has it). See docs/TESTING.md."
         )
     if shutil.which("node") is None:
         pytest.skip("node not available")

@@ -20,7 +20,7 @@ only nested and called from a sibling scope is flagged. See that script's header
 for the full design + the verified dynamic-global allowlist.
 
 Graceful skip: if node or eslint isn't available the test SKIPS (the release gate
-runs where eslint IS installed — see TESTING.md), so toolchain-free envs aren't
+runs where eslint IS installed — see docs/TESTING.md), so toolchain-free envs aren't
 blocked.
 """
 import shutil
@@ -40,7 +40,7 @@ def test_static_js_has_no_undefined_references():
         pytest.skip(
             "eslint not installed — install with "
             "`npm install --no-save --before=<48h-ago> eslint` to enforce the "
-            "scope/undef guard locally (CI/release env has it). See TESTING.md."
+            "scope/undef guard locally (CI/release env has it). See docs/TESTING.md."
         )
     if shutil.which("node") is None:
         pytest.skip("node not available")

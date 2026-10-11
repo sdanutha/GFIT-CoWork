@@ -13,7 +13,7 @@ Hermes WebUI is intentionally simple to work on: Python on the server, vanilla J
 - Read [`docs/CONTRACTS.md`](docs/CONTRACTS.md) and any linked contract/RFC for
   the subsystem you will touch.
 - For UI or UX work, read [`docs/UIUX-GUIDE.md`](docs/UIUX-GUIDE.md)
-  and [`DESIGN.md`](DESIGN.md).
+  and [`docs/DESIGN.md`](docs/DESIGN.md).
 - For runtime, streaming, recovery, replay, compression, context reconstruction,
   or session metadata work, start with [`docs/rfcs/README.md`](docs/rfcs/README.md)
   and the relevant RFC listed there.
@@ -84,7 +84,7 @@ unsupported system interpreters during collection:
 
 CI also runs this suite on Python `3.14`, the only supported version.
 
-If your change affects browser behavior, also run the relevant manual checks from [TESTING.md](TESTING.md).
+If your change affects browser behavior, also run the relevant manual checks from [docs/TESTING.md](docs/TESTING.md).
 
 ### 3. Clear PR Description
 
@@ -137,8 +137,8 @@ If your change alters behavior, architecture, testing, setup, or user-facing wor
 Common files:
 
 - [README.md](README.md) for setup, usage, and contributor-facing commands
-- [ARCHITECTURE.md](ARCHITECTURE.md) for implementation details and design constraints
-- [TESTING.md](TESTING.md) for manual and automated verification guidance
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for implementation details and design constraints
+- [docs/TESTING.md](docs/TESTING.md) for manual and automated verification guidance
 - [CHANGELOG.md](CHANGELOG.md) for release history context. Do not edit it in
   ordinary contributor PRs; include release-note-ready wording in the PR body
   so the owner can carry it into the CHANGELOG.
@@ -220,7 +220,7 @@ Want the smoothest review?
 ## Development References
 
 - [README.md](README.md)
-- [ARCHITECTURE.md](ARCHITECTURE.md)
-- [TESTING.md](TESTING.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/TESTING.md](docs/TESTING.md)
 
 Questions are best raised early, before a large change is finished.

@@ -217,9 +217,9 @@ The runner creates or reuses `.venv` with Python 3.14 and installs
 picks the base interpreter for `.venv`. Tests run against isolated servers with
 their own state directories; real sessions and cron jobs are never touched.
 Login is on in the tests too: the shared test server logs in one test User bound
-to their own Profile (see "How the automated tests log in" in TESTING.md).
+to their own Profile (see "How the automated tests log in" in docs/TESTING.md).
 CI runs the same suite on every pull request to `main` and `dev`. See
-[`TESTING.md`](TESTING.md) for manual checks.
+[`docs/TESTING.md`](docs/TESTING.md) for manual checks.
 
 ## Architecture
 
@@ -240,7 +240,7 @@ routing shell.
 | `deploy/` | The Deployment kit |
 
 Design notes and the endpoint catalogue are in
-[`ARCHITECTURE.md`](ARCHITECTURE.md); the vocabulary is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the vocabulary is in
 [`CONTEXT.md`](CONTEXT.md) and the decisions in [`docs/adr/`](docs/adr/).
 
 ## Compatibility
@@ -271,14 +271,14 @@ must match.
 - [`docs/advanced-chat-setup.md`](docs/advanced-chat-setup.md) — Gateway-backed chat and recall prefill
 
 **Using and customizing**
-- [`THEMES.md`](THEMES.md) — themes and skins
+- [`docs/THEMES.md`](docs/THEMES.md) — themes and skins
 - [`docs/workspace-git.md`](docs/workspace-git.md) — the read-only Workspace Git view
 
 **Contributing and design**
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — contribution style and PR expectations
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — system design and every API endpoint
-- [`TESTING.md`](TESTING.md) — manual and automated verification
-- [`DESIGN.md`](DESIGN.md) and [`docs/UIUX-GUIDE.md`](docs/UIUX-GUIDE.md) — design tokens and UI/UX principles
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design and every API endpoint
+- [`docs/TESTING.md`](docs/TESTING.md) — manual and automated verification
+- [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/UIUX-GUIDE.md`](docs/UIUX-GUIDE.md) — design tokens and UI/UX principles
 - [`docs/sse-streams.md`](docs/sse-streams.md) — the SSE endpoints
 - [`docs/CONTRACTS.md`](docs/CONTRACTS.md) and [`docs/rfcs/README.md`](docs/rfcs/README.md) — contracts and RFCs
 - [`CHANGELOG.md`](CHANGELOG.md) — GFIT-CoWork's release notes

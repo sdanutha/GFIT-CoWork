@@ -76,7 +76,7 @@ graphify-out/
 
 .venv/
 
-# Dev-only lint tooling (ESLint runtime-error guard) — see TESTING.md
+# Dev-only lint tooling (ESLint runtime-error guard) — see docs/TESTING.md
 node_modules/
 package-lock.json
 docs/ui-ux/review-shots/
