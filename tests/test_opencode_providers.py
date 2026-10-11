@@ -3,8 +3,6 @@ Tests for OpenCode Zen and OpenCode Go provider support.
 Verifies provider registration in display/model catalogs and
 env-var fallback detection.
 """
-import sys
-import types
 import pytest
 import api.config as config
 
@@ -64,13 +62,24 @@ def test_opencode_go_in_provider_models():
 
 # ── Env-var fallback detection ────────────────────────────────────────
 
+def _force_env_fallback(monkeypatch):
+    """Make the Agent's provider availability unavailable, as when it is not installed.
+
+    Availability is read through ``config._read_only_available_providers``
+    (ticket 17), which imports ``hermes_cli.models`` with ``from hermes_cli
+    import models``. Once the real package is imported that reads the package
+    attribute, so replacing ``sys.modules["hermes_cli.models"]`` alone no
+    longer forces the fallback; fail the availability read itself.
+    """
+    def _agent_unavailable():
+        raise ImportError("hermes_cli.models")
+
+    monkeypatch.setattr(config, "_read_only_available_providers", _agent_unavailable)
+
+
 def _models_with_env_key(monkeypatch, env_var, expected_provider_display):
     """Helper: fake hermes_cli unavailable, set an env var, check detection."""
-    # Force the env-var fallback path by making hermes_cli import fail
-    fake_mod = types.ModuleType("hermes_cli.models")
-    fake_mod.list_available_providers = None  # will raise on call
-    monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_mod)
-    monkeypatch.delattr(fake_mod, "list_available_providers")
+    _force_env_fallback(monkeypatch)
 
     old_cfg = dict(config.cfg)
     config.cfg["model"] = {}
@@ -97,10 +106,7 @@ def test_opencode_go_detected_via_env_key(monkeypatch):
 
 def test_shared_opencode_api_key_detects_zen_and_go(monkeypatch):
     """A shared OpenCode bridge key should enable both OpenCode surfaces."""
-    fake_mod = types.ModuleType("hermes_cli.models")
-    fake_mod.list_available_providers = None
-    monkeypatch.setitem(sys.modules, "hermes_cli.models", fake_mod)
-    monkeypatch.delattr(fake_mod, "list_available_providers")
+    _force_env_fallback(monkeypatch)
 
     old_cfg = dict(config.cfg)
     config.cfg["model"] = {}

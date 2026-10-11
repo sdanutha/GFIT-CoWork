@@ -1623,7 +1623,9 @@ def test_unknown_providers_do_not_inherit_default_model(monkeypatch):
 
     Regression guard for the bug where unknown providers ended up showing
     gpt-5.4-mini even though those providers do not serve it. Minimax-Cn is
-    now known and should show its own catalog instead.
+    now known and should show its own catalog instead. Alibaba stands for a
+    provider with no catalog: WebUI has no static one, and the installed
+    Agent's live catalog is stubbed empty so it cannot supply one.
     """
     import sys, types
 
@@ -1639,6 +1641,11 @@ def test_unknown_providers_do_not_inherit_default_model(monkeypatch):
     # The WebUI's read-only availability (ticket 17) is what reports these providers.
     monkeypatch.setattr(config, '_read_only_available_providers', fake_mod.list_available_providers)
     monkeypatch.setitem(sys.modules, 'hermes_cli.auth', fake_auth)
+    _live_ids = config._read_live_provider_model_ids
+    monkeypatch.setattr(
+        config, '_read_live_provider_model_ids',
+        lambda pid: [] if pid == 'alibaba' else _live_ids(pid),
+    )
 
     result = _available_models_with_full_cfg(
         provider='openai-codex',
