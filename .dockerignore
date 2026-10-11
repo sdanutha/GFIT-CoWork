@@ -1,10 +1,32 @@
+# The build context is the repo; keep out what the image does not need.
+# Patterns match from the context root: nested matches need **/.
+
+# Version control and caches
 .git
 .pytest_cache
-__pycache__
-*.pyc
-*.pyo
+**/__pycache__
+**/*.pyc
+**/*.pyo
 tests/
+
+# Local development state. A copied .venv could even be chosen as the
+# server's Python (api/config.py looks for one inside the repo).
+.venv/
+venv/
+.scratch/
+node_modules/
+.playwright-mcp/
+.local-review/
+.review-crops/
+archive/
+
+# Secrets: local .env files, the mock LDAP's test certificates, and the
+# Deployments deploy/new-deployment creates (their .env and every Profile)
 .env*
+**/.env
+dev/mock-ldap/certs/
+/deploy/deployments
+
+# Repository instructions for coding agents
 /AGENTS.md
 /.claude
-/deploy/deployments

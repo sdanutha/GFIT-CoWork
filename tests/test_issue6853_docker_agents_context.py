@@ -41,6 +41,24 @@ def test_workspace_agents_file_is_not_recursively_excluded():
     assert not _excluded_by_root_rule("workspace/AGENTS.md", _dockerignore_rules())
 
 
+@pytest.mark.parametrize("rule", [
+    ".git",
+    ".venv/",
+    ".scratch/",
+    "**/__pycache__",
+    "**/*.pyc",
+    ".env*",
+    "**/.env",
+    "dev/mock-ldap/certs/",
+    "/deploy/deployments",
+])
+def test_local_state_and_secrets_are_excluded_from_docker_context(rule):
+    """Local virtualenvs, issue notes, nested caches, .env files, test
+    certificates and Deployment data must not enter the image. A copied .venv
+    could even be chosen as the server's Python (api/config.py)."""
+    assert rule in _dockerignore_rules()
+
+
 def test_dockerfile_copies_context_to_apptoo_before_runtime_seed():
     """The image source and runtime seed source must share the filtered tree."""
     dockerfile = (REPO / "Dockerfile").read_text(encoding="utf-8")
@@ -108,6 +126,8 @@ def test_docker_runtime_keeps_app_clean_in_both_seed_modes_and_workspace_intact(
                     else "cp -a /apptoo/. /app/"
                 )
                 + "; test -f /app/server.py; test ! -e /app/AGENTS.md; "
+                "test ! -e /app/.venv; test ! -e /app/.scratch; test ! -e /app/.git; "
+                "test -z \"$(find /app -name __pycache__ -o -name .env | head -1)\"; "
                 "test -f /workspace/AGENTS.md"
             )
             args = [docker, "run", "--rm", "--mount", f"type=bind,source={workspace},target=/workspace"]
