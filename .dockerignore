@@ -7,3 +7,4 @@ tests/
 .env*
 /AGENTS.md
 /.claude
+/deploy/deployments

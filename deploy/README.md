@@ -1,7 +1,8 @@
 # The GFIT-CoWork Deployment kit
 
 A **Deployment** is one Team's GFIT-CoWork: one Hermes Agent, one GFIT-CoWork,
-and one config file with the Team's AD settings and API keys. Several
+Hermes Agent's dashboard, and one folder holding the Team's config file (AD
+settings and API keys) and everything the Deployment keeps. Several
 Deployments run on the same server. Each one has its own URL, such as
 `https://sales.cowork.gfit.co.th`, and its own data.
 
@@ -12,14 +13,16 @@ below.
 
 | File | What it is |
 |------|------------|
-| `docker-compose.yml` | One Deployment: Hermes Agent, GFIT-CoWork, and their volumes |
-| `team.env.example` | The config file for one Deployment: copy it to `.env` and fill in every value |
+| `docker-compose.yml` | One Deployment: Hermes Agent, GFIT-CoWork and the dashboard. Run it only through `cowork` |
+| `team.env.example` | The template for one Deployment's `.env`; every value is explained there |
+| `new-deployment` | Creates a Deployment's folder in `deployments/<team>/`, with its ports and random secrets |
+| `cowork` | Runs `docker compose` for one Deployment: `deploy/cowork <team> <compose args>` |
 | `caddy/docker-compose.yml` | The HTTPS reverse proxy, run once per server |
 | `caddy/Caddyfile.example` | Which hostname goes to which Deployment |
 
 People only ever reach GFIT-CoWork through the reverse proxy over HTTPS.
-GFIT-CoWork listens on `127.0.0.1` only, and Hermes Agent's gateway is not
-published on the host at all.
+GFIT-CoWork and the dashboard listen on `127.0.0.1` only, and Hermes Agent's
+gateway is not published on the host at all.
 
 ## Before you start
 
@@ -38,14 +41,16 @@ published on the host at all.
 
 ## Once per server
 
-### 1. Build the GFIT-CoWork image
+### 1. Get the GFIT-CoWork source
 
 ```sh
 git clone <gfit-cowork repo> /opt/gfit-cowork/src
-docker build -t gfit-cowork:latest /opt/gfit-cowork/src
 ```
 
-Every Deployment on the server uses this image (`GFIT_COWORK_IMAGE`).
+Every Deployment runs from this checkout. `deploy/cowork <team> up -d` builds
+the GFIT-CoWork image (`gfit-cowork:latest`) from it each time, so every
+Deployment runs the checkout's current code. The commands below run from
+`/opt/gfit-cowork/src`.
 
 ### 2. Start the reverse proxy
 
@@ -67,49 +72,56 @@ docker compose up -d
 
 ## Add a new Team
 
-Do this once for each Team. The example uses `sales`; for the second Team,
-use another name, another port and another hostname (e.g. `account`, `8802`,
-`account.cowork.gfit.co.th`).
+Do this once for each Team. The example uses `sales` with N=1; for the second
+Team, use another name and another N (e.g. `account`, 2).
 
-1. **Make the Deployment's folder** and copy the kit into it:
+1. **Create the Deployment.** N picks the ports (see [Ports](#ports)); the
+   hostname defaults to `<team>.cowork.gfit.co.th`:
 
    ```sh
-   mkdir -p /opt/gfit-cowork/teams/sales/certs
-   cd /opt/gfit-cowork/teams/sales
-   cp /opt/gfit-cowork/src/deploy/docker-compose.yml .
-   cp /opt/gfit-cowork/src/deploy/team.env.example .env
-   chmod 600 .env
-   cp ad-ca.crt certs/          # the AD CA certificate
+   deploy/new-deployment sales 1
    ```
 
-2. **Fill in `.env`.** Every value in `team.env.example` is explained there.
-   The ones that must be different for every Team:
+   This creates `deploy/deployments/sales/` with `.env` (readable by you
+   only), `home/`, `workspace/` and `certs/`, and prints the ports and the
+   dashboard login. They are also in `.env`. Everything the Deployment keeps
+   is in this folder ([ADR 0008](../docs/adr/0008-deployment-storage-and-dashboard.md)).
+   On Docker Desktop (a trial on a laptop), Hermes Agent logs that SQLite WAL
+   is off for `home/`: that is expected there and does not happen on the Linux
+   server.
 
-   | Value | Example | Note |
-   |-------|---------|------|
-   | `TEAM` | `sales` | Names the containers and volumes (`gfit-sales-...`) |
-   | `GFIT_PORT` | `8801` | Not used by any other Deployment |
-   | `GFIT_HOSTNAME` | `sales.cowork.gfit.co.th` | The same hostname as in the Caddyfile |
-   | the provider key, e.g. `OPENROUTER_API_KEY` | | This Team's own key |
-   | `API_SERVER_KEY` | `openssl rand -hex 24` | A new random value for every Deployment |
+2. **Fill in `.env`** in `deploy/deployments/sales/`. `new-deployment`
+   already filled in the name, ports, hostname and every random secret. You
+   fill in:
 
-   The AD values (`HERMES_WEBUI_LDAP_*`) are usually the same for every Team.
+   | Value | Note |
+   |-------|------|
+   | `HERMES_WEBUI_LDAP_URL`, `HERMES_WEBUI_LDAP_DOMAIN`, `HERMES_WEBUI_LDAP_BASE_DN` | From IT; usually the same for every Team |
+   | the provider key, e.g. `OPENROUTER_API_KEY` | This Team's own key |
+
+   and copy the AD CA certificate to `certs/ad-ca.crt`. `deploy/cowork`
+   refuses to start a Deployment while any of these is missing. Before every
+   start it also copies `API_SERVER_KEY` into `home/.env`, the `default`
+   Profile's `.env`, because Hermes Agent's gateway reads it from there once
+   the Deployment has more than one Profile. Do not change the key in
+   `home/.env`: change it in the Deployment's `.env`, and the next start
+   copies it over.
 
 3. **Start it:**
 
    ```sh
-   docker compose up -d
-   docker compose ps          # both services "running"
-   docker compose logs -f gfit-cowork
+   deploy/cowork sales up -d
+   deploy/cowork sales ps          # three services "running"
+   deploy/cowork sales logs -f gfit-cowork
    ```
 
 4. **Add it to the reverse proxy.** Add a block to
-   `/opt/gfit-cowork/proxy/Caddyfile`:
+   `/opt/gfit-cowork/proxy/Caddyfile`, with the Deployment's `GFIT_PORT`:
 
    ```
    sales.cowork.gfit.co.th {
-   	import gfit_tls
-   	reverse_proxy 127.0.0.1:8801
+       import gfit_tls
+       reverse_proxy 127.0.0.1:20187
    }
    ```
 
@@ -123,7 +135,7 @@ use another name, another port and another hostname (e.g. `account`, `8802`,
 5. **Set the provider and model in the `default` Profile.** On the server:
 
    ```sh
-   docker compose exec hermes-agent hermes model
+   deploy/cowork sales exec hermes-agent hermes model
    ```
 
    Choose the Team's provider, enter its key and choose the model. This saves
@@ -135,15 +147,45 @@ use another name, another port and another hostname (e.g. `account`, `8802`,
    `https://sales.cowork.gfit.co.th` and log in. You land in your own Profile,
    with your name in the Profile chip, and the agent answers.
 
+## Ports
+
+Each Deployment gets its ports from its N (0–99). Only GFIT-CoWork and the
+dashboard are published, on `127.0.0.1` only; Hermes Agent's gateway is never
+published.
+
+| N | GFIT-CoWork (`GFIT_PORT`) | Dashboard (`DASHBOARD_PORT`) |
+|---|---|---|
+| 0 | 8787 | 9119 |
+| 1–99 | 2NN87 | 2NN19 |
+
+Example: N=1 → 20187 / 20119, N=25 → 22587 / 22519.
+
+## The dashboard
+
+Hermes Agent's dashboard is for the Operator only. It is never behind the
+reverse proxy: reach it from your own machine over an SSH tunnel, then open
+`http://127.0.0.1:20119` and log in with the dashboard login from `.env`
+(`HERMES_DASHBOARD_BASIC_AUTH_USERNAME` / `..._PASSWORD`):
+
+```sh
+ssh -L 20119:127.0.0.1:20119 <server>
+```
+
+Anyone who can log in to the dashboard can change the whole Deployment, so do
+not give its login to Users. It can also create and delete Profiles, but it does
+not know the Profile roster: create, disable, enable and delete Profiles with
+`gfit` (below), not from the dashboard. Why the dashboard is there and what it
+may be used for is [ADR 0008](../docs/adr/0008-deployment-storage-and-dashboard.md).
+
 ## Add a User
 
 The Operator does this on the server. There is no sign-up and no automatic
-Profile: a person can log in only after their Profile exists. In the Team's
-folder, define a shortcut for the GFIT-CoWork command line (it runs inside the
-container, as the user the server runs as):
+Profile: a person can log in only after their Profile exists. In the
+checkout, define a shortcut for the GFIT-CoWork command line (it runs inside
+the container, as the user the server runs as):
 
 ```sh
-gfit() { docker compose exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin/python -m api.operator_cli "$@"; }
+gfit() { deploy/cowork sales exec -T -u hermeswebui -w /app gfit-cowork /app/venv/bin/python -m api.operator_cli "$@"; }
 ```
 
 1. Create the Profile. The **name must be the person's employee ID**:
@@ -193,7 +235,7 @@ or more Teams.
 4. **Watch during the pilot:**
    - `docker stats` for memory and CPU with everyone working at once. Size
      the server for the full Team from this.
-   - `docker compose logs gfit-cowork` for AD errors ("directory is
+   - `deploy/cowork sales logs gfit-cowork` for AD errors ("directory is
      unavailable") and refused logins.
    - The model provider's usage and cost for the Team's key.
    - What Users ask the Operator for.
@@ -203,28 +245,57 @@ or more Teams.
 
 ## Look after a Deployment
 
-- **Logs:** `docker compose logs --tail 200 gfit-cowork` (or `hermes-agent`).
+- **List Deployments:** `deploy/cowork` with no arguments.
+- **Logs:** `deploy/cowork sales logs --tail 200 gfit-cowork` (or
+  `hermes-agent`, `hermes-dashboard`).
 - **Session store:** `gfit sessions-audit` reports problems (read-only).
   `gfit sessions-repair` and `gfit sessions-cleanup [--empty]` change session
   files the server also writes: run them when nobody is using the Team, then
-  `docker compose restart gfit-cowork` so it rereads them.
-- **Back up** the volumes `gfit-<TEAM>_hermes-home` (Profiles, sessions,
-  memory, User Workspaces, the Profile roster) and
-  `gfit-<TEAM>_admin-workspace` (the server's default Workspace; no User works
-  in it), e.g. with
-  `docker run --rm -v gfit-sales_hermes-home:/data -v "$PWD":/backup alpine tar czf /backup/sales-home.tgz -C /data .`
-- **Upgrade GFIT-CoWork:** pull the source, rebuild the image (see "Once per
-  server"), then `docker compose up -d` in each Team's folder.
+  `deploy/cowork sales restart gfit-cowork` so it rereads them.
+- **Back up** the Deployment's folder, `deploy/deployments/sales/`: `.env`,
+  `home/` (Profiles, sessions, memory, User Workspaces, the Profile roster),
+  `workspace/` (the server's default Workspace; no User works in it) and
+  `certs/`. Stop it first so nothing writes during the copy:
+
+  ```sh
+  deploy/cowork sales stop
+  tar czf sales-backup.tgz --exclude sales/home/hermes-agent -C deploy/deployments sales
+  deploy/cowork sales start
+  ```
+
+  The empty `home/hermes-agent/` folder is only where the agent source is
+  mounted and can be left out.
+- **Upgrade GFIT-CoWork:** `git -C /opt/gfit-cowork/src pull`, then
+  `deploy/cowork <team> up -d` for each Team. It rebuilds the image from the
+  checkout.
 - **Upgrade Hermes Agent:** the agent source volume is filled only on its first
   start, so remove it when upgrading:
 
   ```sh
-  docker compose down
+  deploy/cowork sales down
   docker volume rm gfit-sales_hermes-agent-src
-  docker compose pull
-  docker compose up -d
+  deploy/cowork sales pull hermes-agent hermes-dashboard
+  deploy/cowork sales up -d
   ```
 
+- **Move a Deployment from the old named volumes.** Deployments made before
+  `new-deployment` kept their data in the volumes `gfit-<TEAM>_hermes-home` and
+  `gfit-<TEAM>_admin-workspace`. Create the new folder with the same Team name,
+  copy the old `.env` values and `certs/` into it, then, with the old
+  Deployment stopped (`docker compose down` in its old folder):
+
+  ```sh
+  deploy/new-deployment sales 1
+  # copy the old .env values and certs/ into deploy/deployments/sales/
+  for v in hermes-home:home admin-workspace:workspace; do
+    docker run --rm -v "gfit-sales_${v%%:*}":/from -v "$PWD/deploy/deployments/sales/${v##*:}":/to \
+      alpine sh -c 'cp -a /from/. /to/ && chown -R '"$(id -u):$(id -g)"' /to'
+  done
+  deploy/cowork sales up -d
+  ```
+
+  Keep the old volumes until the Team has checked their Profiles, then remove
+  them with `docker volume rm`.
 - **Login rate limit behind the proxy:** wrong passwords are counted per
   person's address, which the proxy forwards. GFIT-CoWork trusts that address
   only from `TRUSTED_PROXY_CIDRS` (the Docker bridge networks by default). If

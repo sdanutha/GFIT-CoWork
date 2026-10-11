@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy"
 
@@ -47,6 +49,25 @@ def test_webui_service_forwards_gateway_api_key():
         "deploy: WebUI must forward HERMES_WEBUI_GATEWAY_API_KEY from the "
         "same API_SERVER_KEY so the gateway health probe authenticates."
     )
+
+
+def test_every_agent_image_service_gets_the_deployment_api_server_key():
+    """Every service that runs the agent image shares ./home. The image's
+    stage2 hook generates a random API_SERVER_KEY into home/.env when its own
+    container has none, and the gateway loads that .env with override=True,
+    so a dashboard without the key replaced the gateway's key and GFIT-CoWork
+    got 401 from it (found in a full Deployment run)."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text(encoding="utf-8"))["services"]
+    agent_image = services["hermes-agent"]["image"]
+    sharing = [name for name, service in services.items() if service.get("image") == agent_image]
+    assert {"hermes-agent", "hermes-dashboard"} <= set(sharing)
+    for name in sharing:
+        env = services[name].get("environment") or []
+        assert any(str(item).startswith("API_SERVER_KEY=${API_SERVER_KEY:?") for item in env), (
+            f"deploy: {name} must receive the Deployment's API_SERVER_KEY, or the "
+            "image generates its own into the shared home/.env."
+        )
 
 
 def test_env_example_documents_api_server_key():

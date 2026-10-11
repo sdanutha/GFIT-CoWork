@@ -75,3 +75,7 @@ attachments/
 
 # GFIT-CoWork mock LDAP certificates (dev/mock-ldap/make-certs.sh)
 dev/mock-ldap/certs/
+
+# Deployments created by deploy/new-deployment: their .env holds the API keys
+# and home/ holds every Profile.
+deploy/deployments/

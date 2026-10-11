@@ -29,16 +29,22 @@ those tools in a dev-only Dockerfile instead of reintroducing passwordless sudo 
 
 ## How a Deployment is laid out
 
-A Deployment is two containers, `hermes-agent` and `gfit-cowork`, sharing
-**named Docker volumes** (not bind mounts). Named volumes solve the UID/GID
-problem by construction: Docker creates the volume's root directory, both
-containers read and write the same files, and no host-side permission setup is
-needed. Every volume is prefixed with the project name `gfit-<TEAM>`, so
-several Deployments share one server without touching each other.
+A Deployment is three containers, `hermes-agent`, `gfit-cowork` and
+`hermes-dashboard`, sharing the Deployment's own folder,
+`deploy/deployments/<TEAM>/`, through **bind mounts**. Backing up a Deployment
+is copying that folder. `deploy/new-deployment` creates the folder owned by the
+Operator's user and writes that user's `id -u` / `id -g` to `UID` / `GID` in
+`.env` (1000:1000 when run as root, with the folders given to that user), and
+every container runs as that UID/GID, so all of them can read and write the same
+files. The agent's source is the one named volume, prefixed with the project
+name `gfit-<TEAM>`, so several Deployments share one server without touching
+each other. Why bind mounts, and what that means for backup, restore and
+SQLite on Docker Desktop, is
+[ADR 0008](adr/0008-deployment-storage-and-dashboard.md).
 
 ```
                  ┌─────────────────────────────────┐
-                 │      hermes-home (volume)       │
+                 │        ./home (bind mount)       │
                  │ (Profiles, sessions, state, ...) │
                  └─────────────────────────────────┘
                           ↑              ↑
@@ -57,24 +63,26 @@ several Deployments share one server without touching each other.
       └─────────────────────────┘
 ```
 
-- `hermes-home` holds everything a Deployment keeps. Hermes Agent mounts it at
-  `/home/hermes/.hermes`, GFIT-CoWork at `/home/hermeswebui/.hermes`.
+- `./home` holds everything a Deployment keeps. Hermes Agent and the
+  dashboard mount it at `/home/hermes/.hermes`, GFIT-CoWork at
+  `/home/hermeswebui/.hermes`.
 - `hermes-agent-src` is filled from the agent image's `/opt/hermes` on first
   start. The GFIT-CoWork image doesn't ship the agent's Python deps: at
   startup it runs `uv pip install` against this volume to install them. The
   GFIT-CoWork mount is read-only; the agent container is the only writer.
-- `admin-workspace` is the server's default Workspace at `/workspace`; no User
+- `./workspace` is the server's default Workspace at `/workspace`; no User
   works in it. A User's Workspaces live in their Profile.
 - `./certs` (read-only) holds the AD CA certificate.
 
 GFIT-CoWork publishes port 8787 on `127.0.0.1:<GFIT_PORT>` only, so people
-reach it through the HTTPS reverse proxy. Hermes Agent's gateway (8642) is not
-published on the host; GFIT-CoWork reaches it over the Deployment's own
-network.
+reach it through the HTTPS reverse proxy. The dashboard publishes 9119 on
+`127.0.0.1:<DASHBOARD_PORT>` only, for the Operator over an SSH tunnel. Hermes
+Agent's gateway (8642) is not published on the host; GFIT-CoWork reaches it
+over the Deployment's own network.
 
 ## What the multi-container setup isolates (and what it doesn't)
 
-The two containers give you **process, network, and resource isolation** between the gateway and the chat UI:
+The containers give you **process, network, and resource isolation** between the gateway, the Dashboard and the chat UI:
 
 - Each service has its own PID namespace and lifecycle — the agent process can crash without taking down the chat UI and vice versa.
 - The gateway API (port 8642) is bound by the agent service only; GFIT-CoWork cannot bind it and reaches it over the Deployment's network.
@@ -82,8 +90,8 @@ The two containers give you **process, network, and resource isolation** between
 
 What it does **not** isolate:
 
-- **Filesystem boundary.** Both services share `hermes-home`, and GFIT-CoWork mounts the agent's installed source from `hermes-agent-src`. The GFIT-CoWork mount is read-only, but the agent service still has write access, and both services share the home volume.
-- **UID/GID boundary.** Both services take their IDs from the same `UID`/`GID` in `.env`, so files written by one are readable by the other. If you align them to different UIDs you'll get permission errors on the shared volume.
+- **Filesystem boundary.** All three services share the Deployment's `home/` folder, and GFIT-CoWork mounts the agent's installed source from `hermes-agent-src`. The GFIT-CoWork mount is read-only, but the agent service still has write access, and every service shares the home folder.
+- **UID/GID boundary.** Every service takes its IDs from the same `UID`/`GID` in `.env`, so files written by one are readable by the others. If you align them to different UIDs you'll get permission errors on the shared home folder.
 - **Trust boundary on the agent source.** GFIT-CoWork installs Python dependencies from the shared `hermes-agent-src` volume at startup. The read-only mount means a compromised GFIT-CoWork cannot rewrite the agent source, but it does run code from that volume.
 - **Users from each other.** All Profiles in one Deployment run their agents as the same OS user (ADR 0002).
 
@@ -93,8 +101,8 @@ The direct source mount is a compatibility bridge, not the long-term API contrac
 
 The Deployment kit sets `WANTED_UID`/`WANTED_GID` for GFIT-CoWork and
 `HERMES_UID`/`HERMES_GID` for Hermes Agent from the same `UID`/`GID` in `.env`
-(the server's service user, `id -u` / `id -g`), so both containers agree on
-who owns `hermes-home` (#1399). An explicitly supplied `WANTED_UID`/`WANTED_GID`
+(the server's service user, `id -u` / `id -g`), so every container agrees on
+who owns `home/` (#1399). An explicitly supplied `WANTED_UID`/`WANTED_GID`
 always wins and is never overwritten by detection — including the value
 `1024`, which earlier versions treated as "unset".
 
@@ -103,7 +111,7 @@ resolves (#668, #569, #7027):
 
 1. `$HERMES_WEBUI_STATE_DIR` (default `/app/data`)
 2. `/home/hermeswebui/.hermes`, `$HERMES_HOME`, `/opt/data` — the shared
-   hermes-home volume
+   home folder
 3. `/workspace` — used only when nothing above resolves
 4. `1024` — fallback default
 
@@ -119,7 +127,7 @@ GFIT-CoWork handles those in-process. The Deployment kit runs the gateway
 (`gateway run`) in the `hermes-agent` container, so scheduled jobs require the Hermes gateway daemon
 that the kit already starts.
 
-The kit wires the two containers together:
+The kit wires the containers together:
 
 - Hermes Agent gets `API_SERVER_KEY` from `.env`. The agent only starts the
   gateway API listener (port 8642) when `API_SERVER_KEY` is a usable value
@@ -127,8 +135,16 @@ The kit wires the two containers together:
 - GFIT-CoWork gets the same value as `HERMES_WEBUI_GATEWAY_API_KEY`, so its
   health probe authenticates, and `HERMES_API_URL=http://hermes-agent:8642`,
   so it reaches the gateway over the Deployment's network.
+- `deploy/cowork` copies the same key into the default Profile's `.env`
+  (`home/.env`) before every start. With two or more Profiles the gateway reads
+  the key only from there, and without it the gateway's API does not start
+  after a restart (ADR 0008).
+- The Dashboard gets the same `API_SERVER_KEY` too. Without it, the agent
+  image writes a random key into the shared `home/.env` at start-up, the
+  gateway loads that key over its own, and GFIT-CoWork is refused
+  (ADR 0008).
 
-The cron list itself is read from the shared `hermes-home` volume, not from the
+The cron list itself is read from the shared `home/` folder, not from the
 gateway HTTP API. If the Tasks panel shows a gateway warning while the job list
 loads, the warning is about scheduled ticking / gateway health, not about the
 list endpoint.
@@ -141,13 +157,13 @@ list endpoint.
 
 In older gateway builds, `gateway_state.json` can become stale and GFIT-CoWork may lose confidence even if the daemon is up.
 
-**Fix**: Check `API_SERVER_KEY` in `.env` is set and at least 16 characters, then recreate the Deployment with `docker compose up -d --force-recreate`.
+**Fix**: Check `API_SERVER_KEY` in `.env` is set and at least 16 characters, then recreate the Deployment with `deploy/cowork <TEAM> up -d --force-recreate`.
 
 **Verify**: Once the gateway is up, the System Settings pill should turn green and the Tasks banner disappear. In the Deployment's folder:
 
 ```bash
-docker compose exec hermes-agent hermes gateway status
-docker compose logs --tail 200 hermes-agent
+deploy/cowork <TEAM> exec hermes-agent hermes gateway status
+deploy/cowork <TEAM> logs --tail 200 hermes-agent
 ```
 
 For container-to-container diagnostics, set one of `HERMES_API_URL` or `HERMES_WEBUI_GATEWAY_BASE_URL` in the `gfit-cowork` environment, then restart GFIT-CoWork.
@@ -171,13 +187,13 @@ Refs #2785, #4483.
 
 ### Upgrading GFIT-CoWork
 
-Pull the source, rebuild the image, then recreate each Team's Deployment:
+Pull the source, then recreate each Team's Deployment. `deploy/cowork` builds
+the image from the checkout on every `up`:
 
 ```bash
 git -C /opt/gfit-cowork/src pull
-docker build -t gfit-cowork:latest /opt/gfit-cowork/src
-# in each Team's folder:
-docker compose up -d
+# for each Team:
+deploy/cowork <TEAM> up -d
 ```
 
 ### Upgrading the agent container
@@ -186,16 +202,16 @@ The `hermes-agent-src` named volume is initialised from the agent image's `/opt/
 
 This is the root cause of [#1416](https://github.com/nesquena/hermes-webui/issues/1416): the symptom looked like a missing entrypoint, but the entrypoint was actually present in the new image and hidden behind the stale named volume.
 
-To upgrade the agent image cleanly, drop the source volume before recreating. In the Team's folder:
+To upgrade the agent image cleanly, drop the source volume before recreating:
 
 ```bash
-docker compose down
+deploy/cowork <TEAM> down
 docker volume rm gfit-<TEAM>_hermes-agent-src
-docker compose pull
-docker compose up -d
+deploy/cowork <TEAM> pull hermes-agent hermes-dashboard
+deploy/cowork <TEAM> up -d
 ```
 
-The `hermes-home` volume (Profiles, sessions, state) is left untouched — only `hermes-agent-src` (the agent's installed Python source) is recreated.
+The Deployment's `home/` folder (Profiles, sessions, state) is left untouched — only `hermes-agent-src` (the agent's installed Python source) is recreated.
 
 ### Compatibility and version pinning
 
@@ -286,13 +302,13 @@ provide host kernel drivers or the NVIDIA runtime.
 PermissionError: [Errno 13] Permission denied: '/home/hermeswebui/.hermes/...'
 ```
 
-**Cause**: Hermes Agent and GFIT-CoWork run as different UIDs, so one cannot read what the other wrote to `hermes-home`.
+**Cause**: Hermes Agent and GFIT-CoWork run as different UIDs, so one cannot read what the other wrote to `home/`.
 
-**Fix**: Set `UID` and `GID` in `.env` to the server's service user (`id -u` / `id -g`) and recreate both containers with `docker compose up -d --force-recreate`. Do not set `WANTED_UID` or `HERMES_UID` separately.
+**Fix**: Set `UID` and `GID` in `.env` to the server's service user (`id -u` / `id -g`) and recreate the containers with `deploy/cowork <TEAM> up -d --force-recreate`. Do not set `WANTED_UID` or `HERMES_UID` separately.
 
 ### 2. ".env file mode 0640 → permission denied" (#1389)
 
-**Symptom**: A credential `.env` inside `hermes-home` was given a group-readable mode such as `0640`, and startup logs show:
+**Symptom**: A credential `.env` inside `home/` was given a group-readable mode such as `0640`, and startup logs show:
 ```
 [security] fixed permissions on .env (0o640 -> 0600)
 failed to load .env: open .env: permission denied
@@ -340,8 +356,8 @@ Both are documented in `api/startup.py::fix_credential_permissions()`.
 **Cause**: Either the file isn't readable (UID/GID issue, see #1) or it's not in the expected path inside the container.
 
 **Fix**:
-- Verify: `docker compose exec gfit-cowork ls -la /home/hermeswebui/.hermes/config.yaml`
-- If it doesn't exist: no model has been set up yet — run `docker compose exec hermes-agent hermes model` (deploy/README.md).
+- Verify: `deploy/cowork <TEAM> exec gfit-cowork ls -la /home/hermeswebui/.hermes/config.yaml`
+- If it doesn't exist: no model has been set up yet — run `deploy/cowork <TEAM> exec hermes-agent hermes model` (deploy/README.md).
 - If it exists but is unreadable: see #1 for the UID/GID fix.
 
 ### 6. "API base URL set to localhost fails from Docker" (#3012)
@@ -367,8 +383,9 @@ Then configure the URL as `http://host.docker.internal:<port>`. Also ensure the 
 
 ## Reference
 
-- [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) — one Deployment: Hermes Agent + GFIT-CoWork
-- [`deploy/team.env.example`](../deploy/team.env.example) — the config file for one Deployment
+- [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) — one Deployment: Hermes Agent + GFIT-CoWork + the dashboard
+- [`deploy/team.env.example`](../deploy/team.env.example) — the template for one Deployment's `.env`
+- [`deploy/new-deployment`](../deploy/new-deployment), [`deploy/cowork`](../deploy/cowork) — create a Deployment; run `docker compose` for one
 - [`deploy/README.md`](../deploy/README.md) — the step-by-step guide
 - [`Dockerfile`](../Dockerfile) — the GFIT-CoWork image
 - [`deploy/docker/docker_init.bash`](../deploy/docker/docker_init.bash) — container entrypoint script

@@ -84,7 +84,7 @@ standard-library server and vanilla JavaScript.
 | [`docs/rfcs/`](docs/rfcs/) | Contracts and larger designs for the runtime (sessions, streaming, turns); [docs/CONTRACTS.md](docs/CONTRACTS.md) says which one covers which subsystem. |
 | [`docs/architecture/`](docs/architecture/) | Focused design notes on single mechanisms (model caches, the agent API contract, ...). |
 | [`docs/ui-ux/`](docs/ui-ux/) | HTML mock-ups for UI proposals. |
-| [`deploy/`](deploy/) | The Deployment kit: one Docker Compose file and `team.env` per Team, and the Caddy reverse proxy that serves every Deployment over HTTPS. |
+| [`deploy/`](deploy/) | The Deployment kit: one Docker Compose file, `new-deployment` and `cowork` to create and run one Deployment per Team in `deploy/deployments/<team>/`, and the Caddy reverse proxy that serves every Deployment over HTTPS. |
 | [`deploy/caddy/`](deploy/caddy/) | The shared reverse proxy: its Compose file and an example Caddyfile. |
 | [`deploy/docker/`](deploy/docker/) | The container entry script (`docker_init.bash`) used by the `Dockerfile`. |
 | [`dev/mock-ldap/`](dev/mock-ldap/) | An OpenLDAP server with sample users, standing in for the company AD during development. |

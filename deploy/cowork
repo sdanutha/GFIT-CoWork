@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Run docker compose for one Deployment: deploy/cowork <team> <compose args>
+#   e.g. deploy/cowork sales up -d
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+
+if [ $# -eq 0 ]; then
+  ls "$root/deployments" 2>/dev/null || true
+  exit 0
+fi
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 <team> <compose args>   e.g. $0 sales up -d" >&2
+  exit 1
+fi
+
+team="$1"; shift
+[[ "$team" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "Invalid Team name '$team': use lowercase letters, digits, - or _." >&2; exit 1; }
+dir="$root/deployments/$team"
+env="$dir/.env"
+[ -f "$env" ] || { echo "No Deployment '$team' ($env not found)." >&2; exit 1; }
+
+value() { grep -m1 "^$1=" "$env" | cut -d= -f2- || true; }
+
+refuse() { echo "Deployment '$team': $1" >&2; exit 1; }
+
+file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+file_owner() { stat -c %u:%g "$1" 2>/dev/null || stat -f %u:%g "$1"; }
+
+# With two or more Profiles, Hermes Agent's gateway runs multiplexed and reads
+# API_SERVER_KEY only from the default Profile's .env (home/.env), not from
+# the container's environment. Copy the Deployment's key there before anything
+# starts, so the gateway and GFIT-CoWork always use the same key (ADR 0008).
+# The Deployment's .env is the only source of the key; the key is never
+# printed. Refuses, and so starts nothing, when it cannot be done safely.
+sync_gateway_key() {
+  local key home target line tmp count=0 matches=0 owner
+  key="$(value API_SERVER_KEY)"
+  home="$dir/home"
+  target="$home/.env"
+
+  [ ! -L "$dir" ] && [ ! -L "$home" ] || refuse "$home or its folder is a symlink; refusing to write the gateway key."
+  [ -d "$home" ] || refuse "home/ is missing (create the Deployment with deploy/new-deployment)."
+  [ "$(cd -P "$home" && pwd)" = "$(cd -P "$dir" && pwd)/home" ] || refuse "home/ resolves outside the Deployment's folder."
+  [ ! -L "$target" ] || refuse "home/.env is a symlink; refusing to write the gateway key."
+  [ ! -e "$target" ] || [ -f "$target" ] || refuse "home/.env is not a regular file."
+
+  if [ -f "$target" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?API_SERVER_KEY= ]]; then
+        count=$((count + 1))
+        [ "$line" = "API_SERVER_KEY=$key" ] && matches=$((matches + 1))
+      fi
+    done < "$target"
+    if [ "$count" = 1 ] && [ "$matches" = 1 ]; then
+      [ "$(file_mode "$target")" = 600 ] || chmod 600 "$target" || refuse "could not make home/.env private."
+      return 0
+    fi
+  fi
+
+  tmp="$(mktemp "$home/.env.cowork.XXXXXX" 2>/dev/null)" || refuse "could not write to home/ to set the gateway key."
+  {
+    if [ -f "$target" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?API_SERVER_KEY= ]] || printf '%s\n' "$line"
+      done < "$target"
+    fi
+    printf 'API_SERVER_KEY=%s\n' "$key"
+  } > "$tmp" || { rm -f "$tmp"; refuse "could not write the gateway key to home/.env."; }
+  chmod 600 "$tmp" || { rm -f "$tmp"; refuse "could not make home/.env private."; }
+  if [ "$(id -u)" = 0 ]; then
+    if [ -f "$target" ]; then owner="$(file_owner "$target")"; else owner="$(value UID):$(value GID)"; fi
+    chown "$owner" "$tmp" || { rm -f "$tmp"; refuse "could not give home/.env to $owner."; }
+  fi
+  mv -f "$tmp" "$target" || { rm -f "$tmp"; refuse "could not replace home/.env."; }
+  echo "Deployment '$team': set the gateway key in home/.env." >&2
+}
+
+# GFIT-CoWork does not start without the Directory, so refuse to start a
+# Deployment whose .env is not filled in yet.
+case "$1" in
+  up|start|restart|create|run)
+    missing=()
+    for key in HERMES_WEBUI_LDAP_URL HERMES_WEBUI_LDAP_DOMAIN HERMES_WEBUI_LDAP_BASE_DN; do
+      [ -n "$(value "$key")" ] || missing+=("$key")
+    done
+    while IFS= read -r line; do
+      missing+=("${line%%=*} (still replace-with-...)")
+    done < <(grep -E '^[A-Z0-9_]+=replace-with' "$env" || true)
+    key="$(value API_SERVER_KEY)"
+    if [ "${#key}" -lt 16 ] && [[ "$key" != replace-with* ]]; then
+      missing+=("API_SERVER_KEY (16+ characters)")
+    fi
+    unset key
+    cert="$(value HERMES_WEBUI_LDAP_CA_CERT)"
+    if [ -n "$cert" ] && [[ "$cert" == /certs/* ]] && [ ! -f "$dir/certs/${cert#/certs/}" ]; then
+      missing+=("certs/${cert#/certs/} (the AD CA certificate)")
+    fi
+    if [ ${#missing[@]} -gt 0 ]; then
+      echo "Deployment '$team' is not ready. Fill in deploy/deployments/$team/:" >&2
+      printf '  - %s\n' "${missing[@]}" >&2
+      exit 1
+    fi
+    sync_gateway_key
+    ;;
+esac
+
+export GFIT_COWORK_SRC="$(cd "$root/.." && pwd)"
+exec docker compose -f "$root/docker-compose.yml" --project-directory "$dir" "$@"

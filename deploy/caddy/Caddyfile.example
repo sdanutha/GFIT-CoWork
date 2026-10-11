@@ -17,10 +17,10 @@
 
 sales.cowork.gfit.co.th {
 	import gfit_tls
-	reverse_proxy 127.0.0.1:8801
+	reverse_proxy 127.0.0.1:20187
 }
 
 account.cowork.gfit.co.th {
 	import gfit_tls
-	reverse_proxy 127.0.0.1:8802
+	reverse_proxy 127.0.0.1:20287
 }

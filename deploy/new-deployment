@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Create a new Deployment: deploy/new-deployment <team> <N> [hostname]
+#   N picks the ports; see "Ports" in deploy/README.md.
+#   hostname defaults to <team>.cowork.gfit.co.th.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+
+usage() { echo "Usage: $0 <team> <N 0-99> [hostname]   e.g. $0 sales 1" >&2; exit 1; }
+[ $# -eq 2 ] || [ $# -eq 3 ] || usage
+team="$1"; n="$2"; hostname="${3:-$team.cowork.gfit.co.th}"
+
+[[ "$team" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "Invalid Team name '$team': use lowercase letters, digits, - or _." >&2; exit 1; }
+[[ "$n" =~ ^(0|[1-9][0-9]?)$ ]] || usage
+[[ "$hostname" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid hostname '$hostname'." >&2; exit 1; }
+
+dir="$root/deployments/$team"
+[ -e "$dir" ] && { echo "Deployment '$team' already exists: $dir" >&2; exit 1; }
+
+if [ "$n" = 0 ]; then
+  gfit_port=8787; dashboard_port=9119
+else
+  base=$((20000 + n * 100))
+  gfit_port=$((base + 87)); dashboard_port=$((base + 19))
+fi
+
+used="$(grep -lx "GFIT_PORT=$gfit_port" "$root"/deployments/*/.env 2>/dev/null | head -n1 || true)"
+[ -z "$used" ] || { echo "N=$n is already used by $(basename "$(dirname "$used")")." >&2; exit 1; }
+
+secret() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# The containers run as the owner of home/ and workspace/. Never as root.
+uid="$(id -u)"; gid="$(id -g)"
+[ "$uid" = 0 ] && { uid=1000; gid=1000; }
+
+dashboard_password="$(secret 12)"
+
+umask 077
+mkdir -p "$dir/home" "$dir/workspace" "$dir/certs"
+sed -e "s/^TEAM=.*/TEAM=$team/" \
+    -e "s/^GFIT_PORT=.*/GFIT_PORT=$gfit_port/" \
+    -e "s/^DASHBOARD_PORT=.*/DASHBOARD_PORT=$dashboard_port/" \
+    -e "s/^GFIT_HOSTNAME=.*/GFIT_HOSTNAME=$hostname/" \
+    -e "s/^HERMES_WEBUI_LDAP_URL=.*/HERMES_WEBUI_LDAP_URL=/" \
+    -e "s/^HERMES_WEBUI_LDAP_DOMAIN=.*/HERMES_WEBUI_LDAP_DOMAIN=/" \
+    -e "s/^HERMES_WEBUI_LDAP_BASE_DN=.*/HERMES_WEBUI_LDAP_BASE_DN=/" \
+    -e "s/^API_SERVER_KEY=.*/API_SERVER_KEY=$(secret 24)/" \
+    -e "s/^HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=.*/HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=$dashboard_password/" \
+    -e "s/^HERMES_DASHBOARD_BASIC_AUTH_SECRET=.*/HERMES_DASHBOARD_BASIC_AUTH_SECRET=$(secret 32)/" \
+    -e "s/^UID=.*/UID=$uid/" \
+    -e "s/^GID=.*/GID=$gid/" \
+    "$root/team.env.example" > "$dir/.env"
+chmod 755 "$dir" "$dir/certs"
+chmod 750 "$dir/home" "$dir/workspace"
+[ "$(id -u)" = 0 ] && chown "$uid:$gid" "$dir/home" "$dir/workspace"
+
+cat <<EOF
+Created Deployment '$team' in deploy/deployments/$team/
+
+  GFIT-CoWork  https://$hostname  (reverse proxy -> 127.0.0.1:$gfit_port)
+  Dashboard    http://127.0.0.1:$dashboard_port  (SSH tunnel only)
+               $(grep '^HERMES_DASHBOARD_BASIC_AUTH_USERNAME=' "$dir/.env" | cut -d= -f2) / $dashboard_password
+
+Before the first start, in deploy/deployments/$team/:
+  - fill in HERMES_WEBUI_LDAP_URL, HERMES_WEBUI_LDAP_DOMAIN and
+    HERMES_WEBUI_LDAP_BASE_DN in .env
+  - set the Team's provider key in .env (e.g. OPENROUTER_API_KEY)
+  - copy the AD CA certificate to certs/ad-ca.crt
+
+Then:
+  deploy/cowork $team up -d
+  deploy/cowork $team exec hermes-agent hermes model
+EOF

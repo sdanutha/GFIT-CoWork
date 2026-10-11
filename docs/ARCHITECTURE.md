@@ -1334,4 +1334,5 @@ confined (ADR 0006).
   the Profile chip shows. The chip opens an identity menu (`openIdentityMenu`) with Sign
   Out.
 - `deploy/` — the Deployment kit: `docker-compose.yml` (one Team), `team.env.example`,
+  `new-deployment` and `cowork` (create and run a Deployment in `deploy/deployments/<team>/`),
   and `caddy/` (the HTTPS reverse proxy shared by every Deployment on a server).

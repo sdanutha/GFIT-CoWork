@@ -50,17 +50,23 @@ def _compose() -> dict:
 
 # ── the kit ─────────────────────────────────────────────────────────────────
 
-def test_compose_runs_hermes_agent_and_gfit_cowork_with_persistent_volumes():
+def test_compose_runs_hermes_agent_gfit_cowork_and_the_dashboard_on_one_home():
     compose = _compose()
     services = compose["services"]
-    assert set(services) == {"hermes-agent", "gfit-cowork"}
-    declared = set(compose.get("volumes") or {})
+    assert set(services) == {"hermes-agent", "gfit-cowork", "hermes-dashboard"}
     for name, service in services.items():
         mounted = {str(v).split(":", 1)[0] for v in service.get("volumes", [])}
-        assert "hermes-home" in mounted, name
-        assert mounted & declared, name
+        # Everything a Deployment keeps is in its own folder's home/.
+        assert "./home" in mounted, name
         assert service.get("restart") == "unless-stopped", name
-    assert {"hermes-home", "hermes-agent-src"} <= declared
+    assert set(compose.get("volumes") or {}) == {"hermes-agent-src"}
+
+
+def test_gfit_cowork_is_built_from_the_checkout():
+    service = _compose()["services"]["gfit-cowork"]
+    assert service["build"]["context"].startswith("${GFIT_COWORK_SRC"), service["build"]
+    assert service["pull_policy"] == "build"
+    assert 'export GFIT_COWORK_SRC=' in (DEPLOY / "cowork").read_text(encoding="utf-8")
 
 
 def test_several_deployments_can_share_one_server():
@@ -70,11 +76,15 @@ def test_several_deployments_can_share_one_server():
     assert "${TEAM" in COMPOSE.read_text(encoding="utf-8").split("services:", 1)[0]
     for name, service in compose["services"].items():
         assert "container_name" not in service, f"{name}: a fixed name would clash between Deployments"
-    # Only GFIT-CoWork is published, on loopback, on the Deployment's own port.
+    # Only GFIT-CoWork and the dashboard are published, on loopback, on the
+    # Deployment's own ports. The gateway is never published.
     assert "ports" not in compose["services"]["hermes-agent"]
     (port,) = compose["services"]["gfit-cowork"]["ports"]
     assert port.startswith("127.0.0.1:${GFIT_PORT"), port
     assert port.endswith(":8787"), port
+    (port,) = compose["services"]["hermes-dashboard"]["ports"]
+    assert port.startswith("127.0.0.1:${DASHBOARD_PORT"), port
+    assert port.endswith(":9119"), port
 
 
 def test_the_config_example_lists_every_value_the_compose_file_needs():
@@ -96,9 +106,12 @@ def test_the_config_example_lists_every_value_the_compose_file_needs():
     assert "HERMES_WEBUI_ADMIN_USERS" not in ENV_EXAMPLE.read_text(encoding="utf-8")
     assert example["HERMES_WEBUI_DIRECTORY"] == "ldap"
     assert example["HERMES_WEBUI_LDAP_URL"].startswith("ldaps://")
-    # Both services read the Deployment's config file.
-    for name, service in _compose()["services"].items():
-        assert service.get("env_file") in (".env", [".env"]), name
+    # Hermes Agent and GFIT-CoWork read the Deployment's config file. The
+    # dashboard gets only its own settings, not the provider or AD values.
+    services = _compose()["services"]
+    for name in ("hermes-agent", "gfit-cowork"):
+        assert services[name].get("env_file") in (".env", [".env"]), name
+    assert "env_file" not in services["hermes-dashboard"]
 
 
 def test_the_reverse_proxy_serves_each_deployment_on_its_own_hostname():
@@ -138,7 +151,221 @@ def test_docker_compose_accepts_the_template(tmp_path):
     assert result.returncode == 0, result.stderr
     config = json.loads(result.stdout)
     assert config["name"] == "gfit-sales"
-    assert {"hermes-agent", "gfit-cowork"} <= set(config["services"])
+    assert {"hermes-agent", "gfit-cowork", "hermes-dashboard"} <= set(config["services"])
+
+
+def _run(cmd, **kwargs):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=60, **kwargs)
+
+
+@pytest.fixture
+def kit(tmp_path):
+    """A copy of the kit's scripts and template, so Deployments are created
+    in tmp_path/deployments and never in the checkout."""
+    root = tmp_path / "deploy"
+    root.mkdir()
+    for name in ("new-deployment", "cowork", "team.env.example", "docker-compose.yml"):
+        shutil.copy2(DEPLOY / name, root / name)
+    return root
+
+
+def _env_of(path: Path) -> dict[str, str]:
+    return dict(
+        line.split("=", 1) for line in path.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+
+
+def test_new_deployment_fills_in_ports_and_secrets(kit):
+    result = _run([str(kit / "new-deployment"), "sales", "1"])
+    assert result.returncode == 0, result.stderr
+    folder = kit / "deployments" / "sales"
+    env = _env_of(folder / ".env")
+    assert env["TEAM"] == "sales"
+    assert (env["GFIT_PORT"], env["DASHBOARD_PORT"]) == ("20187", "20119")
+    assert env["GFIT_HOSTNAME"] == "sales.cowork.gfit.co.th"
+    for key in ("API_SERVER_KEY", "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD", "HERMES_DASHBOARD_BASIC_AUTH_SECRET"):
+        assert len(env[key]) >= 16 and not env[key].startswith("replace-with"), key
+    # The AD values are the Operator's to fill in.
+    assert env["HERMES_WEBUI_LDAP_URL"] == ""
+    assert (folder / ".env").stat().st_mode & 0o077 == 0
+    for sub in ("home", "workspace", "certs"):
+        assert (folder / sub).is_dir(), sub
+    # A second Deployment cannot take the same ports or the same name.
+    assert _run([str(kit / "new-deployment"), "account", "1"]).returncode != 0
+    assert _run([str(kit / "new-deployment"), "sales", "2"]).returncode != 0
+    second = _run([str(kit / "new-deployment"), "account", "2"])
+    assert second.returncode == 0, second.stderr
+    assert _env_of(kit / "deployments" / "account" / ".env")["API_SERVER_KEY"] != env["API_SERVER_KEY"]
+
+
+def test_cowork_refuses_to_start_a_deployment_that_is_not_filled_in(kit):
+    assert _run([str(kit / "new-deployment"), "sales", "1"]).returncode == 0
+    result = _run([str(kit / "cowork"), "sales", "up", "-d"])
+    assert result.returncode == 1
+    for missing in ("HERMES_WEBUI_LDAP_URL", "OPENROUTER_API_KEY", "certs/ad-ca.crt"):
+        assert missing in result.stderr, missing
+    assert _run([str(kit / "cowork"), "nobody", "ps"]).returncode == 1
+    assert _run([str(kit / "cowork"), "../sales", "ps"]).returncode == 1
+
+
+# ── the gateway key in the default Profile's .env ──────────────────────────
+#
+# With two or more Profiles, Hermes Agent v0.21.6 runs its gateway multiplexed
+# and reads API_SERVER_KEY only from the default Profile's .env (home/.env),
+# not from the container's environment. Without the key there, the api_server
+# never starts after a restart and GFIT-CoWork cannot reach the gateway.
+# deploy/cowork copies the Deployment's key into home/.env before it starts
+# anything (ADR 0008).
+
+FAKE_DOCKER = """#!/bin/sh
+printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
+"""
+
+
+@pytest.fixture
+def ready(kit, tmp_path):
+    """A Deployment that is filled in, and a fake `docker` that only records
+    that it was called."""
+    assert _run([str(kit / "new-deployment"), "sales", "1"]).returncode == 0
+    folder = kit / "deployments" / "sales"
+    env = folder / ".env"
+    text = env.read_text(encoding="utf-8")
+    for key, value in (
+        ("HERMES_WEBUI_LDAP_URL", "ldaps://ad.example.test"),
+        ("HERMES_WEBUI_LDAP_DOMAIN", "example.test"),
+        ("HERMES_WEBUI_LDAP_BASE_DN", "DC=example,DC=test"),
+        ("OPENROUTER_API_KEY", "test-provider-key"),
+    ):
+        text = re.sub(rf"^{key}=.*$", f"{key}={value}", text, flags=re.M)
+    env.write_text(text, encoding="utf-8")
+    (folder / "certs" / "ad-ca.crt").write_text("test-only\n", encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    docker = bin_dir / "docker"
+    docker.write_text(FAKE_DOCKER, encoding="utf-8")
+    docker.chmod(0o755)
+    log = tmp_path / "docker.log"
+    run_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_DOCKER_LOG": str(log)}
+
+    def cowork(*args):
+        return _run([str(kit / "cowork"), "sales", *args], env=run_env)
+
+    return folder, cowork, log, _env_of(env)["API_SERVER_KEY"]
+
+
+def _key_lines(path: Path) -> list[str]:
+    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("API_SERVER_KEY=")]
+
+
+def test_cowork_up_writes_the_deployment_key_into_a_fresh_home(ready):
+    folder, cowork, log, key = ready
+    result = cowork("up", "-d")
+    assert result.returncode == 0, result.stderr
+    home_env = folder / "home" / ".env"
+    assert _key_lines(home_env) == [f"API_SERVER_KEY={key}"]
+    assert home_env.stat().st_mode & 0o777 == 0o600
+    assert log.read_text(encoding="utf-8").strip().startswith("compose ")
+    # The key is never printed.
+    assert key not in result.stdout + result.stderr
+
+
+def test_cowork_replaces_a_mismatched_key_and_keeps_everything_else(ready):
+    folder, cowork, _, key = ready
+    home_env = folder / "home" / ".env"
+    home_env.write_text(
+        "# Hermes settings\n"
+        "TERMINAL_TIMEOUT=60\n"
+        "API_SERVER_KEY=a-random-key-the-dashboard-made-0000\n"
+        "OPENROUTER_API_KEY=profile-key\n"
+        "API_SERVER_KEY=\n"
+        "LAST_LINE_WITHOUT_NEWLINE=1",
+        encoding="utf-8",
+    )
+    home_env.chmod(0o644)
+    result = cowork("restart")
+    assert result.returncode == 0, result.stderr
+    lines = home_env.read_text(encoding="utf-8").splitlines()
+    assert [line for line in lines if not line.startswith("API_SERVER_KEY=")] == [
+        "# Hermes settings", "TERMINAL_TIMEOUT=60", "OPENROUTER_API_KEY=profile-key", "LAST_LINE_WITHOUT_NEWLINE=1",
+    ]
+    assert _key_lines(home_env) == [f"API_SERVER_KEY={key}"]
+    assert home_env.stat().st_mode & 0o777 == 0o600
+    assert key not in result.stdout + result.stderr
+    assert "a-random-key-the-dashboard-made" not in result.stdout + result.stderr
+
+
+def test_cowork_up_again_leaves_a_synchronized_home_untouched(ready):
+    folder, cowork, _, key = ready
+    assert cowork("up", "-d").returncode == 0
+    home_env = folder / "home" / ".env"
+    before = home_env.stat()
+    content = home_env.read_bytes()
+    for _ in range(2):
+        assert cowork("up", "-d").returncode == 0
+    after = home_env.stat()
+    assert home_env.read_bytes() == content
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    # Not regenerated: the Deployment's key is unchanged.
+    assert _env_of(folder / ".env")["API_SERVER_KEY"] == key
+
+
+def test_commands_that_start_nothing_do_not_touch_home(ready):
+    folder, cowork, _, _ = ready
+    for args in (("ps",), ("logs", "--tail", "5"), ("config", "--quiet")):
+        assert cowork(*args).returncode == 0
+    assert not (folder / "home" / ".env").exists()
+
+
+def test_cowork_refuses_a_symlinked_home_env(ready, tmp_path):
+    folder, cowork, log, key = ready
+    outside = tmp_path / "outside.env"
+    outside.write_text("KEEP=1\n", encoding="utf-8")
+    (folder / "home" / ".env").symlink_to(outside)
+    result = cowork("up", "-d")
+    assert result.returncode == 1
+    assert "symlink" in result.stderr
+    assert outside.read_text(encoding="utf-8") == "KEEP=1\n"
+    assert not log.exists(), "docker must not run when the key cannot be synchronized"
+    assert key not in result.stdout + result.stderr
+
+
+def test_cowork_refuses_a_symlinked_home(ready, tmp_path):
+    folder, cowork, log, _ = ready
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (folder / "home").rmdir()
+    (folder / "home").symlink_to(elsewhere)
+    result = cowork("up", "-d")
+    assert result.returncode == 1
+    assert not (elsewhere / ".env").exists()
+    assert not log.exists()
+
+
+@pytest.mark.parametrize("bad", ["", "short", "replace-with-openssl-rand-hex-24"])
+def test_cowork_refuses_a_deployment_without_a_usable_key(ready, bad):
+    folder, cowork, log, _ = ready
+    env = folder / ".env"
+    env.write_text(re.sub(r"^API_SERVER_KEY=.*$", f"API_SERVER_KEY={bad}", env.read_text(encoding="utf-8"), flags=re.M), encoding="utf-8")
+    result = cowork("up", "-d")
+    assert result.returncode == 1
+    assert "API_SERVER_KEY" in result.stderr
+    assert not (folder / "home" / ".env").exists()
+    assert not log.exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write a read-only folder")
+def test_cowork_fails_closed_when_home_env_cannot_be_written(ready):
+    folder, cowork, log, key = ready
+    home = folder / "home"
+    home.chmod(0o500)
+    try:
+        result = cowork("up", "-d")
+    finally:
+        home.chmod(0o750)
+    assert result.returncode == 1
+    assert not log.exists()
+    assert key not in result.stdout + result.stderr
 
 
 # ── the rate limit behind the reverse proxy ────────────────────────────────
