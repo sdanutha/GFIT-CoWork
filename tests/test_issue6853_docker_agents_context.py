@@ -51,7 +51,7 @@ def test_dockerfile_copies_context_to_apptoo_before_runtime_seed():
 
 def test_docker_init_has_both_filtered_context_seed_paths():
     """Both startup modes must seed /app from the Dockerfile context copy."""
-    init = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    init = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     assert "rsync -av --chown=hermeswebui:hermeswebui /apptoo/ /app/" in init
     assert "cp -a /apptoo/. /app/" in init

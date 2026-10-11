@@ -42,7 +42,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-INIT_SH = (REPO_ROOT / "docker_init.bash").read_text(encoding="utf-8")
+INIT_SH = (REPO_ROOT / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
 # Logical probe name -> path basename used inside the sandbox. The extracted
 # block's absolute paths are rewritten to these so the test can create/own them.

@@ -1,7 +1,7 @@
 name: Docker smoke
 
 # Runtime smoke gate for a Team's Deployment: the deploy/ kit, built from this
-# change's own Dockerfile and docker_init.bash.
+# change's own Dockerfile and deploy/docker/docker_init.bash.
 #
 # Background: v0.51.84 (PR #2470) shipped a startup-killing :ro mount + chown
 # interaction (EROFS under `set -e`) that every source-level pytest invariant
@@ -25,7 +25,7 @@ on:
     branches: [main, dev]
     paths:
       - 'Dockerfile'
-      - 'docker_init.bash'
+      - 'deploy/docker/docker_init.bash'
       - '.dockerignore'
       - 'deploy/**'
       - '.github/workflows/docker-smoke.yml'
@@ -33,7 +33,7 @@ on:
     branches: [main, dev]
     paths:
       - 'Dockerfile'
-      - 'docker_init.bash'
+      - 'deploy/docker/docker_init.bash'
       - '.dockerignore'
       - 'deploy/**'
       - '.github/workflows/docker-smoke.yml'

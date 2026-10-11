@@ -25,7 +25,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Where shipped code lives: directories scanned recursively, and single files.
 SCANNED_DIRS = ("api", "static", "deploy", ".github")
 SCANNED_ROOT_GLOBS = ("*.py", "*.sh", "*.ps1")
-SCANNED_FILES = ("Dockerfile", "docker_init.bash")
+SCANNED_FILES = ("Dockerfile",)
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".html", ".css", ".json", ".sh", ".bash", ".ps1",
                  ".yml", ".yaml", ".md", ".txt", ".example", ".caddy", ""}
 
@@ -108,6 +108,6 @@ def test_the_guard_leaves_other_text_alone(line):
 def test_the_guard_reads_every_kind_of_shipped_file():
     rels = {p.relative_to(REPO).as_posix() for p in _shipped_files()}
     for expected in ("api/routes.py", "static/panels.js", "static/index.html", "server.py",
-                     "start.sh", "start.ps1", "Dockerfile", "docker_init.bash",
+                     "start.sh", "start.ps1", "Dockerfile", "deploy/docker/docker_init.bash",
                      "deploy/docker-compose.yml", ".github/workflows/tests.yml"):
         assert expected in rels, expected

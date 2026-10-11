@@ -11,7 +11,7 @@ import pathlib
 import re
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
-INIT_SH   = (REPO_ROOT / "docker_init.bash").read_text(encoding="utf-8")
+INIT_SH   = (REPO_ROOT / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 UI_JS     = (REPO_ROOT / "static" / "ui.js").read_text(encoding="utf-8")
 
 

@@ -3,7 +3,7 @@ import pathlib
 
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
-INIT_SH = (REPO_ROOT / "docker_init.bash").read_text(encoding="utf-8")
+INIT_SH = (REPO_ROOT / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 REQUIREMENTS_TXT = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
 
 

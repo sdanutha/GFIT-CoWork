@@ -50,7 +50,7 @@ def test_docker_startup_warns_when_agent_source_mount_is_writable():
     WebUI's agent source path writable. The entrypoint should warn instead of
     silently accepting a weakened boundary.
     """
-    src = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+    src = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     assert "agent source mount is writable" in src
     assert "read-only mount" in src

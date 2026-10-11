@@ -371,7 +371,7 @@ Then configure the URL as `http://host.docker.internal:<port>`. Also ensure the 
 - [`deploy/team.env.example`](../deploy/team.env.example) — the config file for one Deployment
 - [`deploy/README.md`](../deploy/README.md) — the step-by-step guide
 - [`Dockerfile`](../Dockerfile) — the GFIT-CoWork image
-- [`docker_init.bash`](../docker_init.bash) — container entrypoint script
+- [`deploy/docker/docker_init.bash`](../deploy/docker/docker_init.bash) — container entrypoint script
 
 ## Related issues
 

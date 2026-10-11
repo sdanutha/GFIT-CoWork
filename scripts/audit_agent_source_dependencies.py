@@ -221,7 +221,7 @@ def build_report(root: Path) -> dict[str, object]:
         root,
         (
             "deploy/docker-compose.yml",
-            "docker_init.bash",
+            "deploy/docker/docker_init.bash",
             "docs/docker.md",
             "docs/rfcs/agent-source-boundary.md",
         ),
@@ -239,7 +239,7 @@ def build_report(root: Path) -> dict[str, object]:
             "api/startup.py",
             "api/config.py",
             "api/streaming.py",
-            "docker_init.bash",
+            "deploy/docker/docker_init.bash",
         ),
         (
             ("startup_install_function", r"auto_install_agent_deps"),

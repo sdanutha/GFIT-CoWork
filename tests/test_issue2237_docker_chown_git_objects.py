@@ -5,7 +5,7 @@ import subprocess
 
 
 REPO = Path(__file__).resolve().parents[1]
-INIT_SCRIPT = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+INIT_SCRIPT = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
 
 def test_home_chown_skips_hermes_agent_subtree():
@@ -53,7 +53,7 @@ def test_root_init_uses_git_object_safe_chown_helper():
 
 def test_docker_init_bash_syntax_still_valid():
     result = subprocess.run(
-        ["bash", "-n", str(REPO / "docker_init.bash")],
+        ["bash", "-n", str(REPO / "deploy" / "docker" / "docker_init.bash")],
         capture_output=True,
         text=True,
     )

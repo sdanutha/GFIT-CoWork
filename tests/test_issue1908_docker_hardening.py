@@ -4,7 +4,7 @@ import re
 
 REPO = pathlib.Path(__file__).parent.parent
 DOCKERFILE = (REPO / "Dockerfile").read_text(encoding="utf-8")
-INIT_SCRIPT = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+INIT_SCRIPT = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 DOCKER_DOCS = (REPO / "docs" / "docker.md").read_text(encoding="utf-8")
 
 

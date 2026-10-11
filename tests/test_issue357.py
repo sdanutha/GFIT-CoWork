@@ -16,7 +16,7 @@ import re
 
 REPO = pathlib.Path(__file__).parent.parent
 DOCKERFILE = (REPO / "Dockerfile").read_text(encoding="utf-8")
-INIT_SCRIPT = (REPO / "docker_init.bash").read_text(encoding="utf-8")
+INIT_SCRIPT = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
 
 # ── Dockerfile: uv pre-installed at build time ───────────────────────────────
@@ -197,7 +197,7 @@ class TestWorkspacePermissions:
         """docker_init.bash must pass bash -n syntax check."""
         import subprocess
         result = subprocess.run(
-            ["bash", "-n", str(REPO / "docker_init.bash")],
+            ["bash", "-n", str(REPO / "deploy" / "docker" / "docker_init.bash")],
             capture_output=True, text=True
         )
         assert result.returncode == 0, (
