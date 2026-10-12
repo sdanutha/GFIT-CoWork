@@ -6,7 +6,7 @@ import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import requires_fork
+from tests.conftest import requires_fork
 
 
 def _install_fake_cron(monkeypatch, run_job, events):

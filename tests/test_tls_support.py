@@ -18,7 +18,7 @@ from contextlib import suppress
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import requires_fcntl
+from tests.conftest import requires_fcntl
 
 ROOT = Path(__file__).parent.parent
 

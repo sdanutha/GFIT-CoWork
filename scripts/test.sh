@@ -163,6 +163,12 @@ select_python() {
   else
     base_py="$(find_supported_base_python || true)"
     if [[ -z "$base_py" ]]; then
+      # No 3.14 on PATH (common on Windows): an existing working .venv is enough.
+      VENV_PY="$(resolve_venv_python || true)"
+      if [[ -x "$VENV_PY" ]] && is_supported_python "$VENV_PY" && has_pip "$VENV_PY"; then
+        printf '%s\n' "$VENV_PY"
+        return 0
+      fi
       echo "No supported Python found for GFIT-CoWork tests." >&2
       echo "Install Python 3.14, then rerun ./scripts/test.sh." >&2
       return 2

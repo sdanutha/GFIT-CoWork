@@ -13,6 +13,15 @@ def _make_executable(path):
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _bash():
+    """Git Bash on Windows; a bare ``bash`` there can resolve to the WSL launcher."""
+    if os.name == "nt":
+        git_bash = Path(os.environ.get("HERMES_GIT_BASH_PATH") or r"C:\Program Files\Git\bin\bash.exe")
+        if git_bash.is_file():
+            return str(git_bash)
+    return "bash"
+
+
 def test_pytest_integration_marker_is_registered():
     config = ROOT / "pyproject.toml"
     text = config.read_text(encoding="utf-8")
@@ -129,7 +138,7 @@ def test_local_test_runner_accepts_windows_layout_venv_from_base_python(tmp_path
     env["PYTEST_PROOF_FILE"] = str(proof)
 
     result = subprocess.run(
-        ["bash", "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
+        [_bash(), "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
         cwd=repo,
         env=env,
         text=True,
@@ -183,7 +192,7 @@ def test_local_test_runner_rejects_venv_without_accepted_python_path(tmp_path):
     env["PYTEST_PROOF_FILE"] = str(proof)
 
     result = subprocess.run(
-        ["bash", "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
+        [_bash(), "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
         cwd=repo,
         env=env,
         text=True,
@@ -229,7 +238,7 @@ def test_local_test_runner_rejects_python_older_than_314(tmp_path):
     env["HERMES_WEBUI_TEST_PYTHON"] = "./fake-python"
 
     result = subprocess.run(
-        ["bash", "scripts/test.sh", "tests/example_test.py"],
+        [_bash(), "scripts/test.sh", "tests/example_test.py"],
         cwd=repo,
         env=env,
         text=True,
@@ -256,3 +265,38 @@ def test_live_model_success_log_is_debug_not_default_console_log():
 
     assert "console.debug('[hermes] Live models loaded" in ui
     assert "console.log('[hermes] Live models loaded" not in ui
+
+
+def test_local_test_runner_uses_working_venv_when_path_has_no_python314(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / ".venv" / "Scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", repo / "scripts" / "test.sh")
+    _make_executable(repo / "scripts" / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+    venv_python = repo / ".venv" / "Scripts" / "python.exe"
+    venv_python.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        if [[ "${1:-}" == "-" ]]; then cat >/dev/null; exit 0; fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then exit 0; fi
+        printf '%s\n' "$@" > "$PYTEST_PROOF_FILE"
+        """), encoding="utf-8", newline="\n")
+    _make_executable(venv_python)
+    # PATH's python3.14 / python3 are both unsupported (e.g. Windows: 3.11 + the Store stub).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("python3.14", "python3"):
+        (bin_dir / name).write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n")
+        _make_executable(bin_dir / name)
+    proof = repo / "pytest-proof.txt"
+    env = os.environ.copy()
+    env.pop("HERMES_WEBUI_TEST_PYTHON", None)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["PYTEST_PROOF_FILE"] = str(proof)
+
+    result = subprocess.run([_bash(), "scripts/test.sh", "tests/example_test.py"],
+                            cwd=repo, env=env, text=True, capture_output=True,
+                            timeout=20, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert proof.read_text(encoding="utf-8").splitlines() == ["-m", "pytest", "tests/example_test.py"]

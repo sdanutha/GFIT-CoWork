@@ -207,13 +207,9 @@ class TestLeakedDirectoryIsolation:
     don't see is_directory_enabled()==True (the #5588 failure shape)."""
 
     def _load_guard(self):
-        import importlib.util
+        from tests.conftest import _strip_leaked_login_env
 
-        cpath = Path(__file__).resolve().parent / "conftest.py"
-        spec = importlib.util.spec_from_file_location("_test_conftest", cpath)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod._strip_leaked_login_env
+        return _strip_leaked_login_env
 
     def test_conftest_guard_strips_leaked_directory(self):
         strip = self._load_guard()
@@ -235,13 +231,9 @@ class TestLeakedHermesCommandIsolation:
     so stripping restores exact upstream semantics."""
 
     def _load_guard(self):
-        import importlib.util
+        from tests.conftest import _strip_leaked_login_env
 
-        cpath = Path(__file__).resolve().parent / "conftest.py"
-        spec = importlib.util.spec_from_file_location("_test_conftest_hc", cpath)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod._strip_leaked_login_env
+        return _strip_leaked_login_env
 
     def test_conftest_guard_strips_leaked_hermes_command(self):
         strip = self._load_guard()

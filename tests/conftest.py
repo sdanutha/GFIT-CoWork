@@ -36,6 +36,13 @@ if sys.version_info[:2] != (3, 14):
         returncode=3,
     )
 
+# pytest loads this file as ``tests.conftest``. ``from conftest import ...`` loads
+# a second copy that reruns the module-level setup below (wiping TEST_HOME,
+# rewriting HOME/HERMES_HOME); on Windows that aborted collection.
+if __name__ != "tests.conftest":
+    raise ImportError("import shared test helpers with `from tests.conftest import ...`, "
+                      "not `from conftest import ...`")
+
 WINDOWS = sys.platform == "win32"
 requires_fcntl = pytest.mark.skipif(
     WINDOWS,

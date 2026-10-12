@@ -25,7 +25,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from conftest import TEST_STATE_DIR
+from tests.conftest import TEST_STATE_DIR
 
 from tests._pytest_port import BASE
 
