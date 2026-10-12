@@ -355,7 +355,10 @@ fi
 ##
 if [ ! -f /app/server.py ] && [ -d /apptoo ]; then
   echo ""; echo "-- Seeding /app from /apptoo (rootless startup)"
-  cp -a /apptoo/. /app/ || error_exit "Failed to seed /app from /apptoo (is /app writable by the runtime user?)"
+  # Copy each entry, not "/apptoo/.": cp -a would also set the times of /app
+  # itself, which only its owner (UID 1024) may do, so any other runtime UID
+  # (e.g. k8s runAsUser with WANTED_UID) failed here.
+  find /apptoo -mindepth 1 -maxdepth 1 -exec cp -a {} /app/ \; || error_exit "Failed to seed /app from /apptoo (is /app writable by the runtime user?)"
 fi
 
 echo ""; echo "-- Verifying /app is writable by the hermeswebui runtime user"
