@@ -231,6 +231,10 @@ else
   "$PYTHON_BIN" -m pip install -r "$REQ_FILE"
 fi
 
+# UTF-8 mode, as on the Linux deployment: without it Windows Python reads files
+# and subprocess pipes (node) as cp1252. Inherited by shards and the test server.
+export PYTHONUTF8=1
+
 # --parallel N: run N pytest-shard processes at once and combine their results.
 if [[ "${1:-}" == --parallel=* ]]; then
   shards="${1#--parallel=}"
