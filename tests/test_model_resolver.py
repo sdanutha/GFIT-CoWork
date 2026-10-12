@@ -1043,11 +1043,23 @@ def test_custom_slug_cold_stale_not_picked_still_strips_5979():
     assert model == bare, f"unmarked stale cold custom:slug id must strip (legacy), got {model!r}"
 
 
-def test_warm_models_catalog_provenance_if_cold_publishes_from_disk_5979():
+def test_warm_models_catalog_provenance_if_cold_publishes_from_disk_5979(monkeypatch):
     """The send-path warm helper publishes provenance from a valid disk cache
     when memory is cold — restoring the endpoint-advertised signal so #433
     strips and #5979 preserves — WITHOUT a live rebuild.
     """
+    import urllib.error
+
+    # Keep the catalog build off the network. It probes the custom endpoint
+    # (DNS + GET /v1/models); a slow lookup under load pushed the build past
+    # the live-rebuild budget, the build finished on a background thread, and
+    # no provenance was published here (an intermittent failure). The endpoint
+    # is unreachable either way, so answer that at once.
+    def _unreachable(*args, **kwargs):
+        raise urllib.error.URLError("proxy.example is not reachable in tests")
+
+    monkeypatch.setattr('socket.getaddrinfo', lambda *a, **k: [])
+    monkeypatch.setattr('urllib.request.urlopen', _unreachable)
     old_cfg = dict(config.cfg)
     config.cfg.clear()
     config.cfg.update({
