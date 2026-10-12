@@ -219,6 +219,16 @@ def test_cowork_refuses_to_start_a_deployment_that_is_not_filled_in(kit):
 # anything (ADR 0008).
 
 FAKE_DOCKER = """#!/bin/sh
+# `compose ... ps` asks whether the Deployment runs; it is logged apart, so
+# FAKE_DOCKER_LOG holds only the commands that act on the Deployment.
+case " $* " in
+  *" ps "*)
+    printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG.ps"
+    [ -n "$FAKE_DOCKER_PS_FAIL" ] && exit 1
+    [ -n "$FAKE_DOCKER_RUNNING" ] && echo 0123456789ab
+    exit 0
+    ;;
+esac
 printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
 """
 
@@ -248,8 +258,8 @@ def ready(kit, tmp_path):
     log = tmp_path / "docker.log"
     run_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_DOCKER_LOG": str(log)}
 
-    def cowork(*args):
-        return _run([str(kit / "cowork"), "sales", *args], env=run_env)
+    def cowork(*args, **extra_env):
+        return _run([str(kit / "cowork"), "sales", *args], env={**run_env, **extra_env})
 
     return folder, cowork, log, _env_of(env)["API_SERVER_KEY"]
 
@@ -350,6 +360,42 @@ def test_cowork_refuses_a_deployment_without_a_usable_key(ready, bad):
     result = cowork("up", "-d")
     assert result.returncode == 1
     assert "API_SERVER_KEY" in result.stderr
+    assert not (folder / "home" / ".env").exists()
+    assert not log.exists()
+
+
+def test_cowork_will_not_change_the_key_while_the_deployment_runs(ready):
+    """Hermes Agent writes home/.env too; replacing the file while it runs
+    could lose that write. A key that must change waits for a stopped
+    Deployment."""
+    folder, cowork, log, key = ready
+    home_env = folder / "home" / ".env"
+    before = "TERMINAL_TIMEOUT=60\nAPI_SERVER_KEY=an-old-key-from-before-the-change\n"
+    home_env.write_text(before, encoding="utf-8")
+    result = cowork("restart", FAKE_DOCKER_RUNNING="1")
+    assert result.returncode == 1
+    assert "down" in result.stderr
+    assert home_env.read_text(encoding="utf-8") == before
+    assert not log.exists(), "nothing may start while the key is out of step"
+    assert key not in result.stdout + result.stderr
+    # Stopped, the same start goes ahead and fixes the key.
+    result = cowork("up", "-d")
+    assert result.returncode == 0, result.stderr
+    assert _key_lines(home_env) == [f"API_SERVER_KEY={key}"]
+
+
+def test_cowork_restarts_a_running_deployment_whose_key_already_matches(ready):
+    folder, cowork, log, key = ready
+    assert cowork("up", "-d").returncode == 0
+    result = cowork("restart", FAKE_DOCKER_RUNNING="1")
+    assert result.returncode == 0, result.stderr
+    assert "restart" in log.read_text(encoding="utf-8")
+
+
+def test_cowork_refuses_to_change_the_key_when_it_cannot_tell_whether_it_runs(ready):
+    folder, cowork, log, _ = ready
+    result = cowork("up", "-d", FAKE_DOCKER_PS_FAIL="1")
+    assert result.returncode == 1
     assert not (folder / "home" / ".env").exists()
     assert not log.exists()
 

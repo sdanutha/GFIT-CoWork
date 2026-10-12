@@ -58,6 +58,13 @@ sync_gateway_key() {
     fi
   fi
 
+  # Hermes Agent writes home/.env too, so never replace it while the
+  # Deployment runs: its write could be lost. Unknown counts as running.
+  local running
+  running="$(docker compose -f "$root/docker-compose.yml" --project-directory "$dir" ps --status running -q 2>/dev/null)" \
+    || refuse "could not tell whether it is running, so the gateway key in home/.env was not changed."
+  [ -z "$running" ] || refuse "the gateway key in home/.env must change while the Deployment is running. Stop it first: deploy/cowork $team down, then deploy/cowork $team up -d."
+
   tmp="$(mktemp "$home/.env.cowork.XXXXXX" 2>/dev/null)" || refuse "could not write to home/ to set the gateway key."
   {
     if [ -f "$target" ]; then
