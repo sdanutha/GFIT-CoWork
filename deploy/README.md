@@ -104,8 +104,10 @@ Team, use another name and another N (e.g. `account`, 2).
    start it also copies `API_SERVER_KEY` into `home/.env`, the `default`
    Profile's `.env`, because Hermes Agent's gateway reads it from there once
    the Deployment has more than one Profile. Do not change the key in
-   `home/.env`: change it in the Deployment's `.env`, and the next start
-   copies it over.
+   `home/.env`: change it in the Deployment's `.env`, then
+   `deploy/cowork <team> down` and `up -d`. `cowork` will not replace
+   `home/.env` while the Deployment runs, because Hermes Agent writes that
+   file too.
 
 3. **Start it:**
 
