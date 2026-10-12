@@ -235,6 +235,15 @@ fi
 # and subprocess pipes (node) as cp1252. Inherited by shards and the test server.
 export PYTHONUTF8=1
 
+# --serial: one pytest process (the no-argument default before sharding).
+if [[ "${1:-}" == "--serial" ]]; then
+  shift
+  if [[ $# -eq 0 ]]; then
+    set -- tests/ -v --timeout=60
+  fi
+  exec "$PYTHON_BIN" -m pytest "$@"
+fi
+
 # --parallel N: run N pytest-shard processes at once and combine their results.
 if [[ "${1:-}" == --parallel=* ]]; then
   shards="${1#--parallel=}"
@@ -246,8 +255,15 @@ if [[ "${1:-}" == "--parallel" ]]; then
   exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$@"
 fi
 
+# No arguments: the whole suite, sharded across min(cores, 8) processes.
+# Sharding needs a free port and state dir per shard, so pinned ones run serially.
 if [[ $# -eq 0 ]]; then
-  set -- tests/ -v --timeout=60
+  if [[ -n "${HERMES_WEBUI_TEST_PORT:-}" || -n "${HERMES_WEBUI_TEST_STATE_DIR:-}" ]]; then
+    echo "HERMES_WEBUI_TEST_PORT or HERMES_WEBUI_TEST_STATE_DIR is pinned; running the suite serially." >&2
+    set -- tests/ -v --timeout=60
+  else
+    exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" auto
+  fi
 fi
 
 exec "$PYTHON_BIN" -m pytest "$@"

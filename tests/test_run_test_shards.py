@@ -92,3 +92,15 @@ def test_runner_hands_parallel_runs_to_the_helper():
     runner = (ROOT / "scripts" / "test.sh").read_text(encoding="utf-8")
     assert '"$ROOT/scripts/run_test_shards.py"' in runner
     assert '"${1:-}" == "--parallel"' in runner
+
+
+def test_auto_shard_count_is_cores_capped_at_eight(monkeypatch):
+    monkeypatch.setattr(shards.os, "cpu_count", lambda: 14)
+    assert shards.shard_count("auto") == 8
+    monkeypatch.setattr(shards.os, "cpu_count", lambda: 4)
+    assert shards.shard_count("auto") == 4
+    monkeypatch.setattr(shards.os, "cpu_count", lambda: None)
+    assert shards.shard_count("auto") == 1
+    assert shards.shard_count("3") == 3
+    assert shards.shard_count("0") is None
+    assert shards.shard_count("x") is None

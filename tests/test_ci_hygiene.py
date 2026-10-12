@@ -279,7 +279,7 @@ def test_local_test_runner_uses_working_venv_when_path_has_no_python314(tmp_path
         #!/usr/bin/env bash
         if [[ "${1:-}" == "-" ]]; then cat >/dev/null; exit 0; fi
         if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then exit 0; fi
-        printf '%s\n' "$@" > "$PYTEST_PROOF_FILE"
+        printf '%s\\n' "$@" > "$PYTEST_PROOF_FILE"
         """), encoding="utf-8", newline="\n")
     _make_executable(venv_python)
     # PATH's python3.14 / python3 are both unsupported (e.g. Windows: 3.11 + the Store stub).
@@ -300,3 +300,59 @@ def test_local_test_runner_uses_working_venv_when_path_has_no_python314(tmp_path
 
     assert result.returncode == 0, result.stderr
     assert proof.read_text(encoding="utf-8").splitlines() == ["-m", "pytest", "tests/example_test.py"]
+
+
+_RECORDING_PYTHON = textwrap.dedent("""\
+    #!/usr/bin/env bash
+    # Answers test.sh's version/pip probes; records any other invocation.
+    if [[ "${1:-}" == "-" ]]; then
+      program="$(cat)"
+      if [[ "$program" == *"sys.version_info[:3]"* ]]; then echo "3.14.0"
+      elif [[ "$program" == *"sys.version_info[:2]"* ]]; then echo "3.14"; fi
+      exit 0
+    fi
+    if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then exit 0; fi
+    printf '%s\\n' "$@" > "$PROOF_FILE"
+    """)
+
+
+def _run_runner(tmp_path, *args, **extra_env):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / ".venv" / "Scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", repo / "scripts" / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+    for fake in (repo / "fake-python", repo / ".venv" / "Scripts" / "python.exe"):
+        fake.write_text(_RECORDING_PYTHON, encoding="utf-8", newline="\n")
+        _make_executable(fake)
+    proof = repo / "proof.txt"
+    env = os.environ.copy()
+    for name in ("HERMES_WEBUI_TEST_PORT", "HERMES_WEBUI_TEST_STATE_DIR"):
+        env.pop(name, None)
+    env.update(HERMES_WEBUI_TEST_PYTHON="./fake-python", PROOF_FILE=str(proof), **extra_env)
+    result = subprocess.run([_bash(), "scripts/test.sh", *args], cwd=repo, env=env,
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
+    return proof.read_text(encoding="utf-8").splitlines(), result.stderr
+
+
+def test_local_test_runner_without_arguments_shards_the_whole_suite(tmp_path):
+    argv, _stderr = _run_runner(tmp_path)
+    assert argv[0].replace("\\", "/").endswith("/scripts/run_test_shards.py")
+    assert argv[1:] == ["auto"]
+
+
+def test_local_test_runner_serial_flag_runs_one_pytest_process(tmp_path):
+    argv, _stderr = _run_runner(tmp_path, "--serial")
+    assert argv == ["-m", "pytest", "tests/", "-v", "--timeout=60"]
+
+
+def test_local_test_runner_with_paths_runs_one_pytest_process(tmp_path):
+    argv, _stderr = _run_runner(tmp_path, "tests/test_x.py", "-q")
+    assert argv == ["-m", "pytest", "tests/test_x.py", "-q"]
+
+
+def test_local_test_runner_without_arguments_runs_serially_when_state_is_pinned(tmp_path):
+    argv, stderr = _run_runner(tmp_path, HERMES_WEBUI_TEST_PORT="8789")
+    assert argv == ["-m", "pytest", "tests/", "-v", "--timeout=60"]
+    assert "running the suite serially" in stderr

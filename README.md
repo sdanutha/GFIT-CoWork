@@ -109,8 +109,9 @@ Files at the root:
 ## Running tests
 
 ```bash
-./scripts/test.sh                                  # the whole suite
+./scripts/test.sh                                  # the whole suite, sharded
 ./scripts/test.sh tests/test_gfit_no_admin.py -v   # one file
+./scripts/test.sh --serial                         # the whole suite in one process
 ```
 
 The runner creates or reuses `.venv` with Python 3.14 and installs

@@ -21,11 +21,17 @@
 `pytest-shard` shards, runs them at once, and prints one combined summary, the
 FAILED/ERROR test ids, and a non-zero exit if any shard failed. Each shard's
 full log stays in the temp directory named on the first line. With no pytest
-args it runs `tests/ -q --timeout=60`. Without `--parallel` the runner behaves
-as before.
+args it runs `tests/ -q --timeout=60`.
+
+`./scripts/test.sh` with no arguments runs the whole suite this way with
+min(cores, 8) shards; `--serial` runs it in one process instead. With a pinned
+`HERMES_WEBUI_TEST_PORT` or `HERMES_WEBUI_TEST_STATE_DIR` the no-argument run
+falls back to serial. Any other arguments (paths, `-k`, ...) run one pytest
+process, as before.
 
 ```bash
-./scripts/test.sh --parallel 8              # whole suite
+./scripts/test.sh                           # whole suite, min(cores, 8) shards
+./scripts/test.sh --serial                  # whole suite, one process
 ./scripts/test.sh --parallel 4 tests/test_model_resolver.py
 ```
 
@@ -35,6 +41,10 @@ its own free port and state dir, so `--parallel` refuses a pinned
 
 Measured on a 14-core Mac (2026-10-11, the same commit, both green): the
 whole suite took 145s with `--parallel 8` and 939s (15m39s) serially. The sharded run reported 230 skipped against 221 serially; the skip reasons were not compared.
+
+Measured on a 14-core native Windows machine (2026-10-13, Git Bash): 969s with
+`--parallel 8` and 1016s with `--parallel 12`, so more than 8 shards does not
+help there. Most of the Windows time is per-test fixture overhead, not the tests.
 
 The suite also isolates `HOME` (not only `HERMES_HOME`): Hermes Agent reads
 provider logins from the user's home (Copilot token stores, plugin OAuth
