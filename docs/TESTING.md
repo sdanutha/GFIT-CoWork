@@ -52,6 +52,23 @@ stores) and GitHub token variables, so tests must never see the machine's own.
 Only `DOCKER_CONFIG` is pointed back at the real `~/.docker`, for the docker
 CLI's plugins.
 
+### Two tiers: changed tests while working, the whole suite before merge
+
+```bash
+./scripts/test.sh --changed          # test files touched since merge-base with dev
+./scripts/test.sh --changed=main     # ... since merge-base with another ref
+./scripts/test.sh --changed -k css   # extra pytest args pass through
+```
+
+`scripts/changed_tests.py` takes every file that differs from
+`git merge-base HEAD <ref>`, including uncommitted and untracked files, and
+selects the test files that changed or whose text names a changed file (repo
+path, file name, or dotted Python module). A change to `tests/conftest.py`,
+`tests/_pytest_port.py`, `pyproject.toml` or the requirements selects the whole
+suite. More than 30 selected files run sharded. The selection is textual: add
+neighbouring test files by hand when a change reaches further. Before a merge
+or PR, run the whole suite once (`./scripts/test.sh`).
+
 ### Tests that talk to the shared test server
 
 Every test gets the isolated state directory (`_test_state_dir` in

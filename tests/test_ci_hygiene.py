@@ -360,3 +360,10 @@ def test_local_test_runner_without_arguments_runs_serially_when_state_is_pinned(
     argv, stderr = _run_runner(tmp_path, HERMES_WEBUI_TEST_PORT="8789")
     assert argv == ["-m", "pytest", "tests/", "-v", "--timeout=60"]
     assert "running the suite serially" in stderr
+
+
+def test_local_test_runner_changed_flag_asks_the_selector_and_runs_nothing_when_empty(tmp_path):
+    argv, stderr = _run_runner(tmp_path, "--changed=main")
+    assert argv[0].replace("\\", "/").endswith("/scripts/changed_tests.py")
+    assert argv[1:] == ["main"]
+    assert "no test files touch the changes since main" in stderr

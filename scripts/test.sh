@@ -244,6 +244,28 @@ if [[ "${1:-}" == "--serial" ]]; then
   exec "$PYTHON_BIN" -m pytest "$@"
 fi
 
+# --changed[=REF]: only the test files a change touches since merge-base HEAD REF
+# (default dev); see scripts/changed_tests.py. More than 30 files run sharded.
+if [[ "${1:-}" == "--changed" || "${1:-}" == --changed=* ]]; then
+  ref="dev"
+  if [[ "$1" == --changed=* ]]; then
+    ref="${1#--changed=}"
+  fi
+  shift
+  # tr: Windows Python ends printed lines with CRLF.
+  selected="$("$PYTHON_BIN" "$ROOT/scripts/changed_tests.py" "$ref" | tr -d '\r')" || exit $?
+  if [[ -z "$selected" ]]; then
+    echo "--changed: no test files touch the changes since $ref." >&2
+    exit 0
+  fi
+  mapfile -t files <<< "$selected"
+  echo "--changed: ${#files[@]} test path(s) since $ref." >&2
+  if [[ "${files[*]}" == "tests/" || ${#files[@]} -gt 30 ]]; then
+    exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" auto "${files[@]}" -q --timeout=60 "$@"
+  fi
+  exec "$PYTHON_BIN" -m pytest "${files[@]}" -q --timeout=60 "$@"
+fi
+
 # --parallel N: run N pytest-shard processes at once and combine their results.
 if [[ "${1:-}" == --parallel=* ]]; then
   shards="${1#--parallel=}"
