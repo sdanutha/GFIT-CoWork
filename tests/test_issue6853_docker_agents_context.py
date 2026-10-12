@@ -6,11 +6,18 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import time
 
 import pytest
 
 
 REPO = Path(__file__).resolve().parents[1]
+
+# The rootless seed copies each entry of /apptoo into /app. `cp -a /apptoo/. /app/`
+# also tried to set the times of /app itself, which only its owner (UID 1024)
+# may do, so a rootless start under any other UID (k8s runAsUser with
+# WANTED_UID) failed with "preserving times for '/app/.'".
+ROOTLESS_SEED = "find /apptoo -mindepth 1 -maxdepth 1 -exec cp -a {} /app/ \\;"
 
 
 def _dockerignore_rules() -> set[str]:
@@ -77,7 +84,8 @@ def test_docker_init_has_both_filtered_context_seed_paths():
     init = (REPO / "deploy" / "docker" / "docker_init.bash").read_text(encoding="utf-8")
 
     assert "rsync -av --chown=hermeswebui:hermeswebui /apptoo/ /app/" in init
-    assert "cp -a /apptoo/. /app/" in init
+    assert ROOTLESS_SEED in init
+    assert "cp -a /apptoo/. /app/" not in init
     assert "HERMES_WEBUI_DEFAULT_WORKSPACE=\"/workspace\"" in init
     assert "cd /app" in init
 
@@ -123,7 +131,7 @@ def test_docker_runtime_keeps_app_clean_in_both_seed_modes_and_workspace_intact(
                 + (
                     "rsync -a --chown=hermeswebui:hermeswebui /apptoo/ /app/"
                     if user is None
-                    else "cp -a /apptoo/. /app/"
+                    else ROOTLESS_SEED
                 )
                 + "; test -f /app/server.py; test ! -e /app/AGENTS.md; "
                 "test ! -e /app/.venv; test ! -e /app/.scratch; test ! -e /app/.git; "
@@ -135,5 +143,26 @@ def test_docker_runtime_keeps_app_clean_in_both_seed_modes_and_workspace_intact(
                 args.extend(["--user", user])
             args.extend(["--entrypoint", "bash", tag, "-c", command])
             subprocess.run(args, check=True, timeout=60)
+
+        # The real entry script, rootless under a UID other than the image's
+        # 1024, gets past the seed and the /app writability check.
+        name = f"{tag}-rootless"
+        subprocess.run(
+            [docker, "run", "-d", "--name", name, "--user", "1000:1000",
+             "-e", "WANTED_UID=1000", "-e", "WANTED_GID=1000", tag],
+            check=True, capture_output=True, timeout=60,
+        )
+        try:
+            logs = ""
+            for _ in range(30):
+                logs = subprocess.run([docker, "logs", name], capture_output=True, text=True, timeout=30).stdout
+                if "Verifying /app is writable" in logs or "ERROR" in logs:
+                    break
+                time.sleep(1)
+            assert "Seeding /app from /apptoo (rootless startup)" in logs, logs
+            assert "Failed to seed /app" not in logs, logs
+            assert "Verifying /app is writable" in logs, logs
+        finally:
+            subprocess.run([docker, "rm", "-f", name], check=False, capture_output=True, timeout=60)
     finally:
         subprocess.run([docker, "rmi", "-f", tag], check=False, timeout=60)
