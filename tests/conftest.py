@@ -61,8 +61,8 @@ HOME       = pathlib.Path.home()
 HERMES_HOME = pathlib.Path(os.getenv('HERMES_HOME', str(HOME / '.hermes')))
 
 # ── Test server config ────────────────────────────────────────────────────
-# Port and state dir auto-derive from the repo path when no env var is set,
-# giving every worktree its own isolated port (20000-29999) and state directory.
+# When no env var is set, every pytest process gets a free OS port and a state
+# directory named after the repo path and that port.
 # Override with HERMES_WEBUI_TEST_PORT / HERMES_WEBUI_TEST_STATE_DIR to pin.
 
 def _auto_test_port(repo_root) -> int:
@@ -81,24 +81,30 @@ def _auto_test_port(repo_root) -> int:
     at once. Pin with ``HERMES_WEBUI_TEST_PORT`` for a reproducible/fixed port.
     """
     import socket
-    for _ in range(10):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
+    last_error = None
+    for _ in range(50):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind(("127.0.0.1", 0))
                 port = s.getsockname()[1]
-            except OSError:
-                continue
+        except OSError as exc:
+            # Windows: Winsock can fail transiently (WinError 10106) while
+            # several shards start at once.
+            last_error = exc
+            time.sleep(0.1)
+            continue
         # Avoid the production WebUI port (8787) on the off chance the OS hands
         # it out, and stay clear of privileged ranges. Also cap below 64535 so
         # tests that derive offset ports (test_server_port_exclusivity adds up to
         # +905 to TEST_PORT) can't overflow past 65535.
         if port and port != 8787 and 1024 <= port <= 64535:
             return port
-    # Fallback to the legacy repo-hash port if the OS won't hand us one.
-    import hashlib
-    h = int(hashlib.md5(str(repo_root).encode()).hexdigest(), 16)
-    return 20000 + (h % 10000)
+    # No shared fallback port: concurrent shards would all pick it and wipe
+    # each other's state dir (seen on Windows under --parallel 8).
+    raise RuntimeError(
+        f"could not get a free port for the test server ({last_error}); "
+        "pin one with HERMES_WEBUI_TEST_PORT")
 
 def _auto_state_dir_name(repo_root, port=None) -> str:
     """Per-(repo, port) state dir name.
