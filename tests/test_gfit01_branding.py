@@ -10,6 +10,10 @@ import tomllib
 import urllib.request
 
 from tests.conftest import TEST_BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BRAND = "GFIT-CoWork"

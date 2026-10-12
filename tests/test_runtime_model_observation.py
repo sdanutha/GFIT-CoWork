@@ -9,6 +9,9 @@ import pytest
 
 from api.run_journal import RunJournalWriter, latest_run_summary, read_run_events
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def observation(model="backup", *, session_id="session-a", stream_id="run-a"):
     return {"session_id": session_id, "stream_id": stream_id, "model": model,

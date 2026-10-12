@@ -14,6 +14,9 @@ import pytest
 import api.config as cfg
 import api.profiles as profiles
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _catalog(label: str) -> dict:
     group = {"provider": "OpenAI", "provider_id": "openai", "models": [{"id": label, "label": label, "supports_fast_tier": False}]}

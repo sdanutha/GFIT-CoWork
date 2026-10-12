@@ -18,6 +18,10 @@ from pathlib import Path
 
 from api.routes import _handle_session_compress_status, handle_get
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 # ---------------------------------------------------------------------------

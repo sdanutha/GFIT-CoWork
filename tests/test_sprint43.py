@@ -16,6 +16,10 @@ import pathlib
 import re
 import sys
 import unittest
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 GATEWAY_WATCHER_PY = (REPO_ROOT / "api" / "gateway_watcher.py").read_text(encoding="utf-8")

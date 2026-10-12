@@ -11,6 +11,9 @@ import pytest
 from api import config, streaming
 from tests.test_steer_worker_boundaries import worker_scene as worker_scene
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.mark.parametrize("failure_path", ["exception", "returned"])
 @pytest.mark.parametrize("cancellation", ["stop", "event-only", "detached-only", "none"])

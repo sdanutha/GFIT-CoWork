@@ -8,6 +8,10 @@ Covers:
 """
 import copy
 import unittest
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class TestDeduplicateModelIds(unittest.TestCase):

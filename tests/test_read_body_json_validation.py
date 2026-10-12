@@ -12,6 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 class _Headers:
     def __init__(self, value):

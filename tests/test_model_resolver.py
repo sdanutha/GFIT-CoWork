@@ -6,6 +6,9 @@ tuples for different provider configurations.
 import pytest
 import api.config as config
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _resolve_with_config(model_id, provider=None, base_url=None, default=None, custom_providers=None,
                          explicitly_picked=False):

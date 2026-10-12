@@ -7,6 +7,10 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts" / "run_test_shards.py"

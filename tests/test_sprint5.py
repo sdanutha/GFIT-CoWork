@@ -5,6 +5,9 @@ import pytest
 
 from tests._pytest_port import BASE
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 def get(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:
         return json.loads(r.read()), r.status

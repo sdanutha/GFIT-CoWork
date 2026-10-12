@@ -13,6 +13,10 @@ the agent.  See PR review discussion on #3444.
 """
 
 import api.config as cfg
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class TestOpenaiApiPickerProvider:

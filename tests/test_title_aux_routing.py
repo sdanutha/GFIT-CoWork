@@ -17,6 +17,9 @@ import pytest
 
 from tests._aux_client_helpers import auxiliary_client_modules, patch_tg_config
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.fixture(autouse=True)
 def _install_auxiliary_client_modules():

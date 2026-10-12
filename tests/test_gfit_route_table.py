@@ -20,6 +20,9 @@ from api import route_table
 from api.access import user_may_call
 from api.route_table import PUBLIC, USER, Route
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 CAPTURED = json.loads(
     (Path(__file__).parent / "fixtures" / "gfit_route_answers_before_the_table.json").read_text(encoding="utf-8")
 )

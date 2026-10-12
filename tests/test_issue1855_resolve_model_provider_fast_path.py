@@ -31,6 +31,10 @@ Coverage:
 """
 import pathlib
 from unittest.mock import patch
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent.resolve()

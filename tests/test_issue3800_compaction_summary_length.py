@@ -13,6 +13,10 @@ from tests.test_sprint46 import (
     _install_fake_compression_runtime,
     _make_session,
 )
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _install_manual_summary(monkeypatch, summary_text):

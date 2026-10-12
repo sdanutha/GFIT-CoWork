@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 # These cases run through ``streaming._resolve_runtime_connection_bundle``, the
 # function every agent-construction path in streaming.py calls. Each one also
 # runs with a FOREIGN ambient runtime dict (another provider's endpoint, key,

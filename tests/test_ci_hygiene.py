@@ -6,6 +6,10 @@ import stat
 import subprocess
 import textwrap
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = Path(__file__).resolve().parents[1]
 

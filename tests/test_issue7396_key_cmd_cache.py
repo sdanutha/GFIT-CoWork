@@ -5,6 +5,10 @@ import types
 from unittest import mock
 
 from api import config
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 _MISSING = object()

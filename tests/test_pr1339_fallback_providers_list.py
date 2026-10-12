@@ -9,6 +9,10 @@ WebUI must now also mirror Hermes CLI/gateway fallback-chain semantics:
 entries are appended when they do not duplicate an earlier route.
 """
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 STREAMING_PY = Path(__file__).resolve().parent.parent / "api" / "streaming.py"
 

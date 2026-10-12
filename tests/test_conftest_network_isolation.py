@@ -20,6 +20,9 @@ from __future__ import annotations
 import socket
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def test_outbound_to_public_ipv4_is_blocked():
     """Attempting to connect to a public IP must raise OSError."""

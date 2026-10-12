@@ -30,6 +30,9 @@ import pytest
 
 import api.config as cfg
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ── 1. Auto-detect block writes ``custom``, not ``local`` ────────────────
 

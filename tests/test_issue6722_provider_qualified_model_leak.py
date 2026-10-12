@@ -31,6 +31,10 @@ import api.models as models
 import api.streaming as streaming
 from api.config import STREAMS, create_stream_channel
 from api.models import new_session
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 # (qualified value, expected bare model, expected provider)

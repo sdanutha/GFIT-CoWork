@@ -6,6 +6,10 @@ from http.server import BaseHTTPRequestHandler
 
 from api.helpers import _security_headers
 from server import Handler
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class _HeaderCapture:

@@ -29,6 +29,9 @@ from tests.conftest import TEST_STATE_DIR
 
 from tests._pytest_port import BASE
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def get(path, headers=None):
     req = urllib.request.Request(BASE + path, headers=headers or {})

@@ -4,6 +4,10 @@ Sprint 17 Tests: send_key setting, commands.js static file, workspace subdir lis
 import json, urllib.error, urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get(path):

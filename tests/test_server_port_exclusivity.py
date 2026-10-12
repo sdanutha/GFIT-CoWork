@@ -12,6 +12,9 @@ import pytest
 
 from tests._pytest_port import TEST_PORT
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ── SO_EXCLUSIVEADDRUSE on Windows ──────────────────────────────────────────
 

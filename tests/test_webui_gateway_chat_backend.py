@@ -26,6 +26,10 @@ from api.gateway_chat import (
     webui_gateway_chat_enabled,
 )
 from api.turn_journal import derive_turn_journal_states, read_turn_journal
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_gateway_chat_backend_is_default_off_for_truthy_values():

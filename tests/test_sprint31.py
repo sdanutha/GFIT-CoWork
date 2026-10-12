@@ -16,6 +16,9 @@ import shutil
 import os
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 yaml = pytest.importorskip("yaml", reason="PyYAML required for config write tests")
 
 

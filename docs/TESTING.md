@@ -52,6 +52,21 @@ stores) and GitHub token variables, so tests must never see the machine's own.
 Only `DOCKER_CONFIG` is pointed back at the real `~/.docker`, for the docker
 CLI's plugins.
 
+### Tests that talk to the shared test server
+
+Every test gets the isolated state directory (`_test_state_dir` in
+`tests/conftest.py`); only tests that use the live server start it. A test file
+that sends requests to `TEST_BASE` / `BASE` declares:
+
+```python
+pytestmark = pytest.mark.usefixtures("test_server")
+```
+
+(or requests `test_server` / `base_url` as a fixture). Without it the request is
+refused (`ConnectionRefusedError`). The per-test session cleanup's HTTP calls
+also run only for those tests: they cost ~100 ms per test on Windows. With the
+server opt-in, the Windows `--parallel 8` run went from 969s to 752s.
+
 ## Static JS runtime lint (brick-class regression guard)
 
 Some JS bugs throw a `TypeError`/`ReferenceError` only when a specific function

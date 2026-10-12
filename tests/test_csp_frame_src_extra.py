@@ -9,6 +9,10 @@ touches `frame-ancestors` (who may embed the WebUI), which stays 'none'.
 from __future__ import annotations
 
 from api.helpers import _build_csp_enforced_policy
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_csp_frame_src_default_is_self_only(monkeypatch):

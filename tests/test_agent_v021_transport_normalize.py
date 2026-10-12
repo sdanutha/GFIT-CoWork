@@ -17,6 +17,10 @@ fail in that state.
 """
 import sys
 import types
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 TITLE_TEXT = 'Claude Transport Title'
 SUMMARY_TEXT = '- The remaining work is the final review pass.'

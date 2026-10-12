@@ -31,6 +31,9 @@ from urllib.parse import urlparse
 
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _install_provider_model_ids(monkeypatch, fn):
     """Stub hermes_cli.models.provider_model_ids (returns [] for custom:*)."""

@@ -24,6 +24,9 @@ import pytest
 from tests._pytest_port import BASE
 import api.workspace as w
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def get(path):
     url = BASE + path

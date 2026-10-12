@@ -16,6 +16,10 @@ import types
 from pathlib import Path as _Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _install_fake_get_model_context_length(monkeypatch, recorder, *, default_context=1_000_000):

@@ -13,6 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 ROOT = Path(__file__).parent.parent
 PANELS_JS_PATH = ROOT / "static" / "panels.js"
 PANELS_JS = PANELS_JS_PATH.read_text(encoding="utf-8")

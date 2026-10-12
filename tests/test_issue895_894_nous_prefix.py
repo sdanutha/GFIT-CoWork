@@ -9,6 +9,9 @@ from pathlib import Path
 import api.config as config
 from api.config import resolve_model_provider, set_hermes_default_model
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ── Shared fixture ──────────────────────────────────────────────────────────
 

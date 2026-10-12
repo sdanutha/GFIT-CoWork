@@ -18,6 +18,9 @@ import pytest
 
 from api import config as cfg_mod
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

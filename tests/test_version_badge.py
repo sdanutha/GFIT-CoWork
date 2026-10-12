@@ -16,6 +16,10 @@ import sys
 import types
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO_ROOT = Path(__file__).parent.parent
 

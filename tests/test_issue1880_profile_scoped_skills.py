@@ -1,4 +1,6 @@
 import json
+
+import pytest
 import os
 import pathlib
 import urllib.error
@@ -9,7 +11,7 @@ import tests.conftest as _conftest
 from tests._pytest_port import BASE
 from tests.conftest import requires_agent_modules
 
-pytestmark = requires_agent_modules
+pytestmark = [requires_agent_modules, pytest.mark.usefixtures("test_server")]
 
 
 def _state_dir() -> pathlib.Path:

@@ -1021,23 +1021,12 @@ def _copy2_readonly(source: str, destination: str) -> str:
 # ── Session-scoped test server ────────────────────────────────────────────────
 
 @pytest.fixture(scope="session", autouse=True)
-def test_server():
-    """
-    Start an isolated test server on TEST_PORT with a clean state directory.
-    Paths are discovered dynamically -- no hardcoded absolute path assumptions.
-    """
-    # Kill any leftover process on the test port before starting.
-    # Stale servers from QA harness runs or prior test sessions cause
-    # conftest to think the server is already up, producing false failures.
-    # ONLY for a pinned port: an auto-allocated free port is unique to this
-    # process and was just confirmed free, so there's nothing stale to reap —
-    # and fuser -k on an ephemeral-range port could kill an unrelated client
-    # socket or a concurrent run's process (see TEST_PORT_PINNED note).
-    if TEST_PORT_PINNED:
-        _kill_port_owner(TEST_PORT)
-        import time as _time
-        _time.sleep(0.5)  # brief pause to let the port release
+def _test_state_dir():
+    """The clean, isolated state directory every test shares with the test server.
 
+    Cheap, so every test gets it; booting the server is ``test_server``'s job and
+    only the tests that talk to it pay for it. Yields the Directory users file.
+    """
     # Clean slate
     if TEST_STATE_DIR.exists():
         _rmtree_retry(TEST_STATE_DIR)
@@ -1072,6 +1061,32 @@ def test_server():
     # can read them without importing conftest (avoids circular imports).
     os.environ.setdefault('HERMES_WEBUI_TEST_PORT', str(TEST_PORT))
     # os.environ already set at module level above; no-op here.
+
+    yield directory_users
+
+    _rmtree_retry(TEST_STATE_DIR)
+
+
+@pytest.fixture(scope="session")
+def test_server(_test_state_dir):
+    """
+    Start an isolated test server on TEST_PORT, sharing ``_test_state_dir``.
+    Opt-in: a test file that talks to the server declares
+    ``pytestmark = pytest.mark.usefixtures("test_server")``.
+    Paths are discovered dynamically -- no hardcoded absolute path assumptions.
+    """
+    directory_users = _test_state_dir
+    # Kill any leftover process on the test port before starting.
+    # Stale servers from QA harness runs or prior test sessions cause
+    # conftest to think the server is already up, producing false failures.
+    # ONLY for a pinned port: an auto-allocated free port is unique to this
+    # process and was just confirmed free, so there's nothing stale to reap —
+    # and fuser -k on an ephemeral-range port could kill an unrelated client
+    # socket or a concurrent run's process (see TEST_PORT_PINNED note).
+    if TEST_PORT_PINNED:
+        _kill_port_owner(TEST_PORT)
+        import time as _time
+        _time.sleep(0.5)  # brief pause to let the port release
 
     env = os.environ.copy()
     # Strip ANY real credential env var so the test subprocess never inherits
@@ -1223,8 +1238,6 @@ def test_server():
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc.pid)
 
-    _rmtree_retry(TEST_STATE_DIR)
-
 
 # ── The test User's session ──────────────────────────────────────────────────
 
@@ -1309,7 +1322,7 @@ def request_has_user_session(monkeypatch, tmp_path):
 # ── Test base URL ─────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session")
-def base_url():
+def base_url(test_server):
     return TEST_BASE
 
 
@@ -1478,7 +1491,7 @@ def _backfill_approval_entry_facade():
 # ── Per-test session cleanup ──────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def cleanup_test_sessions():
+def cleanup_test_sessions(request):
     """
     Yields a list for tests to register created session IDs.
     Deletes all registered sessions after each test.
@@ -1499,10 +1512,15 @@ def cleanup_test_sessions():
     # commit-reliable state.db content fingerprint in the cache keys
     # (api/models.py _sqlite_content_fingerprint) — this pre-reset is belt-and-
     # suspenders against setting bleed under shard ordering.
-    try:
-        _post(TEST_BASE, "/api/settings", {"show_cli_sessions": False})
-    except Exception:
-        pass
+    #
+    # The HTTP resets cost ~100 ms per test (most of a Windows run), so only the
+    # tests that use the server (``test_server``) pay for them.
+    on_server = "test_server" in request.fixturenames
+    if on_server:
+        try:
+            _post(TEST_BASE, "/api/settings", {"show_cli_sessions": False})
+        except Exception:
+            pass
     try:
         from api.models import clear_cli_sessions_cache
         clear_cli_sessions_cache()
@@ -1510,22 +1528,23 @@ def cleanup_test_sessions():
         pass
     yield created
 
-    for sid in created:
+    if on_server:
+        for sid in created:
+            try:
+                _post(TEST_BASE, "/api/session/delete", {"session_id": sid})
+            except Exception:
+                pass
+
+        # Sweep the empty sessions a test left behind. The bulk cleanup route went
+        # with the Admin (ADR 0006); delete them one by one like a User would.
         try:
-            _post(TEST_BASE, "/api/session/delete", {"session_id": sid})
+            with urllib.request.urlopen(TEST_BASE + "/api/sessions", timeout=10) as r:
+                listed = json.loads(r.read()).get("sessions") or []
+            for row in listed:
+                if isinstance(row, dict) and row.get("session_id") and not row.get("message_count"):
+                    _post(TEST_BASE, "/api/session/delete", {"session_id": row["session_id"]})
         except Exception:
             pass
-
-    # Sweep the empty sessions a test left behind. The bulk cleanup route went
-    # with the Admin (ADR 0006); delete them one by one like a User would.
-    try:
-        with urllib.request.urlopen(TEST_BASE + "/api/sessions", timeout=10) as r:
-            listed = json.loads(r.read()).get("sessions") or []
-        for row in listed:
-            if isinstance(row, dict) and row.get("session_id") and not row.get("message_count"):
-                _post(TEST_BASE, "/api/session/delete", {"session_id": row["session_id"]})
-    except Exception:
-        pass
 
     try:
         last_ws_file = TEST_STATE_DIR / "last_workspace.txt"
@@ -1535,10 +1554,11 @@ def cleanup_test_sessions():
 
     # Reset the CLI-session visibility setting to its default so it never bleeds
     # across tests (33 gateway_sync tests flip it on; only ~30 reset it).
-    try:
-        _post(TEST_BASE, "/api/settings", {"show_cli_sessions": False})
-    except Exception:
-        pass
+    if on_server:
+        try:
+            _post(TEST_BASE, "/api/settings", {"show_cli_sessions": False})
+        except Exception:
+            pass
     try:
         from api.models import clear_cli_sessions_cache
         clear_cli_sessions_cache()

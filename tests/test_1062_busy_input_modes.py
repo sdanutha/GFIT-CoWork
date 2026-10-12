@@ -12,6 +12,10 @@ Issue: #720 (configurable busy-input behaviour)
 from pathlib import Path
 
 from tests.helpers import source_between as _source_between
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = Path(__file__).parent.parent
 CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")
