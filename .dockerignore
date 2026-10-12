@@ -19,6 +19,16 @@ node_modules/
 .local-review/
 .review-crops/
 archive/
+.coverage
+htmlcov/
+.github/
+.gitignore
+.gitattributes
+
+# Editor and OS files
+.vscode/
+.idea/
+**/.DS_Store
 
 # Secrets: local .env files, the mock LDAP's test certificates, and the
 # Deployments deploy/new-deployment creates (their .env and every Profile)
