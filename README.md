@@ -43,6 +43,7 @@ in-memory Directory instead of the company AD:
 mkdir -p ~/gfit-trial
 cat > ~/gfit-trial/users.json <<'JSON'
 {"521740": {"password": "trial-only", "display_name": "Trial User"}}
+
 JSON
 export HERMES_HOME=~/gfit-trial/.hermes
 export HERMES_WEBUI_STATE_DIR=~/gfit-trial/webui
