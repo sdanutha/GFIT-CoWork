@@ -1,5 +1,7 @@
 # Supported ways to run: the deploy/ kit on a server, start.sh/ctl.sh and start.ps1 for development
 
+> Superseded by [ADR 0009](0009-every-way-to-run-is-a-container.md): every way to run GFIT-CoWork, development included, is a container from the `deploy/` kit; the native launchers are removed.
+
 GFIT-CoWork runs in exactly three ways. On a server, every Team's Deployment runs from the `deploy/` kit: Hermes Agent and GFIT-CoWork in Docker Compose, one Deployment per Team (ADR 0002), behind the Caddy reverse proxy. For development, `start.sh`/`ctl.sh` run it on Linux or macOS and `start.ps1` runs it on native Windows, with `dev/mock-ldap` as the development Directory. We chose this because every Deployment must run GFIT-CoWork's own image with the Directory configured (ADR 0004), and only `deploy/` does that. Upstream's other ways to run did not: two of its root Compose setups pulled Upstream's published image, so an Admin following them got Upstream's code, and its NixOS module could not configure the Directory at all.
 
 ## Consequences

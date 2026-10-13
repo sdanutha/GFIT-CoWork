@@ -64,6 +64,10 @@ _Avoid_: group, department, tenant
 One Hermes Agent plus one GFIT-CoWork, serving exactly one Team, with its own URL, Operator and API key. Deployments share nothing with one another.
 _Avoid_: instance, server, stack
 
+**Development Deployment**:
+A Deployment that runs on a developer's own machine to build and debug GFIT-CoWork. It uses a mock Directory instead of the company AD and serves no real Users or Team. It never runs on a Team's server.
+_Avoid_: local, native, dev stack
+
 **Reception**:
 The one Profile in each Deployment that answers A2A requests from other Deployments. It is not owned by a User and can only answer questions, not take actions.
 _Avoid_: front desk, gateway, team bot
