@@ -62,7 +62,7 @@ The deploy kit also gains configurable home and workspace paths, a fixed UID/GID
 - **Debugging**: a checked-in VS Code "Attach" configuration maps the container's app path to the workspace root.
 - **Setup**: unchanged mechanism. `hermes setup` runs through `deploy/cowork <team> exec hermes-agent`, once per home folder; the kit adds no automatic Setup step.
 - **Home and workspace paths**: Compose reads `HERMES_HOME_DIR` and `HERMES_WORKSPACE_DIR` from `.env`, defaulting to the Deployment folder's `home` and `workspace`. Every guard `deploy/cowork` applies to `home/` and `home/.env` today resolves through `HERMES_HOME_DIR`.
-- **UID/GID**: all services use 10000:10000 by default. `new-deployment` writes 10000 and chowns `home/` and `workspace/` to it, so it needs root; it fails with a clear message if it cannot chown.
+- **UID/GID**: all services use 10000:10000 by default. `new-deployment` writes 10000 and chowns `home/` and `workspace/` to it, so it needs root; it fails with a clear message if it cannot chown. `GFIT_UID`/`GFIT_GID` pick another service user. Exception, decided during implementation: a Development Deployment on a Linux machine runs as the developer, because it mounts their checkout and must write to it (ADR 0009). On Docker Desktop no chown is needed.
 - **Container names**: set explicitly as `gfit-<team>-agent`, `gfit-<team>-cowork`, `gfit-<team>-dashboard` (and `gfit-<team>-ldap` in development).
 - **`/opt/data`**: the agent and the Dashboard each get a named volume for `/opt/data`, treated like the agent-source volume (disposable, not part of backup).
 - **Production exposure**: unchanged. App and Dashboard on `127.0.0.1`, gateway and A2A not published.

@@ -24,6 +24,30 @@ value() { grep -m1 "^$1=" "$env" | cut -d= -f2- || true; }
 
 refuse() { echo "Deployment '$team': $1" >&2; exit 1; }
 
+# A Development Deployment (GFIT_DEV=1, ADR 0009) adds the development overlay.
+# It runs on a developer's machine only, never on a Team's server.
+compose_files=(-f "$root/docker-compose.yml")
+if [ "$(value GFIT_DEV)" = 1 ]; then
+  [ "$(value GFIT_HOSTNAME)" = localhost ] \
+    || refuse "GFIT_DEV=1 is for a Development Deployment, which is always on localhost (GFIT_HOSTNAME=$(value GFIT_HOSTNAME))."
+  compose_files+=(-f "$root/docker-compose.dev.yml")
+fi
+
+# What docker gets: the checkout to build from, the Deployment's folder as the
+# project directory, and the Compose files.
+export GFIT_COWORK_SRC="$(cd "$root/.." && pwd)"
+project_dir="$dir"
+if command -v cygpath >/dev/null 2>&1; then
+  # Git Bash on Windows: give docker Windows paths, and stop MSYS from
+  # rewriting the container paths in the arguments.
+  export MSYS_NO_PATHCONV=1
+  GFIT_COWORK_SRC="$(cygpath -m "$GFIT_COWORK_SRC")"
+  project_dir="$(cygpath -m "$dir")"
+  for i in "${!compose_files[@]}"; do
+    [ "${compose_files[$i]}" = -f ] || compose_files[$i]="$(cygpath -m "${compose_files[$i]}")"
+  done
+fi
+
 file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 file_owner() { stat -c %u:%g "$1" 2>/dev/null || stat -f %u:%g "$1"; }
 
@@ -36,12 +60,22 @@ file_owner() { stat -c %u:%g "$1" 2>/dev/null || stat -f %u:%g "$1"; }
 sync_gateway_key() {
   local key home target line tmp count=0 matches=0 owner
   key="$(value API_SERVER_KEY)"
-  home="$dir/home"
+  # HERMES_HOME_DIR may move home/ out of the folder (ADR 0009); a relative
+  # path is inside the folder, as Compose reads it.
+  home="$(value HERMES_HOME_DIR)"
+  home="${home:-./home}"
+  local in_folder=""
+  [ "${home%/}" = ./home ] || [ "${home%/}" = home ] && in_folder=1
+  [[ "$home" == /* || "$home" =~ ^[A-Za-z]:[/\] ]] || home="$dir/${home#./}"
+  home="${home%/}"
   target="$home/.env"
 
   [ ! -L "$dir" ] && [ ! -L "$home" ] || refuse "$home or its folder is a symlink; refusing to write the gateway key."
-  [ -d "$home" ] || refuse "home/ is missing (create the Deployment with deploy/new-deployment)."
-  [ "$(cd -P "$home" && pwd)" = "$(cd -P "$dir" && pwd)/home" ] || refuse "home/ resolves outside the Deployment's folder."
+  [ -d "$home" ] || refuse "$home is missing (create the Deployment with deploy/new-deployment, or create HERMES_HOME_DIR)."
+  # The folder's own home/ must really be inside it. A moved home is the
+  # Operator's chosen path; only the folder itself must not be a symlink.
+  [ -z "$in_folder" ] || [ "$(cd -P "$home" && pwd)" = "$(cd -P "$dir" && pwd)/home" ] \
+    || refuse "home/ resolves outside the Deployment's folder."
   [ ! -L "$target" ] || refuse "home/.env is a symlink; refusing to write the gateway key."
   [ ! -e "$target" ] || [ -f "$target" ] || refuse "home/.env is not a regular file."
 
@@ -61,7 +95,7 @@ sync_gateway_key() {
   # Hermes Agent writes home/.env too, so never replace it while the
   # Deployment runs: its write could be lost. Unknown counts as running.
   local running
-  running="$(docker compose -f "$root/docker-compose.yml" --project-directory "$dir" ps --status running -q 2>/dev/null)" \
+  running="$(docker compose "${compose_files[@]}" --project-directory "$project_dir" ps --status running -q 2>/dev/null)" \
     || refuse "could not tell whether it is running, so the gateway key in home/.env was not changed."
   [ -z "$running" ] || refuse "the gateway key in home/.env must change while the Deployment is running. Stop it first: deploy/cowork $team down, then deploy/cowork $team up -d."
 
@@ -112,5 +146,4 @@ case "$1" in
     ;;
 esac
 
-export GFIT_COWORK_SRC="$(cd "$root/.." && pwd)"
-exec docker compose -f "$root/docker-compose.yml" --project-directory "$dir" "$@"
+exec docker compose "${compose_files[@]}" --project-directory "$project_dir" "$@"

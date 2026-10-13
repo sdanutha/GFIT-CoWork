@@ -1,5 +1,7 @@
 # No hosted CI; the local test runner is the gate
 
+> Amended by [ADR 0009](0009-every-way-to-run-is-a-container.md): the local test runner runs in a container, and `start.ps1` and native Windows are gone, so the manual `start.ps1` check below no longer applies.
+
 GFIT-CoWork has no GitHub Actions and no `.github/` folder. The suite runs locally through `./scripts/test.sh` before a merge, and that run is the only automated gate. We chose this over keeping the workflows because the repo keeps its tooling in one place, the Claude Code layout (`AGENTS.md` and `.claude/`), and the owner merges locally into `main`, so a hosted check after the push guarded nothing a local run does not.
 
 Supersedes in part ADR 0005 (the native-Windows CI check and the Docker smoke workflow).

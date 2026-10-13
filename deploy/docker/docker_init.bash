@@ -538,7 +538,16 @@ fi
 ensure_hindsight_client_docker_dependency
 
 echo ""; echo "== Running GFIT-CoWork"
-cd /app; python server.py || error_exit "GFIT-CoWork failed or exited with an error"
+cd /app
+if [ -n "${GFIT_DEBUGPY_PORT:-}" ] && [ -d /opt/debugpy ]; then
+  # A Development Deployment (ADR 0009): the server runs under debugpy, which
+  # only the dev image carries. The debugger attaches without pausing start-up.
+  echo "-- Debugger listening on 0.0.0.0:${GFIT_DEBUGPY_PORT}"
+  PYTHONPATH="/opt/debugpy${PYTHONPATH:+:$PYTHONPATH}" python -m debugpy --listen "0.0.0.0:${GFIT_DEBUGPY_PORT}" server.py \
+    || error_exit "GFIT-CoWork failed or exited with an error"
+else
+  python server.py || error_exit "GFIT-CoWork failed or exited with an error"
+fi
 
 # we should never be here because the server should be running indefinitely, but if we are, we exit safely
 ok_exit "Clean exit"

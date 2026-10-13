@@ -14,6 +14,7 @@ below.
 | File | What it is |
 |------|------------|
 | `docker-compose.yml` | One Deployment: Hermes Agent, GFIT-CoWork and the dashboard. Run it only through `cowork` |
+| `docker-compose.dev.yml` | The overlay `cowork` adds for a Development Deployment (`GFIT_DEV=1`); never on a server |
 | `team.env.example` | The template for one Deployment's `.env`; every value is explained there |
 | `new-deployment` | Creates a Deployment's folder in `deployments/<team>/`, with its ports and random secrets |
 | `cowork` | Runs `docker compose` for one Deployment: `deploy/cowork <team> <compose args>` |
@@ -23,6 +24,12 @@ below.
 People only ever reach GFIT-CoWork through the reverse proxy over HTTPS.
 GFIT-CoWork and the dashboard listen on `127.0.0.1` only, and Hermes Agent's
 gateway is not published on the host at all.
+
+The same kit makes a **Development Deployment** on a developer's machine
+(`deploy/new-deployment --dev dev 0`): see
+[docs/setup.md](../docs/setup.md#a-development-deployment) and
+[ADR 0009](../docs/adr/0009-every-way-to-run-is-a-container.md). Everything
+below is about a Team's Deployment on a server.
 
 ## Before you start
 
@@ -79,13 +86,21 @@ Team, use another name and another N (e.g. `account`, 2).
    hostname defaults to `<team>.cowork.gfit.co.th`:
 
    ```sh
-   deploy/new-deployment sales 1
+   sudo deploy/new-deployment sales 1
    ```
 
    This creates `deploy/deployments/sales/` with `.env` (readable by you
    only), `home/`, `workspace/` and `certs/`, and prints the ports and the
    dashboard login. They are also in `.env`. Everything the Deployment keeps
    is in this folder ([ADR 0008](../docs/adr/0008-deployment-storage-and-dashboard.md)).
+   Every container runs as UID/GID 10000, and `new-deployment` gives `home/`
+   and `workspace/` to 10000:10000, which is why it needs `sudo`
+   ([ADR 0009](../docs/adr/0009-every-way-to-run-is-a-container.md)); reading
+   those folders on the server needs `sudo` too. `GFIT_UID=<uid>
+   GFIT_GID=<gid>` picks another service user. To keep the data on another
+   disk, set `HERMES_HOME_DIR` and `HERMES_WORKSPACE_DIR` in `.env` to absolute
+   paths (owned by the same UID/GID) before the first start; then back those
+   up too.
    On Docker Desktop (a trial on a laptop), Hermes Agent logs that SQLite WAL
    is off for `home/`: that is expected there and does not happen on the Linux
    server.
@@ -249,7 +264,9 @@ or more Teams.
 
 - **List Deployments:** `deploy/cowork` with no arguments.
 - **Logs:** `deploy/cowork sales logs --tail 200 gfit-cowork` (or
-  `hermes-agent`, `hermes-dashboard`).
+  `hermes-agent`, `hermes-dashboard`). The containers are named
+  `gfit-<team>-agent`, `gfit-<team>-cowork` and `gfit-<team>-dashboard`, so
+  `docker logs gfit-sales-cowork` works too.
 - **Session store:** `gfit sessions-audit` reports problems (read-only).
   `gfit sessions-repair` and `gfit sessions-cleanup [--empty]` change session
   files the server also writes: run them when nobody is using the Team, then
@@ -266,7 +283,11 @@ or more Teams.
   ```
 
   The empty `home/hermes-agent/` folder is only where the agent source is
-  mounted and can be left out.
+  mounted and can be left out. If `HERMES_HOME_DIR` or `HERMES_WORKSPACE_DIR`
+  point outside the folder, back those paths up as well. The volumes
+  `gfit-<team>_agent-data` and `gfit-<team>_dashboard-data` (the agent image's
+  own `/opt/data`, where the agent installs tools for itself) are not part of
+  a backup: like the agent source volume, they are refilled as needed.
 - **Upgrade GFIT-CoWork:** `git -C /opt/gfit-cowork/src pull`, then
   `deploy/cowork <team> up -d` for each Team. It rebuilds the image from the
   checkout.
@@ -291,7 +312,7 @@ or more Teams.
   # copy the old .env values and certs/ into deploy/deployments/sales/
   for v in hermes-home:home admin-workspace:workspace; do
     docker run --rm -v "gfit-sales_${v%%:*}":/from -v "$PWD/deploy/deployments/sales/${v##*:}":/to \
-      alpine sh -c 'cp -a /from/. /to/ && chown -R '"$(id -u):$(id -g)"' /to'
+      alpine sh -c 'cp -a /from/. /to/ && chown -R 10000:10000 /to'
   done
   deploy/cowork sales up -d
   ```

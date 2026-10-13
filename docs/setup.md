@@ -5,25 +5,28 @@ server who sets up a GFIT-CoWork Deployment and its first Users. There is no
 setup wizard in the web app and no Admin login (ADR 0006); everything below is
 done on the server.
 
-If an AI assistant is helping with install, reinstall, bootstrap, provider
+If an AI assistant is helping with install, reinstall, provider
 setup, or Setup support, read
 [`docs/setup-agent-checklist.md`](setup-agent-checklist.md) before
 running commands or inspecting logs.
 
-The short version:
+GFIT-CoWork runs only in containers, from the `deploy/` kit
+([ADR 0009](adr/0009-every-way-to-run-is-a-container.md)):
 
-1. Install Hermes Agent and give the `default` Profile a provider and model
-   (`hermes setup` or `hermes model`).
-2. Configure the Directory (`HERMES_WEBUI_DIRECTORY`): the company AD for a
-   Deployment, or the in-memory Directory for a trial. Without one the server
-   does not start.
-3. Start GFIT-CoWork.
-4. Create a Profile for each person:
-   `python3 -m api.operator_cli create <employee ID> --clone-from default`.
-5. The person logs in with their employee ID and AD password.
+- **For a Team on a server**, follow [`deploy/README.md`](../deploy/README.md):
+  `deploy/new-deployment <team> <N>`, fill in the AD values, `deploy/cowork
+  <team> up -d`, then Setup and a Profile for each person.
+- **For development, debugging or a trial on one machine**, make a
+  [Development Deployment](#a-development-deployment).
 
-For a Team on a server, the `deploy/` kit does steps 2–3 for you; follow
-[`deploy/README.md`](../deploy/README.md).
+Either way the steps are the same:
+
+1. Give the `default` Profile a provider and model (`hermes setup`).
+2. The Directory: the company AD for a Team, the mock Directory for a
+   Development Deployment. Without one the server does not start.
+3. Create a Profile for each person (`operator_cli create <employee ID>
+   --clone-from default`).
+4. The person logs in with their employee ID and password.
 
 ## Before you start
 
@@ -31,45 +34,46 @@ GFIT-CoWork is only the browser interface. The agent runtime, memory, skills,
 config, cron jobs and provider credentials belong to Hermes Agent, one Profile
 per User.
 
-The bootstrap supports Linux, macOS and WSL2. Native Windows runs with
-`pwsh .\start.ps1`.
+There is no native way to run GFIT-CoWork any more: no `start.sh`,
+`start.ps1`, `ctl.sh` or `bootstrap.py`. The host needs Docker (Docker
+Desktop on Windows and macOS) and a bash (Git Bash on Windows).
 
-## Install path choices
+## A Development Deployment
 
-| Path | Use it when | Notes |
-|---|---|---|
-| Docker Deployment kit (`deploy/`) | You deploy GFIT-CoWork for a Team on a server | One Deployment per Team behind the HTTPS reverse proxy; see [`deploy/README.md`](../deploy/README.md). |
-| Local bootstrap | Development, or a trial on one machine | `./start.sh` or `python3 bootstrap.py`, with the in-memory Directory. |
-
-## A trial on one machine
-
-Do not delete `~/.hermes` to start over. It holds the real Hermes config,
-credentials, memory, skills, Profiles, sessions and cron state. Use an
-isolated Hermes home and state directory, and the in-memory Directory:
+A Deployment on your own machine, made by the same kit as a Team's, with the
+mock Directory instead of AD, your checkout as the app, a debugger, and
+plain HTTP on `localhost`:
 
 ```bash
-mkdir -p ~/gfit-trial
-cat > ~/gfit-trial/users.json <<'JSON'
-{"521740": {"password": "trial-only", "display_name": "Trial User"}}
-JSON
-export HERMES_HOME=~/gfit-trial/.hermes
-export HERMES_WEBUI_STATE_DIR=~/gfit-trial/webui
-export HERMES_WEBUI_PORT=8789
-export HERMES_WEBUI_DIRECTORY=memory
-export HERMES_WEBUI_DIRECTORY_USERS=~/gfit-trial/users.json
-
-hermes setup                                   # provider and model for the default Profile
-python3 -m api.operator_cli create 521740 --clone-from default
-python3 bootstrap.py
+deploy/new-deployment --dev dev 0        # N=0: http://localhost:8787
+deploy/cowork dev up -d                  # the first start builds the dev image and installs the venv
+deploy/cowork dev exec hermes-agent hermes setup     # once: provider, key and model
+deploy/cowork dev exec -T -u hermeswebui -w /app gfit-cowork \
+  /app/venv/bin/python -m api.operator_cli create 521740 --clone-from default
 ```
 
-Then open `http://127.0.0.1:8789` and log in as `521740` / `trial-only`. The
-in-memory Directory is for trials and tests only; a Deployment uses the
-company AD (`HERMES_WEBUI_DIRECTORY=ldap`, see [Login](#login)).
+Then open `http://localhost:8787` and log in as `521740` / `Somchai-Pass-1`
+(the sample Users are in [`dev/mock-ldap`](../dev/mock-ldap/README.md)).
 
-If your repo has a `.env` file, the bootstrap and the command line load it.
-Remove or adjust any `HERMES_HOME`, `HERMES_WEBUI_STATE_DIR` or
-`HERMES_WEBUI_PORT` entries there before an isolated trial.
+- **Editing:** your checkout is mounted at `/app`. JS and CSS changes show on
+  reload; after a Python change run `deploy/cowork dev restart gfit-cowork`.
+- **Debugging:** the server runs under `debugpy` on `DEBUG_PORT` (5678 for
+  N=0). In VS Code, run **Attach to the Development Deployment**
+  (`.vscode/launch.json`) and set breakpoints in the checkout.
+- **State:** everything lives in `deploy/deployments/dev/` and survives
+  `down`. Setup is needed again only if you delete `home/`.
+- **Network:** every port (the app, the Dashboard, the gateway, A2A, the
+  debugger, the mock Directory) is on `127.0.0.1`. `DEV_BIND=0.0.0.0` in the
+  Deployment's `.env` opens them to your network, with the sample passwords
+  from the repo; use it only to test between machines.
+- `deploy/cowork` refuses a Development Deployment whose `GFIT_HOSTNAME` is not
+  `localhost`, so it cannot run on a Team's server.
+- On Docker Desktop, Hermes Agent turns off SQLite WAL in `home/` (ADR 0008):
+  do not measure capacity on a Development Deployment.
+
+Never point a Development Deployment at your real Hermes home: it gives the
+folder to the container's user and changes its SQLite journal mode. Copy what
+you need into its `home/` instead.
 
 ## Providers and models
 
@@ -155,8 +159,8 @@ reverse proxy, set `HERMES_WEBUI_TRUST_FORWARDED_FOR=1` (and
 `HERMES_WEBUI_TRUSTED_PROXY_CIDRS` for a proxy not on loopback) so attempts are
 counted per person's forwarded address, not per proxy. When AD cannot
 be reached, login says the directory is unavailable rather than that the
-password is wrong. For local development, `dev/mock-ldap/` runs an OpenLDAP
-stand-in (see [its README](../dev/mock-ldap/README.md)).
+password is wrong. A Development Deployment runs an OpenLDAP stand-in, the
+mock Directory (see [`dev/mock-ldap`](../dev/mock-ldap/README.md)).
 
 The Directory is the only way in, and login is always on.
 The upstream login methods (the shared `HERMES_WEBUI_PASSWORD` or Settings
@@ -186,14 +190,13 @@ installed app relies on during updates.
   the whole Deployment, edited by the Operator.
 - Each Profile's `webui_state/settings.json`: that User's own web settings.
 
-State normally lives outside the repository: Hermes Agent state in `~/.hermes`
-(Windows `%LOCALAPPDATA%\hermes`), web state in `$HERMES_HOME/webui`. Override
-them with `HERMES_HOME` and `HERMES_WEBUI_STATE_DIR` for an isolated install.
+A Deployment keeps all of it in its `home/` (`HERMES_HOME_DIR` can move it),
+web state in `home/webui`.
 
 ## When to file an issue
 
 File an issue when the diagnostics point to GFIT-CoWork rather than local
 configuration. Include the install path, the output of `/health` (or the
 startup banner if the server never starts), the provider and the Base URL
-shape with secrets redacted, and relevant logs. Never paste API keys, OAuth
+shape with secrets redacted, and relevant logs (`deploy/cowork <team> logs`). Never paste API keys, OAuth
 tokens, passwords or full `.env` contents into an issue.

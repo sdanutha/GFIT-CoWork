@@ -4,8 +4,8 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] debugpy only in the dev target
-- [ ] Debug port published on DEV_BIND in dev only
-- [ ] VS Code Attach configuration checked in
+- [x] debugpy only in the dev target
+- [x] Debug port published on DEV_BIND in dev only
+- [x] VS Code Attach configuration checked in

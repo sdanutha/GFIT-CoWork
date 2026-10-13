@@ -4,9 +4,9 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] new-deployment --dev writes GFIT_DEV=1, localhost, mock Directory values and its CA
-- [ ] cowork adds the overlay only when GFIT_DEV=1, and refuses a non-localhost dev Deployment
-- [ ] Rendered config: source mount, ports on DEV_BIND, gateway/A2A/Dashboard published in dev only
-- [ ] Seam 1 and 2 tests; setup docs
+- [x] new-deployment --dev writes GFIT_DEV=1, localhost, mock Directory values and its CA
+- [x] cowork adds the overlay only when GFIT_DEV=1, and refuses a non-localhost dev Deployment
+- [x] Rendered config: source mount, ports on DEV_BIND, gateway/A2A/Dashboard published in dev only
+- [x] Seam 1 and 2 tests; setup docs

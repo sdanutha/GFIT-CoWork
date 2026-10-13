@@ -12,3 +12,4 @@
 # on every platform (ADR 0009).
 deploy/cowork text eol=lf
 deploy/new-deployment text eol=lf
+scripts/** text eol=lf

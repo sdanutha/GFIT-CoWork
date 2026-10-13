@@ -1,0 +1,82 @@
+# GFIT-CoWork -- the overlay that makes a Deployment a Development Deployment
+# (ADR 0009): GFIT-CoWork from the developer's checkout, under the debugger,
+# with the mock Directory instead of the company AD, over plain HTTP on
+# localhost.
+#
+# Do not use it by hand. deploy/new-deployment --dev writes GFIT_DEV=1 into the
+# Deployment's .env, and deploy/cowork then adds this file on top of
+# docker-compose.yml. deploy/cowork refuses it unless GFIT_HOSTNAME is
+# localhost, so it never runs on a Team's server.
+#
+# Every port is published on DEV_BIND, 127.0.0.1 unless the .env says
+# otherwise: the mock Directory's passwords are in the repo.
+
+services:
+  hermes-agent:
+    ports:
+      # The gateway, to call it directly while developing.
+      - "${DEV_BIND:-127.0.0.1}:${GATEWAY_PORT:?set GATEWAY_PORT in .env}:8642"
+      # A2A. Published so it can be tried between Development Deployments;
+      # a Team's Deployment does not publish it until the Reception (ADR 0003).
+      - "${DEV_BIND:-127.0.0.1}:${A2A_PORT:?set A2A_PORT in .env}:9900"
+
+  gfit-cowork:
+    build:
+      target: dev
+    image: gfit-cowork:dev
+    depends_on:
+      - hermes-agent
+      - mock-ldap
+    ports: !override
+      - "${DEV_BIND:-127.0.0.1}:${GFIT_PORT:?set GFIT_PORT in .env}:8787"
+      # debugpy: attach VS Code with the "Attach to the Development Deployment"
+      # configuration.
+      - "${DEV_BIND:-127.0.0.1}:${DEBUG_PORT:?set DEBUG_PORT in .env}:5678"
+    environment:
+      # Plain HTTP on localhost: no reverse proxy, no HTTPS-only cookie.
+      - HERMES_WEBUI_SECURE=0
+      # With DEV_BIND=0.0.0.0, add this machine's address to DEV_ALLOWED_ORIGINS
+      # (e.g. http://10.1.2.3:8787) so a browser on another machine can log in.
+      - HERMES_WEBUI_ALLOWED_ORIGINS=http://localhost:${GFIT_PORT},http://127.0.0.1:${GFIT_PORT},${DEV_ALLOWED_ORIGINS:-}
+      - HERMES_WEBUI_TRUST_FORWARDED_FOR=0
+      - GFIT_DEBUGPY_PORT=5678
+    volumes:
+      # The developer's checkout is the app: static files are live, a Python
+      # change needs `deploy/cowork <team> restart gfit-cowork`.
+      - ${GFIT_COWORK_SRC:?}:/app
+      # The app's venv stays in the container's own volume, not the checkout.
+      - cowork-venv:/app/venv
+
+  hermes-dashboard:
+    ports: !override
+      - "${DEV_BIND:-127.0.0.1}:${DASHBOARD_PORT:?set DASHBOARD_PORT in .env}:9119"
+
+  # The mock Directory: OpenLDAP with the sample Users in dev/mock-ldap, over
+  # LDAPS with the throwaway CA deploy/new-deployment --dev made.
+  mock-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: gfit-${TEAM}-ldap
+    command: --copy-service
+    environment:
+      LDAP_ORGANISATION: GFIT
+      LDAP_DOMAIN: gfit.local
+      LDAP_ADMIN_PASSWORD: mock-ldap-admin
+      LDAP_TLS: "true"
+      LDAP_TLS_CRT_FILENAME: server.crt
+      LDAP_TLS_KEY_FILENAME: server.key
+      LDAP_TLS_CA_CRT_FILENAME: ca.crt
+      LDAP_TLS_VERIFY_CLIENT: never
+      # The server still accepts plain binds on 389; GFIT-CoWork refuses to
+      # send a password without TLS on its own side, which the tests check.
+      LDAP_TLS_ENFORCE: "false"
+    ports:
+      # For the LDAP tests (tests/test_gfit08_ldap_directory.py).
+      - "${DEV_BIND:-127.0.0.1}:${LDAPS_PORT:?set LDAPS_PORT in .env}:636"
+      - "${DEV_BIND:-127.0.0.1}:${LDAP_PORT:?set LDAP_PORT in .env}:389"
+    volumes:
+      - ./certs/mock-ldap:/container/service/slapd/assets/certs:ro
+      - ${GFIT_COWORK_SRC:?}/dev/mock-ldap/users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/50-users.ldif:ro
+    restart: unless-stopped
+
+volumes:
+  cowork-venv:

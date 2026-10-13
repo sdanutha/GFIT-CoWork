@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# Create a new Deployment: deploy/new-deployment <team> <N> [hostname]
+# Create a new Deployment: deploy/new-deployment [--dev] <team> <N> [hostname]
 #   N picks the ports; see "Ports" in deploy/README.md.
 #   hostname defaults to <team>.cowork.gfit.co.th.
+#   --dev makes a Development Deployment on this machine instead (ADR 0009):
+#   localhost, the mock Directory and its throwaway CA, the developer's checkout.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
 
-usage() { echo "Usage: $0 <team> <N 0-99> [hostname]   e.g. $0 sales 1" >&2; exit 1; }
+usage() { echo "Usage: $0 [--dev] <team> <N 0-99> [hostname]   e.g. $0 sales 1, $0 --dev dev 0" >&2; exit 1; }
+dev=""
+if [ "${1:-}" = "--dev" ]; then dev=1; shift; fi
 [ $# -eq 2 ] || [ $# -eq 3 ] || usage
 team="$1"; n="$2"; hostname="${3:-$team.cowork.gfit.co.th}"
+if [ -n "$dev" ]; then
+  [ $# -eq 2 ] || [ "$hostname" = localhost ] || { echo "A Development Deployment is always on localhost." >&2; exit 1; }
+  hostname=localhost
+  command -v openssl >/dev/null 2>&1 || { echo "openssl is needed to make the mock Directory's certificates." >&2; exit 1; }
+fi
 
 [[ "$team" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "Invalid Team name '$team': use lowercase letters, digits, - or _." >&2; exit 1; }
 [[ "$n" =~ ^(0|[1-9][0-9]?)$ ]] || usage
@@ -19,9 +28,12 @@ dir="$root/deployments/$team"
 
 if [ "$n" = 0 ]; then
   gfit_port=8787; dashboard_port=9119
+  gateway_port=8642; a2a_port=9900; debug_port=5678; ldaps_port=1636; ldap_port=1389
 else
   base=$((20000 + n * 100))
   gfit_port=$((base + 87)); dashboard_port=$((base + 19))
+  gateway_port=$((base + 42)); a2a_port=$((base + 0)); debug_port=$((base + 78))
+  ldaps_port=$((base + 36)); ldap_port=$((base + 89))
 fi
 
 used="$(grep -lx "GFIT_PORT=$gfit_port" "$root"/deployments/*/.env 2>/dev/null | head -n1 || true)"
@@ -29,9 +41,27 @@ used="$(grep -lx "GFIT_PORT=$gfit_port" "$root"/deployments/*/.env 2>/dev/null |
 
 secret() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
-# The containers run as the owner of home/ and workspace/. Never as root.
-uid="$(id -u)"; gid="$(id -g)"
-[ "$uid" = 0 ] && { uid=1000; gid=1000; }
+# Every container runs as UID/GID 10000, which owns home/ and workspace/
+# (ADR 0009). GFIT_UID/GFIT_GID choose another service user. Only root can give
+# the folders to another user, so on Linux the Operator runs this with sudo.
+# Docker Desktop (Windows, macOS) does not map owners into its VM, so there it
+# needs no chown. A Linux Development Deployment runs as the developer, who
+# owns the checkout it mounts.
+me="$(id -u)"
+if [ -n "$dev" ] && [ "$(uname -s)" = Linux ] && [ "$me" != 0 ]; then
+  uid="${GFIT_UID:-$me}"; gid="${GFIT_GID:-$(id -g)}"
+elif [ -n "$dev" ] && [ "$(uname -s)" = Linux ] && [ -n "${SUDO_UID:-}" ]; then
+  # `sudo new-deployment --dev`: still the developer who owns the checkout.
+  uid="${GFIT_UID:-$SUDO_UID}"; gid="${GFIT_GID:-${SUDO_GID:-$SUDO_UID}}"
+else
+  uid="${GFIT_UID:-10000}"; gid="${GFIT_GID:-10000}"
+fi
+[[ "$uid" =~ ^[1-9][0-9]*$ && "$gid" =~ ^[1-9][0-9]*$ ]] || { echo "UID/GID must be numbers above 0, not root." >&2; exit 1; }
+chown_folders=""
+if [ "$(uname -s)" = Linux ] && [ "$uid:$gid" != "$me:$(id -g)" ]; then
+  [ "$me" = 0 ] || { echo "Run with sudo: home/ and workspace/ must belong to $uid:$gid, the user every container runs as." >&2; exit 1; }
+  chown_folders=1
+fi
 
 dashboard_password="$(secret 12)"
 
@@ -52,7 +82,80 @@ sed -e "s/^TEAM=.*/TEAM=$team/" \
     "$root/team.env.example" > "$dir/.env"
 chmod 755 "$dir" "$dir/certs"
 chmod 750 "$dir/home" "$dir/workspace"
-[ "$(id -u)" = 0 ] && chown "$uid:$gid" "$dir/home" "$dir/workspace"
+if [ -n "$chown_folders" ]; then
+  chown "$uid:$gid" "$dir/home" "$dir/workspace" \
+    || { echo "Could not give home/ and workspace/ to $uid:$gid." >&2; exit 1; }
+fi
+
+if [ -n "$dev" ]; then
+  # The mock Directory instead of the company AD. The provider key is set
+  # with `hermes setup`, so it is left empty here.
+  sed -i.bak \
+    -e "s|^HERMES_WEBUI_LDAP_URL=.*|HERMES_WEBUI_LDAP_URL=ldaps://mock-ldap:636|" \
+    -e "s|^HERMES_WEBUI_LDAP_BIND_FORMAT=.*|HERMES_WEBUI_LDAP_BIND_FORMAT=uid={username},ou=people,dc=gfit,dc=local|" \
+    -e "s|^HERMES_WEBUI_LDAP_DOMAIN=.*|HERMES_WEBUI_LDAP_DOMAIN=gfit.local|" \
+    -e "s|^HERMES_WEBUI_LDAP_BASE_DN=.*|HERMES_WEBUI_LDAP_BASE_DN=ou=people,dc=gfit,dc=local|" \
+    -e "s|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=|" \
+    "$dir/.env"
+  rm -f "$dir/.env.bak"
+  cat >> "$dir/.env" <<DEV_ENV
+
+# ── Development Deployment (ADR 0009) ──────────────────────────────────────
+# deploy/cowork adds deploy/docker-compose.dev.yml when this is 1, and only
+# while GFIT_HOSTNAME is localhost.
+GFIT_DEV=1
+# Where every port is published. 0.0.0.0 opens them to the network, with the
+# mock Directory's passwords from the repo: only for testing between machines.
+DEV_BIND=127.0.0.1
+# With DEV_BIND=0.0.0.0: the URLs other machines open, comma-separated,
+# e.g. http://10.1.2.3:$gfit_port
+DEV_ALLOWED_ORIGINS=
+GATEWAY_PORT=$gateway_port
+A2A_PORT=$a2a_port
+DEBUG_PORT=$debug_port
+LDAPS_PORT=$ldaps_port
+LDAP_PORT=$ldap_port
+HERMES_WEBUI_LDAP_USER_FILTER=(uid={username})
+DEV_ENV
+
+  # A throwaway CA and a server certificate for the mock Directory. GFIT-CoWork
+  # reaches it as mock-ldap; the LDAP tests reach it from their own container.
+  certs="$dir/certs/mock-ldap"
+  mkdir -p "$certs"
+  (
+    cd "$certs"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+      -keyout ca.key -out ca.crt -subj "/CN=GFIT-CoWork mock Directory CA" 2>/dev/null
+    openssl req -newkey rsa:2048 -nodes \
+      -keyout server.key -out server.csr -subj "/CN=mock-ldap" 2>/dev/null
+    printf 'subjectAltName=DNS:mock-ldap,DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1\n' > san.ext
+    openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+      -days 825 -out server.crt -extfile san.ext 2>/dev/null
+    rm -f server.csr san.ext ca.srl ca.key
+  ) || { echo "Could not make the mock Directory's certificates." >&2; exit 1; }
+  # The mock Directory's own user reads them; they protect nothing real.
+  chmod 755 "$certs"
+  chmod 644 "$certs"/*
+  cp "$certs/ca.crt" "$dir/certs/ad-ca.crt"
+  chmod 644 "$dir/certs/ad-ca.crt"
+
+  cat <<DEV_DONE
+Created Development Deployment '$team' in deploy/deployments/$team/
+
+  GFIT-CoWork  http://localhost:$gfit_port
+  Dashboard    http://localhost:$dashboard_port
+               $(grep '^HERMES_DASHBOARD_BASIC_AUTH_USERNAME=' "$dir/.env" | cut -d= -f2) / $dashboard_password
+  Debugger     localhost:$debug_port (VS Code: "Attach to the Development Deployment")
+
+Then:
+  deploy/cowork $team up -d
+  deploy/cowork $team exec hermes-agent hermes setup
+  # let a sample User of the mock Directory in (dev/mock-ldap/README.md):
+  deploy/cowork $team exec -T -u hermeswebui -w /app gfit-cowork \\
+    /app/venv/bin/python -m api.operator_cli create 521740 --clone-from default
+DEV_DONE
+  exit 0
+fi
 
 cat <<EOF
 Created Deployment '$team' in deploy/deployments/$team/

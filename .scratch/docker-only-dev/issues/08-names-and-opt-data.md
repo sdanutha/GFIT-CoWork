@@ -4,7 +4,7 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Rendered config has the names and volumes
-- [ ] Deploy guide (backup leaves the volumes out)
+- [x] Rendered config has the names and volumes
+- [x] Deploy guide (backup leaves the volumes out)

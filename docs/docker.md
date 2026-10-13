@@ -32,11 +32,12 @@ those tools in a dev-only Dockerfile instead of reintroducing passwordless sudo 
 A Deployment is three containers, `hermes-agent`, `gfit-cowork` and
 `hermes-dashboard`, sharing the Deployment's own folder,
 `deploy/deployments/<TEAM>/`, through **bind mounts**. Backing up a Deployment
-is copying that folder. `deploy/new-deployment` creates the folder owned by the
-Operator's user and writes that user's `id -u` / `id -g` to `UID` / `GID` in
-`.env` (1000:1000 when run as root, with the folders given to that user), and
-every container runs as that UID/GID, so all of them can read and write the same
-files. The agent's source is the one named volume, prefixed with the project
+is copying that folder. `deploy/new-deployment` (run with `sudo`) writes
+`UID` / `GID` 10000:10000 to `.env` and gives `home/` and `workspace/` to that
+user, and every container runs as that UID/GID, so all of them can read and
+write the same files (ADR 0009; `GFIT_UID`/`GFIT_GID` pick another service
+user). `HERMES_HOME_DIR` and `HERMES_WORKSPACE_DIR` can move those two folders
+elsewhere. The agent's source is the one named volume, prefixed with the project
 name `gfit-<TEAM>`, so several Deployments share one server without touching
 each other. Why bind mounts, and what that means for backup, restore and
 SQLite on Docker Desktop, is

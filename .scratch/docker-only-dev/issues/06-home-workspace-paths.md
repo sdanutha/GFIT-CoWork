@@ -4,8 +4,8 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Compose mounts the configured paths in every service
-- [ ] cowork refuses a symlinked or missing configured home and writes the key into it
-- [ ] Seam 1 and 2 tests; deploy guide
+- [x] Compose mounts the configured paths in every service
+- [x] cowork refuses a symlinked or missing configured home and writes the key into it
+- [x] Seam 1 and 2 tests; deploy guide

@@ -1,7 +1,7 @@
 """GFIT-CoWork ticket 08: the LDAP Directory (company AD over LDAPS or StartTLS).
 
-Tests that need a real LDAP server run against the mock LDAP in
-``dev/mock-ldap`` (see its README) and are skipped unless
+Tests that need a real LDAP server run against the mock Directory of a
+Development Deployment (see dev/mock-ldap/README.md) and are skipped unless
 ``GFIT_MOCK_LDAP_URL`` is set. The rest need no server.
 """
 from __future__ import annotations
@@ -135,6 +135,8 @@ def test_login_while_ad_is_unreachable_says_so(unreachable_srv):
 # ── Against the mock LDAP (dev/mock-ldap) ────────────────────────────────────
 
 MOCK_URL = os.getenv("GFIT_MOCK_LDAP_URL", "")
+# The plain port (StartTLS); from the test container, through the host.
+MOCK_PLAIN_URL = os.getenv("GFIT_MOCK_LDAP_PLAIN_URL", "ldap://localhost:1389")
 mock_ldap = pytest.mark.skipif(not MOCK_URL, reason="mock LDAP not running (set GFIT_MOCK_LDAP_URL)")
 MOCK_PASSWORD = "Somchai-Pass-1"
 
@@ -169,12 +171,12 @@ def test_mock_unknown_user_is_refused(mock_env):
 
 @mock_ldap
 def test_mock_plaintext_port_is_refused(mock_env):
-    mock_env(url="ldap://localhost:1389")
+    mock_env(url=MOCK_PLAIN_URL)
     with pytest.raises(DirectoryUnavailable):
         get_directory().authenticate(MEMBER, MOCK_PASSWORD)
 
 
 @mock_ldap
 def test_mock_starttls_on_the_plain_port_works(mock_env):
-    mock_env(url="ldap://localhost:1389", starttls="1")
+    mock_env(url=MOCK_PLAIN_URL, starttls="1")
     assert get_directory().authenticate(MEMBER, MOCK_PASSWORD) == Identity(MEMBER, "สมชาย ใจดี")

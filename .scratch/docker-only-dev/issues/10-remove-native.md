@@ -4,8 +4,16 @@
 
 **Blocked by:** 01, 04, 09
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Launchers and native-only code gone
-- [ ] Remaining tests green in the container
-- [ ] README, setup, troubleshooting, setup-agent checklist updated
+- [x] Launchers and native-only code gone
+- [x] Remaining tests green in the container
+- [x] README, setup, troubleshooting, setup-agent checklist updated
+
+## Comments
+
+Left in place on purpose (UNSURE in the inventory): the dir-fd fallbacks in
+`api/workspace.py` (`_DIR_FD_OK`, `_O_BINARY`) and the path-based branch of the
+routes move handler. They are dead on Linux but sit in security-relevant
+workspace containment code; removing them deserves its own reviewed change.
+The macOS roots in the workspace block-list also stay (cheap defence).
