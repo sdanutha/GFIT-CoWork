@@ -12,6 +12,9 @@ except ImportError:
 
 from tests._layout_helpers import assert_layout_sane, assert_no_raw_i18n_keys
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCREENSHOT = os.environ.get("WEBUI6066_SCREENSHOT")

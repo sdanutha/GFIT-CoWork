@@ -447,7 +447,7 @@ def _create_session_with_credentials() -> str:
     """
     import time, uuid
     try:
-        from conftest import TEST_STATE_DIR
+        from tests.conftest import TEST_STATE_DIR
         sessions_dir = TEST_STATE_DIR / "sessions"
     except ImportError:
         from api.config import SESSION_DIR as sessions_dir

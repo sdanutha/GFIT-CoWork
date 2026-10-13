@@ -6,6 +6,10 @@ suffix of a slash-qualified ``profile_default_model`` must repair to the full
 qualified ID for named custom providers.
 """
 from unittest.mock import patch
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class TestIssue5127CustomProviderBareSuffixRepair:

@@ -14,6 +14,10 @@ import urllib.request
 
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 REPO = pathlib.Path(__file__).parent.parent
 # Use HERMES_WEBUI_TEST_STATE_DIR if available (set by conftest for the test process),
 # falling back to the shared isolated TEST_STATE_DIR (temp-rooted, never ~/.hermes).

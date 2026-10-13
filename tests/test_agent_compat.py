@@ -21,6 +21,9 @@ import pytest
 
 from api.agent_compat import agent_attr
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 SHAPES = ("pre_split", "pointer_removed")
 
 

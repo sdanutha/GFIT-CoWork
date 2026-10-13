@@ -14,6 +14,9 @@ import yaml
 import api.config as config
 from tests._gfit_server import gfit_server as _gfit_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 ALICE = "521740"
 BOB = "671278"
 START = "model:\n  default: gpt-4o\n  provider: openai\n  base_url: http://127.0.0.1:9/v1\n"

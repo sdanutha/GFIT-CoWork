@@ -28,6 +28,10 @@ STYLE_CSS = (REPO_ROOT / "static" / "style.css").read_text(encoding="utf-8")
 I18N_JS = (REPO_ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _get(path):

@@ -53,6 +53,10 @@ Follow that checklist's safety rules:
   system/Homebrew interpreter directly.
   If a direct pytest invocation reports an unsupported interpreter, rerun through
   `./scripts/test.sh` before debugging product code.
+- While working, run `./scripts/test.sh --changed` (the test files a change
+  touches since `dev`) plus any neighbouring test files you judge relevant.
+  Run the whole suite (`./scripts/test.sh`, sharded) once before a merge or PR;
+  with no hosted CI (ADR 0007) that run is the gate.
 - Prefer the existing Python + vanilla JavaScript structure. Do not add
   dependencies, build tools, frameworks, or long-lived processes without clear
   justification and a rollback story.

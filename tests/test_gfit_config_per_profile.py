@@ -9,6 +9,9 @@ import threading
 
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.fixture
 def two_profiles(tmp_path, monkeypatch):

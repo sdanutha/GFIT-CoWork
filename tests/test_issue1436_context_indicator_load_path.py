@@ -32,6 +32,10 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROUTES = Path(__file__).resolve().parent.parent / "api" / "routes.py"
 UI_JS = Path(__file__).resolve().parent.parent / "static" / "ui.js"

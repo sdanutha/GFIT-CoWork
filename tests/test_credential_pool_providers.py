@@ -6,6 +6,10 @@ import types
 
 import api.config as config
 import api.profiles as profiles
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 _AMBIENT_SOURCES = {"gh_cli", "gh auth token"}
 

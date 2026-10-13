@@ -45,6 +45,9 @@ import api.config as config
 import api.providers as providers
 import api.routes as routes
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 
 _UNGUARDED = 'cfg.get("providers", {})'

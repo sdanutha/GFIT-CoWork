@@ -3,6 +3,10 @@ import sys
 import types
 from typing import Callable, cast
 from unittest import mock
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 _MISSING = object()

@@ -11,6 +11,9 @@ import os
 import pytest
 import api.config as config
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _force_env_fallback(monkeypatch):
     """Force get_available_models() down the explicit env-var fallback path."""

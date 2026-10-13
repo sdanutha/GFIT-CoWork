@@ -14,6 +14,9 @@ import api.auth as auth
 import api.login as login
 from tests._gfit_server import PASSWORD, WRONG_PASSWORD, Client, gfit_server as _gfit_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 MEMBER = "521740"
 NO_PROFILE_USER = "671278"
 

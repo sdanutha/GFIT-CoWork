@@ -13,6 +13,9 @@ import pytest
 from api import config, session_lifecycle, streaming
 from tests.test_steer_worker_boundaries import worker_scene as worker_scene
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.mark.parametrize("path", ["initial", "cached", "returned", "exception"])
 @pytest.mark.parametrize("cancellation", ["stop", "event-only", "detached-only", "successor", "same-agent-successor", "same-agent-completed", "none"])

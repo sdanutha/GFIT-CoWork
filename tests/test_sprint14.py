@@ -4,6 +4,10 @@ Sprint 14 Tests: file rename, folder create, session archive, session tags, merm
 import json, os, pathlib, shutil, tempfile, urllib.error, urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get(path):

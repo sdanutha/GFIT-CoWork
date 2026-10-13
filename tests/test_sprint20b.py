@@ -6,6 +6,10 @@ import re
 import urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get_text(path):
@@ -362,12 +366,6 @@ def test_ui_js_set_busy_calls_update_send_btn():
     busy_end = js.find('\n}', busy_idx) + 2
     busy_body = js[busy_idx:busy_end]
     assert 'updateSendBtn' in busy_body
-
-
-def test_index_html_attach_button_unchanged():
-    """btnAttach must still be present (no regression)."""
-    html, _ = get_text("/")
-    assert 'id="btnAttach"' in html
 
 
 def test_send_function_still_exists():

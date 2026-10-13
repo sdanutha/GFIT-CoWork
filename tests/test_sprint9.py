@@ -5,6 +5,10 @@ Run: ./scripts/test.sh tests/test_sprint9.py -v
 import json, pathlib, urllib.error, urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 def get_text(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:

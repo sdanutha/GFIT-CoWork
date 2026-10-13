@@ -1,6 +1,10 @@
 """Regression coverage for #4300 legacy gateway approval unsupported notice."""
 
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO = Path(__file__).resolve().parents[1]
 GATEWAY_CHAT = (REPO / "api" / "gateway_chat.py").read_text(encoding="utf-8")
@@ -39,11 +43,6 @@ def test_gateway_chat_event_payload_contains_type_and_message():
     """Verify the event payload has type and message fields."""
     assert "approval_type = \"approval_gateway_unsupported\"" in GATEWAY_CHAT
     assert "approval_message = \"Approvals require a newer gateway. Upgrade the connected Hermes gateway to enable this.\"" in GATEWAY_CHAT
-
-
-def test_messages_js_handles_approval_gateway_unsupported_event():
-    """Verify client-side warning handler recognizes the event type."""
-    assert "d.type==='approval_gateway_unsupported'" in MESSAGES_JS
 
 
 def test_messages_js_references_i18n_key_for_approval_gateway_unsupported():

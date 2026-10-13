@@ -19,6 +19,9 @@ import pytest
 
 import api.config as config
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.fixture(autouse=True)
 def _isolate_models_cache(tmp_path, monkeypatch):

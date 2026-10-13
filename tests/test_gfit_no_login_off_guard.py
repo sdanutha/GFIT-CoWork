@@ -12,6 +12,10 @@ import re
 from pathlib import Path
 
 from api import route_table
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO = Path(__file__).resolve().parent.parent
 

@@ -163,6 +163,12 @@ select_python() {
   else
     base_py="$(find_supported_base_python || true)"
     if [[ -z "$base_py" ]]; then
+      # No 3.14 on PATH (common on Windows): an existing working .venv is enough.
+      VENV_PY="$(resolve_venv_python || true)"
+      if [[ -x "$VENV_PY" ]] && is_supported_python "$VENV_PY" && has_pip "$VENV_PY"; then
+        printf '%s\n' "$VENV_PY"
+        return 0
+      fi
       echo "No supported Python found for GFIT-CoWork tests." >&2
       echo "Install Python 3.14, then rerun ./scripts/test.sh." >&2
       return 2
@@ -225,6 +231,41 @@ else
   "$PYTHON_BIN" -m pip install -r "$REQ_FILE"
 fi
 
+# UTF-8 mode, as on the Linux deployment: without it Windows Python reads files
+# and subprocess pipes (node) as cp1252. Inherited by shards and the test server.
+export PYTHONUTF8=1
+
+# --serial: one pytest process (the no-argument default before sharding).
+if [[ "${1:-}" == "--serial" ]]; then
+  shift
+  if [[ $# -eq 0 ]]; then
+    set -- tests/ -v --timeout=60
+  fi
+  exec "$PYTHON_BIN" -m pytest "$@"
+fi
+
+# --changed[=REF]: only the test files a change touches since merge-base HEAD REF
+# (default dev); see scripts/changed_tests.py. More than 30 files run sharded.
+if [[ "${1:-}" == "--changed" || "${1:-}" == --changed=* ]]; then
+  ref="dev"
+  if [[ "$1" == --changed=* ]]; then
+    ref="${1#--changed=}"
+  fi
+  shift
+  # tr: Windows Python ends printed lines with CRLF.
+  selected="$("$PYTHON_BIN" "$ROOT/scripts/changed_tests.py" "$ref" | tr -d '\r')" || exit $?
+  if [[ -z "$selected" ]]; then
+    echo "--changed: no test files touch the changes since $ref." >&2
+    exit 0
+  fi
+  mapfile -t files <<< "$selected"
+  echo "--changed: ${#files[@]} test path(s) since $ref." >&2
+  if [[ "${files[*]}" == "tests/" || ${#files[@]} -gt 30 ]]; then
+    exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" auto "${files[@]}" -q --timeout=60 "$@"
+  fi
+  exec "$PYTHON_BIN" -m pytest "${files[@]}" -q --timeout=60 "$@"
+fi
+
 # --parallel N: run N pytest-shard processes at once and combine their results.
 if [[ "${1:-}" == --parallel=* ]]; then
   shards="${1#--parallel=}"
@@ -236,8 +277,15 @@ if [[ "${1:-}" == "--parallel" ]]; then
   exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$@"
 fi
 
+# No arguments: the whole suite, sharded across min(cores, 8) processes.
+# Sharding needs a free port and state dir per shard, so pinned ones run serially.
 if [[ $# -eq 0 ]]; then
-  set -- tests/ -v --timeout=60
+  if [[ -n "${HERMES_WEBUI_TEST_PORT:-}" || -n "${HERMES_WEBUI_TEST_STATE_DIR:-}" ]]; then
+    echo "HERMES_WEBUI_TEST_PORT or HERMES_WEBUI_TEST_STATE_DIR is pinned; running the suite serially." >&2
+    set -- tests/ -v --timeout=60
+  else
+    exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" auto
+  fi
 fi
 
 exec "$PYTHON_BIN" -m pytest "$@"

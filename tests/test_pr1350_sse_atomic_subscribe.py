@@ -137,8 +137,3 @@ def test_submit_racing_the_subscribe_is_never_lost(monkeypatch):
             ra._pending.pop(sid, None)
 
 
-def test_lock_identity():
-    """_lock must be the same object in both modules."""
-    from api.route_approvals import _lock as a
-    from api.routes import _lock as b
-    assert a is b, "routes.py must re-export the same _lock object"

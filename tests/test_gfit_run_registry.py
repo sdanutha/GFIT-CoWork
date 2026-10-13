@@ -18,6 +18,9 @@ import pytest
 import api.config as config
 from api import run_registry
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 ROOT = Path(__file__).resolve().parents[1]
 
 

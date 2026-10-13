@@ -11,6 +11,10 @@ import re
 import sys
 import unittest
 from unittest import mock
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 # Ensure repo is on sys.path so api.config can be imported
 _REPO_ROOT = pathlib.Path(__file__).parent.parent

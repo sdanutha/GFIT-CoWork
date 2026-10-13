@@ -3,6 +3,10 @@ import re
 
 import api.config as cfg
 import yaml
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def read(path):

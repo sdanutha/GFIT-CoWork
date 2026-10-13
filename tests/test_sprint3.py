@@ -2,6 +2,10 @@
 import json, pathlib, shutil, tempfile, urllib.request, urllib.error
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent

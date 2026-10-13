@@ -7,6 +7,10 @@ a model ID manually (#2542).
 """
 
 import re
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO = __file__.rsplit("/", 2)[-3] if "/" in __file__ else "."
 CONFIG_PY = open(f"{REPO}/api/config.py").read() if REPO != "." else ""

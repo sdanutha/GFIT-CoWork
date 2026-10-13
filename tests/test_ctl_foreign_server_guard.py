@@ -35,6 +35,9 @@ from tests.test_ctl_script import (
     write_fake_python,
 )
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _free_port() -> int:
     with socket.socket() as s:

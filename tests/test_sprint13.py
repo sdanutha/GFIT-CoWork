@@ -4,6 +4,10 @@ Sprint 13 Tests: cron recent endpoint, session duplicate, background alerts.
 import json, pathlib, urllib.error, urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get(path):

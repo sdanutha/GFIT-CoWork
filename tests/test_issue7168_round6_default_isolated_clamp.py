@@ -22,6 +22,9 @@ import pytest
 import api.workspace as workspace
 from api import profiles
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.fixture
 def isolated_default_pinned(tmp_path, monkeypatch):

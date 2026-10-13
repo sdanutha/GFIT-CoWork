@@ -18,6 +18,9 @@ import pytest
 
 import api.config as config
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ---------------------------------------------------------------------------
 # Helpers — lightweight stubs so we don't need a real hermes-agent install

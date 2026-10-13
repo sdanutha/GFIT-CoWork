@@ -19,6 +19,9 @@ from api.access import LEFTOVER_ADMIN_USERS_ENV, NOT_AVAILABLE_MESSAGE
 from api.login import NO_PROFILE_MESSAGE, startup_check
 from tests._gfit_server import gfit_server as _gfit_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 FORMER_ADMIN = "521740"
 FORMER_ADMIN_WITH_PROFILE = "671278"
 USER = "600001"

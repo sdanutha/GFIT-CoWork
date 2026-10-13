@@ -19,6 +19,10 @@ it owns in ``_PROVIDER_MODELS[config_provider]``.
 """
 
 from api.config import resolve_model_provider, model_with_provider_context
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _apply_config_overrides(cfg_module, overrides):

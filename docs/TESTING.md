@@ -21,11 +21,17 @@
 `pytest-shard` shards, runs them at once, and prints one combined summary, the
 FAILED/ERROR test ids, and a non-zero exit if any shard failed. Each shard's
 full log stays in the temp directory named on the first line. With no pytest
-args it runs `tests/ -q --timeout=60`. Without `--parallel` the runner behaves
-as before.
+args it runs `tests/ -q --timeout=60`.
+
+`./scripts/test.sh` with no arguments runs the whole suite this way with
+min(cores, 8) shards; `--serial` runs it in one process instead. With a pinned
+`HERMES_WEBUI_TEST_PORT` or `HERMES_WEBUI_TEST_STATE_DIR` the no-argument run
+falls back to serial. Any other arguments (paths, `-k`, ...) run one pytest
+process, as before.
 
 ```bash
-./scripts/test.sh --parallel 8              # whole suite
+./scripts/test.sh                           # whole suite, min(cores, 8) shards
+./scripts/test.sh --serial                  # whole suite, one process
 ./scripts/test.sh --parallel 4 tests/test_model_resolver.py
 ```
 
@@ -36,11 +42,47 @@ its own free port and state dir, so `--parallel` refuses a pinned
 Measured on a 14-core Mac (2026-10-11, the same commit, both green): the
 whole suite took 145s with `--parallel 8` and 939s (15m39s) serially. The sharded run reported 230 skipped against 221 serially; the skip reasons were not compared.
 
+Measured on a 14-core native Windows machine (2026-10-13, Git Bash): 969s with
+`--parallel 8` and 1016s with `--parallel 12`, so more than 8 shards does not
+help there. Most of the Windows time is per-test fixture overhead, not the tests.
+
 The suite also isolates `HOME` (not only `HERMES_HOME`): Hermes Agent reads
 provider logins from the user's home (Copilot token stores, plugin OAuth
 stores) and GitHub token variables, so tests must never see the machine's own.
 Only `DOCKER_CONFIG` is pointed back at the real `~/.docker`, for the docker
 CLI's plugins.
+
+### Two tiers: changed tests while working, the whole suite before merge
+
+```bash
+./scripts/test.sh --changed          # test files touched since merge-base with dev
+./scripts/test.sh --changed=main     # ... since merge-base with another ref
+./scripts/test.sh --changed -k css   # extra pytest args pass through
+```
+
+`scripts/changed_tests.py` takes every file that differs from
+`git merge-base HEAD <ref>`, including uncommitted and untracked files, and
+selects the test files that changed or whose text names a changed file (repo
+path, file name, or dotted Python module). A change to `tests/conftest.py`,
+`tests/_pytest_port.py`, `pyproject.toml` or the requirements selects the whole
+suite. More than 30 selected files run sharded. The selection is textual: add
+neighbouring test files by hand when a change reaches further. Before a merge
+or PR, run the whole suite once (`./scripts/test.sh`).
+
+### Tests that talk to the shared test server
+
+Every test gets the isolated state directory (`_test_state_dir` in
+`tests/conftest.py`); only tests that use the live server start it. A test file
+that sends requests to `TEST_BASE` / `BASE` declares:
+
+```python
+pytestmark = pytest.mark.usefixtures("test_server")
+```
+
+(or requests `test_server` / `base_url` as a fixture). Without it the request is
+refused (`ConnectionRefusedError`). The per-test session cleanup's HTTP calls
+also run only for those tests: they cost ~100 ms per test on Windows. With the
+server opt-in, the Windows `--parallel 8` run went from 969s to 752s.
 
 ## Static JS runtime lint (brick-class regression guard)
 

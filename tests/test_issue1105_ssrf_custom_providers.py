@@ -8,6 +8,9 @@ and adds them to the trusted set, so user-explicitly configured local endpoints
 import os
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ---------- Source-code analysis tests ----------
 

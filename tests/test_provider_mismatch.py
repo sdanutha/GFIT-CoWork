@@ -18,6 +18,10 @@ from tests.conftest import TEST_STATE_DIR
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent.resolve()
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _read(rel_path: str) -> str:

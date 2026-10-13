@@ -28,6 +28,9 @@ import api.profiles as profiles
 from api import operator_cli
 from tests._gfit_server import gfit_server as _gfit_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 USERS = {"700001": "Somsri Jaidee", "700002": "Somchai Jaidee"}
 NAMES = sorted(USERS)
 

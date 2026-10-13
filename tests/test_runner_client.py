@@ -6,6 +6,9 @@ import pytest
 from api.runner_client import HttpRunnerClient, RunnerClientError
 from api.runtime_adapter import StartRunRequest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 class FakeResponse:
     def __init__(self, payload):

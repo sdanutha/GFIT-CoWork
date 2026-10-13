@@ -17,6 +17,10 @@ from api.turn_builder import (
     webui_agent,
     workspace_system_message,
 )
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 CONFIG = {"agent": {"personalities": {
     "pirate": {"system_prompt": "Talk like a pirate.", "tone": "salty", "style": "brief"},

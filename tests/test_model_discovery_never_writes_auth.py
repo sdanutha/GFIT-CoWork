@@ -28,6 +28,9 @@ import pytest
 import api.config as config
 import api.profiles as profiles
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 SECRET = "sk-live-0123456789-SECRET"
 CUSTOM = "custom:bothub"
 A, B = "521740", "671278"

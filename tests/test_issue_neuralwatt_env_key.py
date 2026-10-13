@@ -10,6 +10,10 @@ import builtins
 
 import api.config as config
 import api.providers as providers
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _force_env_fallback(monkeypatch):

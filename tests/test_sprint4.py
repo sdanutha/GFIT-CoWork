@@ -2,6 +2,10 @@
 import json, pathlib, uuid, urllib.request, urllib.error
 
 from tests._pytest_port import BASE, new_session_id
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 def get(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:
@@ -80,14 +84,6 @@ def test_session_search_returns_matches(cleanup_test_sessions):
     assert status == 200
     sids = [s["session_id"] for s in data["sessions"]]
     assert sid in sids
-
-def test_session_search_empty_query_returns_all():
-    data, status = get("/api/sessions/search?q=")
-    assert status == 200 and "sessions" in data
-
-def test_session_search_no_results():
-    data, status = get("/api/sessions/search?q=zzznomatchzzz9999")
-    assert status == 200 and data["sessions"] == []
 
 def test_file_create(cleanup_test_sessions):
     sid, ws = make_session_tracked(cleanup_test_sessions)

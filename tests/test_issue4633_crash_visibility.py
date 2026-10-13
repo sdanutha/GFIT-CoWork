@@ -34,6 +34,9 @@ import pytest
 
 import api.crash_visibility as cv
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.fixture
 def fresh_hooks(tmp_path):

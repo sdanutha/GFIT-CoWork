@@ -2,6 +2,10 @@ import queue
 import sys
 import types
 from unittest import mock
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 # Sentinel for sys.modules save/restore — distinguishes "key wasn't there" from None.
 _MISSING = object()

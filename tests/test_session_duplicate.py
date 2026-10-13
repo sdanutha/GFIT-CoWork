@@ -21,6 +21,9 @@ import pytest
 
 from tests.conftest import TEST_BASE, TEST_STATE_DIR, _post, TEST_WORKSPACE, _wait_for_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _get(path):
     """GET helper -- returns parsed JSON, or raises HTTPError on non-2xx."""

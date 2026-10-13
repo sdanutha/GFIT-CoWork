@@ -28,6 +28,10 @@ import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 
 from tests._pytest_port import BASE, new_session_id
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 # ──────────────────────────────────────────────

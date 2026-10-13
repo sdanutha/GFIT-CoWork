@@ -17,6 +17,9 @@ from api.config import ACTIVE_RUNS, STREAMS, STREAMS_LOCK, create_stream_channel
 from api import profiles
 from api.models import new_session
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.fixture
 def isolated_sessions(tmp_path, monkeypatch):

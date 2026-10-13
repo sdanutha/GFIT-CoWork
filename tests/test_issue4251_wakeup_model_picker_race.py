@@ -7,6 +7,10 @@ from unittest import mock
 
 import api.oauth
 import api.streaming as streaming
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class FakeSession:

@@ -6,11 +6,24 @@ import stat
 import subprocess
 import textwrap
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = Path(__file__).resolve().parents[1]
 
 def _make_executable(path):
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _bash():
+    """Git Bash on Windows; a bare ``bash`` there can resolve to the WSL launcher."""
+    if os.name == "nt":
+        git_bash = Path(os.environ.get("HERMES_GIT_BASH_PATH") or r"C:\Program Files\Git\bin\bash.exe")
+        if git_bash.is_file():
+            return str(git_bash)
+    return "bash"
 
 
 def test_pytest_integration_marker_is_registered():
@@ -129,7 +142,7 @@ def test_local_test_runner_accepts_windows_layout_venv_from_base_python(tmp_path
     env["PYTEST_PROOF_FILE"] = str(proof)
 
     result = subprocess.run(
-        ["bash", "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
+        [_bash(), "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
         cwd=repo,
         env=env,
         text=True,
@@ -183,7 +196,7 @@ def test_local_test_runner_rejects_venv_without_accepted_python_path(tmp_path):
     env["PYTEST_PROOF_FILE"] = str(proof)
 
     result = subprocess.run(
-        ["bash", "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
+        [_bash(), "scripts/test.sh", "tests/example_test.py", "-v", "--timeout=60"],
         cwd=repo,
         env=env,
         text=True,
@@ -229,7 +242,7 @@ def test_local_test_runner_rejects_python_older_than_314(tmp_path):
     env["HERMES_WEBUI_TEST_PYTHON"] = "./fake-python"
 
     result = subprocess.run(
-        ["bash", "scripts/test.sh", "tests/example_test.py"],
+        [_bash(), "scripts/test.sh", "tests/example_test.py"],
         cwd=repo,
         env=env,
         text=True,
@@ -256,3 +269,101 @@ def test_live_model_success_log_is_debug_not_default_console_log():
 
     assert "console.debug('[hermes] Live models loaded" in ui
     assert "console.log('[hermes] Live models loaded" not in ui
+
+
+def test_local_test_runner_uses_working_venv_when_path_has_no_python314(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / ".venv" / "Scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", repo / "scripts" / "test.sh")
+    _make_executable(repo / "scripts" / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+    venv_python = repo / ".venv" / "Scripts" / "python.exe"
+    venv_python.write_text(textwrap.dedent("""\
+        #!/usr/bin/env bash
+        if [[ "${1:-}" == "-" ]]; then cat >/dev/null; exit 0; fi
+        if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then exit 0; fi
+        printf '%s\\n' "$@" > "$PYTEST_PROOF_FILE"
+        """), encoding="utf-8", newline="\n")
+    _make_executable(venv_python)
+    # PATH's python3.14 / python3 are both unsupported (e.g. Windows: 3.11 + the Store stub).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("python3.14", "python3"):
+        (bin_dir / name).write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n")
+        _make_executable(bin_dir / name)
+    proof = repo / "pytest-proof.txt"
+    env = os.environ.copy()
+    env.pop("HERMES_WEBUI_TEST_PYTHON", None)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env["PYTEST_PROOF_FILE"] = str(proof)
+
+    result = subprocess.run([_bash(), "scripts/test.sh", "tests/example_test.py"],
+                            cwd=repo, env=env, text=True, capture_output=True,
+                            timeout=20, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert proof.read_text(encoding="utf-8").splitlines() == ["-m", "pytest", "tests/example_test.py"]
+
+
+_RECORDING_PYTHON = textwrap.dedent("""\
+    #!/usr/bin/env bash
+    # Answers test.sh's version/pip probes; records any other invocation.
+    if [[ "${1:-}" == "-" ]]; then
+      program="$(cat)"
+      if [[ "$program" == *"sys.version_info[:3]"* ]]; then echo "3.14.0"
+      elif [[ "$program" == *"sys.version_info[:2]"* ]]; then echo "3.14"; fi
+      exit 0
+    fi
+    if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then exit 0; fi
+    printf '%s\\n' "$@" > "$PROOF_FILE"
+    """)
+
+
+def _run_runner(tmp_path, *args, **extra_env):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / ".venv" / "Scripts").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "test.sh", repo / "scripts" / "test.sh")
+    (repo / "requirements-dev.txt").write_text("", encoding="utf-8")
+    for fake in (repo / "fake-python", repo / ".venv" / "Scripts" / "python.exe"):
+        fake.write_text(_RECORDING_PYTHON, encoding="utf-8", newline="\n")
+        _make_executable(fake)
+    proof = repo / "proof.txt"
+    env = os.environ.copy()
+    for name in ("HERMES_WEBUI_TEST_PORT", "HERMES_WEBUI_TEST_STATE_DIR"):
+        env.pop(name, None)
+    env.update(HERMES_WEBUI_TEST_PYTHON="./fake-python", PROOF_FILE=str(proof), **extra_env)
+    result = subprocess.run([_bash(), "scripts/test.sh", *args], cwd=repo, env=env,
+                            capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
+    return proof.read_text(encoding="utf-8").splitlines(), result.stderr
+
+
+def test_local_test_runner_without_arguments_shards_the_whole_suite(tmp_path):
+    argv, _stderr = _run_runner(tmp_path)
+    assert argv[0].replace("\\", "/").endswith("/scripts/run_test_shards.py")
+    assert argv[1:] == ["auto"]
+
+
+def test_local_test_runner_serial_flag_runs_one_pytest_process(tmp_path):
+    argv, _stderr = _run_runner(tmp_path, "--serial")
+    assert argv == ["-m", "pytest", "tests/", "-v", "--timeout=60"]
+
+
+def test_local_test_runner_with_paths_runs_one_pytest_process(tmp_path):
+    argv, _stderr = _run_runner(tmp_path, "tests/test_x.py", "-q")
+    assert argv == ["-m", "pytest", "tests/test_x.py", "-q"]
+
+
+def test_local_test_runner_without_arguments_runs_serially_when_state_is_pinned(tmp_path):
+    argv, stderr = _run_runner(tmp_path, HERMES_WEBUI_TEST_PORT="8789")
+    assert argv == ["-m", "pytest", "tests/", "-v", "--timeout=60"]
+    assert "running the suite serially" in stderr
+
+
+def test_local_test_runner_changed_flag_asks_the_selector_and_runs_nothing_when_empty(tmp_path):
+    argv, stderr = _run_runner(tmp_path, "--changed=main")
+    assert argv[0].replace("\\", "/").endswith("/scripts/changed_tests.py")
+    assert argv[1:] == ["main"]
+    assert "no test files touch the changes since main" in stderr

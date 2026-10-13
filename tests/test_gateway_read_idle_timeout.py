@@ -27,6 +27,10 @@ from api.gateway_chat import (
     _gateway_read_timeout_secs,
     _iter_sse_lines_cancellable,
 )
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class _FakeResp:

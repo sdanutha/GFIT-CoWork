@@ -26,10 +26,13 @@ try:
 except ImportError:
     CLARIFY_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(
-    not CLARIFY_AVAILABLE,
-    reason="api.clarify not available in this environment",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not CLARIFY_AVAILABLE,
+        reason="api.clarify not available in this environment",
+    ),
+    pytest.mark.usefixtures("test_server"),
+]
 
 
 def get(path):

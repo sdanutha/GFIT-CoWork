@@ -20,6 +20,9 @@ import pytest
 import api.config as config
 from api.profiles import ProfileNotReadable
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 SECRET = "sk-live-0123456789-SECRET"
 PROVIDER = "custom:bothub"
 A = "/profiles/a/auth.json"

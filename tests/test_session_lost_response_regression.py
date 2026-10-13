@@ -32,6 +32,9 @@ from api.models import (
 )
 from api.run_journal import append_run_event
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 # ── Fixtures (shape mirrors test_session_sidecar_repair.py) ────────────────
 

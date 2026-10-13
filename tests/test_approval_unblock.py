@@ -38,10 +38,13 @@ try:
 except ImportError:
     APPROVAL_AVAILABLE = False
 
-pytestmark = pytest.mark.skipif(
-    not APPROVAL_AVAILABLE,
-    reason="tools.approval not available in this environment"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not APPROVAL_AVAILABLE,
+        reason="tools.approval not available in this environment"
+    ),
+    pytest.mark.usefixtures("test_server"),
+]
 
 from tests._pytest_port import BASE
 

@@ -4,6 +4,10 @@ Sprint 12 Tests: settings panel, session pinning, session import, SSE reconnect.
 import json, pathlib, urllib.error, urllib.request, urllib.parse
 
 from tests._pytest_port import BASE, TEST_DEFAULT_MODEL
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get(path):

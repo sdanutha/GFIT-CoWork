@@ -25,6 +25,9 @@ sys.path.insert(0, str(REPO.parent / ".hermes" / "hermes-agent"))
 
 from api.config import CUSTOM_MODELS_ENDPOINT_TIMEOUT_SECONDS
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def read(rel):
     return (REPO / rel).read_text(encoding="utf-8")

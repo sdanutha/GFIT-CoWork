@@ -42,6 +42,9 @@ HAS_OVERRIDE = hasattr(hermes_constants, "set_hermes_home_override") and hasattr
 
 from api import profiles as profiles_api  # noqa: E402
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _seed_profile_home(base: Path, name: str, provider: str, model: str) -> Path:
     home = base / name

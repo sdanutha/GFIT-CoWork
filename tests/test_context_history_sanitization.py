@@ -14,6 +14,10 @@ from api.streaming import (
     _sanitize_messages_for_api,
     _strip_oob_blocks,
 )
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 OOB_BLOCK = (

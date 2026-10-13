@@ -1,5 +1,9 @@
 """Regression tests for WebUI notes source discovery."""
 from __future__ import annotations
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_notes_sources_identifies_note_or_knowledge_mcp_servers():
