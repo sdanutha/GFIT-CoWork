@@ -45,14 +45,12 @@ Follow that checklist's safety rules:
 - Keep one logical change per PR; split unrelated refactors or cleanup.
 - Read `docs/CONTRACTS.md` and the linked contract/RFC for the touched
   subsystem before editing.
-- For local pytest runs, use `./scripts/test.sh` instead of bare `python3`,
-  `python -m pytest`, or `pytest`. The script creates/uses the repo `.venv`,
-  pins execution to Python 3.14, and installs missing dev test dependencies.
-  `HERMES_WEBUI_TEST_PYTHON` selects the supported base interpreter used to
-  create or rebuild `.venv`; it must not install test dependencies into a
-  system/Homebrew interpreter directly.
-  If a direct pytest invocation reports an unsupported interpreter, rerun through
-  `./scripts/test.sh` before debugging product code.
+- Run pytest only through `./scripts/test.sh`, never bare `python3`,
+  `python -m pytest` or `pytest`. It builds the image's `dev` target and runs
+  the tests in a throwaway Linux container that mounts only the checkout
+  (ADR 0009), with Python 3.14, the test dependencies and Hermes Agent at the
+  pinned release. It needs Docker on the host (Docker Desktop and Git Bash on
+  Windows); nothing runs natively.
 - While working, run `./scripts/test.sh --changed` (the test files a change
   touches since `dev`) plus any neighbouring test files you judge relevant.
   Run the whole suite (`./scripts/test.sh`, sharded) once before a merge or PR;
@@ -154,13 +152,13 @@ safety cannot be confirmed: unknown is not allowed. Validate adversarial inputs
 at the point of use, account for check-then-use races, and scope caches by the
 complete identity so profiles and sessions cannot leak into each other.
 
-Prefer isolated trial state for experiments:
+Prefer isolated trial state for experiments: a Development Deployment of its
+own, on a free N, whose state is only its own folder (ADR 0009):
 
 ```bash
-HERMES_HOME=/tmp/hermes-webui-agent-home \
-HERMES_WEBUI_STATE_DIR=/tmp/hermes-webui-agent-state \
-HERMES_WEBUI_PORT=8789 \
-python3 bootstrap.py
+deploy/new-deployment --dev trial 7     # ports 20787, 20719, ...
+deploy/cowork trial up -d
+deploy/cowork trial down                # deploy/deployments/trial/ holds its state
 ```
 
 Do not include private machine instructions in this tracked file. Keep personal

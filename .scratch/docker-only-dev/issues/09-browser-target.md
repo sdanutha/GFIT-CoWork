@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] --browser builds the browser target and runs the browser smoke
-- [ ] Seam 3 test
+- [x] --browser builds the browser target and runs the browser smoke
+- [x] Seam 3 test

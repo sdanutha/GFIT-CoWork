@@ -4,10 +4,10 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Dockerfile dev target: dev requirements, Hermes Agent source at the pinned version, Docker CLI + Compose plugin
-- [ ] ./scripts/test.sh on the host builds the dev target and docker-runs itself with the same arguments; no state is mounted
-- [ ] Missing docker fails with a clear message
-- [ ] Seam 3 tests with a fake docker
-- [ ] AGENTS.md and TESTING.md describe the container runner
+- [x] Dockerfile dev target: dev requirements, Hermes Agent source at the pinned version, Docker CLI + Compose plugin
+- [x] ./scripts/test.sh on the host builds the dev target and docker-runs itself with the same arguments; no state is mounted
+- [x] Missing docker fails with a clear message
+- [x] Seam 3 tests with a fake docker
+- [x] AGENTS.md and TESTING.md describe the container runner
