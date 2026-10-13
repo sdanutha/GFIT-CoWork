@@ -33,6 +33,9 @@ import pytest
 
 from api.paths import _atomic_write_text
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def test_atomic_write_replaces_contents(tmp_path: Path) -> None:
     target = tmp_path / "config.yaml"

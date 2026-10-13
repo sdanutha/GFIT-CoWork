@@ -15,6 +15,10 @@ import json
 import tempfile
 import textwrap
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_profile_switch_route_invalidates_models_cache(tmp_path):

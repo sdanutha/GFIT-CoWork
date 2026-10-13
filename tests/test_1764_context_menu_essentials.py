@@ -26,6 +26,10 @@ in the wider suite).
 """
 from pathlib import Path
 import re
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -193,7 +197,7 @@ import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
-from conftest import TEST_BASE  # noqa: E402
+from tests.conftest import TEST_BASE  # noqa: E402
 
 
 def _post(path, body=None, headers=None):

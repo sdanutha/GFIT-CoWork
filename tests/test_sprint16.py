@@ -8,6 +8,10 @@ import re
 import urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 
 

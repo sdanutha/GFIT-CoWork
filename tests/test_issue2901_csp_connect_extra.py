@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from api.helpers import _build_csp_enforced_policy
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_csp_connect_src_default_header_unchanged(monkeypatch):

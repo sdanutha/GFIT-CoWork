@@ -12,6 +12,9 @@ import pytest
 import api.config as config
 import api.profiles as profiles
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 _API_KEY_ENV_VARS = (
     "LM_API_KEY",

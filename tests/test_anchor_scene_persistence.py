@@ -1,6 +1,10 @@
 import json
 from collections import OrderedDict
 from types import SimpleNamespace
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _client_anchor_scene_message_ref(message):

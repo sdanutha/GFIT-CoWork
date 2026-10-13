@@ -1,6 +1,10 @@
 import sys
 import types
 from unittest.mock import patch
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 # ── Mocking context-length/metadata and setup requirements for routes testing ──
 def fake_get_model_context_length(model, base_url="", **kwargs):

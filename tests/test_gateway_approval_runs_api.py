@@ -12,6 +12,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 _MISSING = object()
 _TEST_ROUTE_SESSION_LOCK = threading.Lock()

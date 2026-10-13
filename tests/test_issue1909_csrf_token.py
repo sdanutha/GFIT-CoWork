@@ -8,6 +8,10 @@ from types import SimpleNamespace
 import api.auth as auth
 import api.config as api_config
 import api.routes as routes
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _signed_cookie(raw_token: str) -> str:

@@ -13,6 +13,10 @@ import urllib.request
 from pathlib import Path
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 BOOT_JS = (Path(__file__).parent.parent / "static" / "boot.js").read_text(encoding="utf-8")

@@ -14,6 +14,9 @@ import pytest
 
 from api.gateway_chat import _gateway_runs_approval_event
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 REPO_ROOT = Path(__file__).parent.parent
 GATEWAY_CHAT_SRC = (REPO_ROOT / "api" / "gateway_chat.py").read_text(encoding="utf-8")
 

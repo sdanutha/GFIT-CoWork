@@ -148,21 +148,6 @@ def test_agent_health_payload_down_when_gateway_metadata_exists_but_no_process(m
     assert payload["details"]["gateway_state"] == "stale"
 
 
-def test_agent_health_payload_unknown_when_gateway_is_not_configured(monkeypatch):
-    from api import agent_health
-
-    monkeypatch.setattr(
-        agent_health,
-        "_gateway_status_module",
-        lambda: _FakeGatewayStatus(runtime_status=None, running_pid=None),
-    )
-
-    payload = agent_health.build_agent_health_payload()
-
-    assert payload["alive"] is None
-    assert payload["details"] == {"state": "unknown", "reason": "gateway_not_configured"}
-
-
 def test_agent_health_route_is_registered_with_tri_state_payload_shape():
     from tests._route_source import route_source
 

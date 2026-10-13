@@ -8,6 +8,10 @@ without tearing down the currently viewed pane's runtime state.
 
 import pathlib
 import re
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO = pathlib.Path(__file__).parent.parent
 

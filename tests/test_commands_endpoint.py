@@ -8,6 +8,10 @@ from typing import Any, cast
 
 
 from tests.conftest import TEST_BASE, requires_agent_modules
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def _install_fake_mcp_tool(monkeypatch, shutdown, discover, servers=None, lock=None):

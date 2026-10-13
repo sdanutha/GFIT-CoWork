@@ -10,6 +10,10 @@ the same policy enforced for real requests.
 from pathlib import Path
 
 from api.routes import apply_cors_preflight_headers
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = Path(__file__).resolve().parent.parent
 

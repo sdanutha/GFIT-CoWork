@@ -9,6 +9,10 @@ from unittest import mock
 import api.config
 import api.oauth
 import api.streaming as streaming
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_runtime_preferred_base_url_uses_runtime_value_for_pooled_provider():

@@ -27,6 +27,9 @@ import pytest
 
 import api.config as config
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _set_config(provider, base_url=None, default=None, custom_providers=None):
     old_cfg = dict(config.cfg)

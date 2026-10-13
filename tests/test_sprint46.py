@@ -15,6 +15,10 @@ from api.models import Session
 from api.config import SESSION_DIR
 from api.routes import _handle_session_compress, get_session
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class _FakeHandler:

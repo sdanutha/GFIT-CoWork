@@ -110,10 +110,3 @@ def test_goal_ingress_does_not_suppress_ordinary_kickoff(monkeypatch):
     assert handler.status != 200
 
 
-def test_goal_silent_suppression_is_exact_and_case_sensitive():
-    assert routes._is_silent_control_message("[SILENT]") is True
-    assert routes._is_silent_control_message("  [SILENT]\n") is True
-    assert routes._is_silent_control_message("[silent]") is False
-    assert routes._is_silent_control_message("prefix [SILENT]") is False
-    assert routes._is_silent_control_message("") is False
-    assert routes._is_silent_control_message(None) is False

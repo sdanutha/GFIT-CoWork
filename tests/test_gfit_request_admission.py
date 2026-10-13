@@ -22,6 +22,9 @@ from api.access import request_admission
 from api.auth import COOKIE_NAME
 from tests._gfit_server import gfit_server as _gfit_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 USER = "521740"
 OTHER_USER = "671278"
 

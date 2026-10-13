@@ -1,5 +1,9 @@
 """Regression coverage for WebUI chat upload path handoff."""
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -11,6 +11,9 @@ import pytest
 
 from tests.conftest import TEST_BASE, requires_agent_modules
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def test_config_snapshot_waits_for_reload_lock(monkeypatch, tmp_path):
     """Snapshot capture cannot run concurrently with cache replacement."""

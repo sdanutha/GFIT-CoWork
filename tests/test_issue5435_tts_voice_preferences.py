@@ -7,6 +7,10 @@ import urllib.error
 import urllib.request
 
 from tests._pytest_port import BASE, TEST_USER_SETTINGS_FILE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")

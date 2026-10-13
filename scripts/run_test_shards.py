@@ -58,11 +58,20 @@ def format_counts(total: dict[str, int]) -> str:
     return ", ".join(f"{total[label]} {label}" for label in labels) or "no tests ran"
 
 
+def shard_count(text: str) -> int | None:
+    """``auto`` -> min(cores, 8): on a 14-core Windows box 12 shards were no faster than 8."""
+    if text == "auto":
+        return min(os.cpu_count() or 1, 8)
+    if text.isdigit() and int(text) >= 1:
+        return int(text)
+    return None
+
+
 def main(argv: list[str]) -> int:
-    if not argv or not argv[0].isdigit() or int(argv[0]) < 1:
+    shards = shard_count(argv[0]) if argv else None
+    if shards is None:
         print("usage: ./scripts/test.sh --parallel N [pytest args]", file=sys.stderr)
         return 2
-    shards = int(argv[0])
     pytest_args = argv[1:] or DEFAULT_ARGS
     pinned = [name for name in PINNED_ENV if os.environ.get(name)]
     if shards > 1 and pinned:

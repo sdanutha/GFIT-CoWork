@@ -11,6 +11,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Building a wheel takes ~40s on Windows alone and more under --parallel; there a
+# pytest-timeout ends the whole shard, so allow more than the runner's 60s.
+pytestmark = pytest.mark.timeout(300)
+
 
 def _copy_repo_without_heavy_dirs(dst: Path) -> Path:
     repo_copy = dst / "repo"
@@ -24,6 +28,10 @@ def _copy_repo_without_heavy_dirs(dst: Path) -> Path:
             ".pytest_cache",
             ".ruff_cache",
             "__pycache__",
+            # Not part of the wheel; tests/ alone is ~90 MB to copy.
+            "tests",
+            "docs",
+            ".scratch",
             # Node harness scripts other tests write into the repo root and
             # delete again; under --parallel one can vanish mid-copy.
             "tmp*.cjs",

@@ -2,6 +2,10 @@ import json
 import urllib.request
 
 from api import config
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_custom_provider_model_field_does_not_block_remote_catalog(monkeypatch, tmp_path):

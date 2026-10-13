@@ -25,6 +25,9 @@ import pytest
 
 from tests.helpers import source_between as _source_between
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 

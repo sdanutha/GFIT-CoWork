@@ -7,6 +7,9 @@ import yaml
 
 import api.profiles as profiles
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 REPO = Path(__file__).resolve().parent.parent
 PANELS_JS = (REPO / "static" / "panels.js").read_text(encoding="utf-8")

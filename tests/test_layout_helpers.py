@@ -16,6 +16,9 @@ from tests._layout_helpers import (
     collect_layout_violations,
 )
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _require_playwright():
     if sync_playwright is None:

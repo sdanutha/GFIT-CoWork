@@ -19,6 +19,10 @@ Tests:
 """
 import re
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 STREAMING = Path(__file__).resolve().parent.parent / "api" / "streaming.py"
 

@@ -21,6 +21,10 @@ known limitation.
 import pathlib
 
 import api.config as config
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 REPO = pathlib.Path(__file__).parent.parent
 CONFIG_SRC = (REPO / "api" / "config.py").read_text(encoding="utf-8")

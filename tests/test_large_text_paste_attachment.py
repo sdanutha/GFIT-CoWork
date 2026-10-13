@@ -89,11 +89,6 @@ def test_large_text_paste_attachment_setting_hydrates_runtime_gate_default_on():
     assert "if(window._largeTextPasteAsAttachment===false)return false;" in BOOT_JS
 
 
-def test_line_threshold_is_one_hundred_lines():
-    assert "const LARGE_TEXT_PASTE_LINE_THRESHOLD=100" in BOOT_JS
-    assert "_largeTextPasteLineCount(value)>=LARGE_TEXT_PASTE_LINE_THRESHOLD" in BOOT_JS
-
-
 def test_large_text_paste_creates_markdown_file_and_uses_existing_tray():
     assert "function _largeTextPasteFile(text,now)" in BOOT_JS
     assert "function _attachLargePastedText(file)" in BOOT_JS

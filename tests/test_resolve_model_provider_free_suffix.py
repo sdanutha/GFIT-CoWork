@@ -17,6 +17,10 @@ back to ``split(":", 1)`` so trailing suffixes stay with the model.
 """
 
 from api.config import resolve_model_provider, model_with_provider_context
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 # ---------------------------------------------------------------------------

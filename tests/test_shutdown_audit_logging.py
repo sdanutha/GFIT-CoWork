@@ -1,6 +1,10 @@
 import logging
 import types
 import threading
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_server_shutdown_audit_logs_active_stream_context(monkeypatch, caplog):

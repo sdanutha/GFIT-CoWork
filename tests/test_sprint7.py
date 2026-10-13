@@ -4,6 +4,10 @@ Sprint 7 Tests: Cron CRUD, Skill CRUD, Memory Write, Session Content Search, Hea
 import json, pathlib, urllib.error, urllib.parse, urllib.request
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 def get(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:

@@ -23,6 +23,10 @@ config-override args again.
 from pathlib import Path
 import sys
 import types
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 REPO = Path(__file__).resolve().parent.parent

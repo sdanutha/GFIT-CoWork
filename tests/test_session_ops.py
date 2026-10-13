@@ -13,6 +13,9 @@ import pytest
 
 from tests.conftest import TEST_BASE, TEST_PROFILE_HOME, TEST_USER, _post, make_session_tracked
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 def _get(path, headers=None):
     """GET helper -- returns parsed JSON, or raises HTTPError on non-2xx."""

@@ -3,6 +3,10 @@ import io
 import queue
 
 from tests.conftest import requires_agent_modules
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def test_runtime_adapter_interface_and_legacy_journal_methods_exist():

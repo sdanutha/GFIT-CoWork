@@ -18,6 +18,10 @@ import urllib.request
 import api.config as config
 import api.profiles as profiles
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────

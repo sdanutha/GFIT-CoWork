@@ -23,6 +23,9 @@ import pytest
 
 from tests._gfit_server import PASSWORD, WRONG_PASSWORD, Client, gfit_server as _gfit_server
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 REPO = Path(__file__).resolve().parent.parent
 DEPLOY = REPO / "deploy"
 COMPOSE = DEPLOY / "docker-compose.yml"
@@ -400,7 +403,8 @@ def test_cowork_refuses_to_change_the_key_when_it_cannot_tell_whether_it_runs(re
     assert not log.exists()
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can write a read-only folder")
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                    reason="needs POSIX permissions as a non-root user")
 def test_cowork_fails_closed_when_home_env_cannot_be_written(ready):
     folder, cowork, log, key = ready
     home = folder / "home"

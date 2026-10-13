@@ -1,5 +1,9 @@
 """Regression tests for frontend routing under subpath mounts like /hermes/."""
 from pathlib import Path
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 ROOT = Path(__file__).resolve().parents[1]

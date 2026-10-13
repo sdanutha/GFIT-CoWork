@@ -14,6 +14,9 @@ import api.models as models
 import api.streaming as streaming
 from api.models import Session
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 @pytest.mark.parametrize("started_at", [None, 0, -1, "invalid", float("nan"), float("inf"), 101.0, 10**400])
 def test_terminal_turn_duration_omits_invalid_origin(started_at):

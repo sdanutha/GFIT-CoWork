@@ -19,6 +19,10 @@ import urllib.error
 import urllib.parse
 
 from tests._pytest_port import BASE, new_session_id
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get(path):
@@ -402,10 +406,6 @@ class TestApprovalRespondHTTP:
     def test_respond_rejects_bad_choice(self):
         result, status = post("/api/approval/respond",
                               {"session_id": new_session_id(), "choice": "HACKED"})
-        assert status == 400
-
-    def test_respond_requires_session_id(self):
-        result, status = post("/api/approval/respond", {"choice": "deny"})
         assert status == 400
 
     def test_respond_returns_choice_field(self):

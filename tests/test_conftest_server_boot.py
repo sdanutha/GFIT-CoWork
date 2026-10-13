@@ -12,6 +12,10 @@ with no clue as to the cause) into a single actionable failure:
 from __future__ import annotations
 
 import tests.conftest as conftest
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 class _FakeProc:

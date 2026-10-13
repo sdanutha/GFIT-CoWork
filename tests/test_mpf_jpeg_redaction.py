@@ -12,6 +12,9 @@ import pytest
 
 from api import helpers
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 RAW = (Path(__file__).parent / 'fixtures' / 'multipicture.jpg').read_bytes()
 BASE = RAW.index(b'MPF\0') + 4

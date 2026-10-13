@@ -30,6 +30,9 @@ import pytest
 
 from tests._pytest_port import BASE
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 _PORT = urllib.parse.urlparse(BASE).port
 _BODY = b'{"stale": true}'
 

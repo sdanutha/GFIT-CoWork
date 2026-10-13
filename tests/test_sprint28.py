@@ -12,9 +12,13 @@ import urllib.request
 
 # Import test constants from conftest (same process — these are module-level values)
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from conftest import TEST_STATE_DIR
+from tests.conftest import TEST_STATE_DIR
 
 from tests._pytest_port import BASE
+import pytest
+
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
 
 
 def get(path):

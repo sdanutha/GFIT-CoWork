@@ -22,6 +22,9 @@ import types
 import api.config as config
 import pytest
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 
 class _RestoreCfg:
     """Context manager: snapshot cfg, restore on exit (test isolation)."""

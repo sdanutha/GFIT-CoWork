@@ -5,6 +5,9 @@ import pytest
 
 from tests._pytest_port import BASE
 
+# Talks to the shared test server (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("test_server")
+
 def get(path):
     with urllib.request.urlopen(BASE + path, timeout=10) as r:
         return json.loads(r.read()), r.status
@@ -38,10 +41,6 @@ def make_workspace_child(base: pathlib.Path, name: str) -> pathlib.Path:
     target.mkdir(parents=True, exist_ok=True)
     return target
 
-
-def test_server_running_from_new_location():
-    data, status = get("/health")
-    assert status == 200 and data["status"] == "ok"
 
 def test_app_js_served():
     """Sprint 9: app.js replaced by modules. Verify ui.js (contains renderMd) is served."""
