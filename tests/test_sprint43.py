@@ -4,7 +4,6 @@ Sprint 43 Tests: Bandit security fixes — B310, B324, B110 + QuietHTTPServer (P
 Covers:
 - gateway_watcher.py: MD5 uses usedforsecurity=False (B324)
 - config.py: URL scheme validation before urlopen (B310)
-- bootstrap.py: URL scheme validation in wait_for_health (B310)
 - server.py: QuietHTTPServer class exists and extends ThreadingHTTPServer
 - server.py: QuietHTTPServer.handle_error suppresses client disconnect errors
 - server.py: QuietHTTPServer uses sys.exc_info() not traceback.sys.exc_info()
@@ -24,7 +23,6 @@ pytestmark = pytest.mark.usefixtures("test_server")
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 GATEWAY_WATCHER_PY = (REPO_ROOT / "api" / "gateway_watcher.py").read_text(encoding="utf-8")
 CONFIG_PY = (REPO_ROOT / "api" / "config.py").read_text(encoding="utf-8")
-BOOTSTRAP_PY = (REPO_ROOT / "bootstrap.py").read_text(encoding="utf-8")
 SERVER_PY = (REPO_ROOT / "server.py").read_text(encoding="utf-8")
 ROUTES_PY = (REPO_ROOT / "api" / "routes.py").read_text(encoding="utf-8")
 AUTH_PY = (REPO_ROOT / "api" / "auth.py").read_text(encoding="utf-8")
@@ -82,27 +80,6 @@ class TestUrlSchemeValidation(unittest.TestCase):
             "nosec B310",
             CONFIG_PY,
             "config.py: urlopen must have # nosec B310 after scheme validation",
-        )
-
-    def test_bootstrap_scheme_validation_present(self):
-        """bootstrap.py wait_for_health must validate URL scheme before urlopen."""
-        self.assertIn(
-            "Invalid health check URL",
-            BOOTSTRAP_PY,
-            "bootstrap.py: URL scheme validation missing in wait_for_health (B310)",
-        )
-        self.assertRegex(
-            BOOTSTRAP_PY,
-            r'url\.startswith\([^)]+http',
-            "bootstrap.py: must check url starts with http:// or https://",
-        )
-
-    def test_bootstrap_urlopen_has_nosec(self):
-        """The urlopen call in bootstrap.py must have a # nosec B310 comment."""
-        self.assertIn(
-            "nosec B310",
-            BOOTSTRAP_PY,
-            "bootstrap.py: urlopen must have # nosec B310 after scheme validation",
         )
 
     def test_config_allows_http_and_https(self):

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Shared, TLS-aware /health probe used by every shell launcher (start.sh,
-# ctl.sh) and the Docker HEALTHCHECK.
+# TLS-aware /health probe used by the image's Docker HEALTHCHECK.
 #
 # The WebUI serves HTTPS when both HERMES_WEBUI_TLS_CERT and
 # HERMES_WEBUI_TLS_KEY are set (see api/config.py:TLS_ENABLED). The probe must
@@ -25,7 +24,7 @@
 #   bash scripts/lib/health_probe.sh <host> <port> [path] [max_time]
 # On success it prints the response body to stdout and exits 0.
 #
-# Kept bash 3.2 compatible under `set -u` (ctl.sh sources this).
+# Safe under `set -u`.
 
 # Guard so the self-signed warning is printed at most once per process even
 # when the probe is retried in a wait loop.

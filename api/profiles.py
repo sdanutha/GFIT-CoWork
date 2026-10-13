@@ -373,9 +373,7 @@ def _resolve_base_hermes_home() -> Path:
         # If HERMES_HOME points to a profiles/ subdir, walk up two levels to the base
         return _unwrap_profile_home_to_base(p)
 
-    # Platform default. On Windows this includes the #2905 migration-safety
-    # fallback (prefer the populated legacy %USERPROFILE%\.hermes over an
-    # empty %LOCALAPPDATA%\hermes). Import the shared path helper directly
+    # The default (~/.hermes). Import the shared path helper directly
     # instead of importing api.config here; api.config imports profiles during
     # startup, so going through config creates a partial-module circular import
     # when api.profiles is imported first.

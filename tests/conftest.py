@@ -15,12 +15,10 @@ PATH DISCOVERY:
 """
 import copy
 import json
-import inspect
 import multiprocessing
 import os
 import pathlib
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -31,8 +29,8 @@ import pytest
 if sys.version_info[:2] != (3, 14):
     pytest.exit(
         "GFIT-CoWork tests require Python 3.14. "
-        "Run ./scripts/test.sh so the repo-local supported .venv is used "
-        "instead of an unsupported system python.",
+        "Run ./scripts/test.sh, which runs them in the dev image "
+        "(ADR 0009).",
         returncode=3,
     )
 
@@ -243,11 +241,9 @@ def _isolate_hermes_config_path():
 def _strip_leaked_login_env() -> None:
     """Remove a leaked HERMES_WEBUI_DIRECTORY between tests (#7168 review).
 
-    bootstrap.py runs _load_repo_dotenv() at import time, which copies values
-    from the developer's real repo .env straight into os.environ. When any
-    test imports bootstrap mid-session (e.g. tests/test_bootstrap_foreground.py
-    via its import_bootstrap fixture), a local .env configuring the Directory
-    leaks into the process environment OUTSIDE monkeypatch's undo scope. Every
+    A test that loads a ``.env`` into os.environ mid-session (as the removed
+    bootstrap.py once did on import) leaks a Directory setting into the
+    process environment OUTSIDE monkeypatch's undo scope. Every
     later test then sees a Directory it did not set up. Tests that need one
     set the var themselves AFTER this strip.
 
@@ -869,15 +865,6 @@ def _kill_process_tree(pid):
     if not pid or pid <= 0:
         return
     try:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW}),
-            )
-            return
         import signal
 
         os.kill(pid, signal.SIGKILL)
@@ -886,49 +873,9 @@ def _kill_process_tree(pid):
 
 
 def _kill_port_owner(port):
-    """Best-effort free of TEST_PORT, using a Windows-native owner lookup."""
+    """Best-effort free of TEST_PORT."""
     try:
-        if sys.platform != "win32":
-            subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
-            return
-
-        creationflags = {"creationflags": subprocess.CREATE_NO_WINDOW}
-        ps_cmd = (
-            "$port = " + str(port) + "; "
-            "$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::', '::ffff:127.0.0.1') } | "
-            "Select-Object -First 1 -ExpandProperty OwningProcess; "
-            "if ($conn) { $conn }"
-        )
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            **creationflags,
-        )
-        pid_text = proc.stdout.strip()
-        if not pid_text:
-            proc = subprocess.run(
-                ["netstat", "-ano", "-p", "tcp"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                **creationflags,
-            )
-            port_suffixes = (f":{port}", f"[::]:{port}", f"127.0.0.1:{port}", f"[::1]:{port}")
-            for line in proc.stdout.splitlines():
-                parts = line.split()
-                if len(parts) < 5 or parts[0].upper() != "TCP":
-                    continue
-                local_addr = parts[1]
-                state = parts[3].upper()
-                owner_pid = parts[4]
-                if state == "LISTENING" and any(local_addr.endswith(suffix) for suffix in port_suffixes):
-                    pid_text = owner_pid
-                    break
-        if pid_text:
-            _kill_process_tree(int(pid_text))
+        subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
     except Exception:
         pass
 
@@ -950,18 +897,7 @@ def _rmtree_retry(path):
     if not target.exists():
         return
 
-    def _clear_readonly(_func, entry, _exc):
-        try:
-            os.chmod(entry, 0o666)
-            _func(entry)
-        except Exception:
-            raise
-
-    rmtree_kwargs = (
-        {"onexc": _clear_readonly}
-        if "onexc" in inspect.signature(shutil.rmtree).parameters
-        else {"onerror": _clear_readonly}
-    ) if sys.platform == "win32" else {}
+    rmtree_kwargs = {}
 
     attempts = 5
     last_exc = None
@@ -1003,19 +939,7 @@ def _rmtree_retry(path):
 def _seed_test_skills(real_skills: pathlib.Path, test_skills: pathlib.Path) -> None:
     if not real_skills.exists() or test_skills.exists():
         return
-    try:
-        test_skills.symlink_to(real_skills)
-    except OSError as exc:
-        if not WINDOWS or getattr(exc, "winerror", None) != 1314:
-            raise
-        shutil.copytree(real_skills, test_skills, copy_function=_copy2_readonly)
-
-
-def _copy2_readonly(source: str, destination: str) -> str:
-    copied = shutil.copy2(source, destination)
-    path = pathlib.Path(copied)
-    path.chmod(path.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
-    return copied
+    test_skills.symlink_to(real_skills)
 
 
 # ── Session-scoped test server ────────────────────────────────────────────────
@@ -1197,7 +1121,6 @@ def test_server(_test_state_dir):
                 env=env,
                 stdout=_logf,
                 stderr=subprocess.STDOUT,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}),
             )
         # 45s (up from 20s): server.py imports the full hermes-agent, which is
         # import-heavy and can exceed 20s on a loaded runner — the old timeout

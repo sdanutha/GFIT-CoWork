@@ -26,13 +26,16 @@ webui_prefill_messages_script:
 webui_prefill_messages_script_timeout: 5
 ```
 
-or:
+or, in the Deployment's `.env` (`deploy/deployments/<team>/.env`):
 
 ```bash
-HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT="python3 /path/to/notes_recall.py" \
-HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT_TIMEOUT=5 \
-./ctl.sh restart
+HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT="python3 /path/to/notes_recall.py"
+HERMES_WEBUI_PREFILL_MESSAGES_SCRIPT_TIMEOUT=5
 ```
+
+then `deploy/cowork <team> up -d gfit-cowork`, which recreates the container
+with the new `.env` (`deploy/cowork <team> restart gfit-cowork` keeps the old
+one). The script path is a path inside the `gfit-cowork` container.
 
 The script may print either an OpenAI-style JSON message list, a JSON object with
 a `messages` list, or plain text; plain text is wrapped as one `user` prefill
@@ -98,23 +101,20 @@ automatic generation when the auxiliary flag is off.
 By default, browser chat runs through WebUI's in-process legacy runtime. Advanced
 self-hosted deployments can opt into routing new browser turns through a running
 Hermes Gateway API server while preserving the existing WebUI `/api/chat/start`
-and `/api/chat/stream` browser contract:
+and `/api/chat/stream` browser contract. In the Deployment's `.env`:
 
 ```bash
-HERMES_WEBUI_CHAT_BACKEND=gateway \
-HERMES_WEBUI_GATEWAY_BASE_URL=http://127.0.0.1:8642 \
-HERMES_WEBUI_GATEWAY_API_KEY=... \
-./ctl.sh restart
+HERMES_WEBUI_CHAT_BACKEND=gateway
+HERMES_WEBUI_GATEWAY_BASE_URL=http://hermes-agent:8642
 ```
+
+then `deploy/cowork <team> up -d gfit-cowork`. The kit already passes
+`API_SERVER_KEY` to GFIT-CoWork as `HERMES_WEBUI_GATEWAY_API_KEY`.
 
 Gateway-backed approval prompts need one more explicit opt-in because they use the Gateway runs API path:
 
 ```bash
-HERMES_WEBUI_CHAT_BACKEND=gateway \
-HERMES_WEBUI_GATEWAY_BASE_URL=http://127.0.0.1:8642 \
-HERMES_WEBUI_GATEWAY_API_KEY=... \
-HERMES_WEBUI_GATEWAY_USE_RUNS_API=true \
-./ctl.sh restart
+HERMES_WEBUI_GATEWAY_USE_RUNS_API=true
 ```
 
 Use this when the connected gateway advertises approval support and you want tool approval cards to appear in WebUI. Without `HERMES_WEBUI_GATEWAY_USE_RUNS_API=true`, gateway chat stays on the legacy chat-completions transport and approval-capable commands can remain pending in the agent without a WebUI approval card.

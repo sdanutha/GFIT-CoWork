@@ -16,23 +16,6 @@ from tests._pytest_port import TEST_PORT
 pytestmark = pytest.mark.usefixtures("test_server")
 
 
-# ── SO_EXCLUSIVEADDRUSE on Windows ──────────────────────────────────────────
-
-@pytest.mark.skipif(sys.platform != 'win32', reason='Windows-only socket option')
-def test_exclusive_addr_use_set_on_windows():
-    from server import QuietHTTPServer
-    port = TEST_PORT + 901
-    httpd = QuietHTTPServer(('127.0.0.1', port), BaseHTTPRequestHandler)
-    try:
-        val = httpd.socket.getsockopt(
-            socket.SOL_SOCKET,
-            getattr(socket, 'SO_EXCLUSIVEADDRUSE', -5),
-        )
-        assert val != 0, 'SO_EXCLUSIVEADDRUSE should be set on Windows'
-    finally:
-        httpd.server_close()
-
-
 # ── Live-listener probe ─────────────────────────────────────────────────────
 
 def test_probe_detects_live_server():

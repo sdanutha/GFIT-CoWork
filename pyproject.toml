@@ -18,18 +18,10 @@ dynamic = ["version", "dependencies"]
 [project.urls]
 Upstream = "https://github.com/nesquena/hermes-webui"
 
-[project.scripts]
-# Packaged CLI entry point (#6739): `gfit-cowork` starts the server, the
-# pip-installed equivalent of `python server.py` from a source checkout. The
-# generated console script calls bootstrap.main(), which runs launcher-python
-# discovery and dep-ensure before launching the server — matching the effective
-# behavior of the `python server.py` / `python -m server` launch surface.
-gfit-cowork = "bootstrap:main"
-
 [tool.setuptools]
 include-package-data = true
 packages = ["api", "static"]
-py-modules = ["bootstrap", "server"]
+py-modules = ["server"]
 
 [tool.setuptools.package-data]
 static = ["**/*"]
@@ -42,9 +34,9 @@ version_file = "api/_scm_version.py"
 
 # GFIT-CoWork — build metadata plus Python tooling config.
 #
-# The project now exposes standard Python build metadata for the current flat
-# runtime layout while still keeping the source-checkout launch surface
-# (`bootstrap.py`, `start.sh`, `ctl.sh`) authoritative. The Ruff gate remains
+# The project exposes standard Python build metadata for the current flat
+# runtime layout; GFIT-CoWork itself runs only in its container image
+# (ADR 0009), which starts `server.py`. The Ruff gate remains
 # forward-looking and line-scoped on NEW/CHANGED Python code; see
 # scripts/ruff_lint.py and docs/TESTING.md > "Python lint gate (ruff)".
 

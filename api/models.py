@@ -18,15 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast, overload
 
-try:  # pragma: no cover - platform-specific imports.
-    import fcntl as _fcntl
-except ImportError:  # pragma: no cover
-    _fcntl = None
-
-try:  # pragma: no cover - platform-specific imports.
-    import msvcrt as _msvcrt
-except ImportError:  # pragma: no cover
-    _msvcrt = None
+import fcntl as _fcntl
 
 import api.config as _cfg
 from api.compression_anchor import is_context_compression_marker
@@ -216,37 +208,9 @@ _LEGACY_SIDECAR_FACTS_MAX = 2000
 _STALE_TMP_AGE_SECONDS = 3600  # 1 hour
 
 
-# ---------------------------------------------------------------------------
-# Windows-safe os.replace() with retry
-# ---------------------------------------------------------------------------
-# On Windows, os.replace() raises WinError 5 (ERROR_ACCESS_DENIED) when the
-# target file is momentarily locked by another process (antivirus scanner,
-# browser polling the session JSON, etc.).  This helper retries with
-# exponential backoff on PermissionError, which is the Python exception
-# mapped from WinError 5.  On non-Windows platforms it is a thin wrapper
-# (one attempt, no delay).
-# ---------------------------------------------------------------------------
-
-_WINDOWS_REPLACE_MAX_RETRIES = 5
-_WINDOWS_REPLACE_INITIAL_DELAY = 0.05  # 50 ms
-
-
 def _safe_replace(src: Path, dst: Path) -> None:
-    """Atomic replace with retries on Windows file-locking errors."""
-    if os.name != 'nt':
-        os.replace(src, dst)
-        return
-
-    delay = _WINDOWS_REPLACE_INITIAL_DELAY
-    for attempt in range(_WINDOWS_REPLACE_MAX_RETRIES):
-        try:
-            os.replace(src, dst)
-            return
-        except PermissionError:
-            if attempt == _WINDOWS_REPLACE_MAX_RETRIES - 1:
-                raise
-            time.sleep(delay)
-            delay *= 2  # 50 -> 100 -> 200 -> 400 -> 800 ms
+    """Atomic replace (``os.replace``)."""
+    os.replace(src, dst)
 
 
 # Serializes index writers so concurrent Session.save() calls cannot race on
@@ -12921,31 +12885,11 @@ def _cleanup_manifest_process_lock(hermes_home):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     with os.fdopen(fd, "r+b", buffering=0) as lock_file:
-        if _fcntl is not None:
-            _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_UN)
-            return
-
-        if _msvcrt is not None:
-            if os.fstat(lock_file.fileno()).st_size == 0:
-                lock_file.write(b"\0")
-            lock_file.seek(0)
-            _msvcrt.locking(  # type: ignore[attr-defined]
-                lock_file.fileno(), _msvcrt.LK_LOCK, 1  # type: ignore[attr-defined]
-            )
-            try:
-                yield
-            finally:
-                lock_file.seek(0)
-                _msvcrt.locking(  # type: ignore[attr-defined]
-                    lock_file.fileno(), _msvcrt.LK_UNLCK, 1  # type: ignore[attr-defined]
-                )
-            return
-
-        raise RuntimeError("cross-process session cleanup locking is unavailable")
+        _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_UN)
 
 
 _cleanup_manifest_locks_guard = threading.Lock()

@@ -1,7 +1,8 @@
 """GFIT-CoWork -- the Operator's command line for the Profile lifecycle.
 
 There is no Admin in the web app (ADR 0006). The Operator, on the Deployment's
-server, runs this with the same Python and environment as the web server::
+server, runs this inside the GFIT-CoWork container, with the same Python and
+environment as the web server (deploy/README.md, "Add a User")::
 
     python3 -m api.operator_cli list
     python3 -m api.operator_cli create 521740 --display-name "Somchai Jaidee"
@@ -12,8 +13,8 @@ server, runs this with the same Python and environment as the web server::
     python3 -m api.operator_cli sessions-repair
     python3 -m api.operator_cli sessions-cleanup [--empty]
 
-It reads the repo ``.env`` first, as the launcher does, so it finds the same
-state directory and Hermes home as the server. Each action is the matching
+The container's environment gives it the same state directory and Hermes home
+as the server. Each action is the matching
 function in ``api.roster``. This process changes only durable state (the
 roster, the Hermes Profile, the Profile's scheduled jobs); the running server
 notices a disable and ends the Profile's logins and running turns itself
@@ -34,14 +35,6 @@ import argparse
 import json
 import os
 import sys
-
-
-def _load_env() -> None:
-    """Load the repo ``.env`` into the environment, as ``bootstrap.py`` does."""
-    try:
-        import bootstrap  # noqa: F401  (loads .env on import)
-    except ImportError:
-        pass
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -138,7 +131,6 @@ def run(argv: list[str]) -> int:
 
 
 def main() -> None:
-    _load_env()
     # Preparing the Hermes Agent runtime is the server's job. Without this, the
     # first import of the Agent's cron code may install into the data root and
     # re-exec this process, which then cannot find this module.

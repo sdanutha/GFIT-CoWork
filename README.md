@@ -34,36 +34,30 @@ work is in [docs/operator.md](docs/operator.md) and
 
 ## Quick start (development)
 
-You need Python 3 and Hermes Agent installed (the launcher finds it in
-`~/.hermes/hermes-agent` or `HERMES_WEBUI_AGENT_DIR`). Use an isolated Hermes
-home and state directory so a trial never touches your real `~/.hermes`, and the
-in-memory Directory instead of the company AD:
+GFIT-CoWork runs only in Linux containers
+([ADR 0009](docs/adr/0009-every-way-to-run-is-a-container.md)). You need
+Docker (Docker Desktop on Windows and macOS) and a bash (Git Bash on Windows);
+the image brings Python and Hermes Agent. A Development Deployment is made by
+the same [`deploy/`](deploy/README.md) kit as a Team's, with the mock Directory
+([`dev/mock-ldap/`](dev/mock-ldap/)) instead of the company AD:
 
 ```bash
-mkdir -p ~/gfit-trial
-cat > ~/gfit-trial/users.json <<'JSON'
-{"521740": {"password": "trial-only", "display_name": "Trial User"}}
-
-JSON
-export HERMES_HOME=~/gfit-trial/.hermes
-export HERMES_WEBUI_STATE_DIR=~/gfit-trial/webui
-export HERMES_WEBUI_PORT=8789
-export HERMES_WEBUI_DIRECTORY=memory
-export HERMES_WEBUI_DIRECTORY_USERS=~/gfit-trial/users.json
-
-hermes setup                                                     # provider and model for the default Profile
-python3 -m api.operator_cli create 521740 --clone-from default   # a Profile for the test User
-./start.sh                                                       # or: python3 bootstrap.py
+deploy/new-deployment --dev dev 0                  # N=0: http://localhost:8787
+deploy/cowork dev up -d                            # the first start builds the dev image
+deploy/cowork dev exec hermes-agent hermes setup   # once: provider and model for the default Profile
+deploy/cowork dev exec -T -u hermeswebui -w /app gfit-cowork \
+  /app/venv/bin/python -m api.operator_cli create 521740 --clone-from default
 ```
 
-Open `http://127.0.0.1:8789` and log in as `521740` / `trial-only`. The server
-does not start without a Directory.
+Open `http://localhost:8787` and log in as `521740` / `Somchai-Pass-1`. Your
+checkout is mounted as the app: JS and CSS changes show on reload, and after a
+Python change run `deploy/cowork dev restart gfit-cowork`. Logs are in
+`deploy/cowork dev logs -f gfit-cowork`. Its state stays in
+`deploy/deployments/dev/`, never in your real `~/.hermes`.
 
-Other ways to run it ([ADR 0005](docs/adr/0005-supported-ways-to-run.md)):
-`./ctl.sh start|stop|status|logs` runs it as a background daemon; on native
-Windows use `pwsh .\start.ps1`; [`dev/mock-ldap/`](dev/mock-ldap/) is a stand-in
-AD for testing the `ldap` Directory; and a Team's server uses the
-[`deploy/`](deploy/README.md) kit. All settings are in
+[docs/setup.md](docs/setup.md#a-development-deployment) covers the debugger
+and the rest; a Team's server uses the same kit
+([deploy/README.md](deploy/README.md)). All settings are in
 [docs/configuration.md](docs/configuration.md), and
 [docs/setup.md](docs/setup.md) covers providers and the first Profile. If an AI
 assistant is helping with install or Setup, have it read
@@ -98,10 +92,9 @@ Files at the root:
 | File | What it is |
 | --- | --- |
 | `server.py` | The HTTP server: the routing shell that hands every request to `api/`. |
-| `bootstrap.py`, `start.sh`, `ctl.sh`, `start.ps1` | Launchers: find Hermes Agent and Python, then start the server (foreground, daemon, or Windows). |
-| `Dockerfile`, `.dockerignore` | The GFIT-CoWork container image used by `deploy/`. |
+| `Dockerfile`, `.dockerignore` | The GFIT-CoWork container image used by `deploy/`, with a `dev` target for Development Deployments and the test runner. |
 | `requirements.txt`, `requirements-dev.txt`, `pyproject.toml`, `package.json` | Python runtime and dev dependencies, project metadata and lint config, and the dev-only ESLint guard for `static/*.js`. |
-| `.env.example` | A template for local settings: copy it to `.env`, which the launchers read at startup. |
+| `.env.example` | A list of the server's optional settings; in a Deployment they go in its `.env` (`deploy/deployments/<team>/.env`). |
 | `CONTEXT.md` | The project's vocabulary. |
 | `AGENTS.md`, `CONTRIBUTING.md` | How to contribute, for AI assistants and for people. |
 | `CHANGELOG.md`, `LICENSE` | Release notes and the MIT license. |
@@ -115,10 +108,10 @@ Files at the root:
 ./scripts/test.sh --changed                        # tests touched since dev
 ```
 
-The runner creates or reuses `.venv` with Python 3.14 and installs
-`requirements-dev.txt` when something is missing (`HERMES_WEBUI_TEST_PYTHON`
-picks the base interpreter). Tests run against isolated servers with their own
-state directories; real sessions and cron jobs are never touched. There is no
+The runner builds the image's `dev` target and runs pytest in a throwaway
+container that mounts only the checkout, so Docker is all the host needs. Tests
+run against isolated servers with their own state directories; a Deployment's
+sessions and cron jobs are never touched. There is no
 hosted CI; this local run is the gate. See [docs/TESTING.md](docs/TESTING.md)
 for how the tests log in and for manual checks.
 
@@ -139,7 +132,7 @@ reporting an upgrade problem, give both versions (Settings → System).
 - [`deploy/README.md`](deploy/README.md) — adding a Team, adding a User, running a pilot
 - [`docs/operator.md`](docs/operator.md) — what Users can do, and the Operator's command line for Profiles
 - [`docs/setup.md`](docs/setup.md) — Setup: login and the Directory, provider setup on the server, the first Profile
-- [`docs/configuration.md`](docs/configuration.md) — environment variables and how the launchers find things
+- [`docs/configuration.md`](docs/configuration.md) — environment variables and what the image sets up
 - [`docs/docker.md`](docs/docker.md) — the image: volumes, UID/GID, the gateway, upgrades, common failures
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — diagnostic flows for common failures
 - [`docs/setup-agent-checklist.md`](docs/setup-agent-checklist.md) — safety rules for assistant-led install support

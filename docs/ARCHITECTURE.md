@@ -10,7 +10,7 @@
 > Automated coverage: ~11,500 tests via `./scripts/test.sh tests/ --collect-only -q`,
 > run locally on Python 3.14. There is no hosted CI (docs/adr/0007-no-hosted-ci.md).
 >
-> Notable architecture state: the bootstrap owns agent and Python discovery, and Setup is the Operator's with `hermes setup` (there is no first-run wizard); the default WebUI state directory is `~/.hermes/webui`; `ctl.sh` provides a daemon wrapper for homelab installs; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping. (Version/test-count numbers above are a periodic snapshot — the authoritative source is the latest git tag and `pytest --collect-only`.)
+> Notable architecture state: GFIT-CoWork runs only in containers from the `deploy/` kit (ADR 0009), for Team and Development Deployments alike, and the image provides the agent source and Python; Setup is the Operator's with `hermes setup` (there is no first-run wizard); a Deployment's WebUI state directory is its `home/webui`; chat streaming is still WebUI-owned SSE with stream-ownership guards, cancellation, async manual compression, and turn-journal audit plumbing; provider/model discovery is profile-aware with live-model cache invalidation and custom-provider scoping. (Version/test-count numbers above are a periodic snapshot — the authoritative source is the latest git tag and `pytest --collect-only`.)
 
 ---
 
@@ -45,12 +45,9 @@ actions. The topbar remains focused on conversation context and the workspace/fi
     <repo>/
     server.py              Thin routing shell + HTTP Handler + auth middleware.
                            Delegates all route handling to api/routes.py.
-    bootstrap.py           One-shot launcher: optional agent install, deps, health wait, browser open.
-    start.sh               Thin wrapper around bootstrap.py for shell-based startup.
-    ctl.sh                 Daemon lifecycle wrapper (start/stop/restart/status/logs) for homelab installs.
-    pyproject.toml         Standard build metadata plus the Ruff lint gate; source-checkout launch surface still centers on bootstrap.py / start.sh / ctl.sh.
-    Dockerfile             python:3.14-slim container image
-    deploy/                Deployment kit: one Team's Compose file, config example, Caddy proxy
+    pyproject.toml         Standard build metadata plus the Ruff lint gate.
+    Dockerfile             python:3.14-slim container image; the dev target adds the agent, test deps and debugpy
+    deploy/                Deployment kit: new-deployment and cowork, the Compose file and its dev overlay, config example, Caddy proxy
     .dockerignore          Excludes .git, tests/, .env* from Docker builds
     api/
       __init__.py          Package marker
@@ -117,19 +114,23 @@ State directory (runtime data, separate from source):
     settings.json      User settings (default model, workspace, send key)
     projects.json      Session project groups (name, color, id)
 
-Log file:
+In a Deployment this is `deploy/deployments/<team>/home/webui`, seen in the
+container as `/home/hermeswebui/.hermes/webui`.
 
-    ~/.hermes/webui/bootstrap-8787.log   start.sh/bootstrap background server log
-    ~/.hermes/webui.log                  ctl.sh daemon log
+Logs: the server writes to the container's stdout.
+
+    deploy/cowork <team> logs -f gfit-cowork
 
 ---
 
 ## 3. Runtime Environment
 
-- Python interpreter: <agent-dir>/venv/bin/python
-- The venv has all Hermes agent dependencies (run_agent, tools/*, cron/*)
-- Server binds to 127.0.0.1:8787 (localhost only, not public internet)
-- Access from Mac: SSH tunnel: ssh -N -L 8787:127.0.0.1:8787 <user>@<your-server>
+- Runs in the `gfit-cowork` container of a Deployment (ADR 0009)
+- Python interpreter: /app/venv/bin/python
+- The venv has all Hermes agent dependencies (run_agent, tools/*, cron/*), installed
+  from the hermes-agent-src volume at /home/hermeswebui/.hermes/hermes-agent
+- Listens on 8787 in the container, published on 127.0.0.1:GFIT_PORT (localhost only)
+- Team Deployments are reached through the Caddy reverse proxy over HTTPS
 - The server imports Hermes modules via sys.path.insert(0, parent_dir)
 
 Environment variables controlling behavior:
@@ -947,8 +948,7 @@ The api() helper:
     curl -s http://127.0.0.1:8787/health | python3 -m json.tool
 
     # Tail the server log live
-    tail -f ~/.hermes/webui/bootstrap-8787.log
-    tail -f ~/.hermes/webui.log  # when launched through ctl.sh
+    deploy/cowork <team> logs -f gfit-cowork
 
     # List all sessions (metadata only)
     curl -s http://127.0.0.1:8787/api/sessions | python3 -m json.tool
@@ -957,12 +957,11 @@ The api() helper:
     SID=your_session_id_here
     curl -s "http://127.0.0.1:8787/api/session?session_id=$SID" | python3 -m json.tool
 
-    # Kill and restart server cleanly
-    pkill -f "python.*server.py"
-    <repo>/start.sh
+    # Restart the server cleanly
+    deploy/cowork <team> restart gfit-cowork
 
-    # Check if server process is running
-    ps aux | grep "server.py"
+    # Check if the server's container is running
+    deploy/cowork <team> ps
 
     # Inspect session files on disk
     ls -lt ~/.hermes/webui/sessions/
@@ -972,8 +971,8 @@ The api() helper:
     python3 -c "import json; d=json.load(open('sessions/SID.json')); print(len(d['messages']))"
 
     # Check approval module state
-    cd <agent-dir>
-    venv/bin/python -c "from tools.approval import _pending; print(_pending)"
+    deploy/cowork <team> exec -T -u hermeswebui -w /app gfit-cowork \
+      /app/venv/bin/python -c "from tools.approval import _pending; print(_pending)"
 
     # Check active SSE streams (requires server access)
     curl -s http://127.0.0.1:8787/health  # streams not exposed yet, add in Phase G

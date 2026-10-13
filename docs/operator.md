@@ -27,19 +27,20 @@ refused (fail closed).
 
 ## Managing Profiles
 
-The Operator manages Profiles on the server with the same Python and
-environment as the web server (in a Deployment, through the `gfit` shortcut in
-[deploy/README.md](../deploy/README.md#add-a-user)):
+The Operator manages Profiles on the server, inside the Deployment's
+GFIT-CoWork container, through the `gfit` shortcut in
+[deploy/README.md](../deploy/README.md#add-a-user) (`api.operator_cli` with the
+web server's Python and environment):
 
 ```bash
-python3 -m api.operator_cli list                                   # name, status, last login, display name
-python3 -m api.operator_cli create 521740 --display-name "Somchai Jaidee" --clone-from default
-python3 -m api.operator_cli disable 521740
-python3 -m api.operator_cli enable 521740
-python3 -m api.operator_cli delete 521740 --confirm 521740        # only a disabled Profile
-python3 -m api.operator_cli sessions-audit                         # read-only
-python3 -m api.operator_cli sessions-repair                        # quiet time; restart the server after
-python3 -m api.operator_cli sessions-cleanup [--empty]             # quiet time; restart the server after
+gfit list                                   # name, status, last login, display name
+gfit create 521740 --display-name "Somchai Jaidee" --clone-from default
+gfit disable 521740
+gfit enable 521740
+gfit delete 521740 --confirm 521740        # only a disabled Profile
+gfit sessions-audit                         # read-only
+gfit sessions-repair                        # quiet time; restart the server after
+gfit sessions-cleanup [--empty]             # quiet time; restart the server after
 ```
 
 A Profile is named after the person's employee ID. `--clone-from default`

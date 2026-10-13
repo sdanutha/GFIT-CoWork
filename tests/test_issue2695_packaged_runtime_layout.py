@@ -82,7 +82,7 @@ def test_wheel_build_contains_runtime_tree(extracted_wheel):
     wheel, _ = extracted_wheel
     with zipfile.ZipFile(wheel) as zf:
         names = set(zf.namelist())
-        assert "bootstrap.py" in names
+        assert "bootstrap.py" not in names  # no native launcher (ADR 0009)
         assert "server.py" in names
         # GFIT-CoWork ships no MCP server of its own (remove-admin ticket 08).
         assert "mcp_server.py" not in names

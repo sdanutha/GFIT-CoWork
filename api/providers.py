@@ -17,11 +17,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-try:  # POSIX-only; Windows-style environments fall back to process-local locking.
-    import fcntl
-except ImportError:  # pragma: no cover - exercised only where fcntl is unavailable
-    fcntl = None  # type: ignore[assignment]
-
 from api.config import (
     _custom_provider_slug_from_name,
     _pool_entry_payloads,
