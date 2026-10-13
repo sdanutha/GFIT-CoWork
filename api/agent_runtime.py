@@ -25,7 +25,6 @@ from api.config import (
     _AGENT_DIR,  # noqa: F401
     _DEFAULT_STATE_HOME,
 )
-from api.subprocess_utils import windows_hide_flags
 
 _RESTART_REQUIRED_MESSAGE = (
     "Hermes Agent was updated while GFIT-CoWork was running. "
@@ -40,20 +39,6 @@ _AGENT_UPDATE_MAX_AGE_SECONDS = 20 * 60
 # Anything larger is not a legitimate marker; cap the read so a huge or growing
 # regular file can never exhaust memory on the stale-runtime request path.
 _AGENT_UPDATE_MARKER_MAX_BYTES = 64 * 1024
-# O_NOFOLLOW is POSIX; on platforms that lack it the fast os.open() path is not
-# taken at all (see _MARKER_SAFE_OPEN_AVAILABLE below).
-# The marker read hardening relies on two POSIX-only open flags to stay both
-# non-blocking (never hang on a FIFO/device) and symlink-safe. O_NONBLOCK is
-# Unix-only and O_NOFOLLOW is absent on some platforms; accessing them
-# unconditionally raises AttributeError on native Windows. Resolve them safely
-# and only take the os.open() fast path when BOTH are genuinely available —
-# otherwise the read cannot prove non-blocking + no-follow and must fall back to
-# an lstat-only classification (see _read_live_agent_update).
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
-_MARKER_SAFE_OPEN_AVAILABLE = bool(getattr(os, "O_NOFOLLOW", 0)) and bool(
-    getattr(os, "O_NONBLOCK", 0)
-)
 _HERMES_HOME = Path(_DEFAULT_STATE_HOME)
 _AGENT_PYTHON = Path(PYTHON_EXE).expanduser() if PYTHON_EXE else None
 
@@ -84,7 +69,6 @@ def _read_agent_revision(
             capture_output=True,
             text=True,
             timeout=2,
-            creationflags=windows_hide_flags(),
         )
         if worktree_result.returncode != 0:
             return None
@@ -105,7 +89,6 @@ def _read_agent_revision(
             capture_output=True,
             text=True,
             timeout=2,
-            creationflags=windows_hide_flags(),
         )
         if tracked_result.returncode != 0:
             return None
@@ -115,7 +98,6 @@ def _read_agent_revision(
             capture_output=True,
             text=True,
             timeout=2,
-            creationflags=windows_hide_flags(),
         )
     except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError):
         return None
@@ -158,48 +140,11 @@ def agent_runtime_stale_payload(exc: AgentRuntimeChangedError) -> dict:
 
 
 def _pid_is_alive(pid: int) -> bool | None:
-    """Return PID liveness, or ``None`` when the platform cannot confirm it."""
+    """Return PID liveness, or ``None`` when it cannot be confirmed."""
     if pid <= 0:
         return False
     if pid.bit_length() > 32:
         return None
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel32.OpenProcess.argtypes = (
-                wintypes.DWORD,
-                wintypes.BOOL,
-                wintypes.DWORD,
-            )
-            kernel32.OpenProcess.restype = wintypes.HANDLE
-            kernel32.GetExitCodeProcess.argtypes = (
-                wintypes.HANDLE,
-                ctypes.POINTER(wintypes.DWORD),
-            )
-            kernel32.GetExitCodeProcess.restype = wintypes.BOOL
-            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-            kernel32.CloseHandle.restype = wintypes.BOOL
-            handle = kernel32.OpenProcess(0x1000, False, pid)
-            if not handle:
-                error = ctypes.get_last_error()
-                if error == 5:  # ERROR_ACCESS_DENIED still proves the PID exists.
-                    return True
-                if error == 87:  # ERROR_INVALID_PARAMETER for a missing PID.
-                    return False
-                return None
-            try:
-                exit_code = wintypes.DWORD()
-                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                    return None
-                return exit_code.value == 259  # STILL_ACTIVE
-            finally:
-                kernel32.CloseHandle(handle)
-        except (AttributeError, OSError, TypeError, ValueError):
-            return None
-
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -226,20 +171,8 @@ def _read_live_agent_update(marker: Path) -> str:
     Anything that is not a small regular file is classified ``unknown`` rather
     than allowed to hang or exhaust memory on a stale-runtime request path.
     """
-    if not _MARKER_SAFE_OPEN_AVAILABLE:
-        # Without both O_NONBLOCK and O_NOFOLLOW we cannot prove the read is
-        # non-blocking and symlink-safe (e.g. native Windows), so never open the
-        # marker: an unverifiable marker fails closed to ``unknown``, and only a
-        # genuinely missing path is ``absent``.
-        try:
-            marker.lstat()
-        except FileNotFoundError:
-            return "absent"
-        except (OSError, ValueError, TypeError):
-            return "unknown"
-        return "unknown"
     try:
-        fd = os.open(marker, os.O_RDONLY | _O_NONBLOCK | _O_NOFOLLOW)
+        fd = os.open(marker, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except FileNotFoundError:
         try:
             marker.lstat()

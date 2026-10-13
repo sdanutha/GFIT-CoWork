@@ -24,7 +24,6 @@ import re
 import shutil
 import stat
 import subprocess
-import sys
 import concurrent.futures
 import contextlib
 import contextvars
@@ -39,7 +38,6 @@ from api.config import (
     DEFAULT_WORKSPACE as _BOOT_DEFAULT_WORKSPACE,
     MAX_FILE_BYTES
 )
-from api.subprocess_utils import windows_hide_flags
 
 
 # ── Profile-aware path resolution ───────────────────────────────────────────
@@ -129,26 +127,13 @@ def _last_workspace_file_for_profile(profile: str | Path | None = None) -> Path 
 
 
 def _expanduser_path(path: str | Path) -> Path:
-    """Return *path* after shell-style home expansion.
-
-    ``Path.expanduser()`` on Windows does not consistently honor a monkeypatched
-    ``HOME`` in tests, which makes host-native replay diverge from the repo's
-    portability expectations. Use ``os.path.expanduser`` as the expansion source,
-    then wrap it back into ``Path``.
-    """
+    """Return *path* after ``~`` / ``~/...`` home expansion (``HOME`` first)."""
     raw = str(path)
     if raw.startswith('~'):
-        home = (
-            os.environ.get('HOME')
-            or os.environ.get('USERPROFILE')
-            or (
-                (os.environ.get('HOMEDRIVE') or '') + (os.environ.get('HOMEPATH') or '')
-            )
-            or str(Path.home())
-        )
-        if raw in ('~', '~/', '~\\'):
+        home = os.environ.get('HOME') or str(Path.home())
+        if raw in ('~', '~/'):
             return Path(home)
-        if raw.startswith('~/') or raw.startswith('~\\'):
+        if raw.startswith('~/'):
             return Path(home) / raw[2:]
         # NOTE: ``~user`` / ``~root`` forms are intentionally NOT expanded here.
         # Master deliberately does not block ``/root`` (#510/#521 — Hermes commonly
@@ -1725,15 +1710,13 @@ def rename_anchored(root: Path, source: Path, dest: Path) -> None:
 
 
 def _birthtime_ns(lst) -> int | None:
-    """Return creation time in ns, or None when the platform lacks birthtime."""
+    """Return creation time in ns, or None when the filesystem lacks birthtime."""
     value = getattr(lst, 'st_birthtime_ns', None)
     if value is not None:
         return value
     value = getattr(lst, 'st_birthtime', None)
     if value is not None:
         return int(value * 1_000_000_000)
-    if sys.platform == 'win32':
-        return getattr(lst, 'st_ctime_ns', None)
     return None
 
 
@@ -2026,7 +2009,6 @@ def _run_git(args, cwd, timeout=3):
         r = subprocess.run(
             ['git'] + args, cwd=str(cwd), capture_output=True,
             text=True, timeout=timeout,
-            creationflags=windows_hide_flags(),
         )
         return r.stdout.strip() if r.returncode == 0 else None
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):

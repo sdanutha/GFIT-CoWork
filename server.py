@@ -141,30 +141,6 @@ class QuietHTTPServer(ThreadingHTTPServer):
         self.accept_loop_requests_total = 0
         self.accept_loop_last_request_at = 0.0
 
-    def server_bind(self):
-        if sys.platform == 'win32':
-            self.allow_reuse_address = False
-            SO_EXCLUSIVEADDRUSE = getattr(socket, 'SO_EXCLUSIVEADDRUSE', -5)
-            self.socket.setsockopt(socket.SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1)
-            # Retry bind on Windows to handle the case where a previous
-            # process (e.g. during self-update) is still releasing the port.
-            # The old process calls os._exit(0) which starts tearing down
-            # its socket, but with SO_EXCLUSIVEADDRUSE the OS blocks new
-            # binds until the teardown completes.  Retry for up to 10 s.
-            max_retries = 20
-            retry_delay = 0.5
-            for attempt in range(max_retries):
-                try:
-                    super().server_bind()
-                    return
-                except OSError as e:
-                    if e.winerror == 10048 and attempt < max_retries - 1:  # WSAEADDRINUSE
-                        time.sleep(retry_delay)
-                    else:
-                        raise
-        else:
-            super().server_bind()
-
     def get_request(self):
         """Accept raw sockets and defer TLS handshake work to request threads."""
         request, client_address = self.socket.accept()
@@ -678,7 +654,7 @@ def main() -> None:
     print(f'  Then open:     {scheme}://localhost:{PORT}', flush=True)
     print('', flush=True)
 
-    # ctl.sh stops the WebUI with SIGTERM. Python's default SIGTERM handler
+    # `docker stop` stops the WebUI with SIGTERM. Python's default SIGTERM handler
     # terminates the process WITHOUT unwinding the try/finally around
     # serve_forever(), so drain_all_on_shutdown() (which flushes in-flight
     # fire-and-forget memory commits) would never run on the normal managed
@@ -703,7 +679,7 @@ def main() -> None:
 
     try:
         signal.signal(signal.SIGTERM, _request_shutdown)
-        signal.signal(signal.SIGINT, _request_shutdown)  # Ctrl-C / ctl.sh daemons (#7078)
+        signal.signal(signal.SIGINT, _request_shutdown)  # Ctrl-C (#7078)
     except (ValueError, OSError):
         logger.debug("Could not install shutdown signal handlers", exc_info=True)
 

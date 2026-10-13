@@ -279,8 +279,6 @@ def test_git_diff_skips_repo_local_textconv(tmp_path):
     import os
     import sys
 
-    if os.name == "nt":
-        pytest.skip("scripted textconv helper setup is POSIX-only")
 
     from api.workspace_git import git_diff
 
@@ -313,8 +311,6 @@ def test_git_diff_skips_repo_local_clean_filter_without_destructive_mode(tmp_pat
     import os
     import sys
 
-    if os.name == "nt":
-        pytest.skip("scripted clean filter setup is POSIX-only")
 
     from api.workspace_git import WORKSPACE_GIT_DESTRUCTIVE_ENV, git_diff
 
@@ -417,8 +413,6 @@ def test_git_status_ignores_repo_local_fsmonitor_command(tmp_path):
     import os
     import sys
 
-    if os.name == "nt":
-        pytest.skip("executable fsmonitor helper setup is POSIX-only")
 
     from api.workspace_git import git_status
 
@@ -447,8 +441,6 @@ def test_git_status_skips_repo_local_clean_filter_without_destructive_mode(tmp_p
     import os
     import sys
 
-    if os.name == "nt":
-        pytest.skip("scripted clean filter setup is POSIX-only")
 
     from api.workspace_git import WORKSPACE_GIT_DESTRUCTIVE_ENV, git_status
 
@@ -586,8 +578,6 @@ def test_git_status_blocks_injection_via_filter_name_with_equals(tmp_path, monke
     import os
     import sys
 
-    if os.name == "nt":
-        pytest.skip("scripted filter setup is POSIX-only")
 
     from api.workspace_git import WORKSPACE_GIT_DESTRUCTIVE_ENV, git_status
 
@@ -614,61 +604,3 @@ def test_git_status_blocks_injection_via_filter_name_with_equals(tmp_path, monke
 
     assert status["is_git"] is True
     assert not marker.exists()
-
-
-def test_run_git_passes_windows_hide_flags(monkeypatch, tmp_path):
-    """_run_git must pass creationflags=windows_hide_flags() so git child
-    processes don't accumulate visible console windows on Windows (#5692).
-    windows_hide_flags() is 0 on non-Windows, so this is a safe no-op there;
-    the test asserts the kwarg is wired regardless of platform."""
-    import api.workspace_git as wg
-    from api.subprocess_utils import windows_hide_flags
-
-    repo = _init_repo(tmp_path / "repo")
-    (repo / "f.txt").write_text("x\n", encoding="utf-8")
-    _commit_all(repo)
-
-    captured = {}
-    real_run = subprocess.run
-
-    def fake_run(*args, **kwargs):
-        captured["creationflags"] = kwargs.get("creationflags", "MISSING")
-        return real_run(*args, **kwargs)
-
-    monkeypatch.setattr(wg.subprocess, "run", fake_run)
-    wg._run_git(repo, ["rev-parse", "HEAD"])
-
-    assert captured.get("creationflags") == windows_hide_flags(), (
-        "_run_git must pass creationflags=windows_hide_flags() to subprocess.run"
-    )
-
-
-def test_config_names_for_scope_passes_windows_hide_flags(monkeypatch, tmp_path):
-    """_config_names_for_scope must also pass creationflags=windows_hide_flags()
-    (#5692) — the git-config probe spawns a console window on Windows too."""
-    import re as _re
-    import api.workspace_git as wg
-    from api.subprocess_utils import windows_hide_flags
-
-    repo = _init_repo(tmp_path / "repo")
-
-    captured = {}
-    real_run = subprocess.run
-
-    def fake_run(*args, **kwargs):
-        captured["creationflags"] = kwargs.get("creationflags", "MISSING")
-        return real_run(*args, **kwargs)
-
-    monkeypatch.setattr(wg.subprocess, "run", fake_run)
-    wg._config_names_for_scope(
-        "--local",
-        repo,
-        {},
-        "filter\\..*",
-        _re.compile(r"^filter\."),
-        ignore_unsupported=True,
-    )
-
-    assert captured.get("creationflags") == windows_hide_flags(), (
-        "_config_names_for_scope must pass creationflags=windows_hide_flags()"
-    )

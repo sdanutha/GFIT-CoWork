@@ -147,12 +147,11 @@ def test_585_get_available_models_calls_reload_config():
 
 # ── #567: UID note in the Deployment's config ───────────────────────────────
 
-def test_567_team_env_tells_admin_how_to_find_uid():
-    """deploy/team.env.example must tell the Admin to run 'id -u' / 'id -g' for
-    the UID/GID the volumes are owned by (#567)."""
-    assert "id -u" in TEAM_ENV and "id -g" in TEAM_ENV, (
-        "team.env.example should tell the Admin to run 'id -u' / 'id -g' to find the UID/GID (#567)"
-    )
+def test_567_team_env_tells_the_operator_whom_the_containers_run_as():
+    """deploy/team.env.example must name the UID/GID every container runs as
+    and that owns home/ and workspace/ (#567; 10000 since ADR 0009)."""
+    assert "UID=10000" in TEAM_ENV and "GID=10000" in TEAM_ENV
+    assert "owns home/ and workspace/" in TEAM_ENV
 
 
 # ── #590: transcription spinner already present ───────────────────────────────

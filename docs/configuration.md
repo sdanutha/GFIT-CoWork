@@ -2,23 +2,28 @@
 
 How GFIT-CoWork finds what it needs, and the environment variables that change
 it. The Directory and login variables are in [setup.md](setup.md#login); the
-`deploy/` kit sets the ones a Deployment needs in `team.env`. `.env` in the repo
-root is read at startup; see [`.env.example`](../.env.example).
+`deploy/` kit sets the ones a Deployment needs in `team.env`. Other settings go
+in the Deployment's `.env` (`deploy/deployments/<team>/.env`), which
+`deploy/cowork` passes to the container; [`.env.example`](../.env.example)
+lists them.
 
-## What the launchers find on their own
+## What the image sets up
 
-The launchers and `bootstrap.py` find what they need on their own:
+GFIT-CoWork runs only in the container image from the `deploy/` kit
+([ADR 0009](adr/0009-every-way-to-run-is-a-container.md)). The image and
+`deploy/docker-compose.yml` set up what it needs:
 
-| Thing | How it finds it |
+| Thing | Where it is |
 |---|---|
-| Hermes agent dir | `HERMES_WEBUI_AGENT_DIR`, then known checkout paths, the `hermes` launcher on `PATH`, and finally the installed `run_agent` module exposed by `HERMES_WEBUI_PYTHON` |
-| Python executable | Agent venv first, then `.venv` in this repo, then system `python3` |
-| State directory | `HERMES_WEBUI_STATE_DIR` env, then `$HERMES_HOME/webui` (Windows default `%LOCALAPPDATA%\hermes\webui`, POSIX default `~/.hermes/webui`) |
-| Default workspace | `HERMES_WEBUI_DEFAULT_WORKSPACE` env, then `~/workspace`, then state dir |
-| Port | `HERMES_WEBUI_PORT` env or first argument, default `8787` |
+| Hermes agent dir | The `hermes-agent-src` volume, filled from the agent image and mounted read-only at `/home/hermeswebui/.hermes/hermes-agent` |
+| Python executable | The container's venv, `/app/venv`; the first start installs the agent into it |
+| State directory | `/home/hermeswebui/.hermes/webui`, which is the Deployment's `home/webui` |
+| Default workspace | `/workspace`, which is the Deployment's `workspace/` |
+| Port | `8787` in the container, published on `127.0.0.1:GFIT_PORT` |
 
-State lives outside the repo, in `~/.hermes/webui/` by default (sessions,
-Workspaces, settings, projects, the Profile roster).
+State lives in the Deployment's folder, `deploy/deployments/<team>/home/webui`
+(sessions, Workspaces, settings, projects, the Profile roster).
+`HERMES_HOME_DIR` in its `.env` can move `home/` elsewhere.
 
 ## Environment variables
 

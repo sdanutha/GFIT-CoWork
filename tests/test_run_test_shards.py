@@ -98,7 +98,20 @@ def test_runner_hands_parallel_runs_to_the_helper():
     assert '"${1:-}" == "--parallel"' in runner
 
 
+def test_auto_shard_count_leaves_each_shard_three_gb(monkeypatch):
+    """In an 8 GB Docker VM, four shards ran it out of memory and thousands of
+    tests errored; each shard (pytest, a test server, Hermes Agent) needs ~3 GB."""
+    monkeypatch.setattr(shards.os, "cpu_count", lambda: 14)
+    monkeypatch.setattr(shards, "memory_gb", lambda: 8)
+    assert shards.shard_count("auto") == 2
+    monkeypatch.setattr(shards, "memory_gb", lambda: 2)
+    assert shards.shard_count("auto") == 1
+    monkeypatch.setattr(shards, "memory_gb", lambda: None)  # unknown: cores decide
+    assert shards.shard_count("auto") == 8
+
+
 def test_auto_shard_count_is_cores_capped_at_eight(monkeypatch):
+    monkeypatch.setattr(shards, "memory_gb", lambda: 64)
     monkeypatch.setattr(shards.os, "cpu_count", lambda: 14)
     assert shards.shard_count("auto") == 8
     monkeypatch.setattr(shards.os, "cpu_count", lambda: 4)

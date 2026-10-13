@@ -1,241 +1,86 @@
 #!/usr/bin/env bash
+# Run GFIT-CoWork's test suite in a throwaway Linux container (ADR 0009).
+#
+# On the host, this builds the image's `dev` target (or `browser` for
+# --browser) and runs itself inside a fresh container that mounts only the
+# checkout: no Deployment, no Hermes home, no state from the host. Inside the
+# container it runs pytest with the image's Python, which has the test
+# dependencies and Hermes Agent at the pinned version.
+#
+#   ./scripts/test.sh                  the whole suite, sharded
+#   ./scripts/test.sh --changed[=REF]  the test files a change touches since REF (dev)
+#   ./scripts/test.sh --parallel[=N]   N pytest-shard processes
+#   ./scripts/test.sh --serial         one pytest process
+#   ./scripts/test.sh --browser        the headless browser smoke
+#   ./scripts/test.sh <pytest args>    e.g. tests/test_x.py -q
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="$ROOT/.venv"
-REQ_FILE="$ROOT/requirements-dev.txt"
 
-resolve_venv_python() {
-  local candidate
-  for candidate in "$VENV_DIR/bin/python" "$VENV_DIR/Scripts/python.exe"; do
-    if [[ -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
+if [[ -z "${GFIT_TEST_IN_CONTAINER:-}" ]]; then
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker is required to run the tests: they run in a Linux container (ADR 0009)." >&2
+    echo "Install Docker (Docker Desktop on Windows and macOS) and rerun ./scripts/test.sh." >&2
+    exit 2
+  fi
+
+  target=dev
+  run_opts=()
+  if [[ "${1:-}" == "--browser" ]]; then
+    target=browser
+    run_opts+=(--shm-size=1g)
+  fi
+  image="gfit-cowork-test:$target"
+
+  src="$ROOT"
+  if command -v cygpath >/dev/null 2>&1; then
+    # Git Bash: give docker a Windows path, and stop MSYS from rewriting
+    # container paths like /src into C:/Program Files/Git/src.
+    src="$(cygpath -m "$ROOT")"
+    export MSYS_NO_PATHCONV=1
+  fi
+
+  # Files the tests write in the checkout (.pytest_cache) belong to the
+  # developer on Linux. Docker Desktop maps ownership itself.
+  if [[ "$(uname -s)" == Linux ]]; then
+    run_opts+=(--user "$(id -u):$(id -g)")
+  else
+    run_opts+=(--user hermeswebui)
+  fi
+  [[ -t 1 ]] && run_opts+=(-t)
+  # The LDAP tests can reach a Development Deployment's mock Directory through
+  # the host (dev/mock-ldap/README.md).
+  run_opts+=(--add-host host.docker.internal:host-gateway)
+  for name in GFIT_MOCK_LDAP_URL GFIT_MOCK_LDAP_PLAIN_URL GFIT_MOCK_LDAP_CA_CERT; do
+    [[ -n "${!name:-}" ]] && run_opts+=(-e "$name=${!name}")
   done
-  return 1
-}
 
-VENV_PY="$(resolve_venv_python || true)"
+  echo "Building the $target test image ($image)..." >&2
+  docker build --target "$target" -t "$image" "$src" >&2
 
-is_supported_python() {
-  "$1" - <<'PY' >/dev/null 2>&1
-import sys
-raise SystemExit(0 if sys.version_info[:2] == (3, 14) else 1)
-PY
-}
-
-python_version() {
-  "$1" - <<'PY'
-import sys
-print(".".join(map(str, sys.version_info[:3])))
-PY
-}
-
-python_major_minor() {
-  "$1" - <<'PY'
-import sys
-print(".".join(map(str, sys.version_info[:2])))
-PY
-}
-
-resolve_executable() {
-  local candidate="$1"
-  if [[ "$candidate" == */* ]]; then
-    [[ -x "$candidate" ]] && printf '%s\n' "$candidate" || true
-  else
-    command -v "$candidate" 2>/dev/null || true
-  fi
-}
-
-find_supported_base_python() {
-  local candidate path
-  for candidate in python3.14 python3; do
-    path="$(resolve_executable "$candidate")"
-    if [[ -n "$path" ]] && is_supported_python "$path"; then
-      printf '%s\n' "$path"
-      return 0
-    fi
-  done
-  return 1
-}
-
-has_pip() {
-  "$1" -m pip --version >/dev/null 2>&1
-}
-
-ensure_pip() {
-  local py="$1"
-  if ! has_pip "$py"; then
-    "$py" -m ensurepip --upgrade
-  fi
-}
-
-missing_dev_deps() {
-  "$1" - <<'PY'
-import importlib.util
-
-modules = [
-    "cryptography",
-    "pytest",
-    "pytest_asyncio",
-    "pytest_shard",
-    "pytest_timeout",
-    "ruamel.yaml",
-    "ruff",
-    "yaml",
-]
-missing = [name for name in modules if importlib.util.find_spec(name) is None]
-if missing:
-    print(", ".join(missing))
-    raise SystemExit(1)
-PY
-}
-
-venv_guidance() {
-  local base_py="${1:-}"
-  if [[ -n "$base_py" ]]; then
-    echo "Could not create a working .venv with $base_py ($(python_version "$base_py"))." >&2
-  else
-    echo "Could not create a working .venv for GFIT-CoWork tests." >&2
-  fi
-  echo "Install the matching Python venv/ensurepip package (for example python3.x-venv on Debian/Ubuntu)" >&2
-  echo "or set HERMES_WEBUI_TEST_PYTHON to a Python 3.14 interpreter." >&2
-}
-
-create_or_rebuild_venv() {
-  local base_py="$1"
-  local mode="${2:-create}"
-  local action="Creating"
-  local venv_args=("$VENV_DIR")
-  # Never create/clear a virtualenv *through* a symlink: `python -m venv --clear`
-  # (and a dangling-symlink create) would empty/write the symlink's target, not a
-  # repo-local .venv. A symlinked .venv that already works is used directly above,
-  # before this function is reached, so refusing here only blocks the destructive path.
-  if [[ -L "$VENV_DIR" ]]; then
-    echo "$VENV_DIR is a symlink; refusing to create or clear a virtualenv through it." >&2
-    echo "Remove the .venv symlink (or set HERMES_WEBUI_TEST_PYTHON to a Python 3.14) and rerun." >&2
-    return 2
-  fi
-  if [[ "$mode" == "rebuild" ]]; then
-    action="Rebuilding"
-    venv_args=(--clear "$VENV_DIR")
-  fi
-  echo "$action .venv with $base_py ($(python_version "$base_py"))." >&2
-  if ! "$base_py" -m venv "${venv_args[@]}"; then
-    rm -rf "$VENV_DIR"
-    venv_guidance "$base_py"
-    return 2
-  fi
-  VENV_PY="$(resolve_venv_python || true)"
-  if [[ ! -x "$VENV_PY" ]]; then
-    rm -rf "$VENV_DIR"
-    echo "$VENV_DIR was created but does not contain bin/python or Scripts/python.exe." >&2
-    venv_guidance "$base_py"
-    return 2
-  fi
-  if ! has_pip "$VENV_PY"; then
-    rm -rf "$VENV_DIR"
-    echo "$VENV_DIR was created but its Python cannot run pip." >&2
-    venv_guidance "$base_py"
-    return 2
-  fi
-}
-
-select_python() {
-  local requested="${HERMES_WEBUI_TEST_PYTHON:-}"
-  local requested_path base_py
-  local desired_major_minor current_major_minor
-
-  if [[ -n "$requested" ]]; then
-    requested_path="$(resolve_executable "$requested")"
-    if [[ -z "$requested_path" || ! -x "$requested_path" ]]; then
-      echo "HERMES_WEBUI_TEST_PYTHON does not point to an executable: $requested" >&2
-      return 2
-    fi
-    if ! is_supported_python "$requested_path"; then
-      echo "Unsupported Python for GFIT-CoWork tests: $requested_path ($(python_version "$requested_path"))" >&2
-      echo "Use Python 3.14." >&2
-      return 2
-    fi
-    base_py="$requested_path"
-    desired_major_minor="$(python_major_minor "$base_py")"
-  else
-    base_py="$(find_supported_base_python || true)"
-    if [[ -z "$base_py" ]]; then
-      # No 3.14 on PATH (common on Windows): an existing working .venv is enough.
-      VENV_PY="$(resolve_venv_python || true)"
-      if [[ -x "$VENV_PY" ]] && is_supported_python "$VENV_PY" && has_pip "$VENV_PY"; then
-        printf '%s\n' "$VENV_PY"
-        return 0
-      fi
-      echo "No supported Python found for GFIT-CoWork tests." >&2
-      echo "Install Python 3.14, then rerun ./scripts/test.sh." >&2
-      return 2
-    fi
-    desired_major_minor=""
-  fi
-
-  VENV_PY="$(resolve_venv_python || true)"
-  if [[ -x "$VENV_PY" ]]; then
-    if is_supported_python "$VENV_PY"; then
-      current_major_minor="$(python_major_minor "$VENV_PY")"
-      if [[ -z "$desired_major_minor" || "$current_major_minor" == "$desired_major_minor" ]]; then
-        if has_pip "$VENV_PY"; then
-          printf '%s\n' "$VENV_PY"
-          return 0
-        fi
-        echo "Existing .venv uses supported Python $(python_version "$VENV_PY") but cannot run pip; rebuilding." >&2
-        create_or_rebuild_venv "$base_py" rebuild || return $?
-        printf '%s\n' "$VENV_PY"
-        return 0
-      fi
-      echo "Rebuilding .venv from Python $current_major_minor to requested $desired_major_minor." >&2
-      create_or_rebuild_venv "$base_py" rebuild || return $?
-      printf '%s\n' "$VENV_PY"
-      return 0
-    fi
-    echo "Rebuilding unsupported .venv ($(python_version "$VENV_PY")) with $base_py ($(python_version "$base_py"))." >&2
-    create_or_rebuild_venv "$base_py" rebuild || return $?
-    printf '%s\n' "$VENV_PY"
-    return 0
-  fi
-
-  if [[ -e "$VENV_DIR" && ! -x "$VENV_PY" ]]; then
-    echo "$VENV_DIR exists but does not contain bin/python or Scripts/python.exe; rebuilding." >&2
-    create_or_rebuild_venv "$base_py" rebuild || return $?
-    printf '%s\n' "$VENV_PY"
-    return 0
-  fi
-
-  create_or_rebuild_venv "$base_py" create || return $?
-  printf '%s\n' "$VENV_PY"
-}
-
-PYTHON_BIN="$(select_python)" || exit $?
-
-if [[ ! -f "$REQ_FILE" ]]; then
-  echo "Missing $REQ_FILE" >&2
-  exit 2
+  # --no-healthcheck: the image's HEALTHCHECK probes a server this container
+  # does not run.
+  exec docker run --rm --no-healthcheck "${run_opts[@]}" \
+    -v "$src:/src" -w /src \
+    -e GFIT_TEST_IN_CONTAINER=1 \
+    -e HOME=/tmp/test-home \
+    -e HERMES_HOME=/tmp/hermes-home \
+    -e HERMES_WEBUI_STATE_DIR=/tmp/webui-state \
+    -e HERMES_WEBUI_AGENT_DIR=/opt/gfit-dev/hermes-agent \
+    --entrypoint bash \
+    "$image" scripts/test.sh "$@"
 fi
 
-if missing="$(missing_dev_deps "$PYTHON_BIN" 2>/dev/null)"; then
-  :
-else
-  echo "Installing missing GFIT-CoWork test dependencies in $PYTHON_BIN ($(python_version "$PYTHON_BIN"))." >&2
-  if [[ -n "${missing:-}" ]]; then
-    echo "Missing modules: $missing" >&2
-  fi
-  ensure_pip "$PYTHON_BIN"
-  "$PYTHON_BIN" -m pip install --upgrade pip
-  "$PYTHON_BIN" -m pip install -r "$REQ_FILE"
+# Inside the container. The image's Python has every test dependency.
+PYTHON_BIN="${GFIT_TEST_PYTHON:-/opt/gfit-dev/test-venv/bin/python}"
+
+# --browser: the headless browser smoke (tests/browser_smoke.py).
+if [[ "${1:-}" == "--browser" ]]; then
+  shift
+  exec "$PYTHON_BIN" "$ROOT/tests/browser_smoke.py" "$@"
 fi
 
-# UTF-8 mode, as on the Linux deployment: without it Windows Python reads files
-# and subprocess pipes (node) as cp1252. Inherited by shards and the test server.
-export PYTHONUTF8=1
-
-# --serial: one pytest process (the no-argument default before sharding).
+# --serial: one pytest process.
 if [[ "${1:-}" == "--serial" ]]; then
   shift
   if [[ $# -eq 0 ]]; then
@@ -252,8 +97,7 @@ if [[ "${1:-}" == "--changed" || "${1:-}" == --changed=* ]]; then
     ref="${1#--changed=}"
   fi
   shift
-  # tr: Windows Python ends printed lines with CRLF.
-  selected="$("$PYTHON_BIN" "$ROOT/scripts/changed_tests.py" "$ref" | tr -d '\r')" || exit $?
+  selected="$("$PYTHON_BIN" "$ROOT/scripts/changed_tests.py" "$ref")" || exit $?
   if [[ -z "$selected" ]]; then
     echo "--changed: no test files touch the changes since $ref." >&2
     exit 0
@@ -277,7 +121,7 @@ if [[ "${1:-}" == "--parallel" ]]; then
   exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$@"
 fi
 
-# No arguments: the whole suite, sharded across min(cores, 8) processes.
+# No arguments: the whole suite, sharded across min(cores, 8, memory / 3 GB) processes.
 # Sharding needs a free port and state dir per shard, so pinned ones run serially.
 if [[ $# -eq 0 ]]; then
   if [[ -n "${HERMES_WEBUI_TEST_PORT:-}" || -n "${HERMES_WEBUI_TEST_STATE_DIR:-}" ]]; then

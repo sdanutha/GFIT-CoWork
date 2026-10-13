@@ -3,10 +3,8 @@ Sprint 1 test suite for the Hermes Web UI.
 
 Tests use the ISOLATED test server. Port is auto-derived per worktree (see conftest.py).
 Production server (port 8787) and your real conversations are never touched.
-Start the server before running:
-    <repo>/start.sh
-    # wait 2 seconds
-    pytest webui-mvp/tests/test_sprint1.py -v
+Run them with ./scripts/test.sh tests/test_sprint1.py; the shared test server
+starts itself.
 
 All tests are HTTP-level: they call real API endpoints and verify responses.
 No mocking required for session CRUD, upload parser, or approval API.

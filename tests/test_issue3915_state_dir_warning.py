@@ -1,6 +1,6 @@
 """Tests for STATE_DIR divergence warning (issue #3915).
 
-When a user switches launch methods (bootstrap.py / ctl.sh / systemd), the
+When a Deployment changes how it is run (for example its mounts), the
 HERMES_WEBUI_STATE_DIR env var may differ from the previous run, leaving
 the current state directory empty while session data exists in a sibling.
 

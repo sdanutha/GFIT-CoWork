@@ -857,38 +857,6 @@ print(f"RESULT={models.delete_cli_session(sid)}", flush=True)
         assert not (sessions_dir / f"{sid}.jsonl").exists()
 
 
-def test_cleanup_manifest_process_lock_uses_windows_byte_lock(
-    tmp_path, monkeypatch
-):
-    """The native-Windows fallback locks and unlocks one persistent byte."""
-    import api.models as models
-
-    calls = []
-
-    class FakeMsvcrt:
-        LK_LOCK = 1
-        LK_UNLCK = 2
-
-        @staticmethod
-        def locking(fd, mode, nbytes):
-            calls.append((fd, mode, nbytes))
-
-    monkeypatch.setattr(models, "_fcntl", None)
-    monkeypatch.setattr(models, "_msvcrt", FakeMsvcrt)
-
-    with pytest.raises(RuntimeError, match="probe"):
-        with models._cleanup_manifest_process_lock(tmp_path):
-            assert [call[1:] for call in calls] == [(FakeMsvcrt.LK_LOCK, 1)]
-            raise RuntimeError("probe")
-
-    assert [call[1:] for call in calls] == [
-        (FakeMsvcrt.LK_LOCK, 1),
-        (FakeMsvcrt.LK_UNLCK, 1),
-    ]
-    lock_path = tmp_path / ".session_cleanup.lock"
-    assert lock_path.read_bytes() == b"\0"
-
-
 def test_delete_cli_session_thread_lock_does_not_block_different_profiles(
     tmp_path, monkeypatch
 ):

@@ -15,12 +15,10 @@ PATH DISCOVERY:
 """
 import copy
 import json
-import inspect
 import multiprocessing
 import os
 import pathlib
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -31,8 +29,8 @@ import pytest
 if sys.version_info[:2] != (3, 14):
     pytest.exit(
         "GFIT-CoWork tests require Python 3.14. "
-        "Run ./scripts/test.sh so the repo-local supported .venv is used "
-        "instead of an unsupported system python.",
+        "Run ./scripts/test.sh, which runs them in the dev image "
+        "(ADR 0009).",
         returncode=3,
     )
 
@@ -231,6 +229,39 @@ for _model_env in ('HERMES_MODEL', 'OPENAI_MODEL', 'LLM_MODEL'):
     os.environ.pop(_model_env, None)
 
 
+_TEMP_ENV_VARS = ('TMPDIR', 'TMP', 'TEMP')
+_REAL_TEMP_ENV = {name: os.environ.get(name) for name in _TEMP_ENV_VARS}
+
+
+def _use_real_temp_dir() -> None:
+    """Point TMPDIR/TMP/TEMP and tempfile back at the real temp dir.
+
+    Importing Hermes Agent points them at HERMES_HOME/cache/scratch. In this
+    process HERMES_HOME is the test state dir, which fixtures wipe, so a later
+    tempfile.mkdtemp() vanished under it (FileNotFoundError, seen on Linux).
+    """
+    import tempfile
+    for name, value in _REAL_TEMP_ENV.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    tempfile.tempdir = None
+
+
+def pytest_collectstart(collector):
+    # Test modules that call tempfile at import time, after an earlier module
+    # imported the agent.
+    _use_real_temp_dir()
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_temp_dir():
+    """Give every test the real temp dir (see _use_real_temp_dir)."""
+    _use_real_temp_dir()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_hermes_config_path():
     """Keep profile/.env side effects from leaking the live config path across tests."""
@@ -243,11 +274,9 @@ def _isolate_hermes_config_path():
 def _strip_leaked_login_env() -> None:
     """Remove a leaked HERMES_WEBUI_DIRECTORY between tests (#7168 review).
 
-    bootstrap.py runs _load_repo_dotenv() at import time, which copies values
-    from the developer's real repo .env straight into os.environ. When any
-    test imports bootstrap mid-session (e.g. tests/test_bootstrap_foreground.py
-    via its import_bootstrap fixture), a local .env configuring the Directory
-    leaks into the process environment OUTSIDE monkeypatch's undo scope. Every
+    A test that loads a ``.env`` into os.environ mid-session (as the removed
+    bootstrap.py once did on import) leaks a Directory setting into the
+    process environment OUTSIDE monkeypatch's undo scope. Every
     later test then sees a Directory it did not set up. Tests that need one
     set the var themselves AFTER this strip.
 
@@ -520,6 +549,11 @@ requires_agent_modules = pytest.mark.skipif(
 )
 
 def pytest_configure(config):
+    # Pin tmp_path's root now. Importing Hermes Agent later points TMPDIR at
+    # HERMES_HOME/cache/scratch, inside the state dir the fixtures wipe, and
+    # pytest would otherwise put every later tmp_path there.
+    if not config.option.basetemp:
+        config.option.basetemp = str(TEST_STATE_DIR.parent / f"pytest-{TEST_STATE_DIR.name}")
     config.addinivalue_line("markers", "requires_agent: skip when hermes-agent dir is not found")
     config.addinivalue_line("markers", "requires_agent_modules: skip when hermes-agent Python modules are not importable")
     config.addinivalue_line("markers", "requires_fcntl: skip when fcntl-backed file-descriptor operations are unavailable")
@@ -700,6 +734,17 @@ _hermes_test_socket.create_connection = _hermes_blocked_create_connection
 _hermes_test_socket.socket.connect = _hermes_blocked_socket_connect
 
 
+@pytest.fixture(autouse=True)
+def _reinstall_network_block():
+    """Put the block back before every test. Importing Hermes Agent replaces
+    socket.create_connection with its own happy-eyeballs wrapper, which
+    bypassed the block for every later test. allow_outbound_network, which
+    a test requests explicitly, runs after this and still wins."""
+    _hermes_test_socket.create_connection = _hermes_blocked_create_connection
+    _hermes_test_socket.socket.connect = _hermes_blocked_socket_connect
+    yield
+
+
 @pytest.fixture
 def allow_outbound_network(monkeypatch):
     """Opt-in to real outbound network for the duration of one test.
@@ -869,15 +914,6 @@ def _kill_process_tree(pid):
     if not pid or pid <= 0:
         return
     try:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW}),
-            )
-            return
         import signal
 
         os.kill(pid, signal.SIGKILL)
@@ -886,49 +922,9 @@ def _kill_process_tree(pid):
 
 
 def _kill_port_owner(port):
-    """Best-effort free of TEST_PORT, using a Windows-native owner lookup."""
+    """Best-effort free of TEST_PORT."""
     try:
-        if sys.platform != "win32":
-            subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
-            return
-
-        creationflags = {"creationflags": subprocess.CREATE_NO_WINDOW}
-        ps_cmd = (
-            "$port = " + str(port) + "; "
-            "$conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::', '::ffff:127.0.0.1') } | "
-            "Select-Object -First 1 -ExpandProperty OwningProcess; "
-            "if ($conn) { $conn }"
-        )
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            **creationflags,
-        )
-        pid_text = proc.stdout.strip()
-        if not pid_text:
-            proc = subprocess.run(
-                ["netstat", "-ano", "-p", "tcp"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                **creationflags,
-            )
-            port_suffixes = (f":{port}", f"[::]:{port}", f"127.0.0.1:{port}", f"[::1]:{port}")
-            for line in proc.stdout.splitlines():
-                parts = line.split()
-                if len(parts) < 5 or parts[0].upper() != "TCP":
-                    continue
-                local_addr = parts[1]
-                state = parts[3].upper()
-                owner_pid = parts[4]
-                if state == "LISTENING" and any(local_addr.endswith(suffix) for suffix in port_suffixes):
-                    pid_text = owner_pid
-                    break
-        if pid_text:
-            _kill_process_tree(int(pid_text))
+        subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
     except Exception:
         pass
 
@@ -950,18 +946,7 @@ def _rmtree_retry(path):
     if not target.exists():
         return
 
-    def _clear_readonly(_func, entry, _exc):
-        try:
-            os.chmod(entry, 0o666)
-            _func(entry)
-        except Exception:
-            raise
-
-    rmtree_kwargs = (
-        {"onexc": _clear_readonly}
-        if "onexc" in inspect.signature(shutil.rmtree).parameters
-        else {"onerror": _clear_readonly}
-    ) if sys.platform == "win32" else {}
+    rmtree_kwargs = {}
 
     attempts = 5
     last_exc = None
@@ -1003,19 +988,7 @@ def _rmtree_retry(path):
 def _seed_test_skills(real_skills: pathlib.Path, test_skills: pathlib.Path) -> None:
     if not real_skills.exists() or test_skills.exists():
         return
-    try:
-        test_skills.symlink_to(real_skills)
-    except OSError as exc:
-        if not WINDOWS or getattr(exc, "winerror", None) != 1314:
-            raise
-        shutil.copytree(real_skills, test_skills, copy_function=_copy2_readonly)
-
-
-def _copy2_readonly(source: str, destination: str) -> str:
-    copied = shutil.copy2(source, destination)
-    path = pathlib.Path(copied)
-    path.chmod(path.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
-    return copied
+    test_skills.symlink_to(real_skills)
 
 
 # ── Session-scoped test server ────────────────────────────────────────────────
@@ -1179,8 +1152,11 @@ def test_server(_test_state_dir):
     # this, _wait_for_server could only report a bare "did not start" timeout
     # and every HTTP-dependent test then cascaded with ConnectionRefused —
     # hundreds of opaque failures from a single root cause.
-    import tempfile as _tempfile
-    _server_log = pathlib.Path(_tempfile.gettempdir()) / f"hermes-webui-test-server-{TEST_PORT}.log"
+    # Beside the state dir, not under tempfile.gettempdir(): once a test has
+    # imported Hermes Agent, it points TMPDIR at HERMES_HOME/cache/scratch,
+    # which is inside the state dir this fixture wipes (seen on Linux).
+    _server_log = TEST_STATE_DIR.parent / f"hermes-webui-test-server-{TEST_PORT}.log"
+    _server_log.parent.mkdir(parents=True, exist_ok=True)
 
     # Boot the server, retrying once if it dies early or fails to bind. Boot
     # failures here are most often transient (a port not yet released by a prior
@@ -1197,7 +1173,6 @@ def test_server(_test_state_dir):
                 env=env,
                 stdout=_logf,
                 stderr=subprocess.STDOUT,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}),
             )
         # 45s (up from 20s): server.py imports the full hermes-agent, which is
         # import-heavy and can exceed 20s on a loaded runner — the old timeout

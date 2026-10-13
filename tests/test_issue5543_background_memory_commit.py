@@ -11,7 +11,7 @@ extraction. The gate-certifier required three guarantees this file locks in:
    ``_background_commit_threads`` does not grow without bound (Finding 2).
 3. Shutdown drain: drain_all_on_shutdown() joins in-flight background commit
    threads AND flushes the pending generation, and the server's SIGTERM handler
-   routes the managed ``ctl.sh stop`` through the serve_forever() ``finally`` so
+   routes ``docker stop`` (SIGTERM) through the serve_forever() ``finally`` so
    the drain actually runs (Finding 1).
 """
 

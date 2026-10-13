@@ -3,10 +3,9 @@ import json
 import logging
 import os
 import sqlite3
-import sys
 from contextlib import closing
-from pathlib import Path, PurePosixPath, PureWindowsPath
-from urllib.parse import quote, quote_from_bytes
+from pathlib import Path, PurePosixPath
+from urllib.parse import quote_from_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -22,40 +21,12 @@ logger = logging.getLogger(__name__)
 _SOURCE_COLUMN_WARNED_DB_PATHS: set[str] = set()
 
 
-def state_db_file_uri(db_path, platform: str | None = None) -> str:
+def state_db_file_uri(db_path) -> str:
     """Build the ``file:`` URI (no query string) for an absolute ``state.db`` path.
 
-    ``Path.as_uri()`` is not usable here: for a UNC share it emits
-    ``file://server/share/state.db`` and SQLite rejects any non-local URI
-    authority unless compiled with ``SQLITE_ALLOW_URI_AUTHORITY`` (the
-    CPython 3.11-3.13 Windows builds are not). SQLite instead accepts the
-    *empty*-authority spelling ``file:////server/share/state.db``, whose path
-    ``//server/share/...`` the Windows VFS opens as the UNC name. Drive-letter
-    paths keep the documented ``file:///C:/...`` form and POSIX paths are
-    unchanged. Only ``/`` survives unescaped, so ``?`` and ``#`` in path
-    components cannot leak into the query string.
-
-    ``platform`` defaults to the running interpreter; tests pass it explicitly
-    so the Windows shapes are checked from any host.
+    Only ``/`` survives unescaped, so ``?`` and ``#`` in path components cannot
+    leak into the query string.
     """
-    platform = platform or sys.platform
-    if platform == "win32":
-        win = PureWindowsPath(str(db_path))
-        drive = win.drive
-        if drive.startswith("\\\\?\\"):
-            # Extended-length prefix: "\\?\C:" or "\\?\UNC\server\share".
-            drive = drive[4:]
-            if drive.upper().startswith("UNC\\"):
-                drive = "\\\\" + drive[4:]
-        parts = win.parts[1:]  # drop the anchor, keep the path components
-        if drive.startswith("\\\\"):
-            host_share = drive[2:].replace("\\", "/")
-            posix_path = "//" + "/".join((host_share, *parts))
-        else:
-            posix_path = "/" + "/".join((drive, *parts))
-        # ``:`` stays literal so the drive letter keeps SQLite's documented
-        # ``file:///C:/...`` shape (``Path.as_uri()`` leaves it unescaped too).
-        return "file://" + quote(posix_path, safe="/:")
     posix_path = PurePosixPath(str(db_path)).as_posix()
     # Quote the filesystem BYTES, not the str: a POSIX path component that is
     # not valid UTF-8 is carried in the str as ``surrogateescape`` code points,
@@ -66,9 +37,9 @@ def state_db_file_uri(db_path, platform: str | None = None) -> str:
     return "file://" + quote_from_bytes(os.fsencode(posix_path), safe="/")
 
 
-def state_db_readonly_uri(db_path, platform: str | None = None) -> str:
+def state_db_readonly_uri(db_path) -> str:
     """Strict read-only (``mode=ro``) form of :func:`state_db_file_uri`."""
-    return state_db_file_uri(db_path, platform=platform) + "?mode=ro"
+    return state_db_file_uri(db_path) + "?mode=ro"
 
 
 def open_state_db_readonly(db_path: Path, log: logging.Logger | None = None) -> sqlite3.Connection:

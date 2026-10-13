@@ -5,10 +5,10 @@
 > Each section is written as a step-by-step test procedure with expected outcomes.
 > A browser agent (e.g. Claude with Chrome access) can execute this plan directly.
 >
-> Prerequisites: SSH tunnel is active on port 8787. Open http://localhost:8787 in browser.
+> Prerequisites: a Development Deployment is running (`deploy/new-deployment --dev dev 0`, then `deploy/cowork dev up -d`; see docs/setup.md), or an SSH tunnel to a Deployment is active on port 8787. Open http://localhost:8787 in browser.
 > Server health check: curl http://127.0.0.1:8787/health should return {"status":"ok"}.
 >
-> Automated coverage: ~19,900 tests collected via `./scripts/test.sh tests/ --collect-only -q`. There is no hosted CI ([ADR 0007](adr/0007-no-hosted-ci.md)): run the suite locally on Python 3.14 with `./scripts/test.sh`, and run the ruff diff gate, the headless browser smoke test, and the Docker smoke test by hand when a change touches what they cover. The suite covers the bootstrap, Directory login and Profile admission, CSS regression coverage for thinking/tool card animation, streaming session persistence, mobile layout breakpoints, locale parity across 14 languages, and hundreds of issue/PR-pinned regression tests.
+> Automated coverage: ~19,900 tests collected via `./scripts/test.sh tests/ --collect-only -q`. There is no hosted CI ([ADR 0007](adr/0007-no-hosted-ci.md)): run the suite with `./scripts/test.sh`, which runs it in a throwaway Linux container built from the image's `dev` target ([ADR 0009](adr/0009-every-way-to-run-is-a-container.md)), and run the ruff diff gate, the headless browser smoke test, and the Docker smoke test by hand when a change touches what they cover. The suite covers Directory login and Profile admission, CSS regression coverage for thinking/tool card animation, streaming session persistence, mobile layout breakpoints, locale parity across 14 languages, and hundreds of issue/PR-pinned regression tests.
 > Run: `./scripts/test.sh`
 >
 > Local regression focus: verify that a previously closed workspace panel stays visually closed from first paint through boot completion on desktop refresh; there should be no brief open-then-close flash.
@@ -24,13 +24,13 @@ full log stays in the temp directory named on the first line. With no pytest
 args it runs `tests/ -q --timeout=60`.
 
 `./scripts/test.sh` with no arguments runs the whole suite this way with
-min(cores, 8) shards; `--serial` runs it in one process instead. With a pinned
+min(cores, 8, memory / 3 GB) shards (the container sees the Docker VM's memory: 2 shards in an 8 GB VM); `--serial` runs it in one process instead. With a pinned
 `HERMES_WEBUI_TEST_PORT` or `HERMES_WEBUI_TEST_STATE_DIR` the no-argument run
 falls back to serial. Any other arguments (paths, `-k`, ...) run one pytest
 process, as before.
 
 ```bash
-./scripts/test.sh                           # whole suite, min(cores, 8) shards
+./scripts/test.sh                           # whole suite, min(cores, 8, memory/3 GB) shards
 ./scripts/test.sh --serial                  # whole suite, one process
 ./scripts/test.sh --parallel 4 tests/test_model_resolver.py
 ```
@@ -42,9 +42,21 @@ its own free port and state dir, so `--parallel` refuses a pinned
 Measured on a 14-core Mac (2026-10-11, the same commit, both green): the
 whole suite took 145s with `--parallel 8` and 939s (15m39s) serially. The sharded run reported 230 skipped against 221 serially; the skip reasons were not compared.
 
-Measured on a 14-core native Windows machine (2026-10-13, Git Bash): 969s with
-`--parallel 8` and 1016s with `--parallel 12`, so more than 8 shards does not
-help there. Most of the Windows time is per-test fixture overhead, not the tests.
+Before ADR 0009 the suite also ran natively on Windows (969s with
+`--parallel 8`); it now runs only in the container, where the cores are the
+ones Docker gives its VM (Docker Desktop's resource settings).
+
+### The test container
+
+On the host, `./scripts/test.sh` builds the image's `dev` target (the
+production image plus Hermes Agent's source and venv at the pinned release,
+the test dependencies, the Docker CLI with the Compose plugin, `openssl` and
+`debugpy`) and runs itself in a fresh container with the same arguments. Only
+the checkout is mounted, at `/src`; `HOME`, `HERMES_HOME` and the state dir
+are inside the container, so a test can never reach a Deployment or a real
+Hermes home. The first build takes several minutes; later builds reuse the
+cache. Docker is the only thing the host needs (on Windows, Docker Desktop and
+Git Bash).
 
 The suite also isolates `HOME` (not only `HERMES_HOME`): Hermes Agent reads
 provider logins from the user's home (Copilot token stores, plugin OAuth
@@ -81,8 +93,9 @@ pytestmark = pytest.mark.usefixtures("test_server")
 
 (or requests `test_server` / `base_url` as a fixture). Without it the request is
 refused (`ConnectionRefusedError`). The per-test session cleanup's HTTP calls
-also run only for those tests: they cost ~100 ms per test on Windows. With the
-server opt-in, the Windows `--parallel 8` run went from 969s to 752s.
+also run only for those tests: they cost ~100 ms per test on Windows, where
+the suite then ran. With the server opt-in, that `--parallel 8` run went from
+969s to 752s.
 
 ## Static JS runtime lint (brick-class regression guard)
 
@@ -140,19 +153,17 @@ clean without touching the backlog. Cleaning the backlog is a separate,
 maintainer-run, safe-fixes-only decision (tracked in #3273).
 
 ```bash
-# one-time dev setup (ruff is a dev-only tool):
-pip install ruff            # or: uv tool install ruff / uvx ruff ...
-# the gate (only flags violations on lines you added/changed vs origin/master):
-python3 scripts/ruff_lint.py --diff origin/master
-# whole-tree backlog report (informational — never blocks):
-python3 scripts/ruff_lint.py --all
+# the gate (only flags violations on lines you added/changed vs main),
+# with the dev image's ruff:
+docker run --rm -v "$PWD:/src" -w /src --entrypoint /opt/gfit-dev/test-venv/bin/python \
+  gfit-cowork-test:dev scripts/ruff_lint.py --diff main
+# whole-tree backlog report (informational — never blocks): the same with --all
 ```
 
 `tests/test_ruff_forward_lint.py` holds the **whole tree** free of E9 (real
 syntax/runtime) findings and verifies the curated config shape; it runs in-suite
-when ruff is present and **skips gracefully** when it isn't — so environments
-without ruff aren't blocked; `./scripts/test.sh` installs ruff from
-`requirements-dev.txt`, so the runner enforces it. The diff-scoped gate has no
+when ruff is present and **skips gracefully** when it isn't; the dev image has
+ruff from `requirements-dev.txt`, so `./scripts/test.sh` enforces it. The diff-scoped gate has no
 automated runner; run it by hand before merging, and it is part of the
 maintainer pre-release pre-gate.
 
@@ -166,11 +177,12 @@ that throws only when a real browser executes the page (e.g. a `function X(){}` 
 `tests/browser_smoke.py` boots the real `server.py` (agent-free, on an ephemeral
 port, with an isolated temp state dir) and loads the key pages in headless
 Chromium, failing if **any** console error or uncaught JS exception fires on load.
-Nothing runs it automatically; run it locally when a change touches page load:
+Nothing runs it automatically; run it when a change touches page load. It
+runs in the image's `browser` target (the `dev` target plus Playwright and
+Chromium):
 
 ```bash
-pip install playwright && python -m playwright install chromium
-python tests/browser_smoke.py
+./scripts/test.sh --browser
 ```
 
 It is intentionally **credential-free**: it strips every `*_API_KEY` from the
@@ -305,10 +317,8 @@ User's session. The test suite follows the production contract:
 - **A test that starts its own `server.py`** passes `directory_env(state_dir)`
   so the server has a Directory and starts.
 
-Local development uses the same in-memory Directory: set
-`HERMES_WEBUI_DIRECTORY=memory` and `HERMES_WEBUI_DIRECTORY_USERS` to a JSON
-file of `{"<employee id>": {"password": "...", "display_name": "..."}}`, and
-create each User's Profile with `python3 -m api.operator_cli create <id>`.
+A Development Deployment uses the mock Directory instead (an OpenLDAP
+service with the sample Users in `dev/mock-ldap`); see docs/setup.md.
 
 ## How to Use This Document
 
@@ -849,8 +859,7 @@ FAIL: Sidebar causes layout overflow or blocks chat.
 ### T11.3: Structured Log Output
 SETUP: SSH access to the server.
 STEPS:
-  1. In a terminal: tail -f ~/.hermes/webui/bootstrap-8787.log
-     (or tail -f ~/.hermes/webui.log when launched through `ctl.sh`)
+  1. In a terminal: deploy/cowork <team> logs -f gfit-cowork
   2. In browser: perform any action (load page, send message, click file)
 EXPECT:
   - Log entries appear in terminal as JSON: {"ts":"...","method":"GET","path":"/health","status":200,"ms":0.1}

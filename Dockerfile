@@ -1,4 +1,12 @@
-FROM python:3.14-slim
+# The Hermes Agent release the dev and test images carry. Keep it the same as
+# HERMES_AGENT_IMAGE in deploy/team.env.example.
+ARG HERMES_AGENT_IMAGE=nousresearch/hermes-agent:v0.21.6
+
+FROM ${HERMES_AGENT_IMAGE} AS hermes-agent
+FROM docker:29-cli AS docker-cli
+
+# ── base: everything but GFIT-CoWork's own source ───────────────────────────
+FROM python:3.14-slim AS base
 
 LABEL maintainer="GFIT-CoWork"
 LABEL description="GFIT-CoWork — browser interface for Hermes Agent"
@@ -130,6 +138,9 @@ USER root
 # The init script will skip the download when uv is already on PATH.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
+# ── production: the image every Deployment runs ─────────────────────────────
+FROM base AS production
+
 COPY --chown=root:root . /apptoo
 
 # Bake the git version tag into the image so the settings badge works even
@@ -153,3 +164,51 @@ HEALTHCHECK --interval=30s --timeout=8s --start-period=10s --retries=3 \
 USER root
 CMD ["/hermeswebui_init.bash"]
 
+# ── dev: a Development Deployment and the test runner (ADR 0009) ────────────
+# Never deployed to a Team. Built on base, not production, so a source change
+# does not rebuild it: the source is mounted at /app (a Development
+# Deployment) or /src (the test runner). It adds:
+#  - Hermes Agent's source and venv at the pinned release, with GFIT-CoWork's
+#    runtime dependencies added, for the test server (it runs the agent the
+#    way a Deployment does);
+#  - a separate test venv for pytest itself, without the agent installed, so
+#    tests that load a fake agent get it;
+#  - the Docker CLI and the Compose plugin (no daemon), so the deploy-kit tests
+#    can render the Compose file;
+#  - debugpy in /opt/debugpy, which deploy/docker/docker_init.bash runs the
+#    server under when GFIT_DEBUGPY_PORT is set (the development overlay);
+#  - openssl, for deploy/new-deployment --dev in the deploy-kit tests, and
+#    node, for the tests that run static/*.js;
+#  - git that accepts the mounted checkout whatever its owner.
+FROM base AS dev
+COPY --from=hermes-agent /opt/hermes /opt/gfit-dev/hermes-agent
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+COPY requirements.txt requirements-dev.txt /tmp/requirements/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && uv pip install --python /opt/gfit-dev/hermes-agent/.venv/bin/python -r /tmp/requirements/requirements.txt \
+    && uv venv --seed --python /usr/local/bin/python3 /opt/gfit-dev/test-venv \
+    && uv pip install --python /opt/gfit-dev/test-venv/bin/python -r /tmp/requirements/requirements-dev.txt \
+    && uv pip install --python /usr/local/bin/python3 --target /opt/debugpy debugpy \
+    && git config --system --add safe.directory '*'
+
+ENV HERMES_WEBUI_HOST=0.0.0.0
+ENV HERMES_WEBUI_PORT=8787
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=8s --start-period=60s --retries=3 \
+  CMD bash /app/scripts/lib/health_probe.sh localhost 8787 /health 2 >/dev/null || exit 1
+USER root
+CMD ["/hermeswebui_init.bash"]
+
+# ── browser: dev plus Playwright and Chromium, for ./scripts/test.sh --browser
+FROM dev AS browser
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+RUN uv pip install --python /opt/gfit-dev/test-venv/bin/python playwright \
+    && /opt/gfit-dev/test-venv/bin/python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/playwright \
+    && rm -rf /var/lib/apt/lists/*
+
+# The default build target stays the production image.
+FROM production

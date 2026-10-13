@@ -108,6 +108,6 @@ def test_the_guard_leaves_other_text_alone(line):
 def test_the_guard_reads_every_kind_of_shipped_file():
     rels = {p.relative_to(REPO).as_posix() for p in _shipped_files()}
     for expected in ("api/routes.py", "static/panels.js", "static/index.html", "server.py",
-                     "start.sh", "start.ps1", "Dockerfile", "deploy/docker/docker_init.bash",
+                     "Dockerfile", "deploy/docker/docker_init.bash",
                      "deploy/docker-compose.yml"):
         assert expected in rels, expected

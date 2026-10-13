@@ -79,3 +79,6 @@ dev/mock-ldap/certs/
 # Deployments created by deploy/new-deployment: their .env holds the API keys
 # and home/ holds every Profile.
 deploy/deployments/
+
+# The agent copy the image stages under /app, if a mounted checkout ever gets it
+/hermes-agent-src/

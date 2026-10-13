@@ -25,33 +25,17 @@ DEPLOY_COMPOSE = REPO / "deploy" / "docker-compose.yml"
 def test_deployment_aligns_agent_uid_with_webui():
     """REGRESSION (#1399, fixed in #1428): the agent and the WebUI must take
     their UID/GID from the same source. Before #1428 the agent had no
-    HERMES_UID/HERMES_GID at all and used the image default of 10000, while
-    the webui used 1000 — files the agent wrote to the shared hermes-home
-    volume were unreadable by the webui."""
+    HERMES_UID/HERMES_GID at all and used the image default, while the webui
+    used another — files the agent wrote to the shared home were unreadable
+    by the webui. Both now default to 10000 (ADR 0009), from .env's UID/GID."""
     src = DEPLOY_COMPOSE.read_text(encoding="utf-8")
 
-    # Agent must declare HERMES_UID/HERMES_GID
-    assert "HERMES_UID=${UID:-1000}" in src, (
-        "deploy: hermes-agent must set HERMES_UID=${UID:-1000} so it "
-        "matches the webui's WANTED_UID=${UID:-1000}. Before #1428 the agent "
-        "ran as the image default (10000), causing PermissionError on the "
-        "shared hermes-home volume."
-    )
-    assert "HERMES_GID=${GID:-1000}" in src, (
-        "deploy: hermes-agent must set HERMES_GID=${GID:-1000}"
-    )
-
-    # WebUI must use ${UID}/${GID} (same source)
-    assert "WANTED_UID=${UID:-1000}" in src
-    assert "WANTED_GID=${GID:-1000}" in src
-
-    # The pre-#1428 default of 10000 must NOT appear anywhere
-    # (negative-pattern guard prevents revert)
-    assert "HERMES_UID:-10000" not in src, (
-        "Pre-#1428 default (HERMES_UID:-10000) must not return — that's the "
-        "bug shape. All UIDs should pull from ${UID:-1000}."
-    )
-    assert "HERMES_GID:-10000" not in src
+    assert src.count("HERMES_UID=${UID:-10000}") == 2  # the agent and the dashboard
+    assert src.count("HERMES_GID=${GID:-10000}") == 2
+    assert "WANTED_UID=${UID:-10000}" in src
+    assert "WANTED_GID=${GID:-10000}" in src
+    # Never a fixed default that bypasses .env's UID/GID.
+    assert "HERMES_UID:-" not in src and "HERMES_GID:-" not in src
 
 
 # ── 2: docs/docker.md comprehensive guide ──────────────────────────────────

@@ -276,6 +276,11 @@ if [ "A${whoami}" == "Aroot" ]; then
   mkdir -p /app || error_exit "Failed to create /app directory"
   chown hermeswebui:hermeswebui /app || error_exit "Failed to set owner of /app to hermeswebui user"
   rsync -av --chown=hermeswebui:hermeswebui /apptoo/ /app/ || error_exit "Failed to sync /apptoo to /app with correct ownership"
+  # A Development Deployment mounts its own volume at /app/venv (ADR 0009);
+  # Docker creates it owned by root.
+  if [ -d /app/venv ]; then
+    chown hermeswebui:hermeswebui /app/venv || error_exit "Failed to set owner of /app/venv to hermeswebui user"
+  fi
 
   if [ -z "${HERMES_WEBUI_DEFAULT_WORKSPACE+x}" ]; then export HERMES_WEBUI_DEFAULT_WORKSPACE="/workspace"; fi
   if [ ! -d "$HERMES_WEBUI_DEFAULT_WORKSPACE" ]; then
@@ -493,7 +498,9 @@ else
     # with "Permission denied" even though `_stage_src` itself was created
     # writable by hermeswebui. Re-add owner-write on the staged tree after the
     # copy so the build dir is genuinely writable, not just owned by us.
-    _stage_src="/app/hermes-agent-src"
+    # A Development Deployment mounts the developer's checkout at /app, so its
+    # overlay moves this copy into the venv's own volume (ADR 0009).
+    _stage_src="${HERMES_AGENT_STAGE_DIR:-/app/hermes-agent-src}"
     rm -rf "$_stage_src"
     mkdir -p "$_stage_src"
     if command -v rsync >/dev/null 2>&1; then
@@ -538,7 +545,16 @@ fi
 ensure_hindsight_client_docker_dependency
 
 echo ""; echo "== Running GFIT-CoWork"
-cd /app; python server.py || error_exit "GFIT-CoWork failed or exited with an error"
+cd /app
+if [ -n "${GFIT_DEBUGPY_PORT:-}" ] && [ -d /opt/debugpy ]; then
+  # A Development Deployment (ADR 0009): the server runs under debugpy, which
+  # only the dev image carries. The debugger attaches without pausing start-up.
+  echo "-- Debugger listening on 0.0.0.0:${GFIT_DEBUGPY_PORT}"
+  PYTHONPATH="/opt/debugpy${PYTHONPATH:+:$PYTHONPATH}" python -m debugpy --listen "0.0.0.0:${GFIT_DEBUGPY_PORT}" server.py \
+    || error_exit "GFIT-CoWork failed or exited with an error"
+else
+  python server.py || error_exit "GFIT-CoWork failed or exited with an error"
+fi
 
 # we should never be here because the server should be running indefinitely, but if we are, we exit safely
 ok_exit "Clean exit"

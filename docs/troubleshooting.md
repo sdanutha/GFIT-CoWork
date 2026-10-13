@@ -30,79 +30,52 @@ management requests, not every scheduled execution.
 
 **Symptom.** WebUI starts, shows the chat interface, but every chat request fails immediately with this error in the response or the server log. As of v0.51.6 the error includes a diagnostic block with the running Python interpreter, the relevant `sys.path` entries, and the most-common fix; on older versions the message is bare.
 
-**Why it happens.** The WebUI imports the agent class at chat time via `from run_agent import AIAgent`. That import only succeeds if the running Python's `sys.path` contains either the hermes-agent checkout or a pip-installed copy of the agent. Three common failure modes:
+**Why it happens.** The WebUI imports the agent class at chat time via `from run_agent import AIAgent`. In a Deployment, the agent's source reaches the `gfit-cowork` container through the `hermes-agent-src` volume, mounted read-only at `/home/hermeswebui/.hermes/hermes-agent`. On the container's first start, `docker_init.bash` installs it into the container's venv (`/app/venv`). Common failure modes:
 
-1. **Agent installed but not on `sys.path`.** Most common. The agent is checked out somewhere (e.g. `~/Programmes/hermes-agent`), the WebUI was launched with a Python that doesn't know about it, and there's no `pip install -e .` linking the two.
-2. **Symlink with a typo or wrong target.** A symlink to the agent looks correct on `ls`, but `readlink` resolves to a path that doesn't exist or doesn't contain `agent/__init__.py`.
-3. **`HERMES_WEBUI_AGENT_DIR` set to the wrong directory.** Override env var beats auto-discovery and points at a directory that has no agent code.
-4. **Agent installed as root, under the FHS layout.** When the Hermes Agent installer runs as root on Linux it places the agent at `/usr/local/lib/hermes-agent` (CLI linked into `/usr/local/bin`), not `~/.hermes/hermes-agent`. Older `bootstrap.py` didn't probe that path, so it built a WebUI-only `.venv` and failed at launch with **"Python environment cannot import both WebUI dependencies and Hermes Agent."** `git pull` to update the WebUI (current `bootstrap.py` auto-discovers the FHS layout and follows the `hermes` launcher to the agent), or set `HERMES_WEBUI_PYTHON=/usr/local/lib/hermes-agent/venv/bin/python` and relaunch.
+1. **The agent source is missing.** The volume was removed while GFIT-CoWork ran, or replaced with a bind mount. The startup log then says `hermes-agent source not found`.
+2. **The install into `/app/venv` failed.** The startup log shows the `uv pip install` error and the container exits.
+3. **The agent source is stale.** The volume is filled only on its first start, so a newer agent image does not reach GFIT-CoWork until the volume is removed ([docs/docker.md](docker.md#upgrading-the-agent-container)).
 
-### Step 1 — confirm the agent location
-
-```bash
-# If you have ~/hermes-agent (the default location):
-ls -la ~/hermes-agent
-readlink ~/hermes-agent          # if it's a symlink, where does it resolve?
-ls ~/hermes-agent/agent/__init__.py 2>&1
-```
-
-The third command must succeed (the file must exist). If it fails, your symlink is broken or pointing at a directory that's missing the agent module — fix that first.
-
-### Step 2 — confirm the WebUI is using the right Python
+### Step 1 — read the startup log
 
 ```bash
-cd ~/hermes-webui && ./start.sh 2>&1 | grep -iE 'agent|python|hermes_webui_python' | head -20
+deploy/cowork <team> logs gfit-cowork 2>&1 | grep -iE 'agent|venv|error' | head -40
 ```
 
-The startup banner prints which Python and agent dir it resolved. If the agent dir is empty or the Python is the wrong one, set the override:
+Look for `hermes-agent source not found` or a failed `uv pip install`.
+
+### Step 2 — confirm the agent source is mounted
 
 ```bash
-export HERMES_WEBUI_AGENT_DIR=/absolute/path/to/hermes-agent
-export HERMES_WEBUI_PYTHON=/absolute/path/to/agent/venv/bin/python
-./start.sh
+deploy/cowork <team> exec -T gfit-cowork ls /home/hermeswebui/.hermes/hermes-agent/run_agent.py
 ```
 
-### Step 3 — install the agent in editable mode
-
-This is the most common fix and resolves the original issue #1695:
+If the file is missing, recreate the volume: the agent container fills it again on its next start.
 
 ```bash
-cd /path/to/hermes-agent          # the directory holding pyproject.toml + the agent/ module
-pip install -e .                  # use the same python that runs the WebUI
+deploy/cowork <team> down
+docker volume rm gfit-<team>_hermes-agent-src
+deploy/cowork <team> up -d
 ```
 
-Then restart the WebUI:
+The Deployment's `home/` (Profiles, sessions, state) is left untouched.
+
+### Step 3 — verify by importing in the container
 
 ```bash
-cd ~/hermes-webui
-./start.sh
+deploy/cowork <team> exec -T -u hermeswebui -w /app gfit-cowork \
+  /app/venv/bin/python -c "from run_agent import AIAgent; print('ok')"
 ```
 
-### Step 4 — verify by importing manually
-
-If steps 1-3 still don't work, check whether the WebUI's Python can import the agent at all:
-
-```bash
-$HERMES_WEBUI_PYTHON -c "from run_agent import AIAgent; print('ok')" 2>&1
-```
-
-(Replace `$HERMES_WEBUI_PYTHON` with the actual Python path from step 2 if the env var isn't set.) If this prints `ok`, the agent IS on `sys.path` for that Python — and the WebUI should work.
-
-If this fails, `import run_agent` itself is broken — check that the agent's pyproject.toml lists `run_agent` as a top-level module or that the agent dir is on PYTHONPATH:
-
-```bash
-PYTHONPATH=/path/to/hermes-agent $HERMES_WEBUI_PYTHON -c "from run_agent import AIAgent; print('ok')"
-```
-
-If adding PYTHONPATH fixes it, persist the path either via `pip install -e .` (preferred) or by setting `HERMES_WEBUI_AGENT_DIR` to that directory.
+If this prints `ok`, the agent is on `sys.path` for the server's Python. If it fails, recreate the `gfit-cowork` container so it installs the agent again (`deploy/cowork <team> up -d --force-recreate gfit-cowork`).
 
 ### When to file a bug
 
-If after running steps 1-4 the import still fails *and* `pip install -e .` succeeded *and* `PYTHONPATH=... python -c "from run_agent import AIAgent"` succeeds — that's a real WebUI bug. File at https://github.com/nesquena/hermes-webui/issues with:
+If the import still fails after step 3 and a recreated container — that's a real WebUI bug. File at https://github.com/nesquena/hermes-webui/issues with:
 
-- The output of every command in steps 1-4
+- The output of every command in steps 1-3
 - The full diagnostic block printed by the WebUI's `ImportError` (v0.51.6+)
-- Your OS, Python version, and how the agent was installed
+- The agent image tag (`HERMES_AGENT_IMAGE` in the Deployment's `.env`, or the default in `deploy/docker-compose.yml`)
 
 ---
 
@@ -215,15 +188,13 @@ turn in the exhausted session instead of being blocked with recovery guidance.
 
 These are observations, not success receipts. Hermes Agent removes `.hermes-update-in-progress` on failed and interrupted exits too. A missing or stale marker, or a readable Git revision, does not prove a completed update or a healthy environment. WebUI only reads these markers; it does not remove or repair them.
 
-**Fix.** Check the Agent updater's outcome and resolve any failed or incomplete Agent update first. Once the Agent checkout and environment are healthy and no updater is running, restart WebUI using the same launch method that started it:
+**Fix.** Check the Agent updater's outcome and resolve any failed or incomplete Agent update first. Once the Agent checkout and environment are healthy and no updater is running, restart the GFIT-CoWork container:
 
 ```bash
-./ctl.sh restart
-# Or, for a user systemd service:
-systemctl --user restart hermes-webui.service
+deploy/cowork <team> restart gfit-cowork
 ```
 
-For a foreground `python3 bootstrap.py`, stop it with Ctrl-C and start it again. Restarting the whole computer or WSL is not required when restarting the WebUI backend succeeds. Retry the action after restarting the backend; refreshing the browser alone does not replace its imported Agent modules.
+Restarting Docker or the whole computer is not required when restarting the container succeeds. Retry the action after restarting the backend; refreshing the browser alone does not replace its imported Agent modules.
 
 **Automatic restart prerequisite.** Revision mismatch does not schedule a WebUI restart. Safe automation requires an Agent-owned terminal success receipt bound to the exact update transaction, final revision, and healthy environment, plus an Agent-owned atomic handoff or lease that excludes new mutations across process replacement (or an Agent updater that performs the restart itself). No such public contract is verified for this integration. Repeated readiness checks followed by `os.execv()` leave a race; WebUI's own update lock does not exclude an external Agent updater. Explicit updates initiated through WebUI retain their existing behavior and are outside this revision-mismatch guard.
 
@@ -248,14 +219,15 @@ sqlite3 "file:$HOME/.hermes/state.db?mode=ro" "PRAGMA index_list(messages)"
 **Fix.** Create the covering read indexes in an explicit drained maintenance window: stop the agent (and any gateway/cron runner) writing to that `state.db`, then run:
 
 ```bash
-python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confirm-drained
+deploy/cowork <team> exec -u hermeswebui -w /app gfit-cowork \
+  /app/venv/bin/python scripts/ensure_state_db_read_indexes.py \
+  --db /home/hermeswebui/.hermes/profiles/<employee ID>/state.db --confirm-drained
 ```
 
 - `--confirm-drained` is mandatory: it is your assertion that no agent turn is running against the database. The tool does not verify it.
-- `--lock-file PATH` (optional) additionally holds an exclusive non-blocking lock on `PATH` (`flock` on POSIX, `msvcrt.locking` on Windows) for deployments that serialise agent turns on a lock file; a held lock makes the tool exit without touching the database. Without `--lock-file` no lock primitive is required, so the script runs on native Windows as well. On Windows the lock covers byte 0 of `PATH`; a new or empty lock file is initialised with one byte first (an existing lock file is never rewritten).
+- `--lock-file PATH` (optional) additionally holds an exclusive non-blocking `flock` on `PATH` for deployments that serialise agent turns on a lock file; a held lock makes the tool exit without touching the database.
 - The tool opens the database `mode=rw` (never `rwc`): a mistyped path raises instead of creating an empty database. Indexes are created inside one `BEGIN IMMEDIATE` transaction and rolled back on any error.
 - It is idempotent and prints a JSON status per index (`created` / `existing` / `skipped`). `skipped` means this database's schema lacks a column that index keys on (an older agent); the indexes the schema does support are still created. An existing index with a different table, key shape or collation is reported as `Incompatible index` and never replaced; an index that is not covering (`EXPLAIN QUERY PLAN`) is reported as `Index is not covering`.
-- Windows UNC profiles (`HERMES_HOME=\\server\share\...`) are supported: readers and this tool build the empty-authority URI `file:////server/share/state.db` that the bundled SQLite accepts.
 
 **When to file a bug.** File a WebUI bug if the listing stays slow after the tool reports `existing` for `idx_messages_session`, if the tool reports `Incompatible index` on an untouched agent-created database, or if a read-only open fails on a local path. Include the tool's JSON output, the `PRAGMA index_list(messages)` result, and the sanitized error text.
 
@@ -267,20 +239,20 @@ python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confir
 
 **Why.** The sidebar is built from the WebUI session files (`<state dir>/sessions/<session_id>.json` and `_index.json`), not from `state.db` directly. A session disappears when its file is missing or shrunken, when its `_index.json` entry is missing, when a WebUI session is wrongly flagged as an imported CLI session (`is_cli_session`), or when its compression lineage has no visible representative. A session can also simply be older than the sidebar's recency window (`HERMES_WEBUI_VISIBLE_SESSION_LIMIT`); search for it before treating it as lost.
 
-**Diagnostic.** Run these on the server, as the Operator, with the same environment as the web server.
+**Diagnostic.** Run these on the server, as the Operator, inside the GFIT-CoWork container, which has the web server's environment: `deploy/cowork <team> exec -u hermeswebui -w /app gfit-cowork bash`.
 
 1. The session store audit, which is read-only:
 
    ```bash
-   python3 -m api.operator_cli sessions-audit
+   /app/venv/bin/python -m api.operator_cli sessions-audit
    ```
 
    It reports shrunken or missing session files, orphan backups and index gaps.
 
-2. If that is clean, run the discoverability audit. It also checks the sidebar's own listing and the CLI flags. It does not read the repo `.env`, so set `HERMES_HOME` and `HERMES_WEBUI_STATE_DIR` as the server has them:
+2. If that is clean, run the discoverability audit. It also checks the sidebar's own listing and the CLI flags. `HERMES_HOME` and `HERMES_WEBUI_STATE_DIR` are already set in the container:
 
    ```bash
-   python3 -m api.session_discoverability \
+   /app/venv/bin/python -m api.session_discoverability \
      --session-dir "$HERMES_WEBUI_STATE_DIR/sessions" \
      --state-db "$HERMES_HOME/profiles/<employee ID>/state.db" \
      --format markdown
@@ -290,11 +262,11 @@ python3 scripts/ensure_state_db_read_indexes.py --db ~/.hermes/state.db --confir
 
 **Fix.**
 
-- For what `sessions-audit` found, run `python3 -m api.operator_cli sessions-repair` when nobody is using the Deployment, then restart the server.
+- For what `sessions-audit` found, run `/app/venv/bin/python -m api.operator_cli sessions-repair` when nobody is using the Deployment, then restart the server.
 - For a stale CLI flag or a missing session file, add `--repair-safe` to the discoverability command. It prints the planned repairs and changes nothing. To apply them, at a quiet time:
 
   ```bash
-  python3 -m api.session_discoverability \
+  /app/venv/bin/python -m api.session_discoverability \
     --session-dir "$HERMES_WEBUI_STATE_DIR/sessions" \
     --state-db "$HERMES_HOME/profiles/<employee ID>/state.db" \
     --repair-safe --apply --backup-dir /path/to/backup

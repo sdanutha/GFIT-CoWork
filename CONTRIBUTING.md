@@ -74,15 +74,15 @@ Keep each PR focused. A small related group of fixes is fine. A bug fix plus a C
 
 ### 2. Local Verification
 
-Run the test suite locally through the repo runner. It creates/uses a supported
-Python 3.14 `.venv` and installs missing dev test dependencies, avoiding
-unsupported system interpreters during collection:
+Run the test suite through the repo runner. It builds the image's `dev` target
+and runs pytest in a throwaway container that mounts only your checkout, so the
+host needs only Docker (Docker Desktop and Git Bash on Windows):
 
 ```bash
 ./scripts/test.sh
 ```
 
-The runner uses Python `3.14`, the only supported version. There is no hosted CI, so this local run is the gate.
+The container brings Python and every test dependency; nothing is installed on the host. There is no hosted CI, so this local run is the gate.
 
 If your change affects browser behavior, also run the relevant manual checks from [docs/TESTING.md](docs/TESTING.md).
 

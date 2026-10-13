@@ -40,7 +40,6 @@ from api.plugin_providers import (
 )
 
 HOME = _paths.HOME
-_hermes_home_has_webui_state = _paths._hermes_home_has_webui_state
 _platform_default_hermes_home = _paths._platform_default_hermes_home
 
 # REPO_ROOT is the directory that contains this file's parent (api/ -> repo root)
@@ -256,20 +255,10 @@ def _discover_python(agent_dir: Path) -> str:
         if venv_py.exists():
             return str(venv_py)
 
-        # Windows layout
-        venv_py_win = agent_dir / "venv" / "Scripts" / "python.exe"
-        if venv_py_win.exists():
-            return str(venv_py_win)
-        
-        venv_py_win = agent_dir / ".venv" / "Scripts" / "python.exe"
-        if venv_py_win.exists():
-            return str(venv_py_win)
-
     # Local .venv inside this repo
-    for subdir, binary in (("bin", "python"), ("Scripts", "python.exe")):
-        local_venv = REPO_ROOT / ".venv" / subdir / binary
-        if local_venv.exists():
-            return str(local_venv)
+    local_venv = REPO_ROOT / ".venv" / "bin" / "python"
+    if local_venv.exists():
+        return str(local_venv)
 
     # Fall back to system python3
     import shutil
@@ -1014,7 +1003,7 @@ def _warn_state_dir_divergence(warn_prefix: str) -> None:
                                 f"{warn_prefix}  STATE_DIR is empty but a sibling state directory has session data.\n"
                                 f"        Current : {STATE_DIR}\n"
                                 f"        Sibling : {sibling}\n"
-                                f"        If you switched launch methods (bootstrap.py / ctl.sh / systemd),\n"
+                                f"        If the Deployment's mounts or environment changed,\n"
                                 f"        the active HERMES_WEBUI_STATE_DIR env var may differ from the\n"
                                 f"        previous run. Set it explicitly to restore access:\n"
                                 f"          export HERMES_WEBUI_STATE_DIR={sibling}",

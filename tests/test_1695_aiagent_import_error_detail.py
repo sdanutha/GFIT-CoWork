@@ -161,24 +161,24 @@ class TestAIAgentImportErrorDocsPresence:
             "docs/troubleshooting.md must have an entry titled \"AIAgent not available\""
         )
 
-    def test_troubleshooting_md_includes_pip_install_editable(self):
-        """The doc must surface the `pip install -e .` fix."""
+    def test_troubleshooting_md_includes_the_reinstall_fix(self):
+        """The doc must surface the fix: recreate the container so it installs
+        the agent into its venv again (ADR 0009: the only way to run)."""
         path = REPO_ROOT / "docs" / "troubleshooting.md"
         content = path.read_text(encoding="utf-8")
-        assert "pip install -e ." in content, (
-            "docs/troubleshooting.md must include the pip install -e . fix"
+        assert "--force-recreate gfit-cowork" in content, (
+            "docs/troubleshooting.md must include the recreate-the-container fix"
         )
 
     def test_troubleshooting_md_describes_diagnostic_steps(self):
-        """The doc must walk through diagnostic commands (readlink, ls, etc.)
-        before jumping to the fix — that ordering is what worked for #1695.
+        """The doc must walk through diagnostic commands before the fix — that
+        ordering is what worked for #1695. In a container (ADR 0009): the
+        startup log, the mounted agent source, then an import in the container.
         """
         path = REPO_ROOT / "docs" / "troubleshooting.md"
         content = path.read_text(encoding="utf-8")
-        # Look for the symlink-resolution diagnostic chain.
-        assert "readlink" in content, (
-            "diagnostic flow must include `readlink` for the symlink-typo failure mode"
+        assert "logs gfit-cowork" in content
+        assert "/home/hermeswebui/.hermes/hermes-agent/run_agent.py" in content, (
+            "diagnostic flow must verify the agent source is mounted"
         )
-        assert "/agent/__init__.py" in content, (
-            "diagnostic flow must verify the agent module file is reachable"
-        )
+        assert "from run_agent import AIAgent" in content

@@ -58,11 +58,13 @@ def test_compose_runs_hermes_agent_gfit_cowork_and_the_dashboard_on_one_home():
     services = compose["services"]
     assert set(services) == {"hermes-agent", "gfit-cowork", "hermes-dashboard"}
     for name, service in services.items():
-        mounted = {str(v).split(":", 1)[0] for v in service.get("volumes", [])}
-        # Everything a Deployment keeps is in its own folder's home/.
-        assert "./home" in mounted, name
+        # The source is everything before ":/<container path>".
+        mounted = {str(v).split(":/", 1)[0] for v in service.get("volumes", [])}
+        # Everything a Deployment keeps is in its home: the folder's home/
+        # unless HERMES_HOME_DIR moves it (ADR 0009).
+        assert "${HERMES_HOME_DIR:-./home}" in mounted, name
         assert service.get("restart") == "unless-stopped", name
-    assert set(compose.get("volumes") or {}) == {"hermes-agent-src"}
+    assert set(compose.get("volumes") or {}) == {"hermes-agent-src", "agent-data", "dashboard-data"}
 
 
 def test_gfit_cowork_is_built_from_the_checkout():
@@ -78,7 +80,8 @@ def test_several_deployments_can_share_one_server():
     # containers, network and volumes.
     assert "${TEAM" in COMPOSE.read_text(encoding="utf-8").split("services:", 1)[0]
     for name, service in compose["services"].items():
-        assert "container_name" not in service, f"{name}: a fixed name would clash between Deployments"
+        # Readable names (ADR 0009), with the Team in them so they never clash.
+        assert service["container_name"].startswith("gfit-${TEAM}-"), name
     # Only GFIT-CoWork and the dashboard are published, on loopback, on the
     # Deployment's own ports. The gateway is never published.
     assert "ports" not in compose["services"]["hermes-agent"]
@@ -159,6 +162,15 @@ def test_docker_compose_accepts_the_template(tmp_path):
 
 def _run(cmd, **kwargs):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=60, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _service_user_is_the_test_user(monkeypatch):
+    """new-deployment gives home/ to 10000:10000, which needs root (ADR 0009).
+    The tests run unprivileged, so the service user is the test's own."""
+    if hasattr(os, "getuid"):
+        monkeypatch.setenv("GFIT_UID", str(os.getuid()))
+        monkeypatch.setenv("GFIT_GID", str(os.getgid()))
 
 
 @pytest.fixture

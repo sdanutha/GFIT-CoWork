@@ -108,8 +108,6 @@ def test_audit_reports_startup_install_dependencies():
     texts = _texts(classes["startup_dependency_install"])
 
     assert ("api/startup.py", "HERMES_WEBUI_AGENT_DIR") in anchors
-    assert ("bootstrap.py", "HERMES_WEBUI_AGENT_DIR") in anchors
-    assert ("start.ps1", "HERMES_WEBUI_AGENT_DIR") in anchors
     assert ("api/startup.py", "auto_install_agent_deps") in anchors
     assert ("server.py", "auto_install_agent_deps") in anchors
     assert any("uv pip install" in text and "[all]" in text for text in texts)
@@ -167,7 +165,6 @@ def test_runtime_import_scan_includes_root_python_entrypoints():
 
     assert "api/routes.py" in paths
     assert "server.py" in paths
-    assert "bootstrap.py" in paths
 
 
 def test_audit_keeps_client_package_candidates_visible():

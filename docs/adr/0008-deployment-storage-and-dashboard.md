@@ -1,5 +1,7 @@
 # A Deployment keeps its data in its own folder, and the Operator gets Hermes Agent's Dashboard on loopback
 
+> Amended by [ADR 0009](0009-every-way-to-run-is-a-container.md): `home/` and `workspace/` may be moved with `HERMES_HOME_DIR`/`HERMES_WORKSPACE_DIR`, every container runs as 10000:10000, containers have fixed names, and `/opt/data` is kept in named volumes.
+
 Each Deployment now lives in one folder on the server, `deploy/deployments/<team>/`, created by `deploy/new-deployment` and run with `deploy/cowork`. Its `.env`, `home/` (everything the Deployment keeps), `workspace/` and `certs/` are bind-mounted from that folder instead of being kept in named Docker volumes. Only the agent's installed source stays a named volume (`gfit-<team>_hermes-agent-src`), because the agent image fills it and it is thrown away on every agent upgrade. We chose this so the Operator can see, back up and restore a whole Deployment as one folder with ordinary tools (`tar`, `rsync`, the server's own backup), without `docker run` recipes for each volume, and because `new-deployment` can give each Deployment its ports and secrets at the moment it creates the folder.
 
 The kit also runs Hermes Agent's own **Dashboard** (`hermes-dashboard`, the agent image's `dashboard` command) next to the gateway. It is for the Operator only: it listens on `127.0.0.1:<DASHBOARD_PORT>` on the server, is never put behind the reverse proxy, and is reached over an SSH tunnel with its own login from `.env`.

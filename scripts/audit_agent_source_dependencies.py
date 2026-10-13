@@ -93,7 +93,7 @@ def _iter_python_files(root: Path) -> list[Path]:
     api_dir = root / "api"
     if api_dir.is_dir():
         paths.update(api_dir.rglob("*.py"))
-    for filename in ("server.py", "bootstrap.py"):
+    for filename in ("server.py",):
         path = root / filename
         if path.is_file():
             paths.add(path)
@@ -234,8 +234,6 @@ def build_report(root: Path) -> dict[str, object]:
         root,
         (
             "server.py",
-            "bootstrap.py",
-            "start.ps1",
             "api/startup.py",
             "api/config.py",
             "api/streaming.py",

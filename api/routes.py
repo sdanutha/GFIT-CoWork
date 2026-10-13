@@ -17036,12 +17036,7 @@ def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int] | 
 
 def _open_file_read_fd(target: Path, anchor_root: Path | None = None) -> int:
     if anchor_root is None:
-        flags = os.O_RDONLY
-        # On Windows, files are opened in text mode by default; O_BINARY
-        # prevents CRLF translation that would corrupt binary media files.
-        if hasattr(os, "O_BINARY"):
-            flags |= os.O_BINARY
-        return os.open(str(target), flags)
+        return os.open(str(target), os.O_RDONLY)
     return open_anchored_fd(anchor_root, target.resolve(), want_dir=False)
 
 

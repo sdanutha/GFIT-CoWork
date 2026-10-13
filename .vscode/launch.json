@@ -1,0 +1,26 @@
+{
+  // Attach to the server of a Development Deployment (ADR 0009):
+  //   deploy/new-deployment --dev dev 0 && deploy/cowork dev up -d
+  // The port is DEBUG_PORT in deploy/deployments/<team>/.env (5678 for N=0).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to the Development Deployment",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": "${input:debugPort}" },
+      "pathMappings": [
+        { "localRoot": "${workspaceFolder}", "remoteRoot": "/app" }
+      ],
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "debugPort",
+      "type": "promptString",
+      "description": "DEBUG_PORT of the Development Deployment",
+      "default": "5678"
+    }
+  ]
+}

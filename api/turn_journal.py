@@ -15,10 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable
 
-try:  # pragma: no cover - fcntl is unavailable on Windows.
-    import fcntl as _fcntl
-except ImportError:  # pragma: no cover
-    _fcntl = None
+import fcntl as _fcntl
 
 TURN_JOURNAL_DIR_NAME = "_turn_journal"
 _TERMINAL_EVENTS = {"completed", "interrupted"}
@@ -50,12 +47,8 @@ def _journal_file_lock(file_obj):
     ``O_APPEND`` keeps normal same-process appends simple, but a long JSONL event
     can exceed POSIX's small atomic-write boundary.  On Unix, take an advisory
     lock around the single event write+fsync so two WebUI worker processes cannot
-    interleave large submitted-message payloads into corrupted JSONL.  Platforms
-    without ``fcntl`` keep the previous best-effort append behavior.
+    interleave large submitted-message payloads into corrupted JSONL.
     """
-    if _fcntl is None:
-        yield
-        return
     _fcntl.flock(file_obj.fileno(), _fcntl.LOCK_EX)
     try:
         yield

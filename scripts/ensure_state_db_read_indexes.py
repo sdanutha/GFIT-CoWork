@@ -14,10 +14,9 @@ Usage::
         --confirm-drained [--lock-file /path/to/agent-activity.lock]
 
 ``--confirm-drained`` is mandatory. When ``--lock-file`` is given, the tool
-takes an exclusive non-blocking lock on that path (``flock`` on POSIX,
-``msvcrt.locking`` on Windows) so that a deployment which serialises agent
-turns on a lock file cannot start a turn mid-rebuild. Without ``--lock-file``
-no lock primitive is needed, so the script runs on every supported platform.
+takes an exclusive non-blocking lock on that path (``flock``) so that a
+deployment which serialises agent turns on a lock file cannot start a turn
+mid-rebuild.
 
 Existing indexes are verified for table, key shape and collation and must be
 covering (``EXPLAIN QUERY PLAN``); an incompatible index is reported, never
@@ -31,14 +30,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
-try:  # POSIX
-    import fcntl
-except ImportError:  # native Windows
-    fcntl = None
-try:  # Windows
-    import msvcrt
-except ImportError:  # POSIX
-    msvcrt = None
+import fcntl
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -92,25 +84,9 @@ def _require_agent_schema(db) -> None:
 def _exclusive_lock(lock_file):
     if lock_file is None:
         return nullcontext()
-    if fcntl is None and msvcrt is None:
-        raise RuntimeError("--lock-file needs fcntl (POSIX) or msvcrt (Windows); "
-                           "neither is available on this interpreter")
     handle = open(lock_file, "a+")
     try:
-        if fcntl is not None:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        else:
-            # Lock one byte at offset 0 without blocking; raises OSError when held.
-            # ``a+`` may have just created an empty file, and Windows cannot lock
-            # a range beyond EOF, so make sure byte 0 exists first. An existing
-            # (deployment-owned) lock file is left untouched. Write the byte on
-            # the descriptor: a text-mode ``handle.write("\n")`` becomes two
-            # bytes (``\r\n``) on native Windows.
-            if os.fstat(handle.fileno()).st_size == 0:
-                os.write(handle.fileno(), b"\0")
-                handle.flush()
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BaseException:
         handle.close()
         raise

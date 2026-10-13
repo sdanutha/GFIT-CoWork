@@ -62,13 +62,9 @@ def test_birthtime_ns_platform_matrix(monkeypatch):
     mac = Stat()
     mac.st_birthtime = 1.5
     assert birthtime_ns(mac) == 1_500_000_000
-    windows = Stat()
-    windows.st_ctime_ns = 456
-    monkeypatch.setattr("api.workspace.sys.platform", "win32")
-    assert birthtime_ns(windows) == 456
-    linux = Stat()
-    monkeypatch.setattr("api.workspace.sys.platform", "linux")
-    assert birthtime_ns(linux) is None
+    without = Stat()
+    without.st_ctime_ns = 456
+    assert birthtime_ns(without) is None
 
 
 def test_escape_symlink_birthtime_is_link_local(tmp_path):
