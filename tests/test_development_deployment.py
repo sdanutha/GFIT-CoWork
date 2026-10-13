@@ -76,6 +76,11 @@ def fake_docker(tmp_path):
     return env, log
 
 
+def _cert_text(path: Path) -> str:
+    return subprocess.run(["openssl", "x509", "-in", str(path), "-noout", "-text"],
+                          capture_output=True, text=True, check=True).stdout
+
+
 needs_openssl = pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl is not installed")
 
 
@@ -100,6 +105,13 @@ def test_new_deployment_dev_makes_a_development_deployment_with_the_mock_directo
     assert ca and (folder / "certs" / "ad-ca.crt").read_bytes() == ca
     assert (folder / "certs" / "mock-ldap" / "server.crt").is_file()
     assert not (folder / "certs" / "mock-ldap" / "ca.key").exists()
+    # Python 3.13+ verifies strictly (VERIFY_X509_STRICT): without these
+    # extensions GFIT-CoWork refused the mock Directory's certificate.
+    ca_text = _cert_text(folder / "certs" / "mock-ldap" / "ca.crt")
+    assert "Certificate Sign" in ca_text and "CA:TRUE" in ca_text
+    server_text = _cert_text(folder / "certs" / "mock-ldap" / "server.crt")
+    assert "TLS Web Server Authentication" in server_text
+    assert "X509v3 Authority Key Identifier" in server_text
     assert "http://localhost:8787" in result.stdout
 
 
@@ -184,6 +196,8 @@ def test_a_development_deployment_publishes_everything_on_loopback(kit):
     assert cowork["build"]["target"] == "dev"
     assert cowork["environment"]["HERMES_WEBUI_SECURE"] == "0"
     assert cowork["environment"]["GFIT_DEBUGPY_PORT"] == "5678"
+    # Nothing the container writes lands in the developer's checkout.
+    assert cowork["environment"]["HERMES_AGENT_STAGE_DIR"].startswith("/app/venv/")
     mounts = {v["target"]: v for v in cowork["volumes"]}
     # The checkout is the app; its venv stays out of the checkout.
     assert mounts["/app"]["type"] == "bind"

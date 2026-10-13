@@ -40,6 +40,9 @@ services:
       - HERMES_WEBUI_ALLOWED_ORIGINS=http://localhost:${GFIT_PORT},http://127.0.0.1:${GFIT_PORT},${DEV_ALLOWED_ORIGINS:-}
       - HERMES_WEBUI_TRUST_FORWARDED_FOR=0
       - GFIT_DEBUGPY_PORT=5678
+      # The init script's writable copy of the agent source goes in the venv
+      # volume, not in the checkout mounted at /app.
+      - HERMES_AGENT_STAGE_DIR=/app/venv/hermes-agent-src
     volumes:
       # The developer's checkout is the app: static files are live, a Python
       # change needs `deploy/cowork <team> restart gfit-cowork`.

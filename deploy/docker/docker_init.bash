@@ -276,6 +276,11 @@ if [ "A${whoami}" == "Aroot" ]; then
   mkdir -p /app || error_exit "Failed to create /app directory"
   chown hermeswebui:hermeswebui /app || error_exit "Failed to set owner of /app to hermeswebui user"
   rsync -av --chown=hermeswebui:hermeswebui /apptoo/ /app/ || error_exit "Failed to sync /apptoo to /app with correct ownership"
+  # A Development Deployment mounts its own volume at /app/venv (ADR 0009);
+  # Docker creates it owned by root.
+  if [ -d /app/venv ]; then
+    chown hermeswebui:hermeswebui /app/venv || error_exit "Failed to set owner of /app/venv to hermeswebui user"
+  fi
 
   if [ -z "${HERMES_WEBUI_DEFAULT_WORKSPACE+x}" ]; then export HERMES_WEBUI_DEFAULT_WORKSPACE="/workspace"; fi
   if [ ! -d "$HERMES_WEBUI_DEFAULT_WORKSPACE" ]; then
@@ -493,7 +498,9 @@ else
     # with "Permission denied" even though `_stage_src` itself was created
     # writable by hermeswebui. Re-add owner-write on the staged tree after the
     # copy so the build dir is genuinely writable, not just owned by us.
-    _stage_src="/app/hermes-agent-src"
+    # A Development Deployment mounts the developer's checkout at /app, so its
+    # overlay moves this copy into the venv's own volume (ADR 0009).
+    _stage_src="${HERMES_AGENT_STAGE_DIR:-/app/hermes-agent-src}"
     rm -rf "$_stage_src"
     mkdir -p "$_stage_src"
     if command -v rsync >/dev/null 2>&1; then
