@@ -4,8 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Git attributes force eol=lf for the deploy kit's and scripts folder's extensionless scripts
-- [ ] A test checks git resolves eol=lf for them
-- [ ] Existing files are renormalized
+- [x] Git attributes force eol=lf for the deploy kit's and scripts folder's extensionless scripts
+- [x] A test checks git resolves eol=lf for them
+- [x] Existing files are renormalized

@@ -8,3 +8,7 @@
 # or directory`.
 *.sh text eol=lf
 *.bash text eol=lf
+# The deploy kit's scripts have no extension, and run inside Linux containers
+# on every platform (ADR 0009).
+deploy/cowork text eol=lf
+deploy/new-deployment text eol=lf
