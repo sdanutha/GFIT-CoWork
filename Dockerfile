@@ -169,23 +169,28 @@ CMD ["/hermeswebui_init.bash"]
 # does not rebuild it: the source is mounted at /app (a Development
 # Deployment) or /src (the test runner). It adds:
 #  - Hermes Agent's source and venv at the pinned release, with GFIT-CoWork's
-#    test dependencies installed into that venv, so the suite runs the agent
-#    the same way the server does;
+#    runtime dependencies added, for the test server (it runs the agent the
+#    way a Deployment does);
+#  - a separate test venv for pytest itself, without the agent installed, so
+#    tests that load a fake agent get it;
 #  - the Docker CLI and the Compose plugin (no daemon), so the deploy-kit tests
 #    can render the Compose file;
 #  - debugpy in /opt/debugpy, which deploy/docker/docker_init.bash runs the
 #    server under when GFIT_DEBUGPY_PORT is set (the development overlay);
-#  - openssl, for deploy/new-deployment --dev in the deploy-kit tests;
+#  - openssl, for deploy/new-deployment --dev in the deploy-kit tests, and
+#    node, for the tests that run static/*.js;
 #  - git that accepts the mounted checkout whatever its owner.
 FROM base AS dev
-COPY --from=hermes-agent /opt/hermes /opt/hermes-agent
+COPY --from=hermes-agent /opt/hermes /opt/gfit-dev/hermes-agent
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY requirements.txt requirements-dev.txt /tmp/requirements/
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssl \
+    && apt-get install -y --no-install-recommends openssl nodejs \
     && apt-get clean && rm -rf /var/lib/apt/lists/* \
-    && uv pip install --python /opt/hermes-agent/.venv/bin/python -r /tmp/requirements/requirements-dev.txt \
+    && uv pip install --python /opt/gfit-dev/hermes-agent/.venv/bin/python -r /tmp/requirements/requirements.txt \
+    && uv venv --seed --python /usr/local/bin/python3 /opt/gfit-dev/test-venv \
+    && uv pip install --python /opt/gfit-dev/test-venv/bin/python -r /tmp/requirements/requirements-dev.txt \
     && uv pip install --python /usr/local/bin/python3 --target /opt/debugpy debugpy \
     && git config --system --add safe.directory '*'
 
@@ -200,8 +205,8 @@ CMD ["/hermeswebui_init.bash"]
 # ── browser: dev plus Playwright and Chromium, for ./scripts/test.sh --browser
 FROM dev AS browser
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
-RUN uv pip install --python /opt/hermes-agent/.venv/bin/python playwright \
-    && /opt/hermes-agent/.venv/bin/python -m playwright install --with-deps chromium \
+RUN uv pip install --python /opt/gfit-dev/test-venv/bin/python playwright \
+    && /opt/gfit-dev/test-venv/bin/python -m playwright install --with-deps chromium \
     && chmod -R a+rX /opt/playwright \
     && rm -rf /var/lib/apt/lists/*
 

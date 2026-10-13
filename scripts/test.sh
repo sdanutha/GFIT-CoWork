@@ -58,19 +58,21 @@ if [[ -z "${GFIT_TEST_IN_CONTAINER:-}" ]]; then
   echo "Building the $target test image ($image)..." >&2
   docker build --target "$target" -t "$image" "$src" >&2
 
-  exec docker run --rm "${run_opts[@]}" \
+  # --no-healthcheck: the image's HEALTHCHECK probes a server this container
+  # does not run.
+  exec docker run --rm --no-healthcheck "${run_opts[@]}" \
     -v "$src:/src" -w /src \
     -e GFIT_TEST_IN_CONTAINER=1 \
     -e HOME=/tmp/test-home \
     -e HERMES_HOME=/tmp/hermes-home \
     -e HERMES_WEBUI_STATE_DIR=/tmp/webui-state \
-    -e HERMES_WEBUI_AGENT_DIR=/opt/hermes-agent \
+    -e HERMES_WEBUI_AGENT_DIR=/opt/gfit-dev/hermes-agent \
     --entrypoint bash \
     "$image" scripts/test.sh "$@"
 fi
 
 # Inside the container. The image's Python has every test dependency.
-PYTHON_BIN="${GFIT_TEST_PYTHON:-/opt/hermes-agent/.venv/bin/python}"
+PYTHON_BIN="${GFIT_TEST_PYTHON:-/opt/gfit-dev/test-venv/bin/python}"
 
 # --browser: the headless browser smoke (tests/browser_smoke.py).
 if [[ "${1:-}" == "--browser" ]]; then
@@ -119,7 +121,7 @@ if [[ "${1:-}" == "--parallel" ]]; then
   exec "$PYTHON_BIN" "$ROOT/scripts/run_test_shards.py" "$@"
 fi
 
-# No arguments: the whole suite, sharded across min(cores, 8) processes.
+# No arguments: the whole suite, sharded across min(cores, 8, memory / 3 GB) processes.
 # Sharding needs a free port and state dir per shard, so pinned ones run serially.
 if [[ $# -eq 0 ]]; then
   if [[ -n "${HERMES_WEBUI_TEST_PORT:-}" || -n "${HERMES_WEBUI_TEST_STATE_DIR:-}" ]]; then

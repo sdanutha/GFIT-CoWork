@@ -58,10 +58,34 @@ def format_counts(total: dict[str, int]) -> str:
     return ", ".join(f"{total[label]} {label}" for label in labels) or "no tests ran"
 
 
+GB_PER_SHARD = 3
+
+
+def memory_gb() -> int | None:
+    """Total memory in whole GB from /proc/meminfo (the container sees its VM's), or None."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def shard_count(text: str) -> int | None:
-    """``auto`` -> min(cores, 8): on a 14-core Windows box 12 shards were no faster than 8."""
+    """``auto`` -> min(cores, 8, memory / 3 GB).
+
+    12 shards were no faster than 8 on a 14-core machine. Each shard runs
+    pytest, a test server and Hermes Agent: in an 8 GB Docker VM four shards
+    ran out of memory and thousands of tests errored.
+    """
     if text == "auto":
-        return min(os.cpu_count() or 1, 8)
+        count = min(os.cpu_count() or 1, 8)
+        memory = memory_gb()
+        if memory is not None:
+            count = min(count, max(1, memory // GB_PER_SHARD))
+        return count
     if text.isdigit() and int(text) >= 1:
         return int(text)
     return None

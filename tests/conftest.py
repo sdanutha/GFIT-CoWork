@@ -229,6 +229,39 @@ for _model_env in ('HERMES_MODEL', 'OPENAI_MODEL', 'LLM_MODEL'):
     os.environ.pop(_model_env, None)
 
 
+_TEMP_ENV_VARS = ('TMPDIR', 'TMP', 'TEMP')
+_REAL_TEMP_ENV = {name: os.environ.get(name) for name in _TEMP_ENV_VARS}
+
+
+def _use_real_temp_dir() -> None:
+    """Point TMPDIR/TMP/TEMP and tempfile back at the real temp dir.
+
+    Importing Hermes Agent points them at HERMES_HOME/cache/scratch. In this
+    process HERMES_HOME is the test state dir, which fixtures wipe, so a later
+    tempfile.mkdtemp() vanished under it (FileNotFoundError, seen on Linux).
+    """
+    import tempfile
+    for name, value in _REAL_TEMP_ENV.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    tempfile.tempdir = None
+
+
+def pytest_collectstart(collector):
+    # Test modules that call tempfile at import time, after an earlier module
+    # imported the agent.
+    _use_real_temp_dir()
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_temp_dir():
+    """Give every test the real temp dir (see _use_real_temp_dir)."""
+    _use_real_temp_dir()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_hermes_config_path():
     """Keep profile/.env side effects from leaking the live config path across tests."""
@@ -516,6 +549,11 @@ requires_agent_modules = pytest.mark.skipif(
 )
 
 def pytest_configure(config):
+    # Pin tmp_path's root now. Importing Hermes Agent later points TMPDIR at
+    # HERMES_HOME/cache/scratch, inside the state dir the fixtures wipe, and
+    # pytest would otherwise put every later tmp_path there.
+    if not config.option.basetemp:
+        config.option.basetemp = str(TEST_STATE_DIR.parent / f"pytest-{TEST_STATE_DIR.name}")
     config.addinivalue_line("markers", "requires_agent: skip when hermes-agent dir is not found")
     config.addinivalue_line("markers", "requires_agent_modules: skip when hermes-agent Python modules are not importable")
     config.addinivalue_line("markers", "requires_fcntl: skip when fcntl-backed file-descriptor operations are unavailable")
@@ -694,6 +732,17 @@ def _hermes_blocked_socket_connect(self, address):
 
 _hermes_test_socket.create_connection = _hermes_blocked_create_connection
 _hermes_test_socket.socket.connect = _hermes_blocked_socket_connect
+
+
+@pytest.fixture(autouse=True)
+def _reinstall_network_block():
+    """Put the block back before every test. Importing Hermes Agent replaces
+    socket.create_connection with its own happy-eyeballs wrapper, which
+    bypassed the block for every later test. allow_outbound_network, which
+    a test requests explicitly, runs after this and still wins."""
+    _hermes_test_socket.create_connection = _hermes_blocked_create_connection
+    _hermes_test_socket.socket.connect = _hermes_blocked_socket_connect
+    yield
 
 
 @pytest.fixture
@@ -1103,8 +1152,11 @@ def test_server(_test_state_dir):
     # this, _wait_for_server could only report a bare "did not start" timeout
     # and every HTTP-dependent test then cascaded with ConnectionRefused —
     # hundreds of opaque failures from a single root cause.
-    import tempfile as _tempfile
-    _server_log = pathlib.Path(_tempfile.gettempdir()) / f"hermes-webui-test-server-{TEST_PORT}.log"
+    # Beside the state dir, not under tempfile.gettempdir(): once a test has
+    # imported Hermes Agent, it points TMPDIR at HERMES_HOME/cache/scratch,
+    # which is inside the state dir this fixture wipes (seen on Linux).
+    _server_log = TEST_STATE_DIR.parent / f"hermes-webui-test-server-{TEST_PORT}.log"
+    _server_log.parent.mkdir(parents=True, exist_ok=True)
 
     # Boot the server, retrying once if it dies early or fails to bind. Boot
     # failures here are most often transient (a port not yet released by a prior

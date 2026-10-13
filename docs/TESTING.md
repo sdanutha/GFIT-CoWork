@@ -24,13 +24,13 @@ full log stays in the temp directory named on the first line. With no pytest
 args it runs `tests/ -q --timeout=60`.
 
 `./scripts/test.sh` with no arguments runs the whole suite this way with
-min(cores, 8) shards; `--serial` runs it in one process instead. With a pinned
+min(cores, 8, memory / 3 GB) shards (the container sees the Docker VM's memory: 2 shards in an 8 GB VM); `--serial` runs it in one process instead. With a pinned
 `HERMES_WEBUI_TEST_PORT` or `HERMES_WEBUI_TEST_STATE_DIR` the no-argument run
 falls back to serial. Any other arguments (paths, `-k`, ...) run one pytest
 process, as before.
 
 ```bash
-./scripts/test.sh                           # whole suite, min(cores, 8) shards
+./scripts/test.sh                           # whole suite, min(cores, 8, memory/3 GB) shards
 ./scripts/test.sh --serial                  # whole suite, one process
 ./scripts/test.sh --parallel 4 tests/test_model_resolver.py
 ```
@@ -155,7 +155,7 @@ maintainer-run, safe-fixes-only decision (tracked in #3273).
 ```bash
 # the gate (only flags violations on lines you added/changed vs main),
 # with the dev image's ruff:
-docker run --rm -v "$PWD:/src" -w /src --entrypoint /opt/hermes-agent/.venv/bin/python \
+docker run --rm -v "$PWD:/src" -w /src --entrypoint /opt/gfit-dev/test-venv/bin/python \
   gfit-cowork-test:dev scripts/ruff_lint.py --diff main
 # whole-tree backlog report (informational — never blocks): the same with --all
 ```
