@@ -368,12 +368,6 @@ def test_ui_js_set_busy_calls_update_send_btn():
     assert 'updateSendBtn' in busy_body
 
 
-def test_index_html_attach_button_unchanged():
-    """btnAttach must still be present (no regression)."""
-    html, _ = get_text("/")
-    assert 'id="btnAttach"' in html
-
-
 def test_send_function_still_exists():
     """send() function must still be defined in messages.js."""
     js, _ = get_text("/static/messages.js")

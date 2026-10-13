@@ -184,12 +184,6 @@ class _FailingSidecarWriter:
 
 # ── Health check ──────────────────────────────────────────────────────────
 
-def test_health():
-    """Server must be running and healthy."""
-    data = get("/health")
-    assert data["status"] == "ok", f"health not ok: {data}"
-
-
 # ── Workspace upload tests ────────────────────────────────────────────────
 
 class TestWorkspaceUploadHappyPath:

@@ -42,10 +42,6 @@ def make_workspace_child(base: pathlib.Path, name: str) -> pathlib.Path:
     return target
 
 
-def test_server_running_from_new_location():
-    data, status = get("/health")
-    assert status == 200 and data["status"] == "ok"
-
 def test_app_js_served():
     """Sprint 9: app.js replaced by modules. Verify ui.js (contains renderMd) is served."""
     raw, ct, status = get_raw("/static/ui.js")

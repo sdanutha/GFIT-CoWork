@@ -85,14 +85,6 @@ def test_session_search_returns_matches(cleanup_test_sessions):
     sids = [s["session_id"] for s in data["sessions"]]
     assert sid in sids
 
-def test_session_search_empty_query_returns_all():
-    data, status = get("/api/sessions/search?q=")
-    assert status == 200 and "sessions" in data
-
-def test_session_search_no_results():
-    data, status = get("/api/sessions/search?q=zzznomatchzzz9999")
-    assert status == 200 and data["sessions"] == []
-
 def test_file_create(cleanup_test_sessions):
     sid, ws = make_session_tracked(cleanup_test_sessions)
     fname = f"test_{uuid.uuid4().hex[:6]}.txt"

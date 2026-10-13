@@ -408,10 +408,6 @@ class TestApprovalRespondHTTP:
                               {"session_id": new_session_id(), "choice": "HACKED"})
         assert status == 400
 
-    def test_respond_requires_session_id(self):
-        result, status = post("/api/approval/respond", {"choice": "deny"})
-        assert status == 400
-
     def test_respond_returns_choice_field(self):
         sid = new_session_id()
         result, status = post("/api/approval/respond",

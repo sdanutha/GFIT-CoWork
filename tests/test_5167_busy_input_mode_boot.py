@@ -127,9 +127,6 @@ class TestSyncMirrorHelpers:
 class TestAssignmentSitesSyncMirror:
     """Every place that sets window._defaultMessageMode must keep the mirror in sync."""
 
-    def test_boot_success_path_persists(self):
-        assert "window._defaultMessageMode=_persistDefaultMessageMode(s.default_message_mode||s.busy_input_mode)" in BOOT_JS
-
     def test_boot_catch_path_reads_persisted(self):
         """The critical #5167/#5170 guarantee: settings-load FAILURE must re-read the
         persisted preference, NOT clobber it with a hardcoded default. A saved

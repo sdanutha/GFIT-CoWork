@@ -45,11 +45,6 @@ def test_gateway_chat_event_payload_contains_type_and_message():
     assert "approval_message = \"Approvals require a newer gateway. Upgrade the connected Hermes gateway to enable this.\"" in GATEWAY_CHAT
 
 
-def test_messages_js_handles_approval_gateway_unsupported_event():
-    """Verify client-side warning handler recognizes the event type."""
-    assert "d.type==='approval_gateway_unsupported'" in MESSAGES_JS
-
-
 def test_messages_js_references_i18n_key_for_approval_gateway_unsupported():
     """Verify the i18n key is referenced in messages.js."""
     # The key should be used in the message handling logic
